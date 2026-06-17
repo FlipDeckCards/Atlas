@@ -302,6 +302,20 @@ def create_app(
     app.include_router(analytics_router)
     include_all_routes(app)
 
+    # Initialize shared session store (Postgres) on startup
+    @app.on_event("startup")
+    async def _startup_session_store() -> None:
+        from openjarvis.server.session_store import SessionStore
+        store = SessionStore()
+        await store.connect()
+        app.state.session_store = store
+
+    @app.on_event("shutdown")
+    async def _shutdown_session_store() -> None:
+        store = getattr(app.state, "session_store", None)
+        if store:
+            await store.close()
+
     # Restore SendBlue channel bindings from database on startup
     _restore_sendblue_bindings(app)
 
