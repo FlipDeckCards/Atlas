@@ -345,11 +345,14 @@ async def index():
         }
       };
 
-      wakeRecognition.onerror = (e) => {
-        if (e.error !== 'aborted' && e.error !== 'no-speech') {
-          console.warn('Wake word error:', e.error);
-        }
-      };
+      recognition.onerror = function(event) {
+    console.log('Wake word error: ' + event.error);
+    if (event.error === 'not-allowed') {
+        console.log('Mic permission denied — not retrying.');
+        return; // stop the loop
+    }
+    startWakeWordDetection();
+};
 
       wakeActive = true;
       try {
