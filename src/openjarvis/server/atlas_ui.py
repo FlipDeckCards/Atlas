@@ -383,9 +383,16 @@ async def index():
     input.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
 
     // ── Boot ───────────────────────────────────────────────
-    loadHistory();
-    // Small delay so browser is ready for mic permission request
-    setTimeout(initWakeWord, 1000);
+loadHistory();
+// Wake word needs a user gesture — start on first click or keypress
+let _wakeStarted = false;
+function maybeStartWakeWord() {
+    if (_wakeStarted) return;
+    _wakeStarted = true;
+    initWakeWord();
+}
+document.addEventListener('click', maybeStartWakeWord);
+document.addEventListener('keydown', maybeStartWakeWord);
   </script>
 </body>
 </html>
