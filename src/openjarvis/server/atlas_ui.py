@@ -209,8 +209,8 @@ async def index():
     @keyframes eye-blink {
       0%,90%,100%{transform:scaleY(1)} 93%,97%{transform:scaleY(0.06)}
     }
-    #eye-l { transform-origin:76px 90px; animation:eye-blink 5s ease-in-out infinite; }
-    #eye-r { transform-origin:124px 90px; animation:eye-blink 5s ease-in-out 0.2s infinite; }
+    #eye-l { transform-origin:75px 88px; animation:eye-blink 5s ease-in-out infinite; }
+    #eye-r { transform-origin:125px 88px; animation:eye-blink 5s ease-in-out 0.2s infinite; }
     .face-state {
       margin-top:16px; text-align:center; font-size:11px; letter-spacing:3px; color:var(--text-dim);
     }
@@ -334,33 +334,82 @@ async def index():
         <div class="f-ring"></div>
         <div class="f-ring2"></div>
         <svg id="atlas-face" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="100" cy="100" r="88" fill="none" stroke="#00e5ff" stroke-width="0.5" opacity="0.15"/>
-          <circle cx="100" cy="100" r="82" fill="none" stroke="#00e5ff" stroke-width="0.3" opacity="0.1"/>
-          <circle cx="100" cy="100" r="76" fill="#060610" stroke="#00e5ff" stroke-width="1.2"/>
-          <line x1="80" y1="63" x2="80" y2="72" stroke="#00e5ff" stroke-width="0.6" opacity="0.3"/>
-          <line x1="100" y1="59" x2="100" y2="71" stroke="#00e5ff" stroke-width="0.6" opacity="0.4"/>
-          <line x1="120" y1="63" x2="120" y2="72" stroke="#00e5ff" stroke-width="0.6" opacity="0.3"/>
-          <line x1="86" y1="66" x2="114" y2="66" stroke="#00e5ff" stroke-width="0.4" opacity="0.2"/>
-          <line x1="34" y1="100" x2="52" y2="100" stroke="#00e5ff" stroke-width="0.5" opacity="0.18"/>
-          <line x1="148" y1="100" x2="166" y2="100" stroke="#00e5ff" stroke-width="0.5" opacity="0.18"/>
-          <ellipse cx="76" cy="90" rx="14" ry="10" fill="#020210" stroke="#00e5ff" stroke-width="0.8" opacity="0.5"/>
-          <ellipse cx="124" cy="90" rx="14" ry="10" fill="#020210" stroke="#00e5ff" stroke-width="0.8" opacity="0.5"/>
-          <g id="eye-l">
-            <ellipse cx="76" cy="90" rx="9" ry="7" fill="#00e5ff" opacity="0.85"/>
-            <ellipse cx="76" cy="90" rx="5" ry="5" fill="#001a2a"/>
-            <ellipse cx="78" cy="88" rx="2" ry="2" fill="#00e5ff" opacity="0.9"/>
-          </g>
-          <g id="eye-r">
-            <ellipse cx="124" cy="90" rx="9" ry="7" fill="#00e5ff" opacity="0.85"/>
-            <ellipse cx="124" cy="90" rx="5" ry="5" fill="#001a2a"/>
-            <ellipse cx="126" cy="88" rx="2" ry="2" fill="#00e5ff" opacity="0.9"/>
-          </g>
-          <path d="M 96 100 L 92 112 L 108 112 L 104 100" fill="none" stroke="#00e5ff" stroke-width="0.7" opacity="0.2"/>
-          <path id="mouth-upper" d="M 78 124 Q 100 121 122 124" fill="none" stroke="#00e5ff" stroke-width="1.5" stroke-linecap="round"/>
-          <path id="mouth-lower" d="M 78 124 Q 100 127 122 124" fill="none" stroke="#00e5ff" stroke-width="1.5" stroke-linecap="round"/>
-          <path id="mouth-fill"  d="M 78 124 Q 100 121 122 124 Q 100 127 78 124" fill="#001a1a" opacity="0"/>
-          <line x1="88" y1="150" x2="112" y2="150" stroke="#00e5ff" stroke-width="0.5" opacity="0.18"/>
-        </svg>
+
+  <!-- Human oval head — wider at temples, tapers to chin -->
+  <path d="M 100 28 C 148 28 172 60 172 98 C 172 138 154 168 137 178 C 121 188 79 188 63 178 C 46 168 28 138 28 98 C 28 60 52 28 100 28 Z"
+        fill="#050510" stroke="#00e5ff" stroke-width="1.2"/>
+  <path d="M 100 34 C 144 34 166 63 166 98 C 166 134 149 163 133 172 C 117 181 83 181 67 172 C 51 163 34 134 34 98 C 34 63 56 34 100 34 Z"
+        fill="none" stroke="#00e5ff" stroke-width="0.3" opacity="0.12"/>
+
+  <!-- Forehead circuit traces -->
+  <line x1="100" y1="30" x2="100" y2="50" stroke="#00e5ff" stroke-width="0.8" opacity="0.4"/>
+  <line x1="84"  y1="37" x2="84"  y2="52" stroke="#00e5ff" stroke-width="0.5" opacity="0.22"/>
+  <line x1="116" y1="37" x2="116" y2="52" stroke="#00e5ff" stroke-width="0.5" opacity="0.22"/>
+  <line x1="79"  y1="50" x2="121" y2="50" stroke="#00e5ff" stroke-width="0.4" opacity="0.18"/>
+  <circle cx="84"  cy="52" r="1.5" fill="#00e5ff" opacity="0.45"/>
+  <circle cx="116" cy="52" r="1.5" fill="#00e5ff" opacity="0.45"/>
+  <circle cx="100" cy="50" r="1.5" fill="#00e5ff" opacity="0.55"/>
+
+  <!-- Temple scan lines -->
+  <line x1="29" y1="88" x2="50" y2="88" stroke="#00e5ff" stroke-width="0.5" opacity="0.18"/>
+  <line x1="32" y1="96" x2="48" y2="96" stroke="#00e5ff" stroke-width="0.4" opacity="0.12"/>
+  <line x1="150" y1="88" x2="171" y2="88" stroke="#00e5ff" stroke-width="0.5" opacity="0.18"/>
+  <line x1="152" y1="96" x2="168" y2="96" stroke="#00e5ff" stroke-width="0.4" opacity="0.12"/>
+
+  <!-- Brow ridges -->
+  <path d="M 56 72 Q 75 66 93 70" fill="none" stroke="#00e5ff" stroke-width="0.9" opacity="0.4"/>
+  <path d="M 107 70 Q 125 66 144 72" fill="none" stroke="#00e5ff" stroke-width="0.9" opacity="0.4"/>
+
+  <!-- Eye sockets -->
+  <ellipse cx="75" cy="88" rx="19" ry="14" fill="#020210" stroke="#00e5ff" stroke-width="0.6" opacity="0.35"/>
+  <ellipse cx="125" cy="88" rx="19" ry="14" fill="#020210" stroke="#00e5ff" stroke-width="0.6" opacity="0.35"/>
+
+  <!-- LEFT EYE (blink via CSS) -->
+  <g id="eye-l">
+    <circle cx="75" cy="88" r="11" fill="#001520" stroke="#00e5ff" stroke-width="1.1" opacity="0.95"/>
+    <circle cx="75" cy="88" r="8"  fill="#002030"/>
+    <circle cx="75" cy="88" r="8"  fill="none" stroke="#00e5ff" stroke-width="0.6" opacity="0.55"/>
+    <circle cx="75" cy="88" r="5"  fill="none" stroke="#00e5ff" stroke-width="0.3" opacity="0.35"/>
+    <circle cx="75" cy="88" r="3.5" fill="#000c18"/>
+    <circle cx="75" cy="88" r="8"  fill="#00e5ff" opacity="0.1"/>
+    <circle cx="71" cy="84" r="2"  fill="#ffffff" opacity="0.65"/>
+    <circle cx="79" cy="92" r="1"  fill="#00e5ff" opacity="0.35"/>
+  </g>
+
+  <!-- RIGHT EYE (blink via CSS) -->
+  <g id="eye-r">
+    <circle cx="125" cy="88" r="11" fill="#001520" stroke="#00e5ff" stroke-width="1.1" opacity="0.95"/>
+    <circle cx="125" cy="88" r="8"  fill="#002030"/>
+    <circle cx="125" cy="88" r="8"  fill="none" stroke="#00e5ff" stroke-width="0.6" opacity="0.55"/>
+    <circle cx="125" cy="88" r="5"  fill="none" stroke="#00e5ff" stroke-width="0.3" opacity="0.35"/>
+    <circle cx="125" cy="88" r="3.5" fill="#000c18"/>
+    <circle cx="125" cy="88" r="8"  fill="#00e5ff" opacity="0.1"/>
+    <circle cx="121" cy="84" r="2"  fill="#ffffff" opacity="0.65"/>
+    <circle cx="129" cy="92" r="1"  fill="#00e5ff" opacity="0.35"/>
+  </g>
+
+  <!-- Nose bridge -->
+  <path d="M 95 100 L 91 114 Q 100 118 109 114 L 105 100"
+        fill="none" stroke="#00e5ff" stroke-width="0.7" opacity="0.22"/>
+  <line x1="100" y1="100" x2="100" y2="113" stroke="#00e5ff" stroke-width="0.4" opacity="0.14"/>
+
+  <!-- Cheek circuit accents -->
+  <path d="M 41 110 L 56 114 L 53 120" fill="none" stroke="#00e5ff" stroke-width="0.5" opacity="0.18"/>
+  <path d="M 159 110 L 144 114 L 147 120" fill="none" stroke="#00e5ff" stroke-width="0.5" opacity="0.18"/>
+
+  <!-- Chin mark -->
+  <line x1="92" y1="163" x2="108" y2="163" stroke="#00e5ff" stroke-width="0.5" opacity="0.18"/>
+  <circle cx="100" cy="163" r="2" fill="none" stroke="#00e5ff" stroke-width="0.4" opacity="0.22"/>
+
+  <!-- MOUTH — JS-driven via setMouthOpen(), IDs must stay -->
+  <path id="mouth-upper" d="M 78 124 Q 100 121 122 124"
+        fill="none" stroke="#00e5ff" stroke-width="1.5" stroke-linecap="round"/>
+  <path id="mouth-lower" d="M 78 124 Q 100 127 122 124"
+        fill="none" stroke="#00e5ff" stroke-width="1.5" stroke-linecap="round"/>
+  <path id="mouth-fill"  d="M 78 124 Q 100 121 122 124 Q 100 127 78 124"
+        fill="#001a1a" opacity="0"/>
+
+</svg>
       </div>
       <div class="face-state">
         <div id="atlas-state">STANDBY</div>
