@@ -1,16 +1,19 @@
 import os
 import httpx
-from fastapi import APIRouter
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi import APIRouter, File, UploadFile
+from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 
 from openjarvis.server.session_store import SessionStore
 
-
 router = APIRouter()
 
 API_KEY = os.getenv("OPENJARVIS_API_KEY", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")  # Rachel
+
 OWNER_USER_ID = "michael"
 CHANNEL = "web"
 
@@ -36,14 +39,50 @@ class ChatRequest(BaseModel):
 @router.get("/api/session/history")
 async def session_history():
     store = await get_store()
-    session = await store.get_or_create(OWNER_USER_ID, CHANNEL)  # FIXED: added CHANNEL
+    session = await store.get_or_create(OWNER_USER_ID, CHANNEL)
     return JSONResponse({
         "messages": [
-            {"role": m["role"], "content": m["content"]}  # FIXED: dict access
-            for m in session["conversation_history"]       # FIXED: dict access
+            {"role": m["role"], "content": m["content"]}
+            for m in session["conversation_history"]
             if m["role"] in ("user", "assistant")
         ]
     })
+
+
+@router.post("/api/voice/transcribe")
+async def transcribe(audio: UploadFile = File(...)):
+    audio_bytes = await audio.read()
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await client.post(
+            "https://api.openai.com/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+            files={"file": (audio.filename or "audio.webm", audio_bytes, audio.content_type or "audio/webm")},
+            data={"model": "whisper-1"}
+        )
+        data = res.json()
+        return JSONResponse({"text": data.get("text", "")})
+
+
+@router.post("/api/voice/speak")
+async def speak(req: ChatRequest):
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await client.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
+            headers={
+                "xi-api-key": ELEVENLABS_API_KEY,
+                "Content-Type": "application/json"
+            },
+            json={
+                "text": req.message,
+                "model_id": "eleven_monolingual_v1",
+                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
+            }
+        )
+        return StreamingResponse(
+            iter([res.content]),
+            media_type="audio/mpeg",
+            headers={"Content-Disposition": "inline; filename=speech.mp3"}
+        )
 
 
 @router.get("/")
@@ -65,18 +104,23 @@ async def index():
     .user { align-self: flex-end; background: #7c6af7; color: #fff; border-bottom-right-radius: 4px; }
     .atlas { align-self: flex-start; background: #1a1a1a; color: #e0e0e0; border-bottom-left-radius: 4px; border: 1px solid #2a2a2a; }
     .thinking { color: #555; font-style: italic; }
-    #input-row { display: flex; padding: 16px 24px; gap: 12px; border-top: 1px solid #222; }
+    #input-row { display: flex; padding: 16px 24px; gap: 12px; border-top: 1px solid #222; align-items: center; }
     #input { flex: 1; background: #1a1a1a; border: 1px solid #333; color: #fff; padding: 12px 16px; border-radius: 8px; font-size: 15px; outline: none; }
     #input:focus { border-color: #7c6af7; }
     #send { background: #7c6af7; color: #fff; border: none; padding: 12px 24px; border-radius: 8px; font-size: 15px; cursor: pointer; font-weight: 600; }
     #send:hover { background: #6a5ce0; }
     #send:disabled { background: #333; cursor: not-allowed; }
+    #mic { background: #1a1a1a; border: 1px solid #333; color: #aaa; padding: 12px 14px; border-radius: 8px; font-size: 18px; cursor: pointer; transition: all 0.2s; user-select: none; }
+    #mic:hover { border-color: #7c6af7; color: #7c6af7; }
+    #mic.recording { background: #3a1a1a; border-color: #f77; color: #f77; animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
   </style>
 </head>
 <body>
   <div id="header"><span>Atlas</span> — AI Hub</div>
   <div id="messages"></div>
   <div id="input-row">
+    <button id="mic" title="Hold to record">🎙️</button>
     <input id="input" type="text" placeholder="Message Atlas..." autocomplete="off"/>
     <button id="send">Send</button>
   </div>
@@ -84,6 +128,7 @@ async def index():
     const messagesEl = document.getElementById('messages');
     const input = document.getElementById('input');
     const send = document.getElementById('send');
+    const mic = document.getElementById('mic');
     const API_KEY = '""" + API_KEY + """';
 
     function addMsg(role, text) {
@@ -102,13 +147,11 @@ async def index():
         });
         const data = await res.json();
         (data.messages || []).forEach(m => addMsg(m.role, m.content));
-      } catch(e) {
-        console.warn('Could not load history:', e.message);
-      }
+      } catch(e) { console.warn('Could not load history:', e.message); }
     }
 
-    async function sendMessage() {
-      const text = input.value.trim();
+    async function sendMessage(text) {
+      if (!text) text = input.value.trim();
       if (!text) return;
       input.value = '';
       send.disabled = true;
@@ -126,6 +169,7 @@ async def index():
         thinking.remove();
         const reply = data.reply || data.detail || 'No response';
         addMsg('atlas', reply);
+        speakReply(reply);  // fire and forget — don't await
       } catch(e) {
         thinking.textContent = 'Error: ' + e.message;
         thinking.classList.remove('thinking');
@@ -134,7 +178,64 @@ async def index():
       input.focus();
     }
 
-    send.addEventListener('click', sendMessage);
+    async function speakReply(text) {
+      try {
+        const res = await fetch('/api/voice/speak', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + API_KEY },
+          body: JSON.stringify({ message: text })
+        });
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audio.play();
+      } catch(e) { console.warn('TTS failed:', e.message); }
+    }
+
+    // Mic — hold to record, release to send
+    let mediaRecorder = null;
+    let audioChunks = [];
+
+    async function startRecording() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioChunks = [];
+        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+        mediaRecorder.onstop = async () => {
+          stream.getTracks().forEach(t => t.stop());
+          const blob = new Blob(audioChunks, { type: 'audio/webm' });
+          const formData = new FormData();
+          formData.append('audio', blob, 'recording.webm');
+          mic.textContent = '⏳';
+          try {
+            const res = await fetch('/api/voice/transcribe', {
+              method: 'POST',
+              headers: { 'Authorization': 'Bearer ' + API_KEY },
+              body: formData
+            });
+            const data = await res.json();
+            if (data.text) await sendMessage(data.text);
+          } catch(e) { console.warn('Transcription failed:', e.message); }
+          mic.textContent = '🎙️';
+          mic.classList.remove('recording');
+        };
+        mediaRecorder.start();
+        mic.classList.add('recording');
+        mic.textContent = '🔴';
+      } catch(e) { console.warn('Mic access denied:', e.message); }
+    }
+
+    function stopRecording() {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+    }
+
+    mic.addEventListener('mousedown', startRecording);
+    mic.addEventListener('touchstart', e => { e.preventDefault(); startRecording(); });
+    mic.addEventListener('mouseup', stopRecording);
+    mic.addEventListener('touchend', e => { e.preventDefault(); stopRecording(); });
+
+    send.addEventListener('click', () => sendMessage());
     input.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
 
     loadHistory();
@@ -148,10 +249,10 @@ async def index():
 @router.post("/api/chat")
 async def chat(req: ChatRequest):
     store = await get_store()
-    session = await store.get_or_create(OWNER_USER_ID, CHANNEL)  # FIXED: added CHANNEL
+    session = await store.get_or_create(OWNER_USER_ID, CHANNEL)
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for m in session["conversation_history"][-10:]:  # FIXED: dict access
+    for m in session["conversation_history"][-10:]:
         if m["role"] in ("user", "assistant"):
             messages.append({"role": m["role"], "content": m["content"]})
     messages.append({"role": "user", "content": req.message})
@@ -165,7 +266,6 @@ async def chat(req: ChatRequest):
         data = res.json()
         reply = data["choices"][0]["message"]["content"]
 
-    # FIXED: was save_message — now uses append_message with correct signature
     await store.append_message(OWNER_USER_ID, CHANNEL, "user", req.message)
     await store.append_message(OWNER_USER_ID, CHANNEL, "assistant", reply)
 
