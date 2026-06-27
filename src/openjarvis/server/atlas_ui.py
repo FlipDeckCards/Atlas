@@ -690,12 +690,12 @@ async def index():
               if (clean) await sendMessage(clean);
             }
           } catch(e) { console.warn('Transcribe failed:', e.message); }
-          micBtn.textContent = '\ud83c\udf99'; micBtn.className = '';
+          micBtn.textContent = '\U0001F399'; micBtn.className = '';
           setTimeout(() => { if (!isRecording) resumeWakeWord(); }, 5000);
         };
         mediaRecorder.start();
         isRecording = true;
-        micBtn.textContent = '\ud83d\udd34'; micBtn.className = 'recording';
+        micBtn.textContent = '\U0001F534'; micBtn.className = 'recording';
         setWakeStatus('recording');
         feedLog('Recording started');
       } catch(e) {
