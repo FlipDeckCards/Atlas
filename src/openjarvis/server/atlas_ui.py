@@ -1,7 +1,7 @@
 import os
 import httpx
 from fastapi import APIRouter, File, UploadFile
-from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse, FileResponse
 from pydantic import BaseModel
 from typing import Optional
 
@@ -24,6 +24,22 @@ Be direct, sharp, and helpful."""
 
 _store: Optional[SessionStore] = None
 
+# ── GLB model path — looks next to this file first, then repo root /static ──
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_MODEL_CANDIDATES = [
+    os.path.join(_HERE, "static", "atlas-model.glb"),
+    os.path.join(_HERE, "..", "..", "static", "atlas-model.glb"),
+    os.path.join(_HERE, "..", "..", "..", "static", "atlas-model.glb"),
+    "/app/static/atlas-model.glb",
+]
+
+def _find_model() -> Optional[str]:
+    for p in _MODEL_CANDIDATES:
+        if os.path.exists(p):
+            return p
+    return None
+
+
 async def get_store() -> SessionStore:
     global _store
     if _store is None:
@@ -34,6 +50,19 @@ async def get_store() -> SessionStore:
 
 class ChatRequest(BaseModel):
     message: str
+
+
+# ── Serve the GLB without needing StaticFiles on the main app ────────────────
+@router.get("/static/atlas-model.glb")
+async def serve_model():
+    path = _find_model()
+    if not path:
+        return JSONResponse({"error": "model not found"}, status_code=404)
+    return FileResponse(
+        path,
+        media_type="model/gltf-binary",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @router.get("/api/session/history")
@@ -95,6 +124,8 @@ async def index():
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Atlas</title>
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
+  <!-- model-viewer web component -->
+  <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
   <style>
     :root {
       --cyan: #00e5ff; --cyan-dim: #005f6b;
@@ -151,7 +182,7 @@ async def index():
     .stat-row .val.d { color: #335566; }
     .spoke-row { display: flex; align-items: center; gap: 8px; padding: 7px 0; font-size: 11px; letter-spacing: 1px; }
     .s-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-    .s-dot.on  { background: #00ff88; box-shadow: 0 0 6px #00ff88; animation: blink 2s infinite; }
+    .s-dot.on   { background: #00ff88; box-shadow: 0 0 6px #00ff88; animation: blink 2s infinite; }
     .s-dot.stby { background: var(--orange); box-shadow: 0 0 6px var(--orange); }
     .s-dot.off  { background: #333; }
     .s-name { color: var(--text); flex: 1; }
@@ -182,7 +213,7 @@ async def index():
       font-family:'Orbitron',monospace; font-size:9px; letter-spacing:4px;
       color:var(--text-dim); margin-bottom:16px; text-transform:uppercase;
     }
-    #face-wrap { position:relative; width:240px; height:240px; }
+    #face-wrap { position:relative; width:240px; height:300px; }
     .f-ring {
       position:absolute; inset:-16px; border:1px solid rgba(0,229,255,0.15);
       border-radius:50%; animation:spin 20s linear infinite;
@@ -197,35 +228,35 @@ async def index():
     }
     @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
 
-    /* atlas-face is now a div container — filter + animation apply to everything inside */
+    /* atlas-face = div wrapper; filter + talking class apply to everything inside */
     #atlas-face {
       position: relative;
-      width:100%; height:100%;
+      width: 100%; height: 100%;
       filter: drop-shadow(0 0 10px var(--cyan)) drop-shadow(0 0 22px rgba(0,229,255,0.25));
       animation: idle-breathe 4s ease-in-out infinite;
       transition: filter 0.3s;
     }
     #atlas-face.talking {
-      filter: drop-shadow(0 0 16px var(--cyan)) drop-shadow(0 0 36px rgba(0,229,255,0.5)) drop-shadow(0 0 8px var(--orange));
+      filter: drop-shadow(0 0 18px var(--cyan)) drop-shadow(0 0 40px rgba(0,229,255,0.55)) drop-shadow(0 0 10px var(--orange));
     }
-    #atlas-face-img {
-      width: 100%; height: 100%;
-      object-fit: cover; object-position: center top;
-      border-radius: 4px; display: block;
+
+    /* model-viewer fills the face-wrap, transparent bg */
+    model-viewer {
+      width: 100%;
+      height: 100%;
+      background-color: transparent;
+      --poster-color: transparent;
     }
+
+    /* SVG overlay sits on top of the 3D model */
     #atlas-face-svg {
-      position: absolute; top: 0; left: 0;
+      position: absolute;
+      top: 0; left: 0;
       width: 100%; height: 100%;
       pointer-events: none;
     }
 
     @keyframes idle-breathe { 0%,100%{transform:scale(1)} 50%{transform:scale(1.006)} }
-    @keyframes eye-blink {
-      0%,90%,100%{transform:scaleY(1)} 93%,97%{transform:scaleY(0.06)}
-    }
-    /* updated transform-origin to match eye positions in the photo */
-    #eye-l { transform-origin:78px 68px; animation:eye-blink 5s ease-in-out infinite; }
-    #eye-r { transform-origin:122px 68px; animation:eye-blink 5s ease-in-out 0.2s infinite; }
 
     .face-state {
       margin-top:16px; text-align:center; font-size:11px; letter-spacing:3px; color:var(--text-dim);
@@ -245,8 +276,8 @@ async def index():
     }
     #wake-ind { display:flex; align-items:center; gap:6px; font-size:10px; color:var(--text-dim); }
     #wake-dot { width:6px; height:6px; border-radius:50%; background:#1a3a4a; transition:all 0.3s; }
-    #wake-dot.listening { background:var(--cyan); box-shadow:0 0 8px var(--cyan); animation:blink 2s infinite; }
-    #wake-dot.recording { background:#ff3344; box-shadow:0 0 8px #ff3344; animation:blink 0.4s infinite; }
+    #wake-dot.listening  { background:var(--cyan); box-shadow:0 0 8px var(--cyan); animation:blink 2s infinite; }
+    #wake-dot.recording  { background:#ff3344; box-shadow:0 0 8px #ff3344; animation:blink 0.4s infinite; }
     #wake-dot.processing { background:var(--orange); box-shadow:0 0 8px var(--orange); animation:blink 0.8s infinite; }
     #messages {
       flex:1; overflow-y:auto; padding:14px;
@@ -257,7 +288,7 @@ async def index():
     #messages::-webkit-scrollbar-thumb{background:var(--cyan-dim);border-radius:2px}
     .msg { max-width:92%; padding:10px 12px; font-size:12px; line-height:1.6; border-radius:2px; }
     .msg-tag { font-size:9px; letter-spacing:2px; margin-bottom:4px; opacity:0.5; }
-    .user { align-self:flex-end; background:rgba(255,109,0,0.08); border:1px solid rgba(255,109,0,0.25); color:#ffa040; }
+    .user  { align-self:flex-end; background:rgba(255,109,0,0.08); border:1px solid rgba(255,109,0,0.25); color:#ffa040; }
     .user .msg-tag { color:var(--orange); }
     .atlas { align-self:flex-start; background:rgba(0,229,255,0.04); border:1px solid rgba(0,229,255,0.14); color:var(--text); }
     .atlas .msg-tag { color:var(--cyan); }
@@ -284,7 +315,7 @@ async def index():
       padding:10px 12px; font-size:15px; cursor:pointer; border-radius:2px; transition:all 0.2s;
     }
     #mic:hover { border-color:var(--orange); color:var(--orange); }
-    #mic.recording { border-color:#ff3344; color:#ff3344; background:rgba(255,51,68,0.08); animation:blink 0.5s infinite; }
+    #mic.recording  { border-color:#ff3344; color:#ff3344; background:rgba(255,51,68,0.08); animation:blink 0.5s infinite; }
     #mic.processing { border-color:var(--orange); color:var(--orange); }
 
     /* ── BOTTOM NAV ──────────────────────────────────── */
@@ -298,7 +329,7 @@ async def index():
       color:var(--text-dim); cursor:pointer; border-right:1px solid var(--border);
       transition:all 0.2s; user-select:none;
     }
-    .nav-tab:hover { color:var(--text); background:rgba(0,229,255,0.03); }
+    .nav-tab:hover  { color:var(--text); background:rgba(0,229,255,0.03); }
     .nav-tab.active { color:var(--cyan); border-bottom:2px solid var(--cyan); }
   </style>
 </head>
@@ -334,14 +365,14 @@ async def index():
       </div>
       <div id="live-feed">
         <div class="p-label">Live Feed</div>
-        <div class="feed-line">▸ Atlas core initialized</div>
-        <div class="feed-line">▸ Neon DB connected</div>
-        <div class="feed-line">▸ Voice engine loaded</div>
-        <div class="feed-line" id="feed-last">▸ Awaiting input...</div>
+        <div class="feed-line">&#9656; Atlas core initialized</div>
+        <div class="feed-line">&#9656; Neon DB connected</div>
+        <div class="feed-line">&#9656; Voice engine loaded</div>
+        <div class="feed-line" id="feed-last">&#9656; Awaiting input...</div>
       </div>
     </div>
 
-    <!-- CENTER -->
+    <!-- CENTER — 3D model -->
     <div id="panel-center">
       <div class="corner tl"></div><div class="corner tr"></div>
       <div class="corner bl"></div><div class="corner br"></div>
@@ -350,44 +381,45 @@ async def index():
         <div class="f-ring"></div>
         <div class="f-ring2"></div>
 
-        <!-- atlas-face is now a div; filter/animation/talking class all apply here -->
         <div id="atlas-face">
 
-          <!-- Base: photorealistic AI face image -->
-          <img id="atlas-face-img"
-               src="https://[key].r2.dev/company_39966/images/[key].png"
-               alt="Atlas"/>
+          <!-- 3D model — auto-rotates, mouse-draggable -->
+          <model-viewer
+            id="atlas-model"
+            src="/static/atlas-model.glb"
+            alt="Atlas 3D"
+            auto-rotate
+            auto-rotate-delay="500"
+            rotation-per-second="12deg"
+            camera-controls
+            camera-orbit="0deg 80deg 2.2m"
+            min-camera-orbit="auto 60deg 1.2m"
+            max-camera-orbit="auto 100deg 4m"
+            environment-image="neutral"
+            shadow-intensity="0"
+            exposure="0.7"
+            tone-mapping="neutral"
+          ></model-viewer>
 
-          <!-- SVG overlay: mouth lip-sync + eye blink ONLY -->
+          <!-- SVG overlay: mouth glow pulses when talking -->
           <svg id="atlas-face-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
-
-            <!-- LEFT EYE blink — subtle glow overlay, no fill blocking the photo -->
-            <g id="eye-l">
-              <ellipse cx="78" cy="68" rx="11" ry="7"
-                       fill="#a855f7" opacity="0.10"/>
-            </g>
-
-            <!-- RIGHT EYE blink -->
-            <g id="eye-r">
-              <ellipse cx="122" cy="68" rx="11" ry="7"
-                       fill="#a855f7" opacity="0.10"/>
-            </g>
-
-            <!-- MOUTH — JS-driven via setMouthOpen(), IDs must stay -->
-            <path id="mouth-upper" d="M 78 118 Q 100 115 122 118"
-                  fill="none" stroke="#a855f7" stroke-width="1.5" stroke-linecap="round"/>
-            <path id="mouth-lower" d="M 78 118 Q 100 121 122 118"
-                  fill="none" stroke="#a855f7" stroke-width="1.5" stroke-linecap="round"/>
-            <path id="mouth-fill"  d="M 78 118 Q 100 115 122 118 Q 100 121 78 118"
-                  fill="#1a001a" opacity="0"/>
-
+            <!-- Scan line — decorative -->
+            <line x1="20" y1="100" x2="180" y2="100"
+                  stroke="#00e5ff" stroke-width="0.4" opacity="0.08"/>
+            <!-- Mouth — JS-driven, IDs must stay -->
+            <path id="mouth-upper" d="M 78 130 Q 100 127 122 130"
+                  fill="none" stroke="#a855f7" stroke-width="1.8" stroke-linecap="round" opacity="0.9"/>
+            <path id="mouth-lower" d="M 78 130 Q 100 133 122 130"
+                  fill="none" stroke="#a855f7" stroke-width="1.8" stroke-linecap="round" opacity="0.9"/>
+            <path id="mouth-fill"  d="M 78 130 Q 100 127 122 130 Q 100 133 78 130"
+                  fill="#2a0040" opacity="0"/>
           </svg>
-        </div>
 
+        </div>
       </div>
       <div class="face-state">
         <div id="atlas-state">STANDBY</div>
-        <div>▸ <span id="center-sub">WAITING FOR INPUT</span></div>
+        <div>&#9656; <span id="center-sub">WAITING FOR INPUT</span></div>
       </div>
     </div>
 
@@ -402,7 +434,7 @@ async def index():
       </div>
       <div id="messages"></div>
       <div id="input-row">
-        <button id="mic" title="Record">🎙</button>
+        <button id="mic" title="Record">&#127897;</button>
         <input id="input" type="text" placeholder='Type or say "Atlas..."' autocomplete="off"/>
         <button id="send">SEND</button>
       </div>
@@ -426,26 +458,28 @@ async def index():
     const wakeDot    = document.getElementById('wake-dot');
     const wakeLabel  = document.getElementById('wake-label');
     const atlasFace  = document.getElementById('atlas-face');
+    const atlasModel = document.getElementById('atlas-model');
     const atlasState = document.getElementById('atlas-state');
     const centerSub  = document.getElementById('center-sub');
     const voiceStat  = document.getElementById('voice-status');
     const API_KEY    = '__ATLAS_API_KEY__';
 
+    // ── Uptime clock ──────────────────────────────────
     const uptimeStart = Date.now();
     setInterval(() => {
-      const s = Math.floor((Date.now() - uptimeStart) / 1000);
-      const h = String(Math.floor(s/3600)).padStart(2,'0');
-      const m = String(Math.floor((s%3600)/60)).padStart(2,'0');
-      const sc = String(s%60).padStart(2,'0');
-      document.getElementById('uptime').textContent = h+':'+m+':'+sc;
+      const s  = Math.floor((Date.now() - uptimeStart) / 1000);
+      const h  = String(Math.floor(s / 3600)).padStart(2, '0');
+      const m  = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+      const sc = String(s % 60).padStart(2, '0');
+      document.getElementById('uptime').textContent = h + ':' + m + ':' + sc;
     }, 1000);
 
     let isRecording = false, mediaRecorder = null, audioChunks = [];
     let wakeRecognition = null, wakeActive = false;
 
-    // y=118 matches mouth position in the face photo
+    // ── Mouth animation (y=130 matches GLB face framing) ──
     function setMouthOpen(a) {
-      const y = 118, w = 22, drop = a * 22;
+      const y = 130, w = 22, drop = a * 20;
       const U = `M ${100-w} ${y} Q 100 ${y-3} ${100+w} ${y}`;
       const L = `M ${100-w} ${y} Q 100 ${y+3+drop} ${100+w} ${y}`;
       const F = `M ${100-w} ${y} Q 100 ${y-3} ${100+w} ${y} Q 100 ${y+3+drop} ${100-w} ${y}`;
@@ -453,18 +487,21 @@ async def index():
       document.getElementById('mouth-lower').setAttribute('d', L);
       const mf = document.getElementById('mouth-fill');
       mf.setAttribute('d', F);
-      mf.style.opacity = a > 0.05 ? String(0.35 + a*0.45) : '0';
+      mf.style.opacity = a > 0.05 ? String(0.35 + a * 0.45) : '0';
     }
 
+    // ── Talking state — glow + pause auto-rotate ──────
     function setTalking(on) {
       if (on) {
         atlasFace.classList.add('talking');
+        if (atlasModel) atlasModel.removeAttribute('auto-rotate');
         atlasState.textContent = 'SPEAKING';
         atlasState.style.color = 'var(--orange)';
         centerSub.textContent  = 'TRANSMITTING AUDIO';
         voiceStat.textContent  = 'SPEAKING';
       } else {
         atlasFace.classList.remove('talking');
+        if (atlasModel) atlasModel.setAttribute('auto-rotate', '');
         atlasState.textContent = 'STANDBY';
         atlasState.style.color = 'var(--cyan)';
         centerSub.textContent  = 'WAITING FOR INPUT';
@@ -504,7 +541,7 @@ async def index():
       const feed = document.getElementById('live-feed');
       const d = document.createElement('div');
       d.className = 'feed-line';
-      d.textContent = '▸ ' + text;
+      d.textContent = '\u25b8 ' + text;
       d.style.color = 'var(--cyan)';
       feed.appendChild(d);
       const lines = feed.querySelectorAll('.feed-line');
@@ -524,7 +561,8 @@ async def index():
       tag.textContent = role === 'user' ? 'YOU' : 'ATLAS';
       const body = document.createElement('div');
       body.textContent = text;
-      wrap.appendChild(tag); wrap.appendChild(body);
+      wrap.appendChild(tag);
+      wrap.appendChild(body);
       messagesEl.appendChild(wrap);
       messagesEl.scrollTop = messagesEl.scrollHeight;
       return wrap;
@@ -532,12 +570,12 @@ async def index():
 
     async function loadHistory() {
       try {
-        const res = await fetch('/api/session/history', {
+        const res  = await fetch('/api/session/history', {
           headers: { 'Authorization': 'Bearer ' + API_KEY }
         });
         const data = await res.json();
         (data.messages || []).forEach(m => addMsg(m.role, m.content));
-        if ((data.messages||[]).length) feedLog('Session history loaded');
+        if ((data.messages || []).length) feedLog('Session history loaded');
       } catch(e) { console.warn('History load failed:', e.message); }
     }
 
@@ -547,13 +585,13 @@ async def index():
       inputEl.value = '';
       sendBtn.disabled = true;
       addMsg('user', text);
-      feedLog('You: ' + text.slice(0,40) + (text.length>40?'...':''));
+      feedLog('You: ' + text.slice(0, 40) + (text.length > 40 ? '...' : ''));
       const thinking = addMsg('atlas', 'Processing...');
       thinking.querySelector('div:last-child').style.color = 'var(--text-dim)';
       atlasState.textContent = 'THINKING';
       atlasState.style.color = 'var(--orange)';
       try {
-        const res = await fetch('/api/chat', {
+        const res  = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + API_KEY },
           body: JSON.stringify({ message: text })
@@ -576,20 +614,20 @@ async def index():
 
     async function speakReply(text) {
       try {
-        const res = await fetch('/api/voice/speak', {
+        const res  = await fetch('/api/voice/speak', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + API_KEY },
           body: JSON.stringify({ message: text })
         });
-        const blob = await res.blob();
-        const url  = URL.createObjectURL(blob);
+        const blob  = await res.blob();
+        const url   = URL.createObjectURL(blob);
         const audio = new Audio(url);
 
         let audioCtx, analyser, dataArray, animating = false;
         try {
           audioCtx = new (window.AudioContext || window.webkitAudioContext)();
           const src = audioCtx.createMediaElementSource(audio);
-          analyser = audioCtx.createAnalyser();
+          analyser  = audioCtx.createAnalyser();
           analyser.fftSize = 256;
           src.connect(analyser);
           analyser.connect(audioCtx.destination);
@@ -601,21 +639,26 @@ async def index():
           if (analyser && dataArray) {
             analyser.getByteFrequencyData(dataArray);
             const slice = dataArray.slice(2, 18);
-            const avg   = slice.reduce((a,b) => a+b, 0) / slice.length;
+            const avg   = slice.reduce((a, b) => a + b, 0) / slice.length;
             setMouthOpen(Math.min(avg / 70, 1));
           }
           requestAnimationFrame(animateMouth);
         }
 
-        audio.onplay   = () => { animating = true;  setTalking(true);  animateMouth(); };
-        audio.onended  = () => {
-          animating = false; setTalking(false);
-          if (audioCtx) audioCtx.close().catch(()=>{});
+        audio.onplay  = () => { animating = true;  setTalking(true);  animateMouth(); };
+        audio.onended = () => {
+          animating = false;
+          setTalking(false);
+          if (audioCtx) audioCtx.close().catch(() => {});
           if (!isRecording) resumeWakeWord();
         };
 
         pauseWakeWord();
-        audio.play().catch(e => { console.warn('Play failed:', e.message); setTalking(false); resumeWakeWord(); });
+        audio.play().catch(e => {
+          console.warn('Play failed:', e.message);
+          setTalking(false);
+          resumeWakeWord();
+        });
       } catch(e) { console.warn('TTS failed:', e.message); resumeWakeWord(); }
     }
 
@@ -624,13 +667,13 @@ async def index():
       try {
         pauseWakeWord();
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        audioChunks = [];
+        audioChunks  = [];
         mediaRecorder = new MediaRecorder(stream);
         mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
         mediaRecorder.onstop = async () => {
           stream.getTracks().forEach(t => t.stop());
           isRecording = false;
-          micBtn.textContent = '⏳'; micBtn.className = 'processing';
+          micBtn.textContent = '\u23f3'; micBtn.className = 'processing';
           setWakeStatus('processing');
           const blob = new Blob(audioChunks, { type: 'audio/webm' });
           const fd   = new FormData();
@@ -643,16 +686,16 @@ async def index():
             });
             const data = await res.json();
             if (data.text) {
-              let clean = data.text.trim().replace(/^atlas[,.]?\\s*/i, '');
+              let clean = data.text.trim().replace(/^atlas[,.]?\s*/i, '');
               if (clean) await sendMessage(clean);
             }
           } catch(e) { console.warn('Transcribe failed:', e.message); }
-          micBtn.textContent = '🎙'; micBtn.className = '';
+          micBtn.textContent = '\ud83c\udf99'; micBtn.className = '';
           setTimeout(() => { if (!isRecording) resumeWakeWord(); }, 5000);
         };
         mediaRecorder.start();
         isRecording = true;
-        micBtn.textContent = '🔴'; micBtn.className = 'recording';
+        micBtn.textContent = '\ud83d\udd34'; micBtn.className = 'recording';
         setWakeStatus('recording');
         feedLog('Recording started');
       } catch(e) {
@@ -673,9 +716,9 @@ async def index():
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SR) { setWakeStatus('unsupported'); return; }
       wakeRecognition = new SR();
-      wakeRecognition.continuous = true;
+      wakeRecognition.continuous     = true;
       wakeRecognition.interimResults = true;
-      wakeRecognition.lang = 'en-US';
+      wakeRecognition.lang           = 'en-US';
       let triggered = false;
       wakeRecognition.onresult = (e) => {
         if (isRecording || triggered) return;
@@ -687,7 +730,9 @@ async def index():
           startRecording();
         }
       };
-      wakeRecognition.onend = () => { if (wakeActive) { try { wakeRecognition.start(); } catch(e){} } };
+      wakeRecognition.onend = () => {
+        if (wakeActive) { try { wakeRecognition.start(); } catch(e){} }
+      };
       wakeRecognition.onerror = (e) => {
         if (e.error === 'not-allowed') { wakeActive = false; setWakeStatus('unsupported'); }
       };
@@ -696,10 +741,15 @@ async def index():
       catch(e) { setWakeStatus('unsupported'); }
     }
 
-    function pauseWakeWord()  { if (!wakeRecognition) return; wakeActive = false; try { wakeRecognition.stop(); } catch(e){} }
+    function pauseWakeWord()  {
+      if (!wakeRecognition) return;
+      wakeActive = false;
+      try { wakeRecognition.stop(); } catch(e){}
+    }
     function resumeWakeWord() {
       if (!wakeRecognition) return;
-      wakeActive = true; try { wakeRecognition.start(); } catch(e){}
+      wakeActive = true;
+      try { wakeRecognition.start(); } catch(e){}
       setWakeStatus('listening');
     }
 
@@ -717,7 +767,7 @@ async def index():
     function maybeStartWakeWord() {
       if (_wakeStarted) return; _wakeStarted = true; initWakeWord();
     }
-    document.addEventListener('click', maybeStartWakeWord);
+    document.addEventListener('click',   maybeStartWakeWord);
     document.addEventListener('keydown', maybeStartWakeWord);
   </script>
 </body>
@@ -732,7 +782,7 @@ async def index():
 
 @router.post("/api/chat")
 async def chat(req: ChatRequest):
-    store = await get_store()
+    store   = await get_store()
     session = await store.get_or_create(OWNER_USER_ID, CHANNEL)
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -747,10 +797,10 @@ async def chat(req: ChatRequest):
             headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
             json={"model": "gpt-4o", "messages": messages}
         )
-        data = res.json()
+        data  = res.json()
         reply = data["choices"][0]["message"]["content"]
 
-    await store.append_message(OWNER_USER_ID, CHANNEL, "user", req.message)
+    await store.append_message(OWNER_USER_ID, CHANNEL, "user",      req.message)
     await store.append_message(OWNER_USER_ID, CHANNEL, "assistant", reply)
 
     return JSONResponse({"reply": reply})
