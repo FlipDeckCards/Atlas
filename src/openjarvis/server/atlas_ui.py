@@ -5,19 +5,19 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from pydantic import BaseModel
 from typing import Optional
 
-from openjarvis.sessions.session import SessionStore
+from openjarvis.sessions.session_store import SessionStore  # FIXED: was session.py
 
 router = APIRouter()
 
 API_KEY = os.getenv("OPENJARVIS_API_KEY", "")
-OWNER_USER_ID = "michael"  # fixed ID — all devices share this session
+OWNER_USER_ID = "michael"
+CHANNEL = "web"
 
 SYSTEM_PROMPT = """You are Atlas, a personal AI hub and orchestrator built by Michael.
 You coordinate a network of specialized agents: OMNI (trading advisor), FlipDeck (card flipping tool), and Deadzone (games platform).
 You have persistent memory and can route tasks to the right spoke. You are not OpenJarvis — you are Atlas.
 Be direct, sharp, and helpful."""
 
-# Lazy init — connects on first request, no app.py changes needed
 _store: Optional[SessionStore] = None
 
 async def get_store() -> SessionStore:
@@ -29,18 +29,18 @@ async def get_store() -> SessionStore:
 
 
 class ChatRequest(BaseModel):
-    message: str  # history is now server-side, not sent from client
+    message: str
 
 
 @router.get("/api/session/history")
 async def session_history():
     store = await get_store()
-    session = await store.get_or_create(OWNER_USER_ID)
+    session = await store.get_or_create(OWNER_USER_ID, CHANNEL)  # FIXED: added CHANNEL
     return JSONResponse({
         "messages": [
-            {"role": m.role, "content": m.content}
-            for m in session.messages
-            if m.role in ("user", "assistant")
+            {"role": m["role"], "content": m["content"]}  # FIXED: dict access
+            for m in session["conversation_history"]       # FIXED: dict access
+            if m["role"] in ("user", "assistant")
         ]
     })
 
@@ -94,7 +94,6 @@ async def index():
       return div;
     }
 
-    // Load history from Neon on every page open
     async function loadHistory() {
       try {
         const res = await fetch('/api/session/history', {
@@ -120,7 +119,7 @@ async def index():
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + API_KEY },
-          body: JSON.stringify({ message: text })  // no history — server owns it
+          body: JSON.stringify({ message: text })
         });
         const data = await res.json();
         thinking.remove();
@@ -137,7 +136,6 @@ async def index():
     send.addEventListener('click', sendMessage);
     input.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
 
-    // Boot
     loadHistory();
   </script>
 </body>
@@ -149,13 +147,12 @@ async def index():
 @router.post("/api/chat")
 async def chat(req: ChatRequest):
     store = await get_store()
-    session = await store.get_or_create(OWNER_USER_ID)
+    session = await store.get_or_create(OWNER_USER_ID, CHANNEL)  # FIXED: added CHANNEL
 
-    # Build context from Neon — last 10 turns
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for m in session.messages[-10:]:
-        if m.role in ("user", "assistant"):
-            messages.append({"role": m.role, "content": m.content})
+    for m in session["conversation_history"][-10:]:  # FIXED: dict access
+        if m["role"] in ("user", "assistant"):
+            messages.append({"role": m["role"], "content": m["content"]})
     messages.append({"role": "user", "content": req.message})
 
     async with httpx.AsyncClient(timeout=30) as client:
@@ -167,8 +164,8 @@ async def chat(req: ChatRequest):
         data = res.json()
         reply = data["choices"][0]["message"]["content"]
 
-    # Persist both turns to Neon
-    await store.save_message(session.session_id, "user", req.message, channel="web")
-    await store.save_message(session.session_id, "assistant", reply, channel="web")
+    # FIXED: was save_message — now uses append_message with correct signature
+    await store.append_message(OWNER_USER_ID, CHANNEL, "user", req.message)
+    await store.append_message(OWNER_USER_ID, CHANNEL, "assistant", reply)
 
     return JSONResponse({"reply": reply})
