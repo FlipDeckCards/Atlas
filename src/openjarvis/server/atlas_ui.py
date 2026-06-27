@@ -720,9 +720,8 @@ async def index():
     document.addEventListener('keydown', maybeStartWakeWord);
   </script>
 </body>
-</html>
-"""
-return HTMLResponse(
+    """
+    return HTMLResponse(
         content=html,
         headers={"Permissions-Policy": "microphone=*"}
     )
