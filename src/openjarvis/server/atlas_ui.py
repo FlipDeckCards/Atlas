@@ -3,18 +3,47 @@ import httpx
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, HTMLResponse
 from pydantic import BaseModel
+from typing import Optional
+
+from .session import SessionStore  # already in same package
 
 router = APIRouter()
 
 API_KEY = os.getenv("OPENJARVIS_API_KEY", "")
+OWNER_USER_ID = "michael"  # fixed ID — all devices share this session
+
 SYSTEM_PROMPT = """You are Atlas, a personal AI hub and orchestrator built by Michael.
 You coordinate a network of specialized agents: OMNI (trading advisor), FlipDeck (card flipping tool), and Deadzone (games platform).
 You have persistent memory and can route tasks to the right spoke. You are not OpenJarvis — you are Atlas.
 Be direct, sharp, and helpful."""
 
+# Lazy init — connects on first request, no app.py changes needed
+_store: Optional[SessionStore] = None
+
+async def get_store() -> SessionStore:
+    global _store
+    if _store is None:
+        _store = SessionStore()
+        await _store.connect()
+    return _store
+
+
 class ChatRequest(BaseModel):
-    message: str
-    history: list = []
+    message: str  # history is now server-side, not sent from client
+
+
+@router.get("/api/session/history")
+async def session_history():
+    store = await get_store()
+    session = await store.get_or_create(OWNER_USER_ID)
+    return JSONResponse({
+        "messages": [
+            {"role": m.role, "content": m.content}
+            for m in session.messages
+            if m.role in ("user", "assistant")
+        ]
+    })
+
 
 @router.get("/")
 async def index():
@@ -51,19 +80,31 @@ async def index():
     <button id="send">Send</button>
   </div>
   <script>
-    const messages = document.getElementById('messages');
+    const messagesEl = document.getElementById('messages');
     const input = document.getElementById('input');
     const send = document.getElementById('send');
-    const history = [];
     const API_KEY = '""" + API_KEY + """';
 
     function addMsg(role, text) {
       const div = document.createElement('div');
       div.className = 'msg ' + (role === 'user' ? 'user' : 'atlas');
       div.textContent = text;
-      messages.appendChild(div);
-      messages.scrollTop = messages.scrollHeight;
+      messagesEl.appendChild(div);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
       return div;
+    }
+
+    // Load history from Neon on every page open
+    async function loadHistory() {
+      try {
+        const res = await fetch('/api/session/history', {
+          headers: { 'Authorization': 'Bearer ' + API_KEY }
+        });
+        const data = await res.json();
+        (data.messages || []).forEach(m => addMsg(m.role, m.content));
+      } catch(e) {
+        console.warn('Could not load history:', e.message);
+      }
     }
 
     async function sendMessage() {
@@ -74,18 +115,17 @@ async def index():
       addMsg('user', text);
       const thinking = addMsg('atlas', 'Thinking...');
       thinking.classList.add('thinking');
-      history.push({ role: 'user', content: text });
+
       try {
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + API_KEY },
-          body: JSON.stringify({ message: text, history })
+          body: JSON.stringify({ message: text })  // no history — server owns it
         });
         const data = await res.json();
         thinking.remove();
         const reply = data.reply || data.detail || 'No response';
         addMsg('atlas', reply);
-        history.push({ role: 'assistant', content: reply });
       } catch(e) {
         thinking.textContent = 'Error: ' + e.message;
         thinking.classList.remove('thinking');
@@ -96,18 +136,26 @@ async def index():
 
     send.addEventListener('click', sendMessage);
     input.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
+
+    // Boot
+    loadHistory();
   </script>
 </body>
 </html>
 """
     return HTMLResponse(html)
 
+
 @router.post("/api/chat")
 async def chat(req: ChatRequest):
+    store = await get_store()
+    session = await store.get_or_create(OWNER_USER_ID)
+
+    # Build context from Neon — last 10 turns
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for m in req.history[-10:]:
-        if m.get("role") in ("user", "assistant"):
-            messages.append({"role": m["role"], "content": m["content"]})
+    for m in session.messages[-10:]:
+        if m.role in ("user", "assistant"):
+            messages.append({"role": m.role, "content": m.content})
     messages.append({"role": "user", "content": req.message})
 
     async with httpx.AsyncClient(timeout=30) as client:
@@ -118,4 +166,9 @@ async def chat(req: ChatRequest):
         )
         data = res.json()
         reply = data["choices"][0]["message"]["content"]
-        return JSONResponse({"reply": reply})
+
+    # Persist both turns to Neon
+    await store.save_message(session.session_id, "user", req.message, channel="web")
+    await store.save_message(session.session_id, "assistant", reply, channel="web")
+
+    return JSONResponse({"reply": reply})
