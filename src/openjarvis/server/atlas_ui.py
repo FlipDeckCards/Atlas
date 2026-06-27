@@ -5,7 +5,8 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from pydantic import BaseModel
 from typing import Optional
 
-from openjarvis.sessions.session_store import SessionStore  # FIXED: was session.py
+from openjarvis.server.session_store import SessionStore
+
 
 router = APIRouter()
 
