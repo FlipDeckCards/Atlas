@@ -97,8 +97,13 @@ async def index():
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #0d0d0d; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; height: 100vh; display: flex; flex-direction: column; }
-    #header { padding: 16px 24px; border-bottom: 1px solid #222; font-size: 20px; font-weight: 700; color: #fff; letter-spacing: 1px; }
-    #header span { color: #7c6af7; }
+    #header { padding: 16px 24px; border-bottom: 1px solid #222; display: flex; align-items: center; justify-content: space-between; }
+    #header-title { font-size: 20px; font-weight: 700; color: #fff; letter-spacing: 1px; }
+    #header-title span { color: #7c6af7; }
+    #wake-status { font-size: 12px; color: #555; display: flex; align-items: center; gap: 6px; }
+    #wake-dot { width: 8px; height: 8px; border-radius: 50%; background: #333; }
+    #wake-dot.listening { background: #7c6af7; animation: pulse 2s infinite; }
+    #wake-dot.recording { background: #f77; animation: pulse 0.5s infinite; }
     #messages { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 12px; }
     .msg { max-width: 75%; padding: 12px 16px; border-radius: 12px; line-height: 1.5; font-size: 15px; }
     .user { align-self: flex-end; background: #7c6af7; color: #fff; border-bottom-right-radius: 4px; }
@@ -110,18 +115,26 @@ async def index():
     #send { background: #7c6af7; color: #fff; border: none; padding: 12px 24px; border-radius: 8px; font-size: 15px; cursor: pointer; font-weight: 600; }
     #send:hover { background: #6a5ce0; }
     #send:disabled { background: #333; cursor: not-allowed; }
-    #mic { background: #1a1a1a; border: 1px solid #333; color: #aaa; padding: 12px 14px; border-radius: 8px; font-size: 18px; cursor: pointer; transition: all 0.2s; user-select: none; }
+    #mic { background: #1a1a1a; border: 1px solid #333; color: #aaa; padding: 12px 14px; border-radius: 8px; font-size: 18px; cursor: pointer; transition: all 0.2s; }
     #mic:hover { border-color: #7c6af7; color: #7c6af7; }
     #mic.recording { background: #3a1a1a; border-color: #f77; color: #f77; animation: pulse 1s infinite; }
+    #mic.processing { background: #1a1a2a; border-color: #7c6af7; color: #7c6af7; }
     @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
+    #wake-hint { text-align: center; font-size: 12px; color: #444; padding: 4px 0 0; }
   </style>
 </head>
 <body>
-  <div id="header"><span>Atlas</span> — AI Hub</div>
+  <div id="header">
+    <div id="header-title"><span>Atlas</span> — AI Hub</div>
+    <div id="wake-status">
+      <div id="wake-dot"></div>
+      <span id="wake-label">Initializing...</span>
+    </div>
+  </div>
   <div id="messages"></div>
   <div id="input-row">
-    <button id="mic" title="Hold to record">🎙️</button>
-    <input id="input" type="text" placeholder="Message Atlas..." autocomplete="off"/>
+    <button id="mic" title="Click to record">🎙️</button>
+    <input id="input" type="text" placeholder='Say "Atlas..." or type here' autocomplete="off"/>
     <button id="send">Send</button>
   </div>
   <script>
@@ -129,8 +142,18 @@ async def index():
     const input = document.getElementById('input');
     const send = document.getElementById('send');
     const mic = document.getElementById('mic');
+    const wakeDot = document.getElementById('wake-dot');
+    const wakeLabel = document.getElementById('wake-label');
     const API_KEY = '""" + API_KEY + """';
 
+    // ── State ──────────────────────────────────────────────
+    let isRecording = false;
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let wakeRecognition = null;
+    let wakeActive = false;
+
+    // ── UI helpers ─────────────────────────────────────────
     function addMsg(role, text) {
       const div = document.createElement('div');
       div.className = 'msg ' + (role === 'user' ? 'user' : 'atlas');
@@ -140,6 +163,26 @@ async def index():
       return div;
     }
 
+    function setWakeStatus(state) {
+      // state: 'off' | 'listening' | 'recording' | 'processing' | 'unsupported'
+      wakeDot.className = '';
+      if (state === 'listening') {
+        wakeDot.classList.add('listening');
+        wakeLabel.textContent = 'Listening for "Atlas"';
+      } else if (state === 'recording') {
+        wakeDot.classList.add('recording');
+        wakeLabel.textContent = 'Recording...';
+      } else if (state === 'processing') {
+        wakeDot.classList.add('listening');
+        wakeLabel.textContent = 'Processing...';
+      } else if (state === 'unsupported') {
+        wakeLabel.textContent = 'Wake word unavailable';
+      } else {
+        wakeLabel.textContent = 'Wake word off';
+      }
+    }
+
+    // ── History ────────────────────────────────────────────
     async function loadHistory() {
       try {
         const res = await fetch('/api/session/history', {
@@ -150,6 +193,7 @@ async def index():
       } catch(e) { console.warn('Could not load history:', e.message); }
     }
 
+    // ── Send message ───────────────────────────────────────
     async function sendMessage(text) {
       if (!text) text = input.value.trim();
       if (!text) return;
@@ -169,7 +213,7 @@ async def index():
         thinking.remove();
         const reply = data.reply || data.detail || 'No response';
         addMsg('atlas', reply);
-        speakReply(reply);  // fire and forget — don't await
+        speakReply(reply);
       } catch(e) {
         thinking.textContent = 'Error: ' + e.message;
         thinking.classList.remove('thinking');
@@ -178,6 +222,7 @@ async def index():
       input.focus();
     }
 
+    // ── TTS ────────────────────────────────────────────────
     async function speakReply(text) {
       try {
         const res = await fetch('/api/voice/speak', {
@@ -188,26 +233,35 @@ async def index():
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
+        audio.onended = () => {
+          // Resume wake word detection after Atlas finishes speaking
+          if (!isRecording) resumeWakeWord();
+        };
+        // Pause wake word while Atlas is speaking (avoid feedback loop)
+        pauseWakeWord();
         audio.play();
-      } catch(e) { console.warn('TTS failed:', e.message); }
+      } catch(e) { console.warn('TTS failed:', e.message); resumeWakeWord(); }
     }
 
-    // Mic — hold to record, release to send
-    let mediaRecorder = null;
-    let audioChunks = [];
-
+    // ── Whisper recording ──────────────────────────────────
     async function startRecording() {
+      if (isRecording) return;
       try {
+        pauseWakeWord();
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         audioChunks = [];
         mediaRecorder = new MediaRecorder(stream);
         mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
         mediaRecorder.onstop = async () => {
           stream.getTracks().forEach(t => t.stop());
+          isRecording = false;
+          mic.textContent = '⏳';
+          mic.className = 'processing';
+          setWakeStatus('processing');
+
           const blob = new Blob(audioChunks, { type: 'audio/webm' });
           const formData = new FormData();
           formData.append('audio', blob, 'recording.webm');
-          mic.textContent = '⏳';
           try {
             const res = await fetch('/api/voice/transcribe', {
               method: 'POST',
@@ -215,30 +269,118 @@ async def index():
               body: formData
             });
             const data = await res.json();
-            if (data.text) await sendMessage(data.text);
+            if (data.text) {
+              // Strip the wake word if it's at the start (e.g. "Atlas what's the market doing")
+              let clean = data.text.trim();
+              clean = clean.replace(/^atlas[,.]?\s*/i, '');
+              if (clean) await sendMessage(clean);
+            }
           } catch(e) { console.warn('Transcription failed:', e.message); }
+
           mic.textContent = '🎙️';
-          mic.classList.remove('recording');
+          mic.className = '';
+          // speakReply handles resumeWakeWord after audio finishes
+          // but if TTS fails we still need to resume:
+          setTimeout(() => { if (!isRecording) resumeWakeWord(); }, 5000);
         };
         mediaRecorder.start();
-        mic.classList.add('recording');
+        isRecording = true;
         mic.textContent = '🔴';
-      } catch(e) { console.warn('Mic access denied:', e.message); }
+        mic.className = 'recording';
+        setWakeStatus('recording');
+      } catch(e) {
+        console.warn('Mic access denied:', e.message);
+        alert('Microphone access denied. Please allow mic permissions and try again.');
+        resumeWakeWord();
+      }
     }
 
     function stopRecording() {
-      if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+      if (!isRecording || !mediaRecorder) return;
+      mediaRecorder.stop();
     }
 
-    mic.addEventListener('mousedown', startRecording);
-    mic.addEventListener('touchstart', e => { e.preventDefault(); startRecording(); });
-    mic.addEventListener('mouseup', stopRecording);
-    mic.addEventListener('touchend', e => { e.preventDefault(); stopRecording(); });
+    // ── Click-to-toggle mic ────────────────────────────────
+    mic.addEventListener('click', () => {
+      if (isRecording) {
+        stopRecording();
+      } else {
+        startRecording();
+      }
+    });
 
+    // ── Wake word: "Atlas" ─────────────────────────────────
+    function initWakeWord() {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) {
+        setWakeStatus('unsupported');
+        return;
+      }
+
+      wakeRecognition = new SR();
+      wakeRecognition.continuous = true;
+      wakeRecognition.interimResults = true;
+      wakeRecognition.lang = 'en-US';
+
+      let triggered = false;
+
+      wakeRecognition.onresult = (event) => {
+        if (isRecording || triggered) return;
+        const transcript = Array.from(event.results)
+          .map(r => r[0].transcript)
+          .join(' ')
+          .toLowerCase();
+
+        if (transcript.includes('atlas')) {
+          triggered = true;
+          setTimeout(() => { triggered = false; }, 3000); // debounce
+          startRecording();
+        }
+      };
+
+      wakeRecognition.onend = () => {
+        // Auto-restart unless we paused it intentionally
+        if (wakeActive) {
+          try { wakeRecognition.start(); } catch(e) {}
+        }
+      };
+
+      wakeRecognition.onerror = (e) => {
+        if (e.error !== 'aborted' && e.error !== 'no-speech') {
+          console.warn('Wake word error:', e.error);
+        }
+      };
+
+      wakeActive = true;
+      try {
+        wakeRecognition.start();
+        setWakeStatus('listening');
+      } catch(e) {
+        setWakeStatus('unsupported');
+      }
+    }
+
+    function pauseWakeWord() {
+      if (!wakeRecognition) return;
+      wakeActive = false;
+      try { wakeRecognition.stop(); } catch(e) {}
+    }
+
+    function resumeWakeWord() {
+      if (!wakeRecognition) return;
+      wakeActive = true;
+      try { wakeRecognition.start(); } catch(e) {}
+      setWakeStatus('listening');
+    }
+
+    // ── Keyboard ───────────────────────────────────────────
     send.addEventListener('click', () => sendMessage());
     input.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
 
+    // ── Boot ───────────────────────────────────────────────
     loadHistory();
+    // Small delay so browser is ready for mic permission request
+    setTimeout(initWakeWord, 1000);
   </script>
 </body>
 </html>
