@@ -385,7 +385,10 @@ async def index():
 </body>
 </html>
 """
-    return HTMLResponse(html)
+    return HTMLResponse(
+    content=html,
+    headers={"Permissions-Policy": "microphone=*"}
+)
 
 
 @router.post("/api/chat")
