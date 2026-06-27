@@ -345,13 +345,15 @@ async def index():
         }
       };
 
-      recognition.onerror = function(event) {
+      wakeRecognition.onerror = function(event) {
     console.log('Wake word error: ' + event.error);
     if (event.error === 'not-allowed') {
         console.log('Mic permission denied — not retrying.');
-        return; // stop the loop
+        wakeActive = false;
+        setWakeStatus('unsupported');
+        return;
     }
-    startWakeWordDetection();
+    // onend above handles restart automatically
 };
 
       wakeActive = true;
