@@ -1,1 +1,17 @@
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+alpaca-py>=0.29.0
+openai==1.12.0
+psycopg2-binary==2.9.9
+python-dotenv==1.0.0
+httpx>=0.23.0,<0.28.0
+python-dateutil>=2.8.0
+sse-starlette==2.0.0
+robin-stocks==3.0.4
+websockets
+numpy
+apscheduler==3.10.4
+pytz
+python-multipart
+asyncpg
 asyncpg
