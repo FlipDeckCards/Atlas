@@ -386,7 +386,8 @@ async def index():
           <!-- 3D model — auto-rotates, mouse-draggable -->
           <model-viewer
             id="atlas-model"
-            src="/static/atlas-model.glb"
+            src="https://github.[encoded].0/atlas-model.glb"
+            crossorigin="anonymous"
             alt="Atlas 3D"
             auto-rotate
             auto-rotate-delay="500"
