@@ -87,7 +87,7 @@ async def speak(req: ChatRequest):
 
 @router.get("/")
 async def index():
- html = """
+    html = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -285,8 +285,8 @@ async def index():
     .nav-tab:hover { color:var(--text); background:rgba(0,229,255,0.03); }
     .nav-tab.active { color:var(--cyan); border-bottom:2px solid var(--cyan); }
   </style>
-  </head>
-  <body>
+</head>
+<body>
 
   <div id="hud-header">
     <div id="hud-title">ATL<span>▲</span>S</div>
@@ -334,23 +334,17 @@ async def index():
         <div class="f-ring"></div>
         <div class="f-ring2"></div>
         <svg id="atlas-face" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
-          <!-- outer rings -->
           <circle cx="100" cy="100" r="88" fill="none" stroke="#00e5ff" stroke-width="0.5" opacity="0.15"/>
           <circle cx="100" cy="100" r="82" fill="none" stroke="#00e5ff" stroke-width="0.3" opacity="0.1"/>
-          <!-- face base -->
           <circle cx="100" cy="100" r="76" fill="#060610" stroke="#00e5ff" stroke-width="1.2"/>
-          <!-- forehead lines -->
           <line x1="80" y1="63" x2="80" y2="72" stroke="#00e5ff" stroke-width="0.6" opacity="0.3"/>
           <line x1="100" y1="59" x2="100" y2="71" stroke="#00e5ff" stroke-width="0.6" opacity="0.4"/>
           <line x1="120" y1="63" x2="120" y2="72" stroke="#00e5ff" stroke-width="0.6" opacity="0.3"/>
           <line x1="86" y1="66" x2="114" y2="66" stroke="#00e5ff" stroke-width="0.4" opacity="0.2"/>
-          <!-- cheek accents -->
           <line x1="34" y1="100" x2="52" y2="100" stroke="#00e5ff" stroke-width="0.5" opacity="0.18"/>
           <line x1="148" y1="100" x2="166" y2="100" stroke="#00e5ff" stroke-width="0.5" opacity="0.18"/>
-          <!-- eye sockets -->
           <ellipse cx="76" cy="90" rx="14" ry="10" fill="#020210" stroke="#00e5ff" stroke-width="0.8" opacity="0.5"/>
           <ellipse cx="124" cy="90" rx="14" ry="10" fill="#020210" stroke="#00e5ff" stroke-width="0.8" opacity="0.5"/>
-          <!-- eyes (blink via CSS) -->
           <g id="eye-l">
             <ellipse cx="76" cy="90" rx="9" ry="7" fill="#00e5ff" opacity="0.85"/>
             <ellipse cx="76" cy="90" rx="5" ry="5" fill="#001a2a"/>
@@ -361,13 +355,10 @@ async def index():
             <ellipse cx="124" cy="90" rx="5" ry="5" fill="#001a2a"/>
             <ellipse cx="126" cy="88" rx="2" ry="2" fill="#00e5ff" opacity="0.9"/>
           </g>
-          <!-- nose bridge -->
           <path d="M 96 100 L 92 112 L 108 112 L 104 100" fill="none" stroke="#00e5ff" stroke-width="0.7" opacity="0.2"/>
-          <!-- mouth (JS-driven) -->
           <path id="mouth-upper" d="M 78 124 Q 100 121 122 124" fill="none" stroke="#00e5ff" stroke-width="1.5" stroke-linecap="round"/>
           <path id="mouth-lower" d="M 78 124 Q 100 127 122 124" fill="none" stroke="#00e5ff" stroke-width="1.5" stroke-linecap="round"/>
           <path id="mouth-fill"  d="M 78 124 Q 100 121 122 124 Q 100 127 78 124" fill="#001a1a" opacity="0"/>
-          <!-- chin -->
           <line x1="88" y1="150" x2="112" y2="150" stroke="#00e5ff" stroke-width="0.5" opacity="0.18"/>
         </svg>
       </div>
@@ -415,9 +406,8 @@ async def index():
     const atlasState = document.getElementById('atlas-state');
     const centerSub  = document.getElementById('center-sub');
     const voiceStat  = document.getElementById('voice-status');
-    const API_KEY    = '""" + API_KEY + """';
+    const API_KEY    = '__ATLAS_API_KEY__';
 
-    // ── Uptime ─────────────────────────────────────────
     const uptimeStart = Date.now();
     setInterval(() => {
       const s = Math.floor((Date.now() - uptimeStart) / 1000);
@@ -427,13 +417,10 @@ async def index():
       document.getElementById('uptime').textContent = h+':'+m+':'+sc;
     }, 1000);
 
-    // ── State ──────────────────────────────────────────
     let isRecording = false, mediaRecorder = null, audioChunks = [];
     let wakeRecognition = null, wakeActive = false;
 
-    // ── Mouth / face ───────────────────────────────────
     function setMouthOpen(a) {
-      // a = 0.0 closed → 1.0 max open
       const y = 124, w = 22, drop = a * 22;
       const U = `M ${100-w} ${y} Q 100 ${y-3} ${100+w} ${y}`;
       const L = `M ${100-w} ${y} Q 100 ${y+3+drop} ${100+w} ${y}`;
@@ -462,7 +449,6 @@ async def index():
       }
     }
 
-    // ── Wake status ────────────────────────────────────
     function setWakeStatus(state) {
       wakeDot.className = '';
       if (state === 'listening') {
@@ -490,7 +476,6 @@ async def index():
       }
     }
 
-    // ── Live feed ──────────────────────────────────────
     function feedLog(text) {
       const feed = document.getElementById('live-feed');
       const d = document.createElement('div');
@@ -507,7 +492,6 @@ async def index():
       if (lines.length > 12) lines[0].remove();
     }
 
-    // ── Message bubble ─────────────────────────────────
     function addMsg(role, text) {
       const wrap = document.createElement('div');
       wrap.className = 'msg ' + (role === 'user' ? 'user' : 'atlas');
@@ -522,7 +506,6 @@ async def index():
       return wrap;
     }
 
-    // ── Load history ───────────────────────────────────
     async function loadHistory() {
       try {
         const res = await fetch('/api/session/history', {
@@ -534,7 +517,6 @@ async def index():
       } catch(e) { console.warn('History load failed:', e.message); }
     }
 
-    // ── Send message ───────────────────────────────────
     async function sendMessage(text) {
       if (!text) text = inputEl.value.trim();
       if (!text) return;
@@ -568,7 +550,6 @@ async def index():
       inputEl.focus();
     }
 
-    // ── TTS + lip-sync ─────────────────────────────────
     async function speakReply(text) {
       try {
         const res = await fetch('/api/voice/speak', {
@@ -614,7 +595,6 @@ async def index():
       } catch(e) { console.warn('TTS failed:', e.message); resumeWakeWord(); }
     }
 
-    // ── Whisper recording ──────────────────────────────
     async function startRecording() {
       if (isRecording) return;
       try {
@@ -639,7 +619,7 @@ async def index():
             });
             const data = await res.json();
             if (data.text) {
-              let clean = data.text.trim().replace(/^atlas[,.]?\\s*/i, '');
+              let clean = data.text.trim().replace(/^atlas[,.]?\s*/i, '');
               if (clean) await sendMessage(clean);
             }
           } catch(e) { console.warn('Transcribe failed:', e.message); }
@@ -665,7 +645,6 @@ async def index():
 
     micBtn.addEventListener('click', () => { isRecording ? stopRecording() : startRecording(); });
 
-    // ── Wake word ──────────────────────────────────────
     function initWakeWord() {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SR) { setWakeStatus('unsupported'); return; }
@@ -700,7 +679,6 @@ async def index():
       setWakeStatus('listening');
     }
 
-    // ── Events ─────────────────────────────────────────
     sendBtn.addEventListener('click', () => sendMessage());
     inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
     document.querySelectorAll('.nav-tab').forEach(t => {
@@ -710,7 +688,6 @@ async def index():
       });
     });
 
-    // ── Boot ───────────────────────────────────────────
     loadHistory();
     let _wakeStarted = false;
     function maybeStartWakeWord() {
@@ -722,7 +699,34 @@ async def index():
 </body>
 </html>
 """
+    html = html.replace("__ATLAS_API_KEY__", API_KEY)
     return HTMLResponse(
         content=html,
         headers={"Permissions-Policy": "microphone=*"}
     )
+
+
+@router.post("/api/chat")
+async def chat(req: ChatRequest):
+    store = await get_store()
+    session = await store.get_or_create(OWNER_USER_ID, CHANNEL)
+
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for m in session["conversation_history"][-10:]:
+        if m["role"] in ("user", "assistant"):
+            messages.append({"role": m["role"], "content": m["content"]})
+    messages.append({"role": "user", "content": req.message})
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await client.post(
+            "http://localhost:10000/v1/chat/completions",
+            headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
+            json={"model": "gpt-4o", "messages": messages}
+        )
+        data = res.json()
+        reply = data["choices"][0]["message"]["content"]
+
+    await store.append_message(OWNER_USER_ID, CHANNEL, "user", req.message)
+    await store.append_message(OWNER_USER_ID, CHANNEL, "assistant", reply)
+
+    return JSONResponse({"reply": reply})
