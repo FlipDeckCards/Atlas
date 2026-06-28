@@ -50,6 +50,7 @@ async def get_store() -> SessionStore:
 
 class ChatRequest(BaseModel):
     message: str
+    image: Optional[str] = None  # base64 encoded image
 
 
 @router.get("/static/atlas-model.glb")
@@ -83,7 +84,7 @@ async def session_history():
     session = await store.get_or_create(OWNER_USER_ID, CHANNEL)
     return JSONResponse({
         "messages": [
-            {"role": m["role"], "content": m["content"]}
+            {"role": m["role"], "content": m["content"] if isinstance(m["content"], str) else m["content"][0].get("text", "") if isinstance(m["content"], list) else str(m["content"])}
             for m in session["conversation_history"]
             if m["role"] in ("user", "assistant")
         ]
@@ -148,7 +149,7 @@ async def index():
       background: var(--bg); color: var(--text);
       font-family: 'Share Tech Mono', monospace;
       height: 100vh; overflow: hidden;
-      display: grid; grid-template-rows: 48px 1fr 44px; gap: 1px;
+      display: grid; grid-template-rows: 48px 1fr; gap: 1px;
       background-image:
         linear-gradient(rgba(0,229,255,0.018) 1px, transparent 1px),
         linear-gradient(90deg, rgba(0,229,255,0.018) 1px, transparent 1px);
@@ -238,7 +239,6 @@ async def index():
       position: absolute; top: 0; left: 0;
       width: 100%; height: 100%; pointer-events: none;
     }
-    @keyframes idle-breathe { 0%,100%{transform:scale(1)} 50%{transform:scale(1.006)} }
     .face-state {
       margin-top:16px; text-align:center; font-size:11px; letter-spacing:3px; color:var(--text-dim);
     }
@@ -296,18 +296,18 @@ async def index():
     #mic:hover { border-color:var(--orange); color:var(--orange); }
     #mic.recording  { border-color:#ff3344; color:#ff3344; background:rgba(255,51,68,0.08); animation:blink 0.5s infinite; }
     #mic.processing { border-color:var(--orange); color:var(--orange); }
-    #hud-nav {
-      background:var(--panel); border-top:1px solid var(--border);
-      display:flex; align-items:center; justify-content:center;
+    #upload-btn {
+      background:transparent; border:1px solid var(--border); color:var(--text-dim);
+      padding:10px 12px; font-size:15px; cursor:pointer; border-radius:2px;
+      transition:all 0.2s; display:flex; align-items:center; line-height:1;
     }
-    .nav-tab {
-      padding:0 28px; height:100%; display:flex; align-items:center;
-      font-family:'Orbitron',monospace; font-size:9px; letter-spacing:3px;
-      color:var(--text-dim); cursor:pointer; border-right:1px solid var(--border);
-      transition:all 0.2s; user-select:none;
+    #upload-btn:hover { border-color:var(--cyan); color:var(--cyan); }
+    #upload-btn.has-image { border-color:#00ff88; color:#00ff88; }
+    #img-input { display:none; }
+    #img-preview {
+      font-size:10px; color:#00ff88; display:none;
+      white-space:nowrap; overflow:hidden; max-width:80px;
     }
-    .nav-tab:hover  { color:var(--text); background:rgba(0,229,255,0.03); }
-    .nav-tab.active { color:var(--cyan); border-bottom:2px solid var(--cyan); }
   </style>
 </head>
 <body>
@@ -356,12 +356,8 @@ async def index():
         <div class="f-ring"></div>
         <div class="f-ring2"></div>
         <div id="atlas-face">
-
           <canvas id="atlas-canvas" style="position:absolute;top:0;left:0;width:100%;height:100%;"></canvas>
-
-          <svg id="atlas-face-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
-        </svg>
-
+          <svg id="atlas-face-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"></svg>
         </div>
       </div>
       <div class="face-state">
@@ -381,19 +377,14 @@ async def index():
       <div id="messages"></div>
       <div id="input-row">
         <button id="mic" title="Record">&#127897;</button>
+        <label id="upload-btn" for="img-input" title="Attach image">📎</label>
+        <input id="img-input" type="file" accept="image/*"/>
+        <span id="img-preview"></span>
         <input id="input" type="text" placeholder='Type or say "Atlas..."' autocomplete="off"/>
         <button id="send">SEND</button>
       </div>
     </div>
 
-  </div>
-
-  <div id="hud-nav">
-    <div class="nav-tab active">CHAT</div>
-    <div class="nav-tab">MEMORY</div>
-    <div class="nav-tab">SPOKES</div>
-    <div class="nav-tab">ANALYTICS</div>
-    <div class="nav-tab">SETTINGS</div>
   </div>
 
   <script>
@@ -404,11 +395,28 @@ async def index():
     const wakeDot    = document.getElementById('wake-dot');
     const wakeLabel  = document.getElementById('wake-label');
     const atlasFace  = document.getElementById('atlas-face');
-    const atlasModel = null;
     const atlasState = document.getElementById('atlas-state');
     const centerSub  = document.getElementById('center-sub');
     const voiceStat  = document.getElementById('voice-status');
+    const imgInput   = document.getElementById('img-input');
+    const imgPreview = document.getElementById('img-preview');
+    const uploadBtn  = document.getElementById('upload-btn');
     const API_KEY    = '__ATLAS_API_KEY__';
+
+    let pendingImageB64 = null;
+
+    imgInput.addEventListener('change', () => {
+      const file = imgInput.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        pendingImageB64 = e.target.result.split(',')[1];
+        imgPreview.textContent = '📷 ' + file.name.slice(0, 14);
+        imgPreview.style.display = 'inline';
+        uploadBtn.classList.add('has-image');
+      };
+      reader.readAsDataURL(file);
+    });
 
     const uptimeStart = Date.now();
     setInterval(() => {
@@ -421,18 +429,6 @@ async def index():
 
     let isRecording = false, mediaRecorder = null, audioChunks = [];
     let wakeRecognition = null, wakeActive = false;
-
-    function setMouthOpen(a) {
-      const y = 130, w = 22, drop = a * 20;
-      const U = `M ${100-w} ${y} Q 100 ${y-3} ${100+w} ${y}`;
-      const L = `M ${100-w} ${y} Q 100 ${y+3+drop} ${100+w} ${y}`;
-      const F = `M ${100-w} ${y} Q 100 ${y-3} ${100+w} ${y} Q 100 ${y+3+drop} ${100-w} ${y}`;
-      document.getElementById('mouth-upper').setAttribute('d', U);
-      document.getElementById('mouth-lower').setAttribute('d', L);
-      const mf = document.getElementById('mouth-fill');
-      mf.setAttribute('d', F);
-      mf.style.opacity = a > 0.05 ? String(0.35 + a * 0.45) : '0';
-    }
 
     function setTalking(on) {
       if (on) {
@@ -447,7 +443,6 @@ async def index():
         atlasState.style.color = 'var(--cyan)';
         centerSub.textContent  = 'WAITING FOR INPUT';
         voiceStat.textContent  = 'READY';
-        setMouthOpen(0);
       }
     }
 
@@ -525,17 +520,27 @@ async def index():
       if (!text) return;
       inputEl.value = '';
       sendBtn.disabled = true;
-      addMsg('user', text);
+
+      const imageToSend = pendingImageB64;
+      pendingImageB64 = null;
+      imgPreview.style.display = 'none';
+      imgPreview.textContent = '';
+      uploadBtn.classList.remove('has-image');
+      imgInput.value = '';
+
+      addMsg('user', text + (imageToSend ? '  📷' : ''));
       feedLog('You: ' + text.slice(0, 40) + (text.length > 40 ? '...' : ''));
       const thinking = addMsg('atlas', 'Processing...');
       thinking.querySelector('div:last-child').style.color = 'var(--text-dim)';
       atlasState.textContent = 'THINKING';
       atlasState.style.color = 'var(--orange)';
       try {
+        const body = { message: text };
+        if (imageToSend) body.image = imageToSend;
         const res  = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + API_KEY },
-          body: JSON.stringify({ message: text })
+          body: JSON.stringify(body)
         });
         const data = await res.json();
         thinking.remove();
@@ -577,12 +582,6 @@ async def index():
 
         function animateMouth() {
           if (!animating) return;
-          if (analyser && dataArray) {
-            analyser.getByteFrequencyData(dataArray);
-            const slice = dataArray.slice(2, 18);
-            const avg   = slice.reduce((a, b) => a + b, 0) / slice.length;
-            setMouthOpen(Math.min(avg / 70, 1));
-          }
           requestAnimationFrame(animateMouth);
         }
 
@@ -696,12 +695,6 @@ async def index():
 
     sendBtn.addEventListener('click', () => sendMessage());
     inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
-    document.querySelectorAll('.nav-tab').forEach(t => {
-      t.addEventListener('click', () => {
-        document.querySelectorAll('.nav-tab').forEach(x => x.classList.remove('active'));
-        t.classList.add('active');
-      });
-    });
 
     loadHistory();
     let _wakeStarted = false;
@@ -711,14 +704,15 @@ async def index():
     document.addEventListener('click',   maybeStartWakeWord);
     document.addEventListener('keydown', maybeStartWakeWord);
   </script>
+
   <script type="importmap">
   {
-  "imports": {
-    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
   }
-  }
-</script>
+  </script>
   <script type="module">
     import * as THREE from 'three';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -739,7 +733,6 @@ async def index():
     scene.add(dir);
     let model;
     new GLTFLoader().load('/static/atlas-model.glb', function(gltf) {
-
       model = gltf.scene;
       const box = new THREE.Box3().setFromObject(model);
       const center = box.getCenter(new THREE.Vector3());
@@ -749,9 +742,26 @@ async def index():
       model.position.sub(center.multiplyScalar(s));
       scene.add(model);
     }, undefined, (e) => console.error('GLB error:', e));
+
     (function animate() {
       requestAnimationFrame(animate);
-      if (model) model.rotation.y += 0.004;
+      if (model) {
+        const now = Date.now();
+        if (!window._lastSpin) window._lastSpin = now;
+        if (window._spinning === undefined) window._spinning = false;
+        if (!window._spinStart) window._spinStart = 0;
+        if (!window._spinning && now - window._lastSpin > 100000) {
+          window._spinning = true;
+          window._spinStart = now;
+        }
+        if (window._spinning) {
+          model.rotation.y += 0.015;
+          if (now - window._spinStart > 2000) {
+            window._spinning = false;
+            window._lastSpin = now;
+          }
+        }
+      }
       renderer.render(scene, camera);
     })();
   </script>
@@ -761,11 +771,9 @@ async def index():
 """
     html = html.replace("__ATLAS_API_KEY__", API_KEY)
     return HTMLResponse(
-    content=html,
-    headers={
-        "Permissions-Policy": "microphone=*",
-    }
-)
+        content=html,
+        headers={"Permissions-Policy": "microphone=*"},
+    )
 
 
 @router.post("/api/chat")
@@ -776,8 +784,17 @@ async def chat(req: ChatRequest):
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     for m in session["conversation_history"][-10:]:
         if m["role"] in ("user", "assistant"):
-            messages.append({"role": m["role"], "content": m["content"]})
-    messages.append({"role": "user", "content": req.message})
+            content = m["content"]
+            if isinstance(content, list):
+                content = next((c.get("text", "") for c in content if c.get("type") == "text"), "")
+            messages.append({"role": m["role"], "content": content})
+
+    user_content = [
+        {"type": "text", "text": req.message},
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{req.image}"}}
+    ] if req.image else req.message
+
+    messages.append({"role": "user", "content": user_content})
 
     async with httpx.AsyncClient(timeout=30) as client:
         res = await client.post(
