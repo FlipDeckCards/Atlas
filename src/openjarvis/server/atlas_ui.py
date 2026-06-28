@@ -69,7 +69,7 @@ async def serve_model():
 @router.get("/api/session/history")
 async def session_history(request: Request):
     user_id = _get_user_id(request)
-    request.app.state.session_store
+    store = request.app.state.session_store  # FIX: was missing assignment
     session = await store.get_or_create(user_id, CHANNEL)
     return JSONResponse({
         "messages": [
@@ -547,6 +547,21 @@ async def index():
       location.reload();
     }
 
+    /* ── Uptime clock ── */
+    // FIX: declared here (before showHUD + auto-login) to avoid temporal dead zone ReferenceError
+    let _uptimeStarted = false;
+    function startUptimeClock() {
+      if (_uptimeStarted) return; _uptimeStarted = true;
+      const t0 = Date.now();
+      setInterval(() => {
+        const s  = Math.floor((Date.now() - t0) / 1000);
+        const h  = String(Math.floor(s / 3600)).padStart(2,'0');
+        const m  = String(Math.floor((s % 3600) / 60)).padStart(2,'0');
+        const sc = String(s % 60).padStart(2,'0');
+        document.getElementById('uptime').textContent = h+':'+m+':'+sc;
+      }, 1000);
+    }
+
     /* ── HUD bootstrap ── */
     function showHUD() {
       document.getElementById('auth-overlay').style.display = 'none';
@@ -568,22 +583,8 @@ async def index():
     }
     /* else: overlay stays visible */
 
-    /* ── Uptime clock ── */
-    let _uptimeStarted = false;
-    function startUptimeClock() {
-      if (_uptimeStarted) return; _uptimeStarted = true;
-      const t0 = Date.now();
-      setInterval(() => {
-        const s  = Math.floor((Date.now() - t0) / 1000);
-        const h  = String(Math.floor(s / 3600)).padStart(2,'0');
-        const m  = String(Math.floor((s % 3600) / 60)).padStart(2,'0');
-        const sc = String(s % 60).padStart(2,'0');
-        document.getElementById('uptime').textContent = h+':'+m+':'+sc;
-      }, 1000);
-    }
-
     /* ── Chat UI ── */
-        const messagesEl = document.getElementById('messages');
+    const messagesEl = document.getElementById('messages');
     const inputEl    = document.getElementById('input');
     const sendBtn    = document.getElementById('send');
     const micBtn     = document.getElementById('mic');
@@ -699,8 +700,7 @@ async def index():
     async function loadHistory() {
       try {
         const res  = await fetch('/api/session/history', { headers: authHeader() });
-        if (res.status === 401) { return; }  // token might just be slow — don't force reload
-
+        if (res.status === 401) { return; }
         const data = await res.json();
         (data.messages || []).forEach(m => addMsg(m.role, m.content, null));
         if ((data.messages || []).length) feedLog('Session history loaded');
@@ -732,8 +732,7 @@ async def index():
           headers: jsonAuthHeader(),
           body: JSON.stringify(body)
         });
-        if (res.status === 401) { return; }  // token might just be slow — don't force reload
-
+        if (res.status === 401) { return; }
         const data = await res.json();
         thinking.remove();
         const reply = data.reply || data.detail || 'No response';
@@ -948,7 +947,7 @@ async def index():
 @router.post("/api/chat")
 async def chat(req: ChatRequest, request: Request):
     user_id = _get_user_id(request)
-    request.app.state.session_store
+    store = request.app.state.session_store  # FIX: was missing assignment
     session = await store.get_or_create(user_id, CHANNEL)
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
