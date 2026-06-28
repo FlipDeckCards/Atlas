@@ -383,20 +383,21 @@ async def index():
 
           <!-- ← CHANGED: same-origin src, no crossorigin attr -->
           <model-viewer
-            id="atlas-model"
-            src="/static/atlas-model.glb"
-            alt="Atlas 3D"
-            auto-rotate
-            auto-rotate-delay="500"
-            rotation-per-second="12deg"
-            camera-controls
-            camera-orbit="0deg 80deg 2.2m"
-            min-camera-orbit="auto 60deg 1.2m"
-            max-camera-orbit="auto 100deg 4m"
-            environment-image="neutral"
-            shadow-intensity="0"
-            exposure="0.7"
-            tone-mapping="neutral"
+          id="atlas-model"
+          src="https://modelviewer.dev/shared-assets/models/Astronaut.glb"
+          crossorigin="anonymous"
+          alt="Atlas 3D"
+          auto-rotate
+          auto-rotate-delay="500"
+          rotation-per-second="12deg"
+          camera-controls
+          camera-orbit="0deg 80deg 2.2m"
+          min-camera-orbit="auto 60deg 1.2m"
+          max-camera-orbit="auto 100deg 4m"
+          environment-image="neutral"
+          shadow-intensity="0"
+          exposure="0.7"
+          tone-mapping="neutral"
           ></model-viewer>
 
           <svg id="atlas-face-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
