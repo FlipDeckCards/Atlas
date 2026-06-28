@@ -760,21 +760,11 @@ async def index():
 """
     html = html.replace("__ATLAS_API_KEY__", API_KEY)
     return HTMLResponse(
-        content=html,
-        headers={
-            "Content-Security-Policy": (
-                "default-src 'self' 'unsafe-inline' 'unsafe-eval' https: data: blob:; "
-                "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
-                "https://ajax.googleapis.com https://unpkg.com; "
-                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-                "font-src 'self' https://fonts.gstatic.com; "
-                "connect-src 'self' wss: ws: https:; "
-                "media-src blob: data:; "
-                "worker-src blob:;"
-            ),
-            "Permissions-Policy": "microphone=*",
-        }
-    )
+    content=html,
+    headers={
+        "Permissions-Policy": "microphone=*",
+    }
+)
 
 
 @router.post("/api/chat")
