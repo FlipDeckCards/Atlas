@@ -8,21 +8,6 @@ __all__ = ["SECURITY_HEADERS", "create_security_middleware"]
 
 
 def create_security_middleware() -> Any:
-    """Create a FastAPI middleware that adds security headers.
-
-    Returns a middleware class/callable, or None if FastAPI is not available.
-
-    Headers added:
-    - X-Content-Type-Options: nosniff
-    - X-Frame-Options: DENY
-    - X-XSS-Protection: 1; mode=block
-    - Strict-Transport-Security: max-age=31536000; includeSubDomains
-    - Referrer-Policy: strict-origin-when-cross-origin
-    - Permissions-Policy: camera=(), microphone=(), geolocation=()
-
-    OPTIONS requests are passed through without headers so that
-    CORS preflight is not blocked.
-    """
     try:
         from starlette.middleware.base import BaseHTTPMiddleware
         from starlette.requests import Request
@@ -32,8 +17,6 @@ def create_security_middleware() -> Any:
 
     class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next: Any) -> Response:
-            # Let CORS preflight requests pass through without
-            # security headers that would conflict with CORS.
             if request.method == "OPTIONS":
                 return await call_next(request)
 
@@ -48,15 +31,15 @@ def create_security_middleware() -> Any:
             response.headers["Permissions-Policy"] = (
                 "camera=(), microphone=(), geolocation=()"
             )
-            response.headers["Content-Security-Policy"] = (
-                "default-src 'self' 'unsafe-inline' 'unsafe-eval'"
-            )
+            # CSP disabled — blocks Three.js CDN (unpkg.com)
+            # response.headers["Content-Security-Policy"] = (
+            #     "default-src 'self' 'unsafe-inline' 'unsafe-eval'"
+            # )
             return response
 
     return SecurityHeadersMiddleware
 
 
-# Also export the header values as constants for testing
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -64,5 +47,5 @@ SECURITY_HEADERS = {
     "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
-    "Content-Security-Policy": "default-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    # "Content-Security-Policy": "default-src 'self' 'unsafe-inline' 'unsafe-eval'",
 }
