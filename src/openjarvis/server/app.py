@@ -1,7 +1,5 @@
-Thought (50s)
-Here's the corrected app.py — two additions only, marked with # ADD:
-
 """FastAPI application factory for the OpenJarvis API server."""
+
 
 from __future__ import annotations
 
