@@ -63,16 +63,19 @@ async def serve_model():
             headers={"Cache-Control": "public, max-age=86400"},
         )
     if not ATLAS_MODEL_URL:
-        return JSONResponse({"error": "model not found and ATLAS_MODEL_URL not set"}, status_code=404)
-    async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
-        r = await client.get(ATLAS_MODEL_URL)
-        if r.status_code != 200:
-            return JSONResponse({"error": f"upstream returned {r.status_code}"}, status_code=502)
-        return Response(
-            content=r.content,
-            media_type="model/gltf-binary",
-            headers={"Cache-Control": "public, max-age=86400"},
-        )
+        return JSONResponse({"error": "ATLAS_MODEL_URL not set"}, status_code=404)
+
+    async def stream_glb():
+        async with httpx.AsyncClient(timeout=300, follow_redirects=True) as client:
+            async with client.stream("GET", ATLAS_MODEL_URL) as r:
+                async for chunk in r.aiter_bytes(chunk_size=65536):
+                    yield chunk
+
+    return StreamingResponse(
+        stream_glb(),
+        media_type="model/gltf-binary",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @router.get("/static/model-viewer.min.js")
