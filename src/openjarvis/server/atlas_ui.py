@@ -329,6 +329,8 @@ async def index():
   body {
     grid-template-rows: 40px 1fr;
     overflow: hidden;
+    height: 100vh;
+    height: 100dvh; /* dynamic viewport height — fixes mobile browser chrome */
   }
   #hud-header {
     padding: 0 12px;
@@ -342,6 +344,8 @@ async def index():
   }
   #hud-main {
     grid-template-columns: 1fr;
+    height: 100%;
+    overflow: hidden;
   }
   #panel-left,
   #panel-center {
@@ -350,9 +354,19 @@ async def index():
   #panel-right {
     border-left: none;
     width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
   #messages {
+    flex: 1;
+    min-height: 0;      /* CRITICAL — prevents overflow eating the input */
     padding: 10px;
+    overflow-y: auto;
+  }
+  #input-area {
+    flex-shrink: 0;     /* CRITICAL — pins input to bottom */
   }
   .msg {
     max-width: 96%;
