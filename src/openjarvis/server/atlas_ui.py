@@ -63,7 +63,17 @@ async def serve_model():
         media_type="model/gltf-binary",
         headers={"Cache-Control": "public, max-age=86400"},
     )
-
+@router.get("/static/model-viewer.min.js")
+async def serve_model_viewer():
+    candidates = [
+        os.path.join(_HERE, "static", "model-viewer.min.js"),
+        os.path.join(_HERE, "..", "..", "static", "model-viewer.min.js"),
+        "/app/static/model-viewer.min.js",
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            return FileResponse(p, media_type="application/javascript")
+    return JSONResponse({"error": "model-viewer not found"}, status_code=404)
 
 @router.get("/api/session/history")
 async def session_history():
@@ -125,7 +135,7 @@ async def index():
   <title>Atlas</title>
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
   <!-- model-viewer web component -->
-  <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
+  <script type="module" src="/static/model-viewer.min.js"
   <style>
     :root {
       --cyan: #00e5ff; --cyan-dim: #005f6b;
