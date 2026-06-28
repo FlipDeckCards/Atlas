@@ -746,7 +746,8 @@ async def index():
     dir.position.set(1, 2, 3);
     scene.add(dir);
     let model;
-    new GLTFLoader().load('/static/atlas-model.glb', (gltf) => {
+    new GLTFLoader().load('https://threejs.[encoded]-Binary/DamagedHelmet.glb', (gltf) => {
+
       model = gltf.scene;
       const box = new THREE.Box3().setFromObject(model);
       const center = box.getCenter(new THREE.Vector3());
