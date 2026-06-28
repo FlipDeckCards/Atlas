@@ -699,7 +699,8 @@ async def index():
     async function loadHistory() {
       try {
         const res  = await fetch('/api/session/history', { headers: authHeader() });
-        if (res.status === 401) { logout(); return; }
+        if (res.status === 401) { return; }  // token might just be slow — don't force reload
+
         const data = await res.json();
         (data.messages || []).forEach(m => addMsg(m.role, m.content, null));
         if ((data.messages || []).length) feedLog('Session history loaded');
@@ -731,7 +732,8 @@ async def index():
           headers: jsonAuthHeader(),
           body: JSON.stringify(body)
         });
-        if (res.status === 401) { logout(); return; }
+        if (res.status === 401) { return; }  // token might just be slow — don't force reload
+
         const data = await res.json();
         thinking.remove();
         const reply = data.reply || data.detail || 'No response';
