@@ -995,8 +995,7 @@ async def index():
     }, undefined, (e) => console.error('GLB error:', e));
   });
   (function animate() {
-    requestAnimation
-    Frame(animate);
+    window.requestAnimationFrame(animate);
     if (model) {
       const now = Date.now();
       if (!_spinning && now - _lastSpin > SPIN_INTERVAL) {
