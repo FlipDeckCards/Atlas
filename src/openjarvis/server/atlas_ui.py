@@ -150,7 +150,7 @@ async def index():
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Atlas</title>
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
-  <script type="module" src="/static/model-viewer.min.js"></script>
+  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
   <style>
     :root {
       --cyan: #00e5ff; --cyan-dim: #005f6b;
@@ -388,7 +388,7 @@ async def index():
           auto-rotate-delay="500"
           rotation-per-second="12deg"
           camera-controls
-          camera-orbit="0deg 80deg 2.2m"
+          camera-orbit="0deg 90deg auto"
           min-camera-orbit="auto 60deg 1.2m"
           max-camera-orbit="auto 100deg 4m"
           environment-image="neutral"
