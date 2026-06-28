@@ -38,7 +38,6 @@ def _find_model() -> Optional[str]:
 
 
 def _get_user_id(request: Request) -> str:
-    """JWT user_id set by AuthMiddleware; fall back to system for API-key clients."""
     return getattr(request.state, "user_id", "system")
 
 
@@ -69,7 +68,7 @@ async def serve_model():
 @router.get("/api/session/history")
 async def session_history(request: Request):
     user_id = _get_user_id(request)
-    store = request.app.state.session_store  # FIX: was missing assignment
+    store = request.app.state.session_store
     session = await store.get_or_create(user_id, CHANNEL)
     return JSONResponse({
         "messages": [
@@ -481,6 +480,17 @@ async def index():
       } catch { return {}; }
     }
 
+    /* ── Audio context unlock (must happen on first user gesture) ── */
+    let _audioCtxUnlocked = false;
+    function unlockAudio() {
+      if (_audioCtxUnlocked) return;
+      _audioCtxUnlocked = true;
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        ctx.resume().then(() => ctx.close()).catch(() => {});
+      } catch(e) {}
+    }
+
     /* ── Auth mode ── */
     let authMode = 'login';
 
@@ -548,7 +558,6 @@ async def index():
     }
 
     /* ── Uptime clock ── */
-    // FIX: declared here (before showHUD + auto-login) to avoid temporal dead zone ReferenceError
     let _uptimeStarted = false;
     function startUptimeClock() {
       if (_uptimeStarted) return; _uptimeStarted = true;
@@ -577,11 +586,7 @@ async def index():
       startUptimeClock();
     }
 
-    /* Check on load */
-    if (getToken()) {
-      showHUD();
-    }
-    /* else: overlay stays visible */
+    if (getToken()) { showHUD(); }
 
     /* ── Chat UI ── */
     const messagesEl = document.getElementById('messages');
@@ -732,7 +737,7 @@ async def index():
           headers: jsonAuthHeader(),
           body: JSON.stringify(body)
         });
-        if (res.status === 401) { return; }
+        if (res.status === 401) { sendBtn.disabled = false; return; }
         const data = await res.json();
         thinking.remove();
         const reply = data.reply || data.detail || 'No response';
@@ -748,31 +753,48 @@ async def index():
       inputEl.focus();
     }
 
+    /* ── TTS: fixed blob MIME type — was causing "no supported source" error ── */
     async function speakReply(text) {
       try {
-        const res  = await fetch('/api/voice/speak', {
+        const res = await fetch('/api/voice/speak', {
           method: 'POST',
           headers: jsonAuthHeader(),
           body: JSON.stringify({ message: text })
         });
-        const blob  = await res.blob();
-        const url   = URL.createObjectURL(blob);
+        if (!res.ok) {
+          console.warn('TTS HTTP error:', res.status, await res.text());
+          resumeWakeWord();
+          return;
+        }
+        /* FIX: res.blob() drops the MIME type in some browsers.
+           Use arrayBuffer() + explicit type to guarantee audio/mpeg decoding. */
+        const arrayBuffer = await res.arrayBuffer();
+        const blob = new Blob([arrayBuffer], { type: 'audio/mpeg' });
+        const url  = URL.createObjectURL(blob);
         const audio = new Audio(url);
-        let audioCtx;
-        try {
-          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-          const src = audioCtx.createMediaElementSource(audio);
-          src.connect(audioCtx.destination);
-        } catch(e) { console.warn('Web Audio setup failed:', e.message); }
         audio.onplay  = () => setTalking(true);
         audio.onended = () => {
           setTalking(false);
-          if (audioCtx) audioCtx.close().catch(() => {});
+          URL.revokeObjectURL(url);
           if (!isRecording) resumeWakeWord();
         };
+        audio.onerror = (e) => {
+          console.warn('Audio element error:', e);
+          setTalking(false);
+          URL.revokeObjectURL(url);
+          resumeWakeWord();
+        };
         pauseWakeWord();
-        audio.play().catch(e => { console.warn('Play failed:', e.message); setTalking(false); resumeWakeWord(); });
-      } catch(e) { console.warn('TTS failed:', e.message); resumeWakeWord(); }
+        audio.play().catch(e => {
+          console.warn('Play blocked:', e.message);
+          setTalking(false);
+          URL.revokeObjectURL(url);
+          resumeWakeWord();
+        });
+      } catch(e) {
+        console.warn('TTS failed:', e.message);
+        resumeWakeWord();
+      }
     }
 
     let isRecording = false, mediaRecorder = null, audioChunks = [];
@@ -802,18 +824,22 @@ async def index():
             });
             const data = await res.json();
             if (data.text) {
-              let clean = data.text.trim().replace(/^aibussol[,.]?\s*/i, '');
+              /* Strip wake word prefix and "send" suffix command */
+              let clean = data.text.trim()
+                .replace(/^aibussol[,.]?\s*/i, '')
+                .replace(/[,.]?\s*send\.?\s*$/i, '')
+                .trim();
               if (clean) await sendMessage(clean);
             }
           } catch(e) { console.warn('Transcribe failed:', e.message); }
           micBtn.textContent = '\u{1F399}'; micBtn.className = '';
-          setTimeout(() => { if (!isRecording) resumeWakeWord(); }, 5000);
+          setTimeout(() => { if (!isRecording) resumeWakeWord(); }, 500);
         };
         mediaRecorder.start();
         isRecording = true;
         micBtn.textContent = '\u{1F534}'; micBtn.className = 'recording';
         setWakeStatus('recording');
-        feedLog('Recording started');
+        feedLog('Recording started — say "send" to submit');
       } catch(e) {
         console.warn('Mic denied:', e.message);
         alert('Microphone access denied.');
@@ -826,52 +852,98 @@ async def index():
       mediaRecorder.stop();
     }
 
-    micBtn.addEventListener('click', () => { isRecording ? stopRecording() : startRecording(); });
+    /* FIX: unlock AudioContext on mic click to satisfy autoplay policy */
+    micBtn.addEventListener('click', () => {
+      unlockAudio();
+      isRecording ? stopRecording() : startRecording();
+    });
 
     function initWakeWord() {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SR) { setWakeStatus('unsupported'); return; }
       wakeRecognition = new SR();
-      wakeRecognition.continuous = true; wakeRecognition.interimResults = true; wakeRecognition.lang = 'en-US';
+      wakeRecognition.continuous = true;
+      wakeRecognition.interimResults = true;
+      wakeRecognition.lang = 'en-US';
+
       let triggered = false;
+
+      /* Wake word variants + "send" voice command */
+      const WAKE_VARIANTS = [
+        'aibussol','ai bus sol','ai bussol','aibus sol',
+        'eye bus sol','eye bussol','i bus sol','i bussol',
+        'a bus sol','a bussol','ay bus sol','ai bus soul',
+        'eye bus soul','hey bus sol','i bus soul'
+      ];
+
       wakeRecognition.onresult = (e) => {
-        if (isRecording || triggered) return;
-        const t = Array.from(e.results).map(r => r[0].transcript).join(' ').toLowerCase();
-        if (t.includes('aibussol') || t.includes('ai bus sol') || t.includes('ai bussol')) {
+        if (triggered) return;
+        const latest = e.results[e.results.length - 1][0].transcript.toLowerCase().trim();
+
+        /* "send" voice command — fires when not recording and input has text */
+        if (!isRecording && (latest === 'send' || latest.endsWith(' send') || latest.endsWith('. send')) && inputEl.value.trim()) {
+          triggered = true;
+          setTimeout(() => { triggered = false; }, 2000);
+          feedLog('Voice command: SEND');
+          sendMessage();
+          return;
+        }
+
+        /* Wake word — start mic recording */
+        if (!isRecording && WAKE_VARIANTS.some(v => latest.includes(v))) {
           triggered = true;
           setTimeout(() => { triggered = false; }, 3000);
           feedLog('Wake word detected');
           startRecording();
         }
       };
-      wakeRecognition.onend = () => { if (wakeActive) { try { wakeRecognition.start(); } catch(e){} } };
-      wakeRecognition.onerror = (e) => {
-        if (e.error === 'not-allowed') { wakeActive = false; setWakeStatus('unsupported'); }
+
+      wakeRecognition.onend = () => {
+        if (wakeActive) {
+          try { wakeRecognition.start(); } catch(e) {}
+        }
       };
+
+      wakeRecognition.onerror = (e) => {
+        if (e.error === 'not-allowed') {
+          wakeActive = false;
+          setWakeStatus('unsupported');
+        }
+        /* other errors (network, no-speech) — onend will restart */
+      };
+
       wakeActive = true;
-      try { wakeRecognition.start(); setWakeStatus('listening'); feedLog('Say "AiBusSol" to wake'); }
-      catch(e) { setWakeStatus('unsupported'); }
+      try {
+        wakeRecognition.start();
+        setWakeStatus('listening');
+        feedLog('Say "AiBusSol" to wake');
+      } catch(e) {
+        setWakeStatus('unsupported');
+      }
     }
 
     function pauseWakeWord() {
       if (!wakeRecognition) return;
       wakeActive = false;
-      try { wakeRecognition.stop(); } catch(e){}
+      try { wakeRecognition.stop(); } catch(e) {}
     }
+
     function resumeWakeWord() {
       if (!wakeRecognition) return;
       wakeActive = true;
-      try { wakeRecognition.start(); } catch(e){}
+      try { wakeRecognition.start(); } catch(e) {}
       setWakeStatus('listening');
     }
 
-    sendBtn.addEventListener('click', () => sendMessage());
-    inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
+    sendBtn.addEventListener('click', () => { unlockAudio(); sendMessage(); });
+    inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') { unlockAudio(); sendMessage(); } });
 
-    /* Wake word starts on first interaction after HUD is visible */
+    /* Wake word starts on first interaction */
     let _wakeStarted = false;
     function maybeStartWakeWord() {
-      if (_wakeStarted || !getToken()) return; _wakeStarted = true; initWakeWord();
+      if (_wakeStarted || !getToken()) return;
+      _wakeStarted = true;
+      initWakeWord();
     }
     document.addEventListener('click',   maybeStartWakeWord);
     document.addEventListener('keydown', maybeStartWakeWord);
@@ -908,7 +980,6 @@ async def index():
   const SPIN_INTERVAL = 100000, SPIN_DURATION = 2500;
   let _lastSpin = Date.now(), _spinning = false, _spinStartAngle = 0, _spinStartTime = 0;
 
-  // FIX: wait for MeshoptDecoder before loading compressed GLB
   MeshoptDecoder.ready.then(() => {
     const loader = new GLTFLoader();
     loader.setMeshoptDecoder(MeshoptDecoder);
@@ -923,9 +994,9 @@ async def index():
       scene.add(model);
     }, undefined, (e) => console.error('GLB error:', e));
   });
-
   (function animate() {
-    requestAnimationFrame(animate);
+    requestAnimation
+    Frame(animate);
     if (model) {
       const now = Date.now();
       if (!_spinning && now - _lastSpin > SPIN_INTERVAL) {
@@ -953,7 +1024,7 @@ async def index():
 @router.post("/api/chat")
 async def chat(req: ChatRequest, request: Request):
     user_id = _get_user_id(request)
-    store = request.app.state.session_store  # FIX: was missing assignment
+    store = request.app.state.session_store
     session = await store.get_or_create(user_id, CHANNEL)
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
