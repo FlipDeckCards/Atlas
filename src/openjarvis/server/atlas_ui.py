@@ -886,28 +886,33 @@ async def index():
   }
   </script>
   <script type="module">
-    import * as THREE from 'three';
-    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+  import * as THREE from 'three';
+  import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+  import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
-    const canvas = document.getElementById('atlas-canvas');
-    const wrap = document.getElementById('face-wrap');
-    const w = wrap.offsetWidth, h = wrap.offsetHeight;
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-    renderer.setSize(w, h);
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setClearColor(0x000000, 0);
-    const scene  = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(35, w / h, 0.1, 100);
-    camera.position.set(0, 0.5, 3);
-    scene.add(new THREE.AmbientLight(0x00e5ff, 0.8));
-    const dir = new THREE.DirectionalLight(0xffffff, 1);
-    dir.position.set(1, 2, 3); scene.add(dir);
+  const canvas = document.getElementById('atlas-canvas');
+  const wrap = document.getElementById('face-wrap');
+  const w = wrap.offsetWidth, h = wrap.offsetHeight;
+  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+  renderer.setSize(w, h);
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setClearColor(0x000000, 0);
+  const scene  = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(35, w / h, 0.1, 100);
+  camera.position.set(0, 0.5, 3);
+  scene.add(new THREE.AmbientLight(0x00e5ff, 0.8));
+  const dir = new THREE.DirectionalLight(0xffffff, 1);
+  dir.position.set(1, 2, 3); scene.add(dir);
 
-    let model;
-    const SPIN_INTERVAL = 100000, SPIN_DURATION = 2500;
-    let _lastSpin = Date.now(), _spinning = false, _spinStartAngle = 0, _spinStartTime = 0;
+  let model;
+  const SPIN_INTERVAL = 100000, SPIN_DURATION = 2500;
+  let _lastSpin = Date.now(), _spinning = false, _spinStartAngle = 0, _spinStartTime = 0;
 
-    new GLTFLoader().load('/static/atlas-model.glb', function(gltf) {
+  // FIX: wait for MeshoptDecoder before loading compressed GLB
+  MeshoptDecoder.ready.then(() => {
+    const loader = new GLTFLoader();
+    loader.setMeshoptDecoder(MeshoptDecoder);
+    loader.load('/static/atlas-model.glb', function(gltf) {
       model = gltf.scene;
       const box = new THREE.Box3().setFromObject(model);
       const center = box.getCenter(new THREE.Vector3());
@@ -917,26 +922,27 @@ async def index():
       model.position.sub(center.multiplyScalar(s));
       scene.add(model);
     }, undefined, (e) => console.error('GLB error:', e));
+  });
 
-    (function animate() {
-      requestAnimationFrame(animate);
-      if (model) {
-        const now = Date.now();
-        if (!_spinning && now - _lastSpin > SPIN_INTERVAL) {
-          _spinning = true; _spinStartAngle = model.rotation.y; _spinStartTime = now;
-        }
-        if (_spinning) {
-          const progress = Math.min((now - _spinStartTime) / SPIN_DURATION, 1);
-          const eased = progress < 0.5
-            ? 2 * progress * progress
-            : 1 - Math.pow(-2 * progress + 2, 2) / 2;
-          model.rotation.y = _spinStartAngle + eased * Math.PI * 2;
-          if (progress >= 1) { model.rotation.y = _spinStartAngle; _spinning = false; _lastSpin = now; }
-        }
+  (function animate() {
+    requestAnimationFrame(animate);
+    if (model) {
+      const now = Date.now();
+      if (!_spinning && now - _lastSpin > SPIN_INTERVAL) {
+        _spinning = true; _spinStartAngle = model.rotation.y; _spinStartTime = now;
       }
-      renderer.render(scene, camera);
-    })();
-  </script>
+      if (_spinning) {
+        const progress = Math.min((now - _spinStartTime) / SPIN_DURATION, 1);
+        const eased = progress < 0.5
+          ? 2 * progress * progress
+          : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+        model.rotation.y = _spinStartAngle + eased * Math.PI * 2;
+        if (progress >= 1) { model.rotation.y = _spinStartAngle; _spinning = false; _lastSpin = now; }
+      }
+    }
+    renderer.render(scene, camera);
+  })();
+</script>
 
 </body>
 </html>
