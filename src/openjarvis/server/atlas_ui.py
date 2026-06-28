@@ -1,7 +1,7 @@
 import os
 import httpx
 from fastapi import APIRouter, File, UploadFile
-from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse, FileResponse
+from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse, FileResponse, Response
 from pydantic import BaseModel
 from typing import Optional
 
@@ -12,7 +12,8 @@ router = APIRouter()
 API_KEY = os.getenv("OPENJARVIS_API_KEY", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")  # Rachel
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+ATLAS_MODEL_URL = os.getenv("ATLAS_MODEL_URL", "")  # ← CHANGED: GitHub Releases URL as env var
 
 OWNER_USER_ID = "michael"
 CHANNEL = "web"
@@ -24,7 +25,6 @@ Be direct, sharp, and helpful."""
 
 _store: Optional[SessionStore] = None
 
-# ── GLB model path — looks next to this file first, then repo root /static ──
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _MODEL_CANDIDATES = [
     os.path.join(_HERE, "static", "atlas-model.glb"),
@@ -52,17 +52,29 @@ class ChatRequest(BaseModel):
     message: str
 
 
-# ── Serve the GLB without needing StaticFiles on the main app ────────────────
+# ← CHANGED: proxy from GitHub Releases when not found locally
 @router.get("/static/atlas-model.glb")
 async def serve_model():
     path = _find_model()
-    if not path:
-        return JSONResponse({"error": "model not found"}, status_code=404)
-    return FileResponse(
-        path,
-        media_type="model/gltf-binary",
-        headers={"Cache-Control": "public, max-age=86400"},
-    )
+    if path:
+        return FileResponse(
+            path,
+            media_type="model/gltf-binary",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+    if not ATLAS_MODEL_URL:
+        return JSONResponse({"error": "model not found and ATLAS_MODEL_URL not set"}, status_code=404)
+    async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
+        r = await client.get(ATLAS_MODEL_URL)
+        if r.status_code != 200:
+            return JSONResponse({"error": f"upstream returned {r.status_code}"}, status_code=502)
+        return Response(
+            content=r.content,
+            media_type="model/gltf-binary",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
+
 @router.get("/static/model-viewer.min.js")
 async def serve_model_viewer():
     candidates = [
@@ -74,6 +86,7 @@ async def serve_model_viewer():
         if os.path.exists(p):
             return FileResponse(p, media_type="application/javascript")
     return JSONResponse({"error": "model-viewer not found"}, status_code=404)
+
 
 @router.get("/api/session/history")
 async def session_history():
@@ -134,7 +147,6 @@ async def index():
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Atlas</title>
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
-  <!-- model-viewer web component -->
   <script type="module" src="/static/model-viewer.min.js"></script>
   <style>
     :root {
@@ -154,8 +166,6 @@ async def index():
         linear-gradient(90deg, rgba(0,229,255,0.018) 1px, transparent 1px);
       background-size: 44px 44px;
     }
-
-    /* ── HEADER ─────────────────────────────────────── */
     #hud-header {
       background: var(--panel); border-bottom: 1px solid var(--border);
       display: flex; align-items: center; justify-content: space-between; padding: 0 20px;
@@ -167,11 +177,7 @@ async def index():
     #hud-title span { color: var(--orange); }
     .hud-meta { display: flex; gap: 24px; font-size: 11px; color: var(--text-dim); letter-spacing: 1px; }
     .hud-meta .v { color: var(--cyan); }
-
-    /* ── MAIN GRID ──────────────────────────────────── */
     #hud-main { display: grid; grid-template-columns: 200px 1fr 320px; gap: 1px; overflow: hidden; }
-
-    /* ── LEFT PANEL ─────────────────────────────────── */
     #panel-left {
       background: var(--panel); border-right: 1px solid var(--border);
       display: flex; flex-direction: column; overflow: hidden;
@@ -203,8 +209,6 @@ async def index():
     }
     .feed-line { color: var(--text-dim); transition: color 0.5s, opacity 0.5s; }
     @keyframes blink { 0%,100%{opacity:1}50%{opacity:0.3} }
-
-    /* ── CENTER ──────────────────────────────────────── */
     #panel-center {
       background: var(--panel);
       display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -237,11 +241,8 @@ async def index():
       border-radius:50%; animation:spin 35s linear infinite reverse;
     }
     @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
-
-    /* atlas-face = div wrapper; filter + talking class apply to everything inside */
     #atlas-face {
-      position: relative;
-      width: 100%; height: 100%;
+      position: relative; width: 100%; height: 100%;
       filter: drop-shadow(0 0 10px var(--cyan)) drop-shadow(0 0 22px rgba(0,229,255,0.25));
       animation: idle-breathe 4s ease-in-out infinite;
       transition: filter 0.3s;
@@ -249,33 +250,22 @@ async def index():
     #atlas-face.talking {
       filter: drop-shadow(0 0 18px var(--cyan)) drop-shadow(0 0 40px rgba(0,229,255,0.55)) drop-shadow(0 0 10px var(--orange));
     }
-
-    /* model-viewer fills the face-wrap, transparent bg */
     model-viewer {
-      width: 100%;
-      height: 100%;
+      width: 100%; height: 100%;
       background-color: transparent;
       --poster-color: transparent;
     }
-
-    /* SVG overlay sits on top of the 3D model */
     #atlas-face-svg {
-      position: absolute;
-      top: 0; left: 0;
-      width: 100%; height: 100%;
-      pointer-events: none;
+      position: absolute; top: 0; left: 0;
+      width: 100%; height: 100%; pointer-events: none;
     }
-
     @keyframes idle-breathe { 0%,100%{transform:scale(1)} 50%{transform:scale(1.006)} }
-
     .face-state {
       margin-top:16px; text-align:center; font-size:11px; letter-spacing:3px; color:var(--text-dim);
     }
     #atlas-state {
       font-family:'Orbitron',monospace; font-size:10px; color:var(--cyan); margin-bottom:4px;
     }
-
-    /* ── RIGHT CHAT PANEL ────────────────────────────── */
     #panel-right {
       background:var(--panel); border-left:1px solid var(--border);
       display:flex; flex-direction:column; overflow:hidden;
@@ -327,8 +317,6 @@ async def index():
     #mic:hover { border-color:var(--orange); color:var(--orange); }
     #mic.recording  { border-color:#ff3344; color:#ff3344; background:rgba(255,51,68,0.08); animation:blink 0.5s infinite; }
     #mic.processing { border-color:var(--orange); color:var(--orange); }
-
-    /* ── BOTTOM NAV ──────────────────────────────────── */
     #hud-nav {
       background:var(--panel); border-top:1px solid var(--border);
       display:flex; align-items:center; justify-content:center;
@@ -346,7 +334,7 @@ async def index():
 <body>
 
   <div id="hud-header">
-    <div id="hud-title">ATL<span>▲</span>S</div>
+    <div id="hud-title">ATL<span>&#9650;</span>S</div>
     <div class="hud-meta">
       <span>OPERATOR: <span class="v">MICHAEL</span></span>
       <span>SESSION: <span class="v">WEB-01</span></span>
@@ -357,7 +345,6 @@ async def index():
 
   <div id="hud-main">
 
-    <!-- LEFT -->
     <div id="panel-left">
       <div class="sys-block">
         <div class="p-label">System Vitals</div>
@@ -382,7 +369,6 @@ async def index():
       </div>
     </div>
 
-    <!-- CENTER — 3D model -->
     <div id="panel-center">
       <div class="corner tl"></div><div class="corner tr"></div>
       <div class="corner bl"></div><div class="corner br"></div>
@@ -390,14 +376,12 @@ async def index():
       <div id="face-wrap">
         <div class="f-ring"></div>
         <div class="f-ring2"></div>
-
         <div id="atlas-face">
 
-          <!-- 3D model — auto-rotates, mouse-draggable -->
+          <!-- ← CHANGED: same-origin src, no crossorigin attr -->
           <model-viewer
             id="atlas-model"
-            src="https://github.[encoded].0/atlas-model.glb"
-            crossorigin="anonymous"
+            src="/static/atlas-model.glb"
             alt="Atlas 3D"
             auto-rotate
             auto-rotate-delay="500"
@@ -412,12 +396,9 @@ async def index():
             tone-mapping="neutral"
           ></model-viewer>
 
-          <!-- SVG overlay: mouth glow pulses when talking -->
           <svg id="atlas-face-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
-            <!-- Scan line — decorative -->
             <line x1="20" y1="100" x2="180" y2="100"
                   stroke="#00e5ff" stroke-width="0.4" opacity="0.08"/>
-            <!-- Mouth — JS-driven, IDs must stay -->
             <path id="mouth-upper" d="M 78 130 Q 100 127 122 130"
                   fill="none" stroke="#a855f7" stroke-width="1.8" stroke-linecap="round" opacity="0.9"/>
             <path id="mouth-lower" d="M 78 130 Q 100 133 122 130"
@@ -434,7 +415,6 @@ async def index():
       </div>
     </div>
 
-    <!-- RIGHT -->
     <div id="panel-right">
       <div id="chat-hdr">
         <div class="p-label" style="margin:0">Command Console</div>
@@ -475,7 +455,6 @@ async def index():
     const voiceStat  = document.getElementById('voice-status');
     const API_KEY    = '__ATLAS_API_KEY__';
 
-    // ── Uptime clock ──────────────────────────────────
     const uptimeStart = Date.now();
     setInterval(() => {
       const s  = Math.floor((Date.now() - uptimeStart) / 1000);
@@ -488,7 +467,6 @@ async def index():
     let isRecording = false, mediaRecorder = null, audioChunks = [];
     let wakeRecognition = null, wakeActive = false;
 
-    // ── Mouth animation (y=130 matches GLB face framing) ──
     function setMouthOpen(a) {
       const y = 130, w = 22, drop = a * 20;
       const U = `M ${100-w} ${y} Q 100 ${y-3} ${100+w} ${y}`;
@@ -501,7 +479,6 @@ async def index():
       mf.style.opacity = a > 0.05 ? String(0.35 + a * 0.45) : '0';
     }
 
-    // ── Talking state — glow + pause auto-rotate ──────
     function setTalking(on) {
       if (on) {
         atlasFace.classList.add('talking');
@@ -697,16 +674,16 @@ async def index():
             });
             const data = await res.json();
             if (data.text) {
-              let clean = data.text.trim().replace(/^atlas[,.]?\s*/i, '');
+              let clean = data.text.trim().replace(/^atlas[,.]?\\s*/i, '');
               if (clean) await sendMessage(clean);
             }
           } catch(e) { console.warn('Transcribe failed:', e.message); }
-          micBtn.textContent = '\U0001F399'; micBtn.className = '';
+          micBtn.textContent = '\u{1F399}'; micBtn.className = '';  // ← CHANGED: JS unicode escape
           setTimeout(() => { if (!isRecording) resumeWakeWord(); }, 5000);
         };
         mediaRecorder.start();
         isRecording = true;
-        micBtn.textContent = '\U0001F534'; micBtn.className = 'recording';
+        micBtn.textContent = '\u{1F534}'; micBtn.className = 'recording';  // ← CHANGED: JS unicode escape
         setWakeStatus('recording');
         feedLog('Recording started');
       } catch(e) {
