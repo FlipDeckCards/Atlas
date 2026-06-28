@@ -719,10 +719,18 @@ async def index():
     document.addEventListener('click',   maybeStartWakeWord);
     document.addEventListener('keydown', maybeStartWakeWord);
   </script>
-
+  <script type="importmap">
+  {
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+  }
+</script>
   <script type="module">
-    import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
-    import { GLTFLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
     const canvas = document.getElementById('atlas-canvas');
     const wrap = document.getElementById('face-wrap');
     const w = wrap.offsetWidth, h = wrap.offsetHeight;
