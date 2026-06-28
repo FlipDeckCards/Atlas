@@ -18,9 +18,9 @@ ATLAS_MODEL_URL = os.getenv("ATLAS_MODEL_URL", "")
 OWNER_USER_ID = "michael"
 CHANNEL = "web"
 
-SYSTEM_PROMPT = """You are Atlas, a personal AI hub and orchestrator built by Michael.
-You coordinate a network of specialized agents: OMNI (trading advisor), FlipDeck (card flipping tool), and Deadzone (games platform).
-You have persistent memory and can route tasks to the right spoke. You are not OpenJarvis — you are Atlas.
+SYSTEM_PROMPT = """You are AiBusSol, a personal AI hub and orchestrator built by Michael.
+You have persistent memory and can handle a wide range of tasks with intelligence and precision.
+You are not OpenJarvis — you are AiBusSol.
 Be direct, sharp, and helpful."""
 
 _store: Optional[SessionStore] = None
@@ -140,7 +140,7 @@ async def index():
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Atlas</title>
+  <title>AiBusSol</title>
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
   <style>
     :root {
@@ -190,13 +190,6 @@ async def index():
     .stat-row .val.g { color: #00ff88; }
     .stat-row .val.o { color: var(--orange); }
     .stat-row .val.d { color: #335566; }
-    .spoke-row { display: flex; align-items: center; gap: 8px; padding: 7px 0; font-size: 11px; letter-spacing: 1px; }
-    .s-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-    .s-dot.on   { background: #00ff88; box-shadow: 0 0 6px #00ff88; animation: blink 2s infinite; }
-    .s-dot.stby { background: var(--orange); box-shadow: 0 0 6px var(--orange); }
-    .s-dot.off  { background: #333; }
-    .s-name { color: var(--text); flex: 1; }
-    .s-tag  { color: var(--text-dim); font-size: 9px; }
     #live-feed {
       flex: 1; padding: 14px 16px; overflow: hidden;
       font-size: 10px; line-height: 1.9; letter-spacing: 0.5px;
@@ -325,85 +318,41 @@ async def index():
     #upload-btn.has-image { border-color:#00ff88; color:#00ff88; }
     #img-input { display:none; }
     /* ── Mobile: phone layout ── */
-@media (max-width: 768px) {
-  body {
-    grid-template-rows: 40px 1fr;
-    overflow: hidden;
-    height: 100vh;
-    height: 100dvh; /* dynamic viewport height — fixes mobile browser chrome */
-  }
-  #hud-header {
-    padding: 0 12px;
-  }
-  #hud-title {
-    font-size: 13px;
-    letter-spacing: 2px;
-  }
-  .hud-meta {
-    display: none;
-  }
-  #hud-main {
-    grid-template-columns: 1fr;
-    height: 100%;
-    overflow: hidden;
-  }
-  #panel-left,
-  #panel-center {
-    display: none;
-  }
-  #panel-right {
-    border-left: none;
-    width: 100%;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  #messages {
-    flex: 1;
-    min-height: 0;      /* CRITICAL — prevents overflow eating the input */
-    padding: 10px;
-    overflow-y: auto;
-  }
-  #input-area {
-    flex-shrink: 0;     /* CRITICAL — pins input to bottom */
-  }
-  .msg {
-    max-width: 96%;
-    font-size: 13px;
-  }
-  #input-row {
-    padding: 8px 10px;
-    gap: 5px;
-  }
-  #input {
-    font-size: 14px;
-    padding: 10px 10px;
-  }
-  #send {
-    padding: 10px 10px;
-    font-size: 8px;
-    letter-spacing: 1px;
-  }
-  #mic, #upload-btn {
-    padding: 10px 10px;
-    font-size: 14px;
-  }
-  #img-preview-bar {
-    padding: 6px 10px 0;
-  }
-}
+    @media (max-width: 768px) {
+      body {
+        grid-template-rows: 40px 1fr;
+        overflow: hidden;
+        height: 100vh;
+        height: 100dvh;
+      }
+      #hud-header { padding: 0 12px; }
+      #hud-title { font-size: 13px; letter-spacing: 2px; }
+      .hud-meta { display: none; }
+      #hud-main { grid-template-columns: 1fr; height: 100%; overflow: hidden; }
+      #panel-left, #panel-center { display: none; }
+      #panel-right {
+        border-left: none; width: 100%; height: 100%;
+        display: flex; flex-direction: column; overflow: hidden;
+      }
+      #messages { flex: 1; min-height: 0; padding: 10px; overflow-y: auto; }
+      #input-area { flex-shrink: 0; }
+      .msg { max-width: 96%; font-size: 13px; }
+      #input-row { padding: 8px 10px; gap: 5px; }
+      #input { font-size: 14px; padding: 10px 10px; }
+      #send { padding: 10px 10px; font-size: 8px; letter-spacing: 1px; }
+      #mic, #upload-btn { padding: 10px 10px; font-size: 14px; }
+      #img-preview-bar { padding: 6px 10px 0; }
+    }
   </style>
 </head>
 <body>
 
   <div id="hud-header">
-    <div id="hud-title">ATL<span>&#9650;</span>S</div>
+    <div id="hud-title">AIBUS<span>SOL</span></div>
     <div class="hud-meta">
       <span>OPERATOR: <span class="v">MICHAEL</span></span>
       <span>SESSION: <span class="v">WEB-01</span></span>
       <span>UPTIME: <span class="v" id="uptime">00:00:00</span></span>
-      <span>SPOKES: <span class="v">3 ONLINE</span></span>
     </div>
   </div>
 
@@ -418,15 +367,9 @@ async def index():
         <div class="stat-row"><span class="lbl">VOICE</span><span class="val" id="voice-status">READY</span></div>
         <div class="stat-row"><span class="lbl">PROTOCOL</span><span class="val d">JSON-RPC</span></div>
       </div>
-      <div class="sys-block">
-        <div class="p-label">Spoke Network</div>
-        <div class="spoke-row"><div class="s-dot on"></div><span class="s-name">OMNI</span><span class="s-tag">TRADING</span></div>
-        <div class="spoke-row"><div class="s-dot on"></div><span class="s-name">FLIPDECK</span><span class="s-tag">OPS</span></div>
-        <div class="spoke-row"><div class="s-dot stby"></div><span class="s-name">DEADZONE</span><span class="s-tag">STANDBY</span></div>
-      </div>
       <div id="live-feed">
         <div class="p-label">Live Feed</div>
-        <div class="feed-line">&#9656; Atlas core initialized</div>
+        <div class="feed-line">&#9656; AiBusSol core initialized</div>
         <div class="feed-line">&#9656; Neon DB connected</div>
         <div class="feed-line">&#9656; Voice engine loaded</div>
         <div class="feed-line" id="feed-last">&#9656; Awaiting input...</div>
@@ -470,7 +413,7 @@ async def index():
           <button id="mic" title="Record">&#127897;</button>
           <label id="upload-btn" for="img-input" title="Attach image">📎</label>
           <input id="img-input" type="file" accept="image/*"/>
-          <input id="input" type="text" placeholder='Type or say "Atlas..."' autocomplete="off"/>
+          <input id="input" type="text" placeholder='Type or say "AiBusSol..."' autocomplete="off"/>
           <button id="send">SEND</button>
         </div>
       </div>
@@ -495,7 +438,7 @@ async def index():
     const imgPreviewName  = document.getElementById('img-preview-name');
     const clearImgBtn   = document.getElementById('clear-img');
     const uploadBtn     = document.getElementById('upload-btn');
-    const API_KEY       = '__ATLAS_API_KEY__';
+    const API_KEY       = '__AIBUSSOL_API_KEY__';
 
     let pendingImageB64     = null;
     let pendingImageDataUrl = null;
@@ -560,7 +503,7 @@ async def index():
       if (state === 'listening') {
         wakeDot.classList.add('listening');
         wakeLabel.textContent  = 'LISTENING';
-        centerSub.textContent  = 'SAY "ATLAS" TO WAKE';
+        centerSub.textContent  = 'SAY "AIBUSSOL" TO WAKE';
         atlasState.textContent = 'ACTIVE';
         atlasState.style.color = 'var(--cyan)';
       } else if (state === 'recording') {
@@ -603,7 +546,7 @@ async def index():
       wrap.className = 'msg ' + (role === 'user' ? 'user' : 'atlas');
       const tag = document.createElement('div');
       tag.className = 'msg-tag';
-      tag.textContent = role === 'user' ? 'YOU' : 'ATLAS';
+      tag.textContent = role === 'user' ? 'YOU' : 'AIBUSSOL';
       const body = document.createElement('div');
       body.textContent = text;
       wrap.appendChild(tag);
@@ -661,7 +604,7 @@ async def index():
         thinking.remove();
         const reply = data.reply || data.detail || 'No response';
         addMsg('atlas', reply, null);
-        feedLog('Atlas responded');
+        feedLog('AiBusSol responded');
         speakReply(reply);
       } catch(e) {
         thinking.querySelector('div:last-child').textContent = 'Error: ' + e.message;
@@ -732,7 +675,7 @@ async def index():
             });
             const data = await res.json();
             if (data.text) {
-              let clean = data.text.trim().replace(/^atlas[,.]?\\s*/i, '');
+              let clean = data.text.trim().replace(/^aibussol[,.]?\\s*/i, '');
               if (clean) await sendMessage(clean);
             }
           } catch(e) { console.warn('Transcribe failed:', e.message); }
@@ -769,7 +712,7 @@ async def index():
       wakeRecognition.onresult = (e) => {
         if (isRecording || triggered) return;
         const t = Array.from(e.results).map(r => r[0].transcript).join(' ').toLowerCase();
-        if (t.includes('atlas')) {
+        if (t.includes('aibussol') || t.includes('ai bus sol') || t.includes('ai bussol')) {
           triggered = true;
           setTimeout(() => { triggered = false; }, 3000);
           feedLog('Wake word detected');
@@ -783,7 +726,7 @@ async def index():
         if (e.error === 'not-allowed') { wakeActive = false; setWakeStatus('unsupported'); }
       };
       wakeActive = true;
-      try { wakeRecognition.start(); setWakeStatus('listening'); feedLog('Say "Atlas" to wake'); }
+      try { wakeRecognition.start(); setWakeStatus('listening'); feedLog('Say "AiBusSol" to wake'); }
       catch(e) { setWakeStatus('unsupported'); }
     }
 
@@ -839,9 +782,8 @@ async def index():
     scene.add(dir);
 
     let model;
-    // Spin state — progress-based so it always completes exactly 360deg
-    const SPIN_INTERVAL = 100000; // ms between spins
-    const SPIN_DURATION = 2500;   // ms per spin
+    const SPIN_INTERVAL = 100000;
+    const SPIN_DURATION = 2500;
     let _lastSpin = Date.now();
     let _spinning = false;
     let _spinStartAngle = 0;
@@ -869,13 +811,12 @@ async def index():
         }
         if (_spinning) {
           const progress = Math.min((now - _spinStartTime) / SPIN_DURATION, 1);
-          // ease in-out for a smooth feel
           const eased = progress < 0.5
             ? 2 * progress * progress
             : 1 - Math.pow(-2 * progress + 2, 2) / 2;
           model.rotation.y = _spinStartAngle + eased * Math.PI * 2;
           if (progress >= 1) {
-            model.rotation.y = _spinStartAngle; // snap back to clean angle
+            model.rotation.y = _spinStartAngle;
             _spinning = false;
             _lastSpin = now;
           }
@@ -888,7 +829,7 @@ async def index():
 </body>
 </html>
 """
-    html = html.replace("__ATLAS_API_KEY__", API_KEY)
+    html = html.replace("__AIBUSSOL_API_KEY__", API_KEY)
     return HTMLResponse(
         content=html,
         headers={"Permissions-Policy": "microphone=*"},
@@ -908,7 +849,6 @@ async def chat(req: ChatRequest):
                 content = next((c.get("text", "") for c in content if c.get("type") == "text"), "")
             messages.append({"role": m["role"], "content": content})
 
-    # Build user content — vision if image present
     if req.image:
         user_content = [
             {"type": "text", "text": req.message},
@@ -926,7 +866,6 @@ async def chat(req: ChatRequest):
                 headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
                 json={"model": "gpt-4o", "messages": messages}
             )
-            # Guard: LiteLLM can return non-JSON on error
             try:
                 data = res.json()
             except Exception:
