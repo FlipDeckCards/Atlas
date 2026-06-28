@@ -135,7 +135,7 @@ async def index():
   <title>Atlas</title>
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
   <!-- model-viewer web component -->
-  <script type="module" src="/static/model-viewer.min.js"
+  <script type="module" src="/static/model-viewer.min.js"></script>
   <style>
     :root {
       --cyan: #00e5ff; --cyan-dim: #005f6b;
