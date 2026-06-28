@@ -1,10 +1,3 @@
-Thought (52s)
-Two issues:
-
-The inline @app.middleware("http") block inside create_app has a broken return response (extra leading space). It's also redundant — PermissionsMiddleware is already defined at the top and added via app.add_middleware(PermissionsMiddleware) later.
-from fastapi.middleware.cors import CORSMiddleware is buried inside the function — moving it to top-level imports.
-Here's the corrected file — remove the broken inline block entirely:
-
 """FastAPI application factory for the OpenJarvis API server."""
 
 
