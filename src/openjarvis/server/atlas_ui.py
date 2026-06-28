@@ -108,6 +108,12 @@ async def speak(req: ChatRequest):
             json={"text": req.message, "model_id": "eleven_monolingual_v1",
                   "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}}
         )
+        content_type = res.headers.get("content-type", "")
+        if res.status_code != 200 or "audio" not in content_type:
+            return JSONResponse(
+                {"error": f"ElevenLabs {res.status_code}", "detail": res.text[:300]},
+                status_code=502
+            )
         return StreamingResponse(iter([res.content]), media_type="audio/mpeg",
                                  headers={"Content-Disposition": "inline; filename=speech.mp3"})
 
