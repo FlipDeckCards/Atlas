@@ -13,7 +13,7 @@ API_KEY = os.getenv("OPENJARVIS_API_KEY", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
-ATLAS_MODEL_URL = os.getenv("ATLAS_MODEL_URL", "")  # ← CHANGED: GitHub Releases URL as env var
+ATLAS_MODEL_URL = os.getenv("ATLAS_MODEL_URL", "")
 
 OWNER_USER_ID = "michael"
 CHANNEL = "web"
@@ -52,7 +52,6 @@ class ChatRequest(BaseModel):
     message: str
 
 
-# ← CHANGED: proxy from GitHub Releases when not found locally
 @router.get("/static/atlas-model.glb")
 async def serve_model():
     path = _find_model()
@@ -76,19 +75,6 @@ async def serve_model():
         media_type="model/gltf-binary",
         headers={"Cache-Control": "public, max-age=86400"},
     )
-
-
-@router.get("/static/model-viewer.min.js")
-async def serve_model_viewer():
-    candidates = [
-        os.path.join(_HERE, "static", "model-viewer.min.js"),
-        os.path.join(_HERE, "..", "..", "static", "model-viewer.min.js"),
-        "/app/static/model-viewer.min.js",
-    ]
-    for p in candidates:
-        if os.path.exists(p):
-            return FileResponse(p, media_type="application/javascript")
-    return JSONResponse({"error": "model-viewer not found"}, status_code=404)
 
 
 @router.get("/api/session/history")
@@ -150,7 +136,6 @@ async def index():
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Atlas</title>
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
-  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
   <style>
     :root {
       --cyan: #00e5ff; --cyan-dim: #005f6b;
@@ -245,15 +230,9 @@ async def index():
     }
     @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
     #atlas-face {
-    position: relative;
-    width: 100%; height: 100%;
-    transition: filter 0.3s;
-    }
-
-    model-viewer {
+      position: relative;
       width: 100%; height: 100%;
-      background-color: transparent;
-      --poster-color: transparent;
+      transition: filter 0.3s;
     }
     #atlas-face-svg {
       position: absolute; top: 0; left: 0;
@@ -378,24 +357,7 @@ async def index():
         <div class="f-ring2"></div>
         <div id="atlas-face">
 
-          <!-- ← CHANGED: same-origin src, no crossorigin attr -->
-          <model-viewer
-          id="atlas-model"
-          src="https://modelviewer.dev/shared-assets/models/Astronaut.glb"
-          crossorigin="anonymous"
-          alt="Atlas 3D"
-          auto-rotate
-          auto-rotate-delay="500"
-          rotation-per-second="12deg"
-          camera-controls
-          camera-orbit="0deg 90deg auto"
-          min-camera-orbit="auto 60deg 1.2m"
-          max-camera-orbit="auto 100deg 4m"
-          environment-image="neutral"
-          shadow-intensity="0"
-          exposure="0.7"
-          tone-mapping="neutral"
-          ></model-viewer>
+          <canvas id="atlas-canvas" style="position:absolute;top:0;left:0;width:100%;height:100%;"></canvas>
 
           <svg id="atlas-face-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
             <line x1="20" y1="100" x2="180" y2="100"
@@ -450,7 +412,7 @@ async def index():
     const wakeDot    = document.getElementById('wake-dot');
     const wakeLabel  = document.getElementById('wake-label');
     const atlasFace  = document.getElementById('atlas-face');
-    const atlasModel = document.getElementById('atlas-model');
+    const atlasModel = null;
     const atlasState = document.getElementById('atlas-state');
     const centerSub  = document.getElementById('center-sub');
     const voiceStat  = document.getElementById('voice-status');
@@ -483,14 +445,12 @@ async def index():
     function setTalking(on) {
       if (on) {
         atlasFace.classList.add('talking');
-        if (atlasModel) atlasModel.removeAttribute('auto-rotate');
         atlasState.textContent = 'SPEAKING';
         atlasState.style.color = 'var(--orange)';
         centerSub.textContent  = 'TRANSMITTING AUDIO';
         voiceStat.textContent  = 'SPEAKING';
       } else {
         atlasFace.classList.remove('talking');
-        if (atlasModel) atlasModel.setAttribute('auto-rotate', '');
         atlasState.textContent = 'STANDBY';
         atlasState.style.color = 'var(--cyan)';
         centerSub.textContent  = 'WAITING FOR INPUT';
@@ -730,7 +690,7 @@ async def index():
       catch(e) { setWakeStatus('unsupported'); }
     }
 
-    function pauseWakeWord()  {
+    function pauseWakeWord() {
       if (!wakeRecognition) return;
       wakeActive = false;
       try { wakeRecognition.stop(); } catch(e){}
@@ -759,6 +719,42 @@ async def index():
     document.addEventListener('click',   maybeStartWakeWord);
     document.addEventListener('keydown', maybeStartWakeWord);
   </script>
+
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+    import { GLTFLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
+    const canvas = document.getElementById('atlas-canvas');
+    const wrap = document.getElementById('face-wrap');
+    const w = wrap.offsetWidth, h = wrap.offsetHeight;
+    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+    renderer.setSize(w, h);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setClearColor(0x000000, 0);
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(35, w / h, 0.1, 100);
+    camera.position.set(0, 0.5, 3);
+    scene.add(new THREE.AmbientLight(0x00e5ff, 0.8));
+    const dir = new THREE.DirectionalLight(0xffffff, 1);
+    dir.position.set(1, 2, 3);
+    scene.add(dir);
+    let model;
+    new GLTFLoader().load('/static/atlas-model.glb', (gltf) => {
+      model = gltf.scene;
+      const box = new THREE.Box3().setFromObject(model);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      const s = 1.8 / Math.max(size.x, size.y, size.z);
+      model.scale.setScalar(s);
+      model.position.sub(center.multiplyScalar(s));
+      scene.add(model);
+    }, undefined, (e) => console.error('GLB error:', e));
+    (function animate() {
+      requestAnimationFrame(animate);
+      if (model) model.rotation.y += 0.004;
+      renderer.render(scene, camera);
+    })();
+  </script>
+
 </body>
 </html>
 """
