@@ -245,14 +245,11 @@ async def index():
     }
     @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
     #atlas-face {
-      position: relative; width: 100%; height: 100%;
-      filter: drop-shadow(0 0 10px var(--cyan)) drop-shadow(0 0 22px rgba(0,229,255,0.25));
-      animation: idle-breathe 4s ease-in-out infinite;
-      transition: filter 0.3s;
+    position: relative;
+    width: 100%; height: 100%;
+    transition: filter 0.3s;
     }
-    #atlas-face.talking {
-      filter: drop-shadow(0 0 18px var(--cyan)) drop-shadow(0 0 40px rgba(0,229,255,0.55)) drop-shadow(0 0 10px var(--orange));
-    }
+
     model-viewer {
       width: 100%; height: 100%;
       background-color: transparent;
