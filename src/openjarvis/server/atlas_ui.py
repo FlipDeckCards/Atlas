@@ -215,7 +215,7 @@ async def index():
       font-family:'Orbitron',monospace; font-size:9px; letter-spacing:4px;
       color:var(--text-dim); margin-bottom:16px; text-transform:uppercase;
     }
-    #face-wrap { position:relative; width:420px; height:520px; }
+    #face-wrap { position:relative; width:600px; height:740px; }
     .f-ring {
       position:absolute; inset:-16px; border:1px solid rgba(0,229,255,0.15);
       border-radius:50%; animation:spin 20s linear infinite;
