@@ -215,7 +215,7 @@ async def index():
       font-family:'Orbitron',monospace; font-size:9px; letter-spacing:4px;
       color:var(--text-dim); margin-bottom:16px; text-transform:uppercase;
     }
-    #face-wrap { position:relative; width:240px; height:300px; }
+    #face-wrap { position:relative; width:420px; height:520px; }
     .f-ring {
       position:absolute; inset:-16px; border:1px solid rgba(0,229,255,0.15);
       border-radius:50%; animation:spin 20s linear infinite;
@@ -360,15 +360,7 @@ async def index():
           <canvas id="atlas-canvas" style="position:absolute;top:0;left:0;width:100%;height:100%;"></canvas>
 
           <svg id="atlas-face-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
-            <line x1="20" y1="100" x2="180" y2="100"
-                  stroke="#00e5ff" stroke-width="0.4" opacity="0.08"/>
-            <path id="mouth-upper" d="M 78 130 Q 100 127 122 130"
-                  fill="none" stroke="#a855f7" stroke-width="1.8" stroke-linecap="round" opacity="0.9"/>
-            <path id="mouth-lower" d="M 78 130 Q 100 133 122 130"
-                  fill="none" stroke="#a855f7" stroke-width="1.8" stroke-linecap="round" opacity="0.9"/>
-            <path id="mouth-fill"  d="M 78 130 Q 100 127 122 130 Q 100 133 78 130"
-                  fill="#2a0040" opacity="0"/>
-          </svg>
+        </svg>
 
         </div>
       </div>
