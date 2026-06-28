@@ -324,6 +324,61 @@ async def index():
     #upload-btn:hover { border-color:var(--cyan); color:var(--cyan); }
     #upload-btn.has-image { border-color:#00ff88; color:#00ff88; }
     #img-input { display:none; }
+    /* ── Mobile: phone layout ── */
+@media (max-width: 768px) {
+  body {
+    grid-template-rows: 40px 1fr;
+    overflow: hidden;
+  }
+  #hud-header {
+    padding: 0 12px;
+  }
+  #hud-title {
+    font-size: 13px;
+    letter-spacing: 2px;
+  }
+  .hud-meta {
+    display: none;
+  }
+  #hud-main {
+    grid-template-columns: 1fr;
+  }
+  #panel-left,
+  #panel-center {
+    display: none;
+  }
+  #panel-right {
+    border-left: none;
+    width: 100%;
+  }
+  #messages {
+    padding: 10px;
+  }
+  .msg {
+    max-width: 96%;
+    font-size: 13px;
+  }
+  #input-row {
+    padding: 8px 10px;
+    gap: 5px;
+  }
+  #input {
+    font-size: 14px;
+    padding: 10px 10px;
+  }
+  #send {
+    padding: 10px 10px;
+    font-size: 8px;
+    letter-spacing: 1px;
+  }
+  #mic, #upload-btn {
+    padding: 10px 10px;
+    font-size: 14px;
+  }
+  #img-preview-bar {
+    padding: 6px 10px 0;
+  }
+}
   </style>
 </head>
 <body>
