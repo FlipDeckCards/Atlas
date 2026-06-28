@@ -84,7 +84,12 @@ async def session_history():
     session = await store.get_or_create(OWNER_USER_ID, CHANNEL)
     return JSONResponse({
         "messages": [
-            {"role": m["role"], "content": m["content"] if isinstance(m["content"], str) else m["content"][0].get("text", "") if isinstance(m["content"], list) else str(m["content"])}
+            {
+                "role": m["role"],
+                "content": m["content"] if isinstance(m["content"], str)
+                           else next((c.get("text", "") for c in m["content"] if c.get("type") == "text"), "")
+                           if isinstance(m["content"], list) else str(m["content"])
+            }
             for m in session["conversation_history"]
             if m["role"] in ("user", "assistant")
         ]
@@ -166,7 +171,7 @@ async def index():
     #hud-title span { color: var(--orange); }
     .hud-meta { display: flex; gap: 24px; font-size: 11px; color: var(--text-dim); letter-spacing: 1px; }
     .hud-meta .v { color: var(--cyan); }
-    #hud-main { display: grid; grid-template-columns: 200px 1fr 320px; gap: 1px; overflow: hidden; }
+    #hud-main { display: grid; grid-template-columns: 200px 1fr 400px; gap: 1px; overflow: hidden; }
     #panel-left {
       background: var(--panel); border-right: 1px solid var(--border);
       display: flex; flex-direction: column; overflow: hidden;
@@ -231,8 +236,7 @@ async def index():
     }
     @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
     #atlas-face {
-      position: relative;
-      width: 100%; height: 100%;
+      position: relative; width: 100%; height: 100%;
       transition: filter 0.3s;
     }
     #atlas-face-svg {
@@ -247,11 +251,11 @@ async def index():
     }
     #panel-right {
       background:var(--panel); border-left:1px solid var(--border);
-      display:flex; flex-direction:column; overflow:hidden;
+      display:flex; flex-direction:column; overflow:hidden; min-width:0;
     }
     #chat-hdr {
       padding:12px 16px; border-bottom:1px solid var(--border);
-      display:flex; align-items:center; justify-content:space-between;
+      display:flex; align-items:center; justify-content:space-between; flex-shrink:0;
     }
     #wake-ind { display:flex; align-items:center; gap:6px; font-size:10px; color:var(--text-dim); }
     #wake-dot { width:6px; height:6px; border-radius:50%; background:#1a3a4a; transition:all 0.3s; }
@@ -262,52 +266,64 @@ async def index():
       flex:1; overflow-y:auto; padding:14px;
       display:flex; flex-direction:column; gap:10px;
       scrollbar-width:thin; scrollbar-color:var(--cyan-dim) transparent;
+      min-height:0;
     }
     #messages::-webkit-scrollbar{width:3px}
     #messages::-webkit-scrollbar-thumb{background:var(--cyan-dim);border-radius:2px}
     .msg { max-width:92%; padding:10px 12px; font-size:12px; line-height:1.6; border-radius:2px; }
     .msg-tag { font-size:9px; letter-spacing:2px; margin-bottom:4px; opacity:0.5; }
+    .msg-thumb {
+      margin-top:6px; border-radius:2px; overflow:hidden;
+      border:1px solid rgba(0,229,255,0.2); display:inline-block;
+    }
+    .msg-thumb img { display:block; max-width:160px; max-height:100px; object-fit:cover; }
     .user  { align-self:flex-end; background:rgba(255,109,0,0.08); border:1px solid rgba(255,109,0,0.25); color:#ffa040; }
     .user .msg-tag { color:var(--orange); }
     .atlas { align-self:flex-start; background:rgba(0,229,255,0.04); border:1px solid rgba(0,229,255,0.14); color:var(--text); }
     .atlas .msg-tag { color:var(--cyan); }
+    #input-area { flex-shrink:0; border-top:1px solid var(--border); }
+    #img-preview-bar {
+      display:none; align-items:center; gap:8px; padding:6px 12px 0;
+      font-size:10px; color:#00ff88;
+    }
+    #img-preview-bar img { width:36px; height:36px; object-fit:cover; border-radius:2px; border:1px solid rgba(0,255,136,0.3); }
+    #img-preview-bar .clear-img { cursor:pointer; color:var(--text-dim); font-size:14px; line-height:1; }
+    #img-preview-bar .clear-img:hover { color:#ff3344; }
     #input-row {
-      display:flex; padding:12px; gap:8px;
-      border-top:1px solid var(--border); align-items:center;
+      display:flex; padding:10px 12px; gap:6px; align-items:center;
     }
     #input {
-      flex:1; background:rgba(0,229,255,0.03); border:1px solid var(--border);
+      flex:1; min-width:0; background:rgba(0,229,255,0.03); border:1px solid var(--border);
       color:var(--text); padding:10px 12px; font-family:'Share Tech Mono',monospace;
       font-size:12px; letter-spacing:0.5px; outline:none; border-radius:2px;
     }
     #input:focus { border-color:var(--cyan); box-shadow:0 0 8px rgba(0,229,255,0.1); }
     #input::placeholder { color:var(--text-dim); }
     #send {
+      flex-shrink:0;
       background:transparent; border:1px solid var(--cyan); color:var(--cyan);
-      padding:10px 14px; font-family:'Orbitron',monospace; font-size:10px;
-      letter-spacing:2px; cursor:pointer; border-radius:2px; transition:all 0.2s;
+      padding:10px 12px; font-family:'Orbitron',monospace; font-size:9px;
+      letter-spacing:2px; cursor:pointer; border-radius:2px; transition:all 0.2s; white-space:nowrap;
     }
     #send:hover { background:rgba(0,229,255,0.1); box-shadow:0 0 12px rgba(0,229,255,0.2); }
     #send:disabled { opacity:0.3; cursor:not-allowed; }
     #mic {
+      flex-shrink:0;
       background:transparent; border:1px solid var(--border); color:var(--text-dim);
-      padding:10px 12px; font-size:15px; cursor:pointer; border-radius:2px; transition:all 0.2s;
+      padding:10px 11px; font-size:15px; cursor:pointer; border-radius:2px; transition:all 0.2s;
     }
     #mic:hover { border-color:var(--orange); color:var(--orange); }
     #mic.recording  { border-color:#ff3344; color:#ff3344; background:rgba(255,51,68,0.08); animation:blink 0.5s infinite; }
     #mic.processing { border-color:var(--orange); color:var(--orange); }
     #upload-btn {
+      flex-shrink:0;
       background:transparent; border:1px solid var(--border); color:var(--text-dim);
-      padding:10px 12px; font-size:15px; cursor:pointer; border-radius:2px;
+      padding:10px 11px; font-size:15px; cursor:pointer; border-radius:2px;
       transition:all 0.2s; display:flex; align-items:center; line-height:1;
     }
     #upload-btn:hover { border-color:var(--cyan); color:var(--cyan); }
     #upload-btn.has-image { border-color:#00ff88; color:#00ff88; }
     #img-input { display:none; }
-    #img-preview {
-      font-size:10px; color:#00ff88; display:none;
-      white-space:nowrap; overflow:hidden; max-width:80px;
-    }
   </style>
 </head>
 <body>
@@ -375,13 +391,19 @@ async def index():
         </div>
       </div>
       <div id="messages"></div>
-      <div id="input-row">
-        <button id="mic" title="Record">&#127897;</button>
-        <label id="upload-btn" for="img-input" title="Attach image">📎</label>
-        <input id="img-input" type="file" accept="image/*"/>
-        <span id="img-preview"></span>
-        <input id="input" type="text" placeholder='Type or say "Atlas..."' autocomplete="off"/>
-        <button id="send">SEND</button>
+      <div id="input-area">
+        <div id="img-preview-bar">
+          <img id="img-preview-thumb" src="" alt="preview"/>
+          <span id="img-preview-name"></span>
+          <span class="clear-img" id="clear-img" title="Remove image">✕</span>
+        </div>
+        <div id="input-row">
+          <button id="mic" title="Record">&#127897;</button>
+          <label id="upload-btn" for="img-input" title="Attach image">📎</label>
+          <input id="img-input" type="file" accept="image/*"/>
+          <input id="input" type="text" placeholder='Type or say "Atlas..."' autocomplete="off"/>
+          <button id="send">SEND</button>
+        </div>
       </div>
     </div>
 
@@ -398,25 +420,43 @@ async def index():
     const atlasState = document.getElementById('atlas-state');
     const centerSub  = document.getElementById('center-sub');
     const voiceStat  = document.getElementById('voice-status');
-    const imgInput   = document.getElementById('img-input');
-    const imgPreview = document.getElementById('img-preview');
-    const uploadBtn  = document.getElementById('upload-btn');
-    const API_KEY    = '__ATLAS_API_KEY__';
+    const imgInput      = document.getElementById('img-input');
+    const imgPreviewBar = document.getElementById('img-preview-bar');
+    const imgPreviewThumb = document.getElementById('img-preview-thumb');
+    const imgPreviewName  = document.getElementById('img-preview-name');
+    const clearImgBtn   = document.getElementById('clear-img');
+    const uploadBtn     = document.getElementById('upload-btn');
+    const API_KEY       = '__ATLAS_API_KEY__';
 
-    let pendingImageB64 = null;
+    let pendingImageB64     = null;
+    let pendingImageDataUrl = null;
+
+    function clearPendingImage() {
+      pendingImageB64 = null;
+      pendingImageDataUrl = null;
+      imgPreviewBar.style.display = 'none';
+      imgPreviewThumb.src = '';
+      imgPreviewName.textContent = '';
+      uploadBtn.classList.remove('has-image');
+      imgInput.value = '';
+    }
 
     imgInput.addEventListener('change', () => {
       const file = imgInput.files[0];
       if (!file) return;
       const reader = new FileReader();
       reader.onload = (e) => {
+        pendingImageDataUrl = e.target.result;
         pendingImageB64 = e.target.result.split(',')[1];
-        imgPreview.textContent = '📷 ' + file.name.slice(0, 14);
-        imgPreview.style.display = 'inline';
+        imgPreviewThumb.src = pendingImageDataUrl;
+        imgPreviewName.textContent = file.name.slice(0, 20);
+        imgPreviewBar.style.display = 'flex';
         uploadBtn.classList.add('has-image');
       };
       reader.readAsDataURL(file);
     });
+
+    clearImgBtn.addEventListener('click', clearPendingImage);
 
     const uptimeStart = Date.now();
     setInterval(() => {
@@ -489,7 +529,7 @@ async def index():
       if (lines.length > 12) lines[0].remove();
     }
 
-    function addMsg(role, text) {
+    function addMsg(role, text, imageDataUrl) {
       const wrap = document.createElement('div');
       wrap.className = 'msg ' + (role === 'user' ? 'user' : 'atlas');
       const tag = document.createElement('div');
@@ -499,6 +539,15 @@ async def index():
       body.textContent = text;
       wrap.appendChild(tag);
       wrap.appendChild(body);
+      if (imageDataUrl) {
+        const thumb = document.createElement('div');
+        thumb.className = 'msg-thumb';
+        const img = document.createElement('img');
+        img.src = imageDataUrl;
+        img.alt = 'attached image';
+        thumb.appendChild(img);
+        wrap.appendChild(thumb);
+      }
       messagesEl.appendChild(wrap);
       messagesEl.scrollTop = messagesEl.scrollHeight;
       return wrap;
@@ -510,7 +559,7 @@ async def index():
           headers: { 'Authorization': 'Bearer ' + API_KEY }
         });
         const data = await res.json();
-        (data.messages || []).forEach(m => addMsg(m.role, m.content));
+        (data.messages || []).forEach(m => addMsg(m.role, m.content, null));
         if ((data.messages || []).length) feedLog('Session history loaded');
       } catch(e) { console.warn('History load failed:', e.message); }
     }
@@ -521,16 +570,13 @@ async def index():
       inputEl.value = '';
       sendBtn.disabled = true;
 
-      const imageToSend = pendingImageB64;
-      pendingImageB64 = null;
-      imgPreview.style.display = 'none';
-      imgPreview.textContent = '';
-      uploadBtn.classList.remove('has-image');
-      imgInput.value = '';
+      const imageToSend    = pendingImageB64;
+      const imageDataUrl   = pendingImageDataUrl;
+      clearPendingImage();
 
-      addMsg('user', text + (imageToSend ? '  📷' : ''));
+      addMsg('user', text, imageDataUrl);
       feedLog('You: ' + text.slice(0, 40) + (text.length > 40 ? '...' : ''));
-      const thinking = addMsg('atlas', 'Processing...');
+      const thinking = addMsg('atlas', 'Processing...', null);
       thinking.querySelector('div:last-child').style.color = 'var(--text-dim)';
       atlasState.textContent = 'THINKING';
       atlasState.style.color = 'var(--orange)';
@@ -545,7 +591,7 @@ async def index():
         const data = await res.json();
         thinking.remove();
         const reply = data.reply || data.detail || 'No response';
-        addMsg('atlas', reply);
+        addMsg('atlas', reply, null);
         feedLog('Atlas responded');
         speakReply(reply);
       } catch(e) {
@@ -569,23 +615,14 @@ async def index():
         const url   = URL.createObjectURL(blob);
         const audio = new Audio(url);
 
-        let audioCtx, analyser, dataArray, animating = false;
+        let audioCtx, animating = false;
         try {
           audioCtx = new (window.AudioContext || window.webkitAudioContext)();
           const src = audioCtx.createMediaElementSource(audio);
-          analyser  = audioCtx.createAnalyser();
-          analyser.fftSize = 256;
-          src.connect(analyser);
-          analyser.connect(audioCtx.destination);
-          dataArray = new Uint8Array(analyser.frequencyBinCount);
+          src.connect(audioCtx.destination);
         } catch(e) { console.warn('Web Audio setup failed:', e.message); }
 
-        function animateMouth() {
-          if (!animating) return;
-          requestAnimationFrame(animateMouth);
-        }
-
-        audio.onplay  = () => { animating = true;  setTalking(true);  animateMouth(); };
+        audio.onplay  = () => { animating = true; setTalking(true); };
         audio.onended = () => {
           animating = false;
           setTalking(false);
@@ -731,7 +768,16 @@ async def index():
     const dir = new THREE.DirectionalLight(0xffffff, 1);
     dir.position.set(1, 2, 3);
     scene.add(dir);
+
     let model;
+    // Spin state — progress-based so it always completes exactly 360deg
+    const SPIN_INTERVAL = 100000; // ms between spins
+    const SPIN_DURATION = 2500;   // ms per spin
+    let _lastSpin = Date.now();
+    let _spinning = false;
+    let _spinStartAngle = 0;
+    let _spinStartTime = 0;
+
     new GLTFLoader().load('/static/atlas-model.glb', function(gltf) {
       model = gltf.scene;
       const box = new THREE.Box3().setFromObject(model);
@@ -747,18 +793,22 @@ async def index():
       requestAnimationFrame(animate);
       if (model) {
         const now = Date.now();
-        if (!window._lastSpin) window._lastSpin = now;
-        if (window._spinning === undefined) window._spinning = false;
-        if (!window._spinStart) window._spinStart = 0;
-        if (!window._spinning && now - window._lastSpin > 100000) {
-          window._spinning = true;
-          window._spinStart = now;
+        if (!_spinning && now - _lastSpin > SPIN_INTERVAL) {
+          _spinning = true;
+          _spinStartAngle = model.rotation.y;
+          _spinStartTime = now;
         }
-        if (window._spinning) {
-          model.rotation.y += 0.015;
-          if (now - window._spinStart > 2000) {
-            window._spinning = false;
-            window._lastSpin = now;
+        if (_spinning) {
+          const progress = Math.min((now - _spinStartTime) / SPIN_DURATION, 1);
+          // ease in-out for a smooth feel
+          const eased = progress < 0.5
+            ? 2 * progress * progress
+            : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+          model.rotation.y = _spinStartAngle + eased * Math.PI * 2;
+          if (progress >= 1) {
+            model.rotation.y = _spinStartAngle; // snap back to clean angle
+            _spinning = false;
+            _lastSpin = now;
           }
         }
       }
@@ -789,21 +839,37 @@ async def chat(req: ChatRequest):
                 content = next((c.get("text", "") for c in content if c.get("type") == "text"), "")
             messages.append({"role": m["role"], "content": content})
 
-    user_content = [
-        {"type": "text", "text": req.message},
-        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{req.image}"}}
-    ] if req.image else req.message
+    # Build user content — vision if image present
+    if req.image:
+        user_content = [
+            {"type": "text", "text": req.message},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{req.image}"}}
+        ]
+    else:
+        user_content = req.message
 
     messages.append({"role": "user", "content": user_content})
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        res = await client.post(
-            "http://localhost:10000/v1/chat/completions",
-            headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
-            json={"model": "gpt-4o", "messages": messages}
-        )
-        data  = res.json()
-        reply = data["choices"][0]["message"]["content"]
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            res = await client.post(
+                "http://localhost:10000/v1/chat/completions",
+                headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
+                json={"model": "gpt-4o", "messages": messages}
+            )
+            # Guard: LiteLLM can return non-JSON on error
+            try:
+                data = res.json()
+            except Exception:
+                return JSONResponse({"reply": f"Backend error: {res.text[:200]}"})
+
+            if "choices" not in data:
+                err = data.get("error", {})
+                return JSONResponse({"reply": f"Model error: {err.get('message', str(data)[:200])}"})
+
+            reply = data["choices"][0]["message"]["content"]
+    except Exception as e:
+        return JSONResponse({"reply": f"Connection error: {str(e)[:200]}"})
 
     await store.append_message(OWNER_USER_ID, CHANNEL, "user",      req.message)
     await store.append_message(OWNER_USER_ID, CHANNEL, "assistant", reply)
