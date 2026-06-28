@@ -1,21 +1,19 @@
 import os
 import httpx
-from fastapi import APIRouter, File, UploadFile
-from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse, FileResponse, Response
+from fastapi import APIRouter, File, UploadFile, Request
+from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse, FileResponse
 from pydantic import BaseModel
 from typing import Optional
 
-from openjarvis.server.session_store import SessionStore
 
 router = APIRouter()
 
-API_KEY = os.getenv("OPENJARVIS_API_KEY", "")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+API_KEY            = os.getenv("OPENJARVIS_API_KEY", "")
+OPENAI_API_KEY     = os.getenv("OPENAI_API_KEY", "")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
-ATLAS_MODEL_URL = os.getenv("ATLAS_MODEL_URL", "")
+ATLAS_MODEL_URL    = os.getenv("ATLAS_MODEL_URL", "")
 
-OWNER_USER_ID = "michael"
 CHANNEL = "web"
 
 SYSTEM_PROMPT = """You are AiBusSol, a personal AI hub and orchestrator built by Michael.
@@ -23,7 +21,6 @@ You have persistent memory and can handle a wide range of tasks with intelligenc
 You are not OpenJarvis — you are AiBusSol.
 Be direct, sharp, and helpful."""
 
-_store: Optional[SessionStore] = None
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _MODEL_CANDIDATES = [
@@ -40,28 +37,22 @@ def _find_model() -> Optional[str]:
     return None
 
 
-async def get_store() -> SessionStore:
-    global _store
-    if _store is None:
-        _store = SessionStore()
-        await _store.connect()
-    return _store
+def _get_user_id(request: Request) -> str:
+    """JWT user_id set by AuthMiddleware; fall back to system for API-key clients."""
+    return getattr(request.state, "user_id", "system")
 
 
 class ChatRequest(BaseModel):
     message: str
-    image: Optional[str] = None  # base64 encoded image
+    image: Optional[str] = None
 
 
 @router.get("/static/atlas-model.glb")
 async def serve_model():
     path = _find_model()
     if path:
-        return FileResponse(
-            path,
-            media_type="model/gltf-binary",
-            headers={"Cache-Control": "public, max-age=86400"},
-        )
+        return FileResponse(path, media_type="model/gltf-binary",
+                            headers={"Cache-Control": "public, max-age=86400"})
     if not ATLAS_MODEL_URL:
         return JSONResponse({"error": "ATLAS_MODEL_URL not set"}, status_code=404)
 
@@ -71,24 +62,24 @@ async def serve_model():
                 async for chunk in r.aiter_bytes(chunk_size=65536):
                     yield chunk
 
-    return StreamingResponse(
-        stream_glb(),
-        media_type="model/gltf-binary",
-        headers={"Cache-Control": "public, max-age=86400"},
-    )
+    return StreamingResponse(stream_glb(), media_type="model/gltf-binary",
+                             headers={"Cache-Control": "public, max-age=86400"})
 
 
 @router.get("/api/session/history")
-async def session_history():
-    store = await get_store()
-    session = await store.get_or_create(OWNER_USER_ID, CHANNEL)
+async def session_history(request: Request):
+    user_id = _get_user_id(request)
+    request.app.state.session_store
+    session = await store.get_or_create(user_id, CHANNEL)
     return JSONResponse({
         "messages": [
             {
                 "role": m["role"],
-                "content": m["content"] if isinstance(m["content"], str)
-                           else next((c.get("text", "") for c in m["content"] if c.get("type") == "text"), "")
-                           if isinstance(m["content"], list) else str(m["content"])
+                "content": (
+                    m["content"] if isinstance(m["content"], str)
+                    else next((c.get("text","") for c in m["content"] if c.get("type")=="text"), "")
+                    if isinstance(m["content"], list) else str(m["content"])
+                )
             }
             for m in session["conversation_history"]
             if m["role"] in ("user", "assistant")
@@ -106,8 +97,7 @@ async def transcribe(audio: UploadFile = File(...)):
             files={"file": (audio.filename or "audio.webm", audio_bytes, audio.content_type or "audio/webm")},
             data={"model": "whisper-1"}
         )
-        data = res.json()
-        return JSONResponse({"text": data.get("text", "")})
+        return JSONResponse({"text": res.json().get("text", "")})
 
 
 @router.post("/api/voice/speak")
@@ -115,26 +105,17 @@ async def speak(req: ChatRequest):
     async with httpx.AsyncClient(timeout=30) as client:
         res = await client.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
-            headers={
-                "xi-api-key": ELEVENLABS_API_KEY,
-                "Content-Type": "application/json"
-            },
-            json={
-                "text": req.message,
-                "model_id": "eleven_monolingual_v1",
-                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
-            }
+            headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
+            json={"text": req.message, "model_id": "eleven_monolingual_v1",
+                  "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}}
         )
-        return StreamingResponse(
-            iter([res.content]),
-            media_type="audio/mpeg",
-            headers={"Content-Disposition": "inline; filename=speech.mp3"}
-        )
+        return StreamingResponse(iter([res.content]), media_type="audio/mpeg",
+                                 headers={"Content-Disposition": "inline; filename=speech.mp3"})
 
 
 @router.get("/")
 async def index():
-    html = """
+    html = r"""
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -160,6 +141,65 @@ async def index():
         linear-gradient(90deg, rgba(0,229,255,0.018) 1px, transparent 1px);
       background-size: 44px 44px;
     }
+
+    /* ── Auth Overlay ── */
+    #auth-overlay {
+      position: fixed; inset: 0; z-index: 9999;
+      background: var(--bg);
+      display: flex; align-items: center; justify-content: center;
+      background-image:
+        linear-gradient(rgba(0,229,255,0.018) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,229,255,0.018) 1px, transparent 1px);
+      background-size: 44px 44px;
+    }
+    #auth-box {
+      background: var(--panel); border: 1px solid var(--cyan-dim);
+      padding: 40px 36px; width: 380px; display: flex; flex-direction: column; gap: 18px;
+      position: relative;
+    }
+    .auth-corner { position:absolute; width:14px; height:14px; border-color:var(--cyan); border-style:solid; }
+    .auth-corner.tl{top:8px;left:8px;border-width:1px 0 0 1px}
+    .auth-corner.tr{top:8px;right:8px;border-width:1px 1px 0 0}
+    .auth-corner.bl{bottom:8px;left:8px;border-width:0 0 1px 1px}
+    .auth-corner.br{bottom:8px;right:8px;border-width:0 1px 1px 0}
+    #auth-title {
+      font-family: 'Orbitron', monospace; font-size: 20px; font-weight: 900;
+      color: var(--cyan); letter-spacing: 4px; text-shadow: 0 0 20px var(--cyan);
+      text-align: center;
+    }
+    #auth-title span { color: var(--orange); }
+    #auth-mode-label {
+      font-size: 9px; letter-spacing: 4px; color: var(--text-dim);
+      text-align: center; text-transform: uppercase;
+    }
+    .auth-field { display: flex; flex-direction: column; gap: 6px; }
+    .auth-field label { font-size: 9px; letter-spacing: 3px; color: var(--text-dim); text-transform: uppercase; }
+    .auth-field input {
+      background: rgba(0,229,255,0.03); border: 1px solid var(--border);
+      color: var(--text); padding: 10px 12px;
+      font-family: 'Share Tech Mono', monospace; font-size: 13px;
+      outline: none; letter-spacing: 1px; width: 100%;
+    }
+    .auth-field input:focus { border-color: var(--cyan); box-shadow: 0 0 8px rgba(0,229,255,0.1); }
+    #auth-btn {
+      background: transparent; border: 1px solid var(--cyan); color: var(--cyan);
+      padding: 13px; font-family: 'Orbitron', monospace; font-size: 10px;
+      letter-spacing: 3px; cursor: pointer; transition: all 0.2s; margin-top: 4px;
+    }
+    #auth-btn:hover { background: rgba(0,229,255,0.1); box-shadow: 0 0 16px rgba(0,229,255,0.25); }
+    #auth-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    #auth-error { font-size: 10px; color: #ff3344; text-align: center; letter-spacing: 1px; min-height: 14px; }
+    #auth-toggle {
+      font-size: 10px; color: var(--text-dim); text-align: center;
+      letter-spacing: 1px; cursor: default;
+    }
+    #auth-toggle-link { color: var(--cyan); cursor: pointer; text-decoration: underline; }
+    #auth-toggle-link:hover { color: #fff; }
+    #auth-display-wrap { display: none; }
+
+    /* ── HUD (hidden until authed) ── */
+    .hud-hidden { display: none !important; }
+
     #hud-header {
       background: var(--panel); border-bottom: 1px solid var(--border);
       display: flex; align-items: center; justify-content: space-between; padding: 0 20px;
@@ -169,8 +209,14 @@ async def index():
       color: var(--cyan); letter-spacing: 4px; text-shadow: 0 0 20px var(--cyan);
     }
     #hud-title span { color: var(--orange); }
-    .hud-meta { display: flex; gap: 24px; font-size: 11px; color: var(--text-dim); letter-spacing: 1px; }
+    .hud-meta { display: flex; gap: 24px; font-size: 11px; color: var(--text-dim); letter-spacing: 1px; align-items: center; }
     .hud-meta .v { color: var(--cyan); }
+    #logout-btn {
+      background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+      padding: 4px 10px; font-family: 'Orbitron', monospace; font-size: 8px;
+      letter-spacing: 2px; cursor: pointer; transition: all 0.2s; border-radius: 2px;
+    }
+    #logout-btn:hover { border-color: #ff3344; color: #ff3344; }
     #hud-main { display: grid; grid-template-columns: 200px 1fr 400px; gap: 1px; overflow: hidden; }
     #panel-left {
       background: var(--panel); border-right: 1px solid var(--border);
@@ -190,10 +236,7 @@ async def index():
     .stat-row .val.g { color: #00ff88; }
     .stat-row .val.o { color: var(--orange); }
     .stat-row .val.d { color: #335566; }
-    #live-feed {
-      flex: 1; padding: 14px 16px; overflow: hidden;
-      font-size: 10px; line-height: 1.9; letter-spacing: 0.5px;
-    }
+    #live-feed { flex: 1; padding: 14px 16px; overflow: hidden; font-size: 10px; line-height: 1.9; letter-spacing: 0.5px; }
     .feed-line { color: var(--text-dim); transition: color 0.5s, opacity 0.5s; }
     @keyframes blink { 0%,100%{opacity:1}50%{opacity:0.3} }
     #panel-center {
@@ -228,20 +271,10 @@ async def index():
       border-radius:50%; animation:spin 35s linear infinite reverse;
     }
     @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
-    #atlas-face {
-      position: relative; width: 100%; height: 100%;
-      transition: filter 0.3s;
-    }
-    #atlas-face-svg {
-      position: absolute; top: 0; left: 0;
-      width: 100%; height: 100%; pointer-events: none;
-    }
-    .face-state {
-      margin-top:16px; text-align:center; font-size:11px; letter-spacing:3px; color:var(--text-dim);
-    }
-    #atlas-state {
-      font-family:'Orbitron',monospace; font-size:10px; color:var(--cyan); margin-bottom:4px;
-    }
+    #atlas-face { position: relative; width: 100%; height: 100%; transition: filter 0.3s; }
+    #atlas-face-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+    .face-state { margin-top:16px; text-align:center; font-size:11px; letter-spacing:3px; color:var(--text-dim); }
+    #atlas-state { font-family:'Orbitron',monospace; font-size:10px; color:var(--cyan); margin-bottom:4px; }
     #panel-right {
       background:var(--panel); border-left:1px solid var(--border);
       display:flex; flex-direction:column; overflow:hidden; min-width:0;
@@ -256,35 +289,25 @@ async def index():
     #wake-dot.recording  { background:#ff3344; box-shadow:0 0 8px #ff3344; animation:blink 0.4s infinite; }
     #wake-dot.processing { background:var(--orange); box-shadow:0 0 8px var(--orange); animation:blink 0.8s infinite; }
     #messages {
-      flex:1; overflow-y:auto; padding:14px;
-      display:flex; flex-direction:column; gap:10px;
-      scrollbar-width:thin; scrollbar-color:var(--cyan-dim) transparent;
-      min-height:0;
+      flex:1; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:10px;
+      scrollbar-width:thin; scrollbar-color:var(--cyan-dim) transparent; min-height:0;
     }
     #messages::-webkit-scrollbar{width:3px}
     #messages::-webkit-scrollbar-thumb{background:var(--cyan-dim);border-radius:2px}
     .msg { max-width:92%; padding:10px 12px; font-size:12px; line-height:1.6; border-radius:2px; }
     .msg-tag { font-size:9px; letter-spacing:2px; margin-bottom:4px; opacity:0.5; }
-    .msg-thumb {
-      margin-top:6px; border-radius:2px; overflow:hidden;
-      border:1px solid rgba(0,229,255,0.2); display:inline-block;
-    }
+    .msg-thumb { margin-top:6px; border-radius:2px; overflow:hidden; border:1px solid rgba(0,229,255,0.2); display:inline-block; }
     .msg-thumb img { display:block; max-width:160px; max-height:100px; object-fit:cover; }
     .user  { align-self:flex-end; background:rgba(255,109,0,0.08); border:1px solid rgba(255,109,0,0.25); color:#ffa040; }
     .user .msg-tag { color:var(--orange); }
     .atlas { align-self:flex-start; background:rgba(0,229,255,0.04); border:1px solid rgba(0,229,255,0.14); color:var(--text); }
     .atlas .msg-tag { color:var(--cyan); }
     #input-area { flex-shrink:0; border-top:1px solid var(--border); }
-    #img-preview-bar {
-      display:none; align-items:center; gap:8px; padding:6px 12px 0;
-      font-size:10px; color:#00ff88;
-    }
+    #img-preview-bar { display:none; align-items:center; gap:8px; padding:6px 12px 0; font-size:10px; color:#00ff88; }
     #img-preview-bar img { width:36px; height:36px; object-fit:cover; border-radius:2px; border:1px solid rgba(0,255,136,0.3); }
     #img-preview-bar .clear-img { cursor:pointer; color:var(--text-dim); font-size:14px; line-height:1; }
     #img-preview-bar .clear-img:hover { color:#ff3344; }
-    #input-row {
-      display:flex; padding:10px 12px; gap:6px; align-items:center;
-    }
+    #input-row { display:flex; padding:10px 12px; gap:6px; align-items:center; }
     #input {
       flex:1; min-width:0; background:rgba(0,229,255,0.03); border:1px solid var(--border);
       color:var(--text); padding:10px 12px; font-family:'Share Tech Mono',monospace;
@@ -293,47 +316,35 @@ async def index():
     #input:focus { border-color:var(--cyan); box-shadow:0 0 8px rgba(0,229,255,0.1); }
     #input::placeholder { color:var(--text-dim); }
     #send {
-      flex-shrink:0;
-      background:transparent; border:1px solid var(--cyan); color:var(--cyan);
+      flex-shrink:0; background:transparent; border:1px solid var(--cyan); color:var(--cyan);
       padding:10px 12px; font-family:'Orbitron',monospace; font-size:9px;
       letter-spacing:2px; cursor:pointer; border-radius:2px; transition:all 0.2s; white-space:nowrap;
     }
     #send:hover { background:rgba(0,229,255,0.1); box-shadow:0 0 12px rgba(0,229,255,0.2); }
     #send:disabled { opacity:0.3; cursor:not-allowed; }
     #mic {
-      flex-shrink:0;
-      background:transparent; border:1px solid var(--border); color:var(--text-dim);
+      flex-shrink:0; background:transparent; border:1px solid var(--border); color:var(--text-dim);
       padding:10px 11px; font-size:15px; cursor:pointer; border-radius:2px; transition:all 0.2s;
     }
     #mic:hover { border-color:var(--orange); color:var(--orange); }
     #mic.recording  { border-color:#ff3344; color:#ff3344; background:rgba(255,51,68,0.08); animation:blink 0.5s infinite; }
     #mic.processing { border-color:var(--orange); color:var(--orange); }
     #upload-btn {
-      flex-shrink:0;
-      background:transparent; border:1px solid var(--border); color:var(--text-dim);
+      flex-shrink:0; background:transparent; border:1px solid var(--border); color:var(--text-dim);
       padding:10px 11px; font-size:15px; cursor:pointer; border-radius:2px;
       transition:all 0.2s; display:flex; align-items:center; line-height:1;
     }
     #upload-btn:hover { border-color:var(--cyan); color:var(--cyan); }
     #upload-btn.has-image { border-color:#00ff88; color:#00ff88; }
     #img-input { display:none; }
-    /* ── Mobile: phone layout ── */
     @media (max-width: 768px) {
-      body {
-        grid-template-rows: 40px 1fr;
-        overflow: hidden;
-        height: 100vh;
-        height: 100dvh;
-      }
+      body { grid-template-rows: 40px 1fr; overflow: hidden; height: 100dvh; }
       #hud-header { padding: 0 12px; }
       #hud-title { font-size: 13px; letter-spacing: 2px; }
-      .hud-meta { display: none; }
+      .hud-meta { gap: 8px; }
       #hud-main { grid-template-columns: 1fr; height: 100%; overflow: hidden; }
       #panel-left, #panel-center { display: none; }
-      #panel-right {
-        border-left: none; width: 100%; height: 100%;
-        display: flex; flex-direction: column; overflow: hidden;
-      }
+      #panel-right { border-left: none; width: 100%; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
       #messages { flex: 1; min-height: 0; padding: 10px; overflow-y: auto; }
       #input-area { flex-shrink: 0; }
       .msg { max-width: 96%; font-size: 13px; }
@@ -341,22 +352,54 @@ async def index():
       #input { font-size: 14px; padding: 10px 10px; }
       #send { padding: 10px 10px; font-size: 8px; letter-spacing: 1px; }
       #mic, #upload-btn { padding: 10px 10px; font-size: 14px; }
-      #img-preview-bar { padding: 6px 10px 0; }
+      #auth-box { width: 92vw; padding: 28px 20px; }
     }
   </style>
 </head>
 <body>
 
-  <div id="hud-header">
-    <div id="hud-title">AIBUS<span>SOL</span></div>
-    <div class="hud-meta">
-      <span>OPERATOR: <span class="v">MICHAEL</span></span>
-      <span>SESSION: <span class="v">WEB-01</span></span>
-      <span>UPTIME: <span class="v" id="uptime">00:00:00</span></span>
+  <!-- ══ AUTH OVERLAY ══ -->
+  <div id="auth-overlay">
+    <div id="auth-box">
+      <div class="auth-corner tl"></div>
+      <div class="auth-corner tr"></div>
+      <div class="auth-corner bl"></div>
+      <div class="auth-corner br"></div>
+      <div id="auth-title">AIBUS<span>SOL</span></div>
+      <div id="auth-mode-label">OPERATOR AUTHENTICATION</div>
+      <div class="auth-field" id="auth-display-wrap">
+        <label>Display Name</label>
+        <input id="auth-display" type="text" placeholder="e.g. Michael" autocomplete="name"/>
+      </div>
+      <div class="auth-field">
+        <label>Email</label>
+        <input id="auth-email" type="email" placeholder="[email]" autocomplete="email"/>
+      </div>
+      <div class="auth-field">
+        <label>Password</label>
+        <input id="auth-password" type="password" placeholder="••••••••" autocomplete="current-password"/>
+      </div>
+      <div id="auth-error"></div>
+      <button id="auth-btn">ACCESS SYSTEM</button>
+      <div id="auth-toggle">
+        <span id="auth-toggle-text">NO ACCESS YET? </span>
+        <span id="auth-toggle-link" onclick="toggleAuthMode()">REGISTER</span>
+      </div>
     </div>
   </div>
 
-  <div id="hud-main">
+  <!-- ══ HUD ══ -->
+  <div id="hud-header" class="hud-hidden">
+    <div id="hud-title">AIBUS<span>SOL</span></div>
+    <div class="hud-meta">
+      <span>OPERATOR: <span class="v" id="operator-name">—</span></span>
+      <span>SESSION: <span class="v">WEB-01</span></span>
+      <span>UPTIME: <span class="v" id="uptime">00:00:00</span></span>
+      <button id="logout-btn" onclick="logout()">LOGOUT</button>
+    </div>
+  </div>
+
+  <div id="hud-main" class="hud-hidden">
 
     <div id="panel-left">
       <div class="sys-block">
@@ -422,7 +465,125 @@ async def index():
   </div>
 
   <script>
-    const messagesEl = document.getElementById('messages');
+    /* ── Token helpers ── */
+    const TOKEN_KEY = 'aibussol_token';
+
+    function getToken()       { return localStorage.getItem(TOKEN_KEY); }
+    function setToken(t)      { localStorage.setItem(TOKEN_KEY, t); }
+    function clearToken()     { localStorage.removeItem(TOKEN_KEY); }
+    function authHeader()     { return { 'Authorization': 'Bearer ' + getToken() }; }
+    function jsonAuthHeader() { return { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() }; }
+
+    function parseJwt(token) {
+      try {
+        const b64 = token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
+        return JSON.parse(atob(b64));
+      } catch { return {}; }
+    }
+
+    /* ── Auth mode ── */
+    let authMode = 'login';
+
+    function toggleAuthMode() {
+      authMode = authMode === 'login' ? 'register' : 'login';
+      document.getElementById('auth-mode-label').textContent =
+        authMode === 'login' ? 'OPERATOR AUTHENTICATION' : 'NEW OPERATOR REGISTRATION';
+      document.getElementById('auth-btn').textContent =
+        authMode === 'login' ? 'ACCESS SYSTEM' : 'CREATE ACCOUNT';
+      document.getElementById('auth-toggle-text').textContent =
+        authMode === 'login' ? 'NO ACCESS YET? ' : 'ALREADY REGISTERED? ';
+      document.getElementById('auth-toggle-link').textContent =
+        authMode === 'login' ? 'REGISTER' : 'LOGIN';
+      document.getElementById('auth-display-wrap').style.display =
+        authMode === 'register' ? 'flex' : 'none';
+      document.getElementById('auth-error').textContent = '';
+    }
+
+    document.getElementById('auth-btn').addEventListener('click', handleAuth);
+    document.getElementById('auth-password').addEventListener('keydown', e => {
+      if (e.key === 'Enter') handleAuth();
+    });
+
+    async function handleAuth() {
+      const email    = document.getElementById('auth-email').value.trim();
+      const password = document.getElementById('auth-password').value;
+      const errorEl  = document.getElementById('auth-error');
+      const btn      = document.getElementById('auth-btn');
+
+      if (!email || !password) { errorEl.textContent = 'EMAIL AND PASSWORD REQUIRED'; return; }
+
+      errorEl.textContent = '';
+      btn.disabled = true;
+      btn.textContent = 'CONNECTING...';
+
+      const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+      const body = authMode === 'login'
+        ? { email, password }
+        : { email, password, display_name: document.getElementById('auth-display').value.trim() || email.split('@')[0] };
+
+      try {
+        const res  = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (res.ok && data.token) {
+          setToken(data.token);
+          showHUD();
+        } else {
+          errorEl.textContent = (data.detail || 'AUTHENTICATION FAILED').toUpperCase();
+        }
+      } catch(e) {
+        errorEl.textContent = 'CONNECTION ERROR';
+      }
+
+      btn.disabled = false;
+      btn.textContent = authMode === 'login' ? 'ACCESS SYSTEM' : 'CREATE ACCOUNT';
+    }
+
+    function logout() {
+      clearToken();
+      location.reload();
+    }
+
+    /* ── HUD bootstrap ── */
+    function showHUD() {
+      document.getElementById('auth-overlay').style.display = 'none';
+      document.getElementById('hud-header').classList.remove('hud-hidden');
+      document.getElementById('hud-main').classList.remove('hud-hidden');
+
+      const payload = parseJwt(getToken());
+      const email   = payload.email || '';
+      document.getElementById('operator-name').textContent =
+        email ? email.split('@')[0].toUpperCase() : 'OPERATOR';
+
+      loadHistory();
+      startUptimeClock();
+    }
+
+    /* Check on load */
+    if (getToken()) {
+      showHUD();
+    }
+    /* else: overlay stays visible */
+
+    /* ── Uptime clock ── */
+    let _uptimeStarted = false;
+    function startUptimeClock() {
+      if (_uptimeStarted) return; _uptimeStarted = true;
+      const t0 = Date.now();
+      setInterval(() => {
+        const s  = Math.floor((Date.now() - t0) / 1000);
+        const h  = String(Math.floor(s / 3600)).padStart(2,'0');
+        const m  = String(Math.floor((s % 3600) / 60)).padStart(2,'0');
+        const sc = String(s % 60).padStart(2,'0');
+        document.getElementById('uptime').textContent = h+':'+m+':'+sc;
+      }, 1000);
+    }
+
+    /* ── Chat UI ── */
+        const messagesEl = document.getElementById('messages');
     const inputEl    = document.getElementById('input');
     const sendBtn    = document.getElementById('send');
     const micBtn     = document.getElementById('mic');
@@ -432,23 +593,20 @@ async def index():
     const atlasState = document.getElementById('atlas-state');
     const centerSub  = document.getElementById('center-sub');
     const voiceStat  = document.getElementById('voice-status');
-    const imgInput      = document.getElementById('img-input');
-    const imgPreviewBar = document.getElementById('img-preview-bar');
+    const imgInput        = document.getElementById('img-input');
+    const imgPreviewBar   = document.getElementById('img-preview-bar');
     const imgPreviewThumb = document.getElementById('img-preview-thumb');
     const imgPreviewName  = document.getElementById('img-preview-name');
-    const clearImgBtn   = document.getElementById('clear-img');
-    const uploadBtn     = document.getElementById('upload-btn');
-    const API_KEY       = '__AIBUSSOL_API_KEY__';
+    const clearImgBtn     = document.getElementById('clear-img');
+    const uploadBtn       = document.getElementById('upload-btn');
 
     let pendingImageB64     = null;
     let pendingImageDataUrl = null;
 
     function clearPendingImage() {
-      pendingImageB64 = null;
-      pendingImageDataUrl = null;
+      pendingImageB64 = null; pendingImageDataUrl = null;
       imgPreviewBar.style.display = 'none';
-      imgPreviewThumb.src = '';
-      imgPreviewName.textContent = '';
+      imgPreviewThumb.src = ''; imgPreviewName.textContent = '';
       uploadBtn.classList.remove('has-image');
       imgInput.value = '';
     }
@@ -470,54 +628,32 @@ async def index():
 
     clearImgBtn.addEventListener('click', clearPendingImage);
 
-    const uptimeStart = Date.now();
-    setInterval(() => {
-      const s  = Math.floor((Date.now() - uptimeStart) / 1000);
-      const h  = String(Math.floor(s / 3600)).padStart(2, '0');
-      const m  = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
-      const sc = String(s % 60).padStart(2, '0');
-      document.getElementById('uptime').textContent = h + ':' + m + ':' + sc;
-    }, 1000);
-
-    let isRecording = false, mediaRecorder = null, audioChunks = [];
-    let wakeRecognition = null, wakeActive = false;
-
     function setTalking(on) {
       if (on) {
         atlasFace.classList.add('talking');
-        atlasState.textContent = 'SPEAKING';
-        atlasState.style.color = 'var(--orange)';
-        centerSub.textContent  = 'TRANSMITTING AUDIO';
-        voiceStat.textContent  = 'SPEAKING';
+        atlasState.textContent = 'SPEAKING'; atlasState.style.color = 'var(--orange)';
+        centerSub.textContent  = 'TRANSMITTING AUDIO'; voiceStat.textContent = 'SPEAKING';
       } else {
         atlasFace.classList.remove('talking');
-        atlasState.textContent = 'STANDBY';
-        atlasState.style.color = 'var(--cyan)';
-        centerSub.textContent  = 'WAITING FOR INPUT';
-        voiceStat.textContent  = 'READY';
+        atlasState.textContent = 'STANDBY'; atlasState.style.color = 'var(--cyan)';
+        centerSub.textContent  = 'WAITING FOR INPUT'; voiceStat.textContent = 'READY';
       }
     }
 
     function setWakeStatus(state) {
       wakeDot.className = '';
       if (state === 'listening') {
-        wakeDot.classList.add('listening');
-        wakeLabel.textContent  = 'LISTENING';
-        centerSub.textContent  = 'SAY "AIBUSSOL" TO WAKE';
-        atlasState.textContent = 'ACTIVE';
-        atlasState.style.color = 'var(--cyan)';
+        wakeDot.classList.add('listening'); wakeLabel.textContent = 'LISTENING';
+        centerSub.textContent = 'SAY "AIBUSSOL" TO WAKE';
+        atlasState.textContent = 'ACTIVE'; atlasState.style.color = 'var(--cyan)';
       } else if (state === 'recording') {
-        wakeDot.classList.add('recording');
-        wakeLabel.textContent  = 'RECORDING';
-        centerSub.textContent  = 'RECORDING INPUT';
-        atlasState.textContent = 'LISTENING';
-        atlasState.style.color = '#ff3344';
+        wakeDot.classList.add('recording'); wakeLabel.textContent = 'RECORDING';
+        centerSub.textContent = 'RECORDING INPUT';
+        atlasState.textContent = 'LISTENING'; atlasState.style.color = '#ff3344';
       } else if (state === 'processing') {
-        wakeDot.classList.add('processing');
-        wakeLabel.textContent  = 'PROCESSING';
-        centerSub.textContent  = 'PROCESSING AUDIO';
-        atlasState.textContent = 'PROCESSING';
-        atlasState.style.color = 'var(--orange)';
+        wakeDot.classList.add('processing'); wakeLabel.textContent = 'PROCESSING';
+        centerSub.textContent = 'PROCESSING AUDIO';
+        atlasState.textContent = 'PROCESSING'; atlasState.style.color = 'var(--orange)';
       } else if (state === 'unsupported') {
         wakeLabel.textContent = 'UNAVAILABLE';
       } else {
@@ -528,9 +664,7 @@ async def index():
     function feedLog(text) {
       const feed = document.getElementById('live-feed');
       const d = document.createElement('div');
-      d.className = 'feed-line';
-      d.textContent = '\u25b8 ' + text;
-      d.style.color = 'var(--cyan)';
+      d.className = 'feed-line'; d.textContent = '\u25b8 ' + text; d.style.color = 'var(--cyan)';
       feed.appendChild(d);
       const lines = feed.querySelectorAll('.feed-line');
       lines.forEach((l, i) => {
@@ -549,16 +683,13 @@ async def index():
       tag.textContent = role === 'user' ? 'YOU' : 'AIBUSSOL';
       const body = document.createElement('div');
       body.textContent = text;
-      wrap.appendChild(tag);
-      wrap.appendChild(body);
+      wrap.appendChild(tag); wrap.appendChild(body);
       if (imageDataUrl) {
         const thumb = document.createElement('div');
         thumb.className = 'msg-thumb';
         const img = document.createElement('img');
-        img.src = imageDataUrl;
-        img.alt = 'attached image';
-        thumb.appendChild(img);
-        wrap.appendChild(thumb);
+        img.src = imageDataUrl; img.alt = 'attached image';
+        thumb.appendChild(img); wrap.appendChild(thumb);
       }
       messagesEl.appendChild(wrap);
       messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -567,12 +698,12 @@ async def index():
 
     async function loadHistory() {
       try {
-        const res  = await fetch('/api/session/history', {
-          headers: { 'Authorization': 'Bearer ' + API_KEY }
-        });
+        const res  = await fetch('/api/session/history', { headers: authHeader() });
+        if (res.status === 401) { logout(); return; }
         const data = await res.json();
         (data.messages || []).forEach(m => addMsg(m.role, m.content, null));
         if ((data.messages || []).length) feedLog('Session history loaded');
+        else feedLog('New session started');
       } catch(e) { console.warn('History load failed:', e.message); }
     }
 
@@ -582,24 +713,25 @@ async def index():
       inputEl.value = '';
       sendBtn.disabled = true;
 
-      const imageToSend    = pendingImageB64;
-      const imageDataUrl   = pendingImageDataUrl;
+      const imageToSend  = pendingImageB64;
+      const imageDataUrl = pendingImageDataUrl;
       clearPendingImage();
 
       addMsg('user', text, imageDataUrl);
       feedLog('You: ' + text.slice(0, 40) + (text.length > 40 ? '...' : ''));
       const thinking = addMsg('atlas', 'Processing...', null);
       thinking.querySelector('div:last-child').style.color = 'var(--text-dim)';
-      atlasState.textContent = 'THINKING';
-      atlasState.style.color = 'var(--orange)';
+      atlasState.textContent = 'THINKING'; atlasState.style.color = 'var(--orange)';
+
       try {
         const body = { message: text };
         if (imageToSend) body.image = imageToSend;
         const res  = await fetch('/api/chat', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + API_KEY },
+          headers: jsonAuthHeader(),
           body: JSON.stringify(body)
         });
+        if (res.status === 401) { logout(); return; }
         const data = await res.json();
         thinking.remove();
         const reply = data.reply || data.detail || 'No response';
@@ -609,8 +741,7 @@ async def index():
       } catch(e) {
         thinking.querySelector('div:last-child').textContent = 'Error: ' + e.message;
         thinking.querySelector('div:last-child').style.color = '#ff3344';
-        atlasState.textContent = 'ERROR';
-        atlasState.style.color = '#ff3344';
+        atlasState.textContent = 'ERROR'; atlasState.style.color = '#ff3344';
       }
       sendBtn.disabled = false;
       inputEl.focus();
@@ -620,36 +751,31 @@ async def index():
       try {
         const res  = await fetch('/api/voice/speak', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + API_KEY },
+          headers: jsonAuthHeader(),
           body: JSON.stringify({ message: text })
         });
         const blob  = await res.blob();
         const url   = URL.createObjectURL(blob);
         const audio = new Audio(url);
-
-        let audioCtx, animating = false;
+        let audioCtx;
         try {
           audioCtx = new (window.AudioContext || window.webkitAudioContext)();
           const src = audioCtx.createMediaElementSource(audio);
           src.connect(audioCtx.destination);
         } catch(e) { console.warn('Web Audio setup failed:', e.message); }
-
-        audio.onplay  = () => { animating = true; setTalking(true); };
+        audio.onplay  = () => setTalking(true);
         audio.onended = () => {
-          animating = false;
           setTalking(false);
           if (audioCtx) audioCtx.close().catch(() => {});
           if (!isRecording) resumeWakeWord();
         };
-
         pauseWakeWord();
-        audio.play().catch(e => {
-          console.warn('Play failed:', e.message);
-          setTalking(false);
-          resumeWakeWord();
-        });
+        audio.play().catch(e => { console.warn('Play failed:', e.message); setTalking(false); resumeWakeWord(); });
       } catch(e) { console.warn('TTS failed:', e.message); resumeWakeWord(); }
     }
+
+    let isRecording = false, mediaRecorder = null, audioChunks = [];
+    let wakeRecognition = null, wakeActive = false;
 
     async function startRecording() {
       if (isRecording) return;
@@ -670,21 +796,21 @@ async def index():
           try {
             const res  = await fetch('/api/voice/transcribe', {
               method: 'POST',
-              headers: { 'Authorization': 'Bearer ' + API_KEY },
+              headers: authHeader(),
               body: fd
             });
             const data = await res.json();
             if (data.text) {
-              let clean = data.text.trim().replace(/^aibussol[,.]?\\s*/i, '');
+              let clean = data.text.trim().replace(/^aibussol[,.]?\s*/i, '');
               if (clean) await sendMessage(clean);
             }
           } catch(e) { console.warn('Transcribe failed:', e.message); }
-          micBtn.textContent = '\U0001F399'; micBtn.className = '';
+          micBtn.textContent = '\u{1F399}'; micBtn.className = '';
           setTimeout(() => { if (!isRecording) resumeWakeWord(); }, 5000);
         };
         mediaRecorder.start();
         isRecording = true;
-        micBtn.textContent = '\U0001F534'; micBtn.className = 'recording';
+        micBtn.textContent = '\u{1F534}'; micBtn.className = 'recording';
         setWakeStatus('recording');
         feedLog('Recording started');
       } catch(e) {
@@ -705,9 +831,7 @@ async def index():
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SR) { setWakeStatus('unsupported'); return; }
       wakeRecognition = new SR();
-      wakeRecognition.continuous     = true;
-      wakeRecognition.interimResults = true;
-      wakeRecognition.lang           = 'en-US';
+      wakeRecognition.continuous = true; wakeRecognition.interimResults = true; wakeRecognition.lang = 'en-US';
       let triggered = false;
       wakeRecognition.onresult = (e) => {
         if (isRecording || triggered) return;
@@ -719,9 +843,7 @@ async def index():
           startRecording();
         }
       };
-      wakeRecognition.onend = () => {
-        if (wakeActive) { try { wakeRecognition.start(); } catch(e){} }
-      };
+      wakeRecognition.onend = () => { if (wakeActive) { try { wakeRecognition.start(); } catch(e){} } };
       wakeRecognition.onerror = (e) => {
         if (e.error === 'not-allowed') { wakeActive = false; setWakeStatus('unsupported'); }
       };
@@ -745,10 +867,10 @@ async def index():
     sendBtn.addEventListener('click', () => sendMessage());
     inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
 
-    loadHistory();
+    /* Wake word starts on first interaction after HUD is visible */
     let _wakeStarted = false;
     function maybeStartWakeWord() {
-      if (_wakeStarted) return; _wakeStarted = true; initWakeWord();
+      if (_wakeStarted || !getToken()) return; _wakeStarted = true; initWakeWord();
     }
     document.addEventListener('click',   maybeStartWakeWord);
     document.addEventListener('keydown', maybeStartWakeWord);
@@ -773,27 +895,22 @@ async def index():
     renderer.setSize(w, h);
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setClearColor(0x000000, 0);
-    const scene = new THREE.Scene();
+    const scene  = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(35, w / h, 0.1, 100);
     camera.position.set(0, 0.5, 3);
     scene.add(new THREE.AmbientLight(0x00e5ff, 0.8));
     const dir = new THREE.DirectionalLight(0xffffff, 1);
-    dir.position.set(1, 2, 3);
-    scene.add(dir);
+    dir.position.set(1, 2, 3); scene.add(dir);
 
     let model;
-    const SPIN_INTERVAL = 100000;
-    const SPIN_DURATION = 2500;
-    let _lastSpin = Date.now();
-    let _spinning = false;
-    let _spinStartAngle = 0;
-    let _spinStartTime = 0;
+    const SPIN_INTERVAL = 100000, SPIN_DURATION = 2500;
+    let _lastSpin = Date.now(), _spinning = false, _spinStartAngle = 0, _spinStartTime = 0;
 
     new GLTFLoader().load('/static/atlas-model.glb', function(gltf) {
       model = gltf.scene;
       const box = new THREE.Box3().setFromObject(model);
       const center = box.getCenter(new THREE.Vector3());
-      const size = box.getSize(new THREE.Vector3());
+      const size   = box.getSize(new THREE.Vector3());
       const s = 1.8 / Math.max(size.x, size.y, size.z);
       model.scale.setScalar(s);
       model.position.sub(center.multiplyScalar(s));
@@ -805,9 +922,7 @@ async def index():
       if (model) {
         const now = Date.now();
         if (!_spinning && now - _lastSpin > SPIN_INTERVAL) {
-          _spinning = true;
-          _spinStartAngle = model.rotation.y;
-          _spinStartTime = now;
+          _spinning = true; _spinStartAngle = model.rotation.y; _spinStartTime = now;
         }
         if (_spinning) {
           const progress = Math.min((now - _spinStartTime) / SPIN_DURATION, 1);
@@ -815,11 +930,7 @@ async def index():
             ? 2 * progress * progress
             : 1 - Math.pow(-2 * progress + 2, 2) / 2;
           model.rotation.y = _spinStartAngle + eased * Math.PI * 2;
-          if (progress >= 1) {
-            model.rotation.y = _spinStartAngle;
-            _spinning = false;
-            _lastSpin = now;
-          }
+          if (progress >= 1) { model.rotation.y = _spinStartAngle; _spinning = false; _lastSpin = now; }
         }
       }
       renderer.render(scene, camera);
@@ -829,24 +940,21 @@ async def index():
 </body>
 </html>
 """
-    html = html.replace("__AIBUSSOL_API_KEY__", API_KEY)
-    return HTMLResponse(
-        content=html,
-        headers={"Permissions-Policy": "microphone=*"},
-    )
+    return HTMLResponse(content=html, headers={"Permissions-Policy": "microphone=*"})
 
 
 @router.post("/api/chat")
-async def chat(req: ChatRequest):
-    store   = await get_store()
-    session = await store.get_or_create(OWNER_USER_ID, CHANNEL)
+async def chat(req: ChatRequest, request: Request):
+    user_id = _get_user_id(request)
+    request.app.state.session_store
+    session = await store.get_or_create(user_id, CHANNEL)
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     for m in session["conversation_history"][-10:]:
         if m["role"] in ("user", "assistant"):
             content = m["content"]
             if isinstance(content, list):
-                content = next((c.get("text", "") for c in content if c.get("type") == "text"), "")
+                content = next((c.get("text","") for c in content if c.get("type")=="text"), "")
             messages.append({"role": m["role"], "content": content})
 
     if req.image:
@@ -879,7 +987,7 @@ async def chat(req: ChatRequest):
     except Exception as e:
         return JSONResponse({"reply": f"Connection error: {str(e)[:200]}"})
 
-    await store.append_message(OWNER_USER_ID, CHANNEL, "user",      req.message)
-    await store.append_message(OWNER_USER_ID, CHANNEL, "assistant", reply)
+    await store.append_message(user_id, CHANNEL, "user",      req.message)
+    await store.append_message(user_id, CHANNEL, "assistant", reply)
 
     return JSONResponse({"reply": reply})
