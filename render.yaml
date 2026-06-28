@@ -4,5 +4,5 @@ services:
     env: python
     headers:
       - path: /*
-        name: [user]-Policy
+        name: Permissions-Policy
         value: "microphone=*, camera=*"
