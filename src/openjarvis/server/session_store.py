@@ -47,6 +47,15 @@ class SessionStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_sessions_updated_at
                     ON channel_sessions (updated_at);
+
+                CREATE TABLE IF NOT EXISTS users (
+                    id            TEXT PRIMARY KEY,
+                    email         TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    display_name  TEXT NOT NULL DEFAULT '',
+                    created_at    TIMESTAMPTZ DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
             """)
 
     async def close(self) -> None:
@@ -54,7 +63,57 @@ class SessionStore:
             await self._pool.close()
 
     # ------------------------------------------------------------------
-    # Public API
+    # User auth methods
+    # ------------------------------------------------------------------
+
+    async def create_user(
+        self,
+        user_id: str,
+        email: str,
+        password_hash: str,
+        display_name: str = "",
+    ) -> None:
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO users (id, email, password_hash, display_name)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (email) DO NOTHING
+                """,
+                user_id, email, password_hash, display_name,
+            )
+
+    async def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM users WHERE email = $1", email
+            )
+            if row is None:
+                return None
+            return {
+                "id":            row["id"],
+                "email":         row["email"],
+                "password_hash": row["password_hash"],
+                "display_name":  row["display_name"],
+                "created_at":    row["created_at"],
+            }
+
+    async def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM users WHERE id = $1", user_id
+            )
+            if row is None:
+                return None
+            return {
+                "id":           row["id"],
+                "email":        row["email"],
+                "display_name": row["display_name"],
+                "created_at":   row["created_at"],
+            }
+
+    # ------------------------------------------------------------------
+    # Session methods
     # ------------------------------------------------------------------
 
     async def get_or_create(
@@ -160,7 +219,6 @@ class SessionStore:
                 "WHERE updated_at < NOW() - ($1 || ' hours')::INTERVAL",
                 str(max_age_hours),
             )
-            # result is like "UPDATE 3" — extract the count
             return int(result.split()[-1])
 
     async def get_last_active_channel(self, sender_id: str) -> Optional[str]:

@@ -20,6 +20,7 @@ from openjarvis.server.research_router import router as research_router
 from openjarvis.server.routes import router
 from openjarvis.server.upload_router import router as upload_router
 from openjarvis.server.atlas_ui import router as atlas_ui_router
+from openjarvis.server.auth_routes import router as auth_router
 
 logger = logging.getLogger(__name__)
 
@@ -302,7 +303,9 @@ def create_app(
     app.include_router(research_router)
     app.include_router(analytics_router)
     app.include_router(atlas_ui_router)
+    app.include_router(auth_router)
     include_all_routes(app)
+
 
     # Initialize shared session store (Postgres) on startup
     @app.on_event("startup")
