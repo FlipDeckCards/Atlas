@@ -746,8 +746,7 @@ async def index():
     dir.position.set(1, 2, 3);
     scene.add(dir);
     let model;
-    new GLTFLoader().load('https://modelviewer.dev/shared-assets/models/Astronaut.glb', (gltf) => {
-
+    new THREE.GLTFLoader().load('/static/atlas-model.glb', function(gltf) {
 
       model = gltf.scene;
       const box = new THREE.Box3().setFromObject(model);
