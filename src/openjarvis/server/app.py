@@ -1,3 +1,10 @@
+Thought (52s)
+Two issues:
+
+The inline @app.middleware("http") block inside create_app has a broken return response (extra leading space). It's also redundant — PermissionsMiddleware is already defined at the top and added via app.add_middleware(PermissionsMiddleware) later.
+from fastapi.middleware.cors import CORSMiddleware is buried inside the function — moving it to top-level imports.
+Here's the corrected file — remove the broken inline block entirely:
+
 """FastAPI application factory for the OpenJarvis API server."""
 
 
@@ -8,9 +15,10 @@ import pathlib
 import time
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.middleware.base import BaseHTTPMiddleware  # ADD
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from openjarvis.server.analytics_routes import router as analytics_router
 from openjarvis.server.api_routes import include_all_routes
@@ -27,7 +35,6 @@ from openjarvis.server.auth_routes import router as auth_router
 logger = logging.getLogger(__name__)
 
 
-# ADD — sets Permissions-Policy on every response so Render can't override it
 class PermissionsMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response = await call_next(request)
@@ -162,12 +169,6 @@ def create_app(
         description="OpenAI-compatible API server for OpenJarvis",
         version="0.1.0",
     )
-    @app.middleware("http")
-    async def add_permissions_policy(request, call_next):
-        response = await call_next(request)
-        response.headers["Permissions-Policy"] = "microphone=*"
-         return response
-    from fastapi.middleware.cors import CORSMiddleware
 
     _origins = (
         cors_origins
@@ -190,7 +191,7 @@ def create_app(
         allow_headers=["*"],
     )
 
-    app.add_middleware(PermissionsMiddleware)  # ADD
+    app.add_middleware(PermissionsMiddleware)
 
     app.state.engine = engine
     app.state.model = model
