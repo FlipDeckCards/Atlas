@@ -162,7 +162,11 @@ def create_app(
         description="OpenAI-compatible API server for OpenJarvis",
         version="0.1.0",
     )
-
+@app.middleware("http")
+async def add_permissions_policy(request, call_next):
+    response = await call_next(request)
+    response.headers["Permissions-Policy"] = "microphone=*"
+    return response
     from fastapi.middleware.cors import CORSMiddleware
 
     _origins = (
