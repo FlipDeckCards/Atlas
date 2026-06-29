@@ -1,5 +1,6 @@
 import os
 import httpx
+import litellm
 from datetime import datetime, timezone
 from fastapi import APIRouter, File, UploadFile, Request
 from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse, FileResponse
@@ -1133,31 +1134,16 @@ async def chat(req: ChatRequest, request: Request):
     messages.append({"role": "user", "content": user_content})
 
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            res = await client.post(
-                "http://localhost:10000/v1/chat/completions",
-                headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
-                json={"model": model_id, "messages": messages}
-            )
-            try:
-                data = res.json()
-            except Exception:
-                return JSONResponse({"reply": f"Backend error: {res.text[:200]}"})
-
-            if "choices" not in data:
-                err = data.get("error", {})
-                return JSONResponse({"reply": f"Model error: {err.get('message', str(data)[:200])}"})
-
-            reply = data["choices"][0]["message"]["content"]
-
+        response = await litellm.acompletion(model=model_id, messages=messages)
+        reply = response.choices[0].message.content
     except Exception as e:
-        return JSONResponse({"reply": f"Connection error: {str(e)[:200]}"})
+        return JSONResponse({"reply": f"Model error: {str(e)[:200]}", "model_display": model_display, "model_color": model_color})
 
-    await store.append_message(user_id, CHANNEL, "user",      req.message)
+    await store.append_message(user_id, CHANNEL, "user", req.message)
     await store.append_message(user_id, CHANNEL, "assistant", reply)
 
     return JSONResponse({
-        "reply":         reply,
+        "reply": reply,
         "model_display": model_display,
-        "model_color":   model_color,
+        "model_color": model_color,
     })
