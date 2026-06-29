@@ -1,5 +1,6 @@
 import os
 import httpx
+from datetime import datetime, timezone
 from fastapi import APIRouter, File, UploadFile, Request
 from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse, FileResponse
 from pydantic import BaseModel
@@ -8,21 +9,24 @@ from typing import Optional
 
 router = APIRouter()
 
-API_KEY            = os.getenv("OPENJARVIS_API_KEY", "")
-OPENAI_API_KEY     = os.getenv("OPENAI_API_KEY", "")
-ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+API_KEY             = os.getenv("OPENJARVIS_API_KEY", "")
+OPENAI_API_KEY      = os.getenv("OPENAI_API_KEY", "")
+ELEVENLABS_API_KEY  = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
-ATLAS_MODEL_URL    = os.getenv("ATLAS_MODEL_URL", "")
+ATLAS_MODEL_URL     = os.getenv("ATLAS_MODEL_URL", "")
 
 CHANNEL = "web"
 
-SYSTEM_PROMPT = """You are AiBusSol, a personal AI hub and orchestrator built by Michael.
+
+def get_system_prompt() -> str:
+    today = datetime.now(timezone.utc).strftime("%A, %B %d, %Y")
+    return f"""You are AiBusSol, a personal AI hub and orchestrator built by Michael.
 You have persistent memory and can handle a wide range of tasks with intelligence and precision.
 You are not OpenJarvis — you are AiBusSol.
+Today's date is {today}.
 Be direct, sharp, and helpful."""
 
 
-# ── Model router ──────────────────────────────────────────────────────────────
 def classify_model(message: str, has_image: bool) -> tuple:
     """Returns (litellm_model_id, display_name, color_class)"""
     if has_image:
@@ -52,7 +56,6 @@ def classify_model(message: str, has_image: bool) -> tuple:
         return "gemini/gemini-1.5-pro", "GEMINI-1.5", "green"
     else:
         return "gpt-4o", "GPT-4O", "cyan"
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -156,9 +159,7 @@ async def speak(req: ChatRequest):
             )
         return StreamingResponse(iter([res.content]), media_type="audio/mpeg",
                                  headers={"Content-Disposition": "inline; filename=speech.mp3"})
-
-
-@router.get("/")
+    @router.get("/")
 async def index():
     html = r"""
 <!DOCTYPE html>
@@ -273,7 +274,6 @@ async def index():
     .stat-row .val.g { color: #00ff88; }
     .stat-row .val.o { color: var(--orange); }
     .stat-row .val.d { color: #335566; }
-    /* ── Engine indicator colors + flash ── */
     #engine-val.engine-cyan   { color: var(--cyan); }
     #engine-val.engine-orange { color: var(--orange); }
     #engine-val.engine-green  { color: #00ff88; }
@@ -407,7 +407,6 @@ async def index():
 </head>
 <body>
 
-  <!-- ══ AUTH OVERLAY ══ -->
   <div id="auth-overlay">
     <div id="auth-box">
       <div class="auth-corner tl"></div>
@@ -437,7 +436,6 @@ async def index():
     </div>
   </div>
 
-  <!-- ══ HUD ══ -->
   <div id="hud-header" class="hud-hidden">
     <div id="hud-title">AIBUS<span>SOL</span></div>
     <div class="hud-meta">
@@ -455,7 +453,6 @@ async def index():
         <div class="p-label">System Vitals</div>
         <div class="stat-row"><span class="lbl">STATUS</span><span class="val g">NOMINAL</span></div>
         <div class="stat-row"><span class="lbl">MEMORY</span><span class="val">ACTIVE</span></div>
-        <!-- ── ENGINE row: id added, color class added ── -->
         <div class="stat-row"><span class="lbl">ENGINE</span><span class="val engine-cyan" id="engine-val">GPT-4O</span></div>
         <div class="stat-row"><span class="lbl">VOICE</span><span class="val" id="voice-status">READY</span></div>
         <div class="stat-row"><span class="lbl">PROTOCOL</span><span class="val d">JSON-RPC</span></div>
@@ -748,7 +745,6 @@ async def index():
       } catch(e) { console.warn('History load failed:', e.message); }
     }
 
-    /* ── Engine indicator updater ── */
     function updateEngineIndicator(modelDisplay, modelColor) {
       const el  = document.getElementById('engine-val');
       const prev = el.textContent;
@@ -787,13 +783,10 @@ async def index():
         const reply = data.reply || data.detail || 'No response';
         addMsg('atlas', reply, null);
         feedLog('AiBusSol responded');
-
-        /* ── Update ENGINE indicator ── */
         if (data.model_display) {
           updateEngineIndicator(data.model_display, data.model_color);
           feedLog('Engine: ' + data.model_display);
         }
-
         speakReply(reply);
       } catch(e) {
         thinking.querySelector('div:last-child').textContent = 'Error: ' + e.message;
@@ -870,21 +863,18 @@ async def index():
     function initWakeWord() {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SR) { setWakeStatus('unsupported'); return; }
-
       wakeRecognition = new SR();
       wakeRecognition.continuous = true;
       wakeRecognition.interimResults = true;
       wakeRecognition.lang = 'en-US';
       wakeActive = true;
       _srMode = 'wake';
-
       const thisInst = wakeRecognition;
       let triggered = false;
       const WAKE_VARIANTS = [
         'hey sol','hey soul','hey saul','hey sal',
         'hey so','hey soll','a sol','heysel','hey-sol'
       ];
-
       wakeRecognition.onresult = (e) => {
         const latest = e.results[e.results.length - 1][0].transcript.toLowerCase().trim();
         if (_srMode === 'wake') {
@@ -897,39 +887,27 @@ async def index():
           }
         } else if (_srMode === 'send') {
           if (!isRecording) return;
-          if (
-            latest === 'send' ||
-            latest.endsWith(' send') ||
-            latest.endsWith('. send') ||
-            latest.includes('send')
-          ) {
+          if (latest === 'send' || latest.endsWith(' send') || latest.endsWith('. send') || latest.includes('send')) {
             feedLog('Voice command: SEND');
             stopRecording();
           }
         }
       };
-
       wakeRecognition.onend = () => {
         if (wakeActive && wakeRecognition === thisInst) {
           try { wakeRecognition.start(); } catch(e) {}
         }
       };
-
       wakeRecognition.onerror = (e) => {
         if (e.error === 'not-allowed') {
-          wakeActive = false;
-          wakeRecognition = null;
-          setWakeStatus('unsupported');
+          wakeActive = false; wakeRecognition = null; setWakeStatus('unsupported');
         }
       };
-
       try {
         wakeRecognition.start();
         setWakeStatus('listening');
         feedLog('Say "Hey Sol" to wake');
-      } catch(e) {
-        setWakeStatus('unsupported');
-      }
+      } catch(e) { setWakeStatus('unsupported'); }
     }
 
     function pauseWakeWord() {
@@ -963,9 +941,7 @@ async def index():
           fd.append('audio', blob, 'recording.webm');
           try {
             const res  = await fetch('/api/voice/transcribe', {
-              method: 'POST',
-              headers: authHeader(),
-              body: fd
+              method: 'POST', headers: authHeader(), body: fd
             });
             const data = await res.json();
             if (data.text) {
@@ -996,11 +972,7 @@ async def index():
       mediaRecorder.stop();
     }
 
-    micBtn.addEventListener('click', () => {
-      unlockAudio();
-      isRecording ? stopRecording() : startRecording();
-    });
-
+    micBtn.addEventListener('click', () => { unlockAudio(); isRecording ? stopRecording() : startRecording(); });
     sendBtn.addEventListener('click', () => { unlockAudio(); sendMessage(); });
     inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') { unlockAudio(); sendMessage(); } });
 
@@ -1013,7 +985,7 @@ async def index():
     document.addEventListener('click',   maybeStartWakeWord);
     document.addEventListener('keydown', maybeStartWakeWord);
   </script>
-   <script type="importmap">
+  <script type="importmap">
   {
     "imports": {
       "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
@@ -1050,38 +1022,26 @@ async def index():
     loader.setMeshoptDecoder(MeshoptDecoder);
     loader.load('/static/atlas-model.glb', function(gltf) {
       model = gltf.scene;
-
       model.traverse((node) => {
         if (node.isBone) {
-          console.log('[SOL BONE]', node.name);
           const n = node.name.toLowerCase();
-          if (
-            n.includes('jaw') || n.includes('chin') ||
-            n.includes('mandible') || n.includes('lower') ||
-            n.includes('mouth') || n.includes('lip')
-          ) {
-            if (!jawBone) {
-              jawBone = node;
-              console.log('[SOL] Jaw bone selected:', node.name);
-            }
+          if (n.includes('jaw') || n.includes('chin') || n.includes('mandible') ||
+              n.includes('lower') || n.includes('mouth') || n.includes('lip')) {
+            if (!jawBone) { jawBone = node; }
           }
         }
         if (node.isMesh && node.morphTargetDictionary) {
-          console.log('[SOL MORPHS]', node.name, Object.keys(node.morphTargetDictionary));
           const keys = Object.keys(node.morphTargetDictionary);
           const mouthKey = keys.find(k => {
             const kl = k.toLowerCase();
             return kl.includes('jaw') || kl.includes('open') ||
-                   kl.includes('mouth') || kl.includes('aa') ||
-                   kl.includes('lip');
+                   kl.includes('mouth') || kl.includes('aa') || kl.includes('lip');
           });
           if (mouthKey && !mouthMesh) {
             mouthMesh = { mesh: node, idx: node.morphTargetDictionary[mouthKey] };
-            console.log('[SOL] Mouth morph selected:', mouthKey, 'on', node.name);
           }
         }
       });
-
       const box    = new THREE.Box3().setFromObject(model);
       const center = box.getCenter(new THREE.Vector3());
       const size   = box.getSize(new THREE.Vector3());
@@ -1105,21 +1065,16 @@ async def index():
         const bass = window._solTalkData.slice(0, 4).reduce((a, b) => a + b, 0) / 4 / 255;
         const mid  = window._solTalkData.slice(4, 8).reduce((a, b) => a + b, 0) / 4 / 255;
         const raw  = Math.max(bass, mid * 0.6);
-
         _smoothJaw += (raw - _smoothJaw) * 0.35;
-
         if (jawBone)   jawBone.rotation.x = _smoothJaw * 0.4;
         if (mouthMesh) mouthMesh.mesh.morphTargetInfluences[mouthMesh.idx] = Math.min(_smoothJaw * 1.2, 1);
-
         model.rotation.x = Math.sin(t * 1.5) * 0.003;
         model.rotation.z = Math.sin(t * 1.1) * 0.002;
         model.position.y = Math.sin(t * 2.0) * 0.002;
-
       } else {
         _smoothJaw += (0 - _smoothJaw) * 0.15;
         if (jawBone)   jawBone.rotation.x = _smoothJaw * 0.4;
         if (mouthMesh) mouthMesh.mesh.morphTargetInfluences[mouthMesh.idx] = Math.min(_smoothJaw * 1.2, 1);
-
         const breath = Math.sin(t * 1.1) * 0.004;
         const sway   = Math.sin(t * 0.37) * 0.006 + Math.sin(t * 0.91) * 0.003;
         const nod    = Math.sin(t * 0.6 + 0.8) * 0.004;
@@ -1127,7 +1082,6 @@ async def index():
         model.rotation.x = nod;
         model.rotation.z = sway;
         model.position.y = drift + breath;
-
         if (!_spinning && now - _lastSpin > SPIN_INTERVAL) {
           _spinStartAngle = model.rotation.y;
           _spinStartTime  = now;
@@ -1150,3 +1104,60 @@ async def index():
 </html>
 """
     return HTMLResponse(content=html, headers={"Permissions-Policy": "microphone=*"})
+
+
+@router.post("/api/chat")
+async def chat(req: ChatRequest, request: Request):
+    user_id = _get_user_id(request)
+    store = request.app.state.session_store
+    session = await store.get_or_create(user_id, CHANNEL)
+
+    model_id, model_display, model_color = classify_model(req.message, bool(req.image))
+
+    messages = [{"role": "system", "content": get_system_prompt()}]
+    for m in session["conversation_history"][-10:]:
+        if m["role"] in ("user", "assistant"):
+            content = m["content"]
+            if isinstance(content, list):
+                content = next((c.get("text","") for c in content if c.get("type")=="text"), "")
+            messages.append({"role": m["role"], "content": content})
+
+    if req.image:
+        user_content = [
+            {"type": "text", "text": req.message},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{req.image}"}}
+        ]
+    else:
+        user_content = req.message
+
+    messages.append({"role": "user", "content": user_content})
+
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            res = await client.post(
+                "http://localhost:10000/v1/chat/completions",
+                headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
+                json={"model": model_id, "messages": messages}
+            )
+            try:
+                data = res.json()
+            except Exception:
+                return JSONResponse({"reply": f"Backend error: {res.text[:200]}"})
+
+            if "choices" not in data:
+                err = data.get("error", {})
+                return JSONResponse({"reply": f"Model error: {err.get('message', str(data)[:200])}"})
+
+            reply = data["choices"][0]["message"]["content"]
+
+    except Exception as e:
+        return JSONResponse({"reply": f"Connection error: {str(e)[:200]}"})
+
+    await store.append_message(user_id, CHANNEL, "user",      req.message)
+    await store.append_message(user_id, CHANNEL, "assistant", reply)
+
+    return JSONResponse({
+        "reply":         reply,
+        "model_display": model_display,
+        "model_color":   model_color,
+    })
