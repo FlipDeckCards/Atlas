@@ -360,6 +360,8 @@ async def index():
     }
   </style>
 </head>
+Thought (106s)
+PART 2 of 3 — HTML body + main script (both fixes applied)
 <body>
 
   <!-- ══ AUTH OVERLAY ══ -->
@@ -635,7 +637,6 @@ async def index():
       }
     }
 
-    /* ── FIX 2: recording status text updated — no "send" voice cmd ── */
     function setWakeStatus(state) {
       wakeDot.className = '';
       if (state === 'listening') {
@@ -644,7 +645,8 @@ async def index():
         atlasState.textContent = 'ACTIVE'; atlasState.style.color = 'var(--cyan)';
       } else if (state === 'recording') {
         wakeDot.classList.add('recording'); wakeLabel.textContent = 'RECORDING';
-        centerSub.textContent = 'RECORDING — TAP MIC TO SEND';
+        /* UPDATED: voice send is back */
+        centerSub.textContent = 'RECORDING — SAY "SEND" OR TAP MIC';
         atlasState.textContent = 'LISTENING'; atlasState.style.color = '#ff3344';
       } else if (state === 'processing') {
         wakeDot.classList.add('processing'); wakeLabel.textContent = 'PROCESSING';
@@ -785,6 +787,7 @@ async def index():
           URL.revokeObjectURL(url);
           resumeWakeWord();
         };
+        /* Destroy SR during TTS to avoid echo pickup */
         pauseWakeWord();
         audio.play().catch(e => {
           console.warn('Play blocked:', e.message);
@@ -800,65 +803,10 @@ async def index():
     }
 
     let isRecording = false, mediaRecorder = null, audioChunks = [];
-    /* ── FIX 1: wakeRecognition destroyed/recreated on each cycle ── */
+
+    /* ── Single SR instance. _srMode switches between 'wake' and 'send' ── */
     let wakeRecognition = null, wakeActive = false;
-
-    /* ── FIX 2: startRecording — no secondary SR, tap mic to stop ── */
-    async function startRecording() {
-      if (isRecording) return;
-      try {
-        pauseWakeWord();
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        audioChunks  = [];
-        mediaRecorder = new MediaRecorder(stream);
-        mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-        mediaRecorder.onstop = async () => {
-          stream.getTracks().forEach(t => t.stop());
-          isRecording = false;
-          micBtn.textContent = '\u23f3'; micBtn.className = 'processing';
-          setWakeStatus('processing');
-          const blob = new Blob(audioChunks, { type: 'audio/webm' });
-          const fd   = new FormData();
-          fd.append('audio', blob, 'recording.webm');
-          try {
-            const res  = await fetch('/api/voice/transcribe', {
-              method: 'POST',
-              headers: authHeader(),
-              body: fd
-            });
-            const data = await res.json();
-            if (data.text) {
-              let clean = data.text.trim()
-                .replace(/^(hey\s+sol|hey\s+soul)[,.]?\s*/i, '')
-                .replace(/[,.]?\s*send\.?\s*$/i, '')
-                .trim();
-              if (clean) await sendMessage(clean);
-            }
-          } catch(e) { console.warn('Transcribe failed:', e.message); }
-          micBtn.textContent = '\u{1F399}'; micBtn.className = '';
-          setTimeout(() => { if (!isRecording) resumeWakeWord(); }, 500);
-        };
-        mediaRecorder.start();
-        isRecording = true;
-        micBtn.textContent = '\u{1F534}'; micBtn.className = 'recording';
-        setWakeStatus('recording');
-        feedLog('Recording — tap mic again to send');
-      } catch(e) {
-        console.warn('Mic denied:', e.message);
-        alert('Microphone access denied.');
-        resumeWakeWord();
-      }
-    }
-
-    function stopRecording() {
-      if (!isRecording || !mediaRecorder) return;
-      mediaRecorder.stop();
-    }
-
-    micBtn.addEventListener('click', () => {
-      unlockAudio();
-      isRecording ? stopRecording() : startRecording();
-    });
+    let _srMode = 'wake';
 
     function initWakeWord() {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -869,6 +817,11 @@ async def index():
       wakeRecognition.interimResults = true;
       wakeRecognition.lang = 'en-US';
       wakeActive = true;
+      _srMode = 'wake';
+
+      /* Capture this instance — prevents stale onend closures from
+         restarting a newer instance after pauseWakeWord destroys us */
+      const thisInst = wakeRecognition;
 
       let triggered = false;
       const WAKE_VARIANTS = [
@@ -877,19 +830,35 @@ async def index():
       ];
 
       wakeRecognition.onresult = (e) => {
-        if (triggered || isRecording) return;
         const latest = e.results[e.results.length - 1][0].transcript.toLowerCase().trim();
-        if (WAKE_VARIANTS.some(v => latest.includes(v))) {
-          triggered = true;
-          setTimeout(() => { triggered = false; }, 3000);
-          feedLog('Wake word detected: Hey Sol');
-          startRecording();
+
+        if (_srMode === 'wake') {
+          /* ── Wake-word detection ── */
+          if (triggered || isRecording) return;
+          if (WAKE_VARIANTS.some(v => latest.includes(v))) {
+            triggered = true;
+            setTimeout(() => { triggered = false; }, 3000);
+            feedLog('Wake word detected: Hey Sol');
+            startRecording();
+          }
+        } else if (_srMode === 'send') {
+          /* ── Send-command detection (same SR, different mode) ── */
+          if (!isRecording) return;
+          if (
+            latest === 'send' ||
+            latest.endsWith(' send') ||
+            latest.endsWith('. send') ||
+            latest.includes('send')
+          ) {
+            feedLog('Voice command: SEND');
+            stopRecording();
+          }
         }
       };
 
-      /* ── FIX 1: onend just restarts if still supposed to be active ── */
+      /* FIX: only auto-restart if THIS instance is still current */
       wakeRecognition.onend = () => {
-        if (wakeActive && wakeRecognition) {
+        if (wakeActive && wakeRecognition === thisInst) {
           try { wakeRecognition.start(); } catch(e) {}
         }
       };
@@ -912,7 +881,7 @@ async def index():
       }
     }
 
-    /* ── FIX 1: destroy the object on pause, recreate fresh on resume ── */
+    /* Destroys SR — used by speakReply to block echo pickup during TTS */
     function pauseWakeWord() {
       wakeActive = false;
       if (!wakeRecognition) return;
@@ -920,10 +889,73 @@ async def index():
       wakeRecognition = null;
     }
 
+    /* Recreates SR after TTS finishes */
     function resumeWakeWord() {
       if (wakeActive) return;
       initWakeWord();
     }
+
+    async function startRecording() {
+      if (isRecording) return;
+      try {
+        /* Switch SR to send-detection mode — DO NOT destroy it.
+           One instance handles both wake and send. */
+        _srMode = 'send';
+
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioChunks  = [];
+        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+        mediaRecorder.onstop = async () => {
+          stream.getTracks().forEach(t => t.stop());
+          isRecording = false;
+          /* Switch back to wake mode before transcribing */
+          _srMode = 'wake';
+          micBtn.textContent = '\u23f3'; micBtn.className = 'processing';
+          setWakeStatus('processing');
+          const blob = new Blob(audioChunks, { type: 'audio/webm' });
+          const fd   = new FormData();
+          fd.append('audio', blob, 'recording.webm');
+          try {
+            const res  = await fetch('/api/voice/transcribe', {
+              method: 'POST',
+              headers: authHeader(),
+              body: fd
+            });
+            const data = await res.json();
+            if (data.text) {
+              let clean = data.text.trim()
+                .replace(/^(hey\s+sol|hey\s+soul)[,.]?\s*/i, '')
+                .replace(/[,.]?\s*send\.?\s*$/i, '')
+                .trim();
+              if (clean) await sendMessage(clean);
+            }
+          } catch(e) { console.warn('Transcribe failed:', e.message); }
+          micBtn.textContent = '\u{1F399}'; micBtn.className = '';
+          /* SR is still alive in wake mode — just update the status dot */
+          setTimeout(() => { if (!isRecording && wakeActive) setWakeStatus('listening'); }, 500);
+        };
+        mediaRecorder.start();
+        isRecording = true;
+        micBtn.textContent = '\u{1F534}'; micBtn.className = 'recording';
+        setWakeStatus('recording');
+        feedLog('Recording — say "send" or tap mic to stop');
+      } catch(e) {
+        console.warn('Mic denied:', e.message);
+        _srMode = 'wake'; /* reset mode, SR still running */
+        alert('Microphone access denied.');
+      }
+    }
+
+    function stopRecording() {
+      if (!isRecording || !mediaRecorder) return;
+      mediaRecorder.stop();
+    }
+
+    micBtn.addEventListener('click', () => {
+      unlockAudio();
+      isRecording ? stopRecording() : startRecording();
+    });
 
     sendBtn.addEventListener('click', () => { unlockAudio(); sendMessage(); });
     inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') { unlockAudio(); sendMessage(); } });
@@ -964,7 +996,6 @@ async def index():
   const dir = new THREE.DirectionalLight(0xffffff, 1);
   dir.position.set(1, 2, 3); scene.add(dir);
 
-  /* ── FIX 3: jaw bone ref + morph target mesh ref ── */
   let model, jawBone = null, mouthMesh = null;
   const SPIN_INTERVAL = 100000, SPIN_DURATION = 2500;
   let _lastSpin = Date.now(), _spinning = false, _spinStartAngle = 0, _spinStartTime = 0;
@@ -976,9 +1007,7 @@ async def index():
     loader.load('/static/atlas-model.glb', function(gltf) {
       model = gltf.scene;
 
-      /* ── FIX 3: scan for jaw bone AND mouth morph targets ── */
       model.traverse((node) => {
-        /* Log every bone so we know exact names */
         if (node.isBone) {
           console.log('[SOL BONE]', node.name);
           const n = node.name.toLowerCase();
@@ -993,7 +1022,6 @@ async def index():
             }
           }
         }
-        /* Also check for morph targets (blend shapes) on skinned meshes */
         if (node.isMesh && node.morphTargetDictionary) {
           console.log('[SOL MORPHS]', node.name, Object.keys(node.morphTargetDictionary));
           const keys = Object.keys(node.morphTargetDictionary);
@@ -1020,7 +1048,6 @@ async def index():
     }, undefined, (e) => console.error('GLB error:', e));
   });
 
-  /* ── Smooth jaw value to avoid jitter ── */
   let _smoothJaw = 0;
 
   (function animate() {
@@ -1030,31 +1057,21 @@ async def index():
       const now = Date.now();
 
       if (window._solTalking && window._solAnalyser) {
-        /* ── FIX 3: audio-reactive jaw/morph — body stays STILL ── */
         window._solAnalyser.getByteFrequencyData(window._solTalkData);
         const bass = window._solTalkData.slice(0, 4).reduce((a, b) => a + b, 0) / 4 / 255;
         const mid  = window._solTalkData.slice(4, 8).reduce((a, b) => a + b, 0) / 4 / 255;
         const raw  = Math.max(bass, mid * 0.6);
 
-        /* Smooth it so the jaw doesn't snap */
         _smoothJaw += (raw - _smoothJaw) * 0.35;
 
-        if (jawBone) {
-          /* Rotate jaw bone open — axis depends on model rig.
-             X is correct for most humanoid rigs; flip sign if it closes instead */
-          jawBone.rotation.x = _smoothJaw * 0.4;
-        }
-        if (mouthMesh) {
-          mouthMesh.mesh.morphTargetInfluences[mouthMesh.idx] = Math.min(_smoothJaw * 1.2, 1);
-        }
+        if (jawBone)   jawBone.rotation.x = _smoothJaw * 0.4;
+        if (mouthMesh) mouthMesh.mesh.morphTargetInfluences[mouthMesh.idx] = Math.min(_smoothJaw * 1.2, 1);
 
-        /* Body: nearly frozen, just a tiny alive micro-sway */
         model.rotation.x = Math.sin(t * 1.5) * 0.003;
         model.rotation.z = Math.sin(t * 1.1) * 0.002;
         model.position.y = Math.sin(t * 2.0) * 0.002;
 
       } else {
-        /* ── Idle: close jaw/morph, breathing + organic sway ── */
         _smoothJaw += (0 - _smoothJaw) * 0.15;
         if (jawBone)   jawBone.rotation.x = _smoothJaw * 0.4;
         if (mouthMesh) mouthMesh.mesh.morphTargetInfluences[mouthMesh.idx] = Math.min(_smoothJaw * 1.2, 1);
@@ -1067,7 +1084,6 @@ async def index():
         model.rotation.z = sway;
         model.position.y = drift + breath;
 
-        /* Occasional full spin */
         if (!_spinning && now - _lastSpin > SPIN_INTERVAL) {
           _spinStartAngle = model.rotation.y;
           _spinStartTime  = now;
