@@ -105,8 +105,15 @@ async def speak(req: ChatRequest):
         res = await client.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
             headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
-            json={"text": req.message, "model_id": "eleven_monolingual_v1",
-                  "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}}
+            json={
+                "text": req.message,
+                "model_id": "eleven_turbo_v2",
+                "voice_settings": {
+                    "stability": 0.5,
+                    "similarity_boost": 0.75,
+                    "speed": 0.85
+                }
+            }
         )
         content_type = res.headers.get("content-type", "")
         if res.status_code != 200 or "audio" not in content_type:
@@ -461,7 +468,7 @@ async def index():
           <button id="mic" title="Record">&#127897;</button>
           <label id="upload-btn" for="img-input" title="Attach image">📎</label>
           <input id="img-input" type="file" accept="image/*"/>
-          <input id="input" type="text" placeholder='Type or say "AiBusSol..."' autocomplete="off"/>
+          <input id="input" type="text" placeholder='Type or say "Hey Sol..."' autocomplete="off"/>
           <button id="send">SEND</button>
         </div>
       </div>
@@ -496,6 +503,9 @@ async def index():
         ctx.resume().then(() => ctx.close()).catch(() => {});
       } catch(e) {}
     }
+
+    /* ── Shared AudioContext for TTS analyser (reused across speaks) ── */
+    let _solAudioCtx = null;
 
     /* ── Auth mode ── */
     let authMode = 'login';
@@ -641,6 +651,8 @@ async def index():
     clearImgBtn.addEventListener('click', clearPendingImage);
 
     function setTalking(on) {
+      /* Expose flag globally so the Three.js module can read it */
+      window._solTalking = on;
       if (on) {
         atlasFace.classList.add('talking');
         atlasState.textContent = 'SPEAKING'; atlasState.style.color = 'var(--orange)';
@@ -656,11 +668,11 @@ async def index():
       wakeDot.className = '';
       if (state === 'listening') {
         wakeDot.classList.add('listening'); wakeLabel.textContent = 'LISTENING';
-        centerSub.textContent = 'SAY "AIBUSSOL" TO WAKE';
+        centerSub.textContent = 'SAY "HEY SOL" TO WAKE';
         atlasState.textContent = 'ACTIVE'; atlasState.style.color = 'var(--cyan)';
       } else if (state === 'recording') {
         wakeDot.classList.add('recording'); wakeLabel.textContent = 'RECORDING';
-        centerSub.textContent = 'RECORDING INPUT';
+        centerSub.textContent = 'RECORDING — SAY "SEND" TO SUBMIT';
         atlasState.textContent = 'LISTENING'; atlasState.style.color = '#ff3344';
       } else if (state === 'processing') {
         wakeDot.classList.add('processing'); wakeLabel.textContent = 'PROCESSING';
@@ -698,6 +710,9 @@ async def index():
       wrap.appendChild(tag); wrap.appendChild(body);
       if (imageDataUrl) {
         const thumb = document.createElement('div');
+        Thought (77s)
+Picked up right where it cut off. Here's the rest:
+
         thumb.className = 'msg-thumb';
         const img = document.createElement('img');
         img.src = imageDataUrl; img.alt = 'attached image';
@@ -759,7 +774,7 @@ async def index():
       inputEl.focus();
     }
 
-    /* ── TTS: fixed blob MIME type — was causing "no supported source" error ── */
+    /* ── TTS with Web Audio analyser exposed for Three.js ── */
     async function speakReply(text) {
       try {
         const res = await fetch('/api/voice/speak', {
@@ -772,21 +787,40 @@ async def index():
           resumeWakeWord();
           return;
         }
-        /* FIX: res.blob() drops the MIME type in some browsers.
-           Use arrayBuffer() + explicit type to guarantee audio/mpeg decoding. */
         const arrayBuffer = await res.arrayBuffer();
         const blob = new Blob([arrayBuffer], { type: 'audio/mpeg' });
         const url  = URL.createObjectURL(blob);
         const audio = new Audio(url);
+
+        /* Wire up Web Audio analyser for Three.js talking animation */
+        try {
+          if (!_solAudioCtx) {
+            _solAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          }
+          if (_solAudioCtx.state === 'suspended') await _solAudioCtx.resume();
+          const analyser = _solAudioCtx.createAnalyser();
+          analyser.fftSize = 64;
+          const src = _solAudioCtx.createMediaElementSource(audio);
+          src.connect(analyser);
+          analyser.connect(_solAudioCtx.destination);
+          window._solAnalyser = analyser;
+          window._solTalkData = new Uint8Array(analyser.frequencyBinCount);
+        } catch(e) {
+          console.warn('Analyser setup failed:', e.message);
+          window._solAnalyser = null;
+        }
+
         audio.onplay  = () => setTalking(true);
         audio.onended = () => {
           setTalking(false);
+          window._solAnalyser = null;
           URL.revokeObjectURL(url);
           if (!isRecording) resumeWakeWord();
         };
         audio.onerror = (e) => {
           console.warn('Audio element error:', e);
           setTalking(false);
+          window._solAnalyser = null;
           URL.revokeObjectURL(url);
           resumeWakeWord();
         };
@@ -794,6 +828,7 @@ async def index():
         audio.play().catch(e => {
           console.warn('Play blocked:', e.message);
           setTalking(false);
+          window._solAnalyser = null;
           URL.revokeObjectURL(url);
           resumeWakeWord();
         });
@@ -805,6 +840,8 @@ async def index():
 
     let isRecording = false, mediaRecorder = null, audioChunks = [];
     let wakeRecognition = null, wakeActive = false;
+    /* Secondary SR that listens for "send" WHILE mic is recording */
+    let sendRecognition = null;
 
     async function startRecording() {
       if (isRecording) return;
@@ -816,6 +853,7 @@ async def index():
         mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
         mediaRecorder.onstop = async () => {
           stream.getTracks().forEach(t => t.stop());
+          stopSendListener();
           isRecording = false;
           micBtn.textContent = '\u23f3'; micBtn.className = 'processing';
           setWakeStatus('processing');
@@ -830,9 +868,8 @@ async def index():
             });
             const data = await res.json();
             if (data.text) {
-              /* Strip wake word prefix and "send" suffix command */
               let clean = data.text.trim()
-                .replace(/^aibussol[,.]?\s*/i, '')
+                .replace(/^(hey\s+sol|hey\s+soul)[,.]?\s*/i, '')
                 .replace(/[,.]?\s*send\.?\s*$/i, '')
                 .trim();
               if (clean) await sendMessage(clean);
@@ -845,7 +882,8 @@ async def index():
         isRecording = true;
         micBtn.textContent = '\u{1F534}'; micBtn.className = 'recording';
         setWakeStatus('recording');
-        feedLog('Recording started — say "send" to submit');
+        feedLog('Recording — say "send" to submit');
+        startSendListener();
       } catch(e) {
         console.warn('Mic denied:', e.message);
         alert('Microphone access denied.');
@@ -858,7 +896,37 @@ async def index():
       mediaRecorder.stop();
     }
 
-    /* FIX: unlock AudioContext on mic click to satisfy autoplay policy */
+    /* "Send" voice command listener — active ONLY while recording */
+    function startSendListener() {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) return;
+      try {
+        sendRecognition = new SR();
+        sendRecognition.continuous = true;
+        sendRecognition.interimResults = true;
+        sendRecognition.lang = 'en-US';
+        sendRecognition.onresult = (e) => {
+          const t = e.results[e.results.length - 1][0].transcript.toLowerCase().trim();
+          if (t === 'send' || t.endsWith(' send') || t.endsWith('. send')) {
+            feedLog('Voice command: SEND');
+            stopRecording();
+          }
+        };
+        sendRecognition.onend = () => {
+          if (isRecording) {
+            try { sendRecognition.start(); } catch(e) {}
+          }
+        };
+        sendRecognition.start();
+      } catch(e) { console.warn('Send listener failed:', e.message); }
+    }
+
+    function stopSendListener() {
+      if (!sendRecognition) return;
+      try { sendRecognition.stop(); } catch(e) {}
+      sendRecognition = null;
+    }
+
     micBtn.addEventListener('click', () => {
       unlockAudio();
       isRecording ? stopRecording() : startRecording();
@@ -874,32 +942,20 @@ async def index():
 
       let triggered = false;
 
-      /* Wake word variants + "send" voice command */
       const WAKE_VARIANTS = [
-        'aibussol','ai bus sol','ai bussol','aibus sol',
-        'eye bus sol','eye bussol','i bus sol','i bussol',
-        'a bus sol','a bussol','ay bus sol','ai bus soul',
-        'eye bus soul','hey bus sol','i bus soul'
+        'hey sol','hey soul','hey saul','hey sal',
+        'hey so','hey soll','hey sol.',
+        'a sol','hey sol!','heysel','hey-sol'
       ];
 
       wakeRecognition.onresult = (e) => {
         if (triggered) return;
         const latest = e.results[e.results.length - 1][0].transcript.toLowerCase().trim();
 
-        /* "send" voice command — fires when not recording and input has text */
-        if (!isRecording && (latest === 'send' || latest.endsWith(' send') || latest.endsWith('. send')) && inputEl.value.trim()) {
-          triggered = true;
-          setTimeout(() => { triggered = false; }, 2000);
-          feedLog('Voice command: SEND');
-          sendMessage();
-          return;
-        }
-
-        /* Wake word — start mic recording */
         if (!isRecording && WAKE_VARIANTS.some(v => latest.includes(v))) {
           triggered = true;
           setTimeout(() => { triggered = false; }, 3000);
-          feedLog('Wake word detected');
+          feedLog('Wake word detected: Hey Sol');
           startRecording();
         }
       };
@@ -915,14 +971,13 @@ async def index():
           wakeActive = false;
           setWakeStatus('unsupported');
         }
-        /* other errors (network, no-speech) — onend will restart */
       };
 
       wakeActive = true;
       try {
         wakeRecognition.start();
         setWakeStatus('listening');
-        feedLog('Say "AiBusSol" to wake');
+        feedLog('Say "Hey Sol" to wake');
       } catch(e) {
         setWakeStatus('unsupported');
       }
@@ -944,7 +999,6 @@ async def index():
     sendBtn.addEventListener('click', () => { unlockAudio(); sendMessage(); });
     inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') { unlockAudio(); sendMessage(); } });
 
-    /* Wake word starts on first interaction */
     let _wakeStarted = false;
     function maybeStartWakeWord() {
       if (_wakeStarted || !getToken()) return;
@@ -969,7 +1023,7 @@ async def index():
   import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
   const canvas = document.getElementById('atlas-canvas');
-  const wrap = document.getElementById('face-wrap');
+  const wrap   = document.getElementById('face-wrap');
   const w = wrap.offsetWidth, h = wrap.offsetHeight;
   const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
   renderer.setSize(w, h);
@@ -985,13 +1039,14 @@ async def index():
   let model;
   const SPIN_INTERVAL = 100000, SPIN_DURATION = 2500;
   let _lastSpin = Date.now(), _spinning = false, _spinStartAngle = 0, _spinStartTime = 0;
+  const _t0 = Date.now();
 
   MeshoptDecoder.ready.then(() => {
     const loader = new GLTFLoader();
     loader.setMeshoptDecoder(MeshoptDecoder);
     loader.load('/static/atlas-model.glb', function(gltf) {
       model = gltf.scene;
-      const box = new THREE.Box3().setFromObject(model);
+      const box    = new THREE.Box3().setFromObject(model);
       const center = box.getCenter(new THREE.Vector3());
       const size   = box.getSize(new THREE.Vector3());
       const s = 1.8 / Math.max(size.x, size.y, size.z);
@@ -1000,25 +1055,49 @@ async def index():
       scene.add(model);
     }, undefined, (e) => console.error('GLB error:', e));
   });
+
   (function animate() {
-    window.requestAnimationFrame(animate);
+    requestAnimationFrame(animate);
     if (model) {
+      const t   = (Date.now() - _t0) / 1000;
       const now = Date.now();
-      if (!_spinning && now - _lastSpin > SPIN_INTERVAL) {
-        _spinning = true; _spinStartAngle = model.rotation.y; _spinStartTime = now;
-      }
-      if (_spinning) {
-        const progress = Math.min((now - _spinStartTime) / SPIN_DURATION, 1);
-        const eased = progress < 0.5
-          ? 2 * progress * progress
-          : 1 - Math.pow(-2 * progress + 2, 2) / 2;
-        model.rotation.y = _spinStartAngle + eased * Math.PI * 2;
-        if (progress >= 1) { model.rotation.y = _spinStartAngle; _spinning = false; _lastSpin = now; }
+
+      if (window._solTalking && window._solAnalyser) {
+        /* Audio-reactive talking animation */
+        window._solAnalyser.getByteFrequencyData(window._solTalkData);
+        const bass = window._solTalkData.slice(0, 4).reduce((a, b) => a + b, 0) / 4 / 255;
+        const mid  = window._solTalkData.slice(4, 12).reduce((a, b) => a + b, 0) / 8 / 255;
+        model.rotation.x = Math.sin(t * 6) * bass * 0.05;
+        model.rotation.z = Math.sin(t * 4 + 1) * mid * 0.03;
+        model.position.y = Math.sin(t * 10) * bass * 0.025;
+      } else {
+        /* Idle: breathing + organic sway + float */
+        const breath = Math.sin(t * 1.1) * 0.004;
+        const sway   = Math.sin(t * 0.37) * 0.006 + Math.sin(t * 0.91) * 0.003;
+        const nod    = Math.sin(t * 0.6 + 0.8) * 0.004;
+        const drift  = Math.sin(t * 0.5) * 0.008;
+        model.rotation.x = nod;
+        model.rotation.z = sway;
+        model.position.y = drift + breath;
+
+        /* Occasional full spin */
+        if (!_spinning && now - _lastSpin > SPIN_INTERVAL) {
+          _spinStartAngle = model.rotation.y;
+          _spinStartTime  = now;
+          _spinning = true;
+          _lastSpin = now;
+        }
+        if (_spinning) {
+          const p = Math.min((now - _spinStartTime) / SPIN_DURATION, 1);
+          const e = p < 0.5 ? 2*p*p : 1 - Math.pow(-2*p+2,2)/2;
+          model.rotation.y = _spinStartAngle + e * Math.PI * 2;
+          if (p >= 1) { model.rotation.y = _spinStartAngle; _spinning = false; }
+        }
       }
     }
     renderer.render(scene, camera);
   })();
-</script>
+  </script>
 
 </body>
 </html>
