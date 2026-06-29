@@ -41,6 +41,7 @@ dependencies = [
     "tomlkit>=0.12",
     "websockets>=15.0.1",
     "litellm",
+    "anthropic>=0.30",
 ]
 
 [project.optional-dependencies]
