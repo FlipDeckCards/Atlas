@@ -159,7 +159,7 @@ async def speak(req: ChatRequest):
             )
         return StreamingResponse(iter([res.content]), media_type="audio/mpeg",
                                  headers={"Content-Disposition": "inline; filename=speech.mp3"})
-    @router.get("/")
+@router.get("/")
 async def index():
     html = r"""
 <!DOCTYPE html>
