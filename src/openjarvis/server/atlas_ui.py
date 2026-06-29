@@ -56,7 +56,7 @@ def classify_model(message: str, has_image: bool) -> tuple:
     gemini_score = sum(1 for s in gemini_signals if s in msg)
 
     if claude_score > gemini_score and claude_score > 0:
-        return "anthropic/claude-3-haiku-20240307", "CLAUDE-3", "orange"
+        return "claude-3-haiku-20240307", "CLAUDE-3", "orange"
     elif gemini_score >= claude_score and gemini_score > 0:
         return "gemini/gemini-2.5-flash", "GEMINI-2.5", "green"
     else:
