@@ -153,8 +153,6 @@ async def index():
         linear-gradient(90deg, rgba(0,229,255,0.018) 1px, transparent 1px);
       background-size: 44px 44px;
     }
-
-    /* ── Auth Overlay ── */
     #auth-overlay {
       position: fixed; inset: 0; z-index: 9999;
       background: var(--bg);
@@ -201,17 +199,11 @@ async def index():
     #auth-btn:hover { background: rgba(0,229,255,0.1); box-shadow: 0 0 16px rgba(0,229,255,0.25); }
     #auth-btn:disabled { opacity: 0.4; cursor: not-allowed; }
     #auth-error { font-size: 10px; color: #ff3344; text-align: center; letter-spacing: 1px; min-height: 14px; }
-    #auth-toggle {
-      font-size: 10px; color: var(--text-dim); text-align: center;
-      letter-spacing: 1px; cursor: default;
-    }
+    #auth-toggle { font-size: 10px; color: var(--text-dim); text-align: center; letter-spacing: 1px; cursor: default; }
     #auth-toggle-link { color: var(--cyan); cursor: pointer; text-decoration: underline; }
     #auth-toggle-link:hover { color: #fff; }
     #auth-display-wrap { display: none; }
-
-    /* ── HUD (hidden until authed) ── */
     .hud-hidden { display: none !important; }
-
     #hud-header {
       background: var(--panel); border-bottom: 1px solid var(--border);
       display: flex; align-items: center; justify-content: space-between; padding: 0 20px;
@@ -477,9 +469,7 @@ async def index():
   </div>
 
   <script>
-    /* ── Token helpers ── */
     const TOKEN_KEY = 'aibussol_token';
-
     function getToken()       { return localStorage.getItem(TOKEN_KEY); }
     function setToken(t)      { localStorage.setItem(TOKEN_KEY, t); }
     function clearToken()     { localStorage.removeItem(TOKEN_KEY); }
@@ -493,7 +483,6 @@ async def index():
       } catch { return {}; }
     }
 
-    /* ── Audio context unlock (must happen on first user gesture) ── */
     let _audioCtxUnlocked = false;
     function unlockAudio() {
       if (_audioCtxUnlocked) return;
@@ -504,10 +493,7 @@ async def index():
       } catch(e) {}
     }
 
-    /* ── Shared AudioContext for TTS analyser (reused across speaks) ── */
     let _solAudioCtx = null;
-
-    /* ── Auth mode ── */
     let authMode = 'login';
 
     function toggleAuthMode() {
@@ -535,18 +521,14 @@ async def index():
       const password = document.getElementById('auth-password').value;
       const errorEl  = document.getElementById('auth-error');
       const btn      = document.getElementById('auth-btn');
-
       if (!email || !password) { errorEl.textContent = 'EMAIL AND PASSWORD REQUIRED'; return; }
-
       errorEl.textContent = '';
       btn.disabled = true;
       btn.textContent = 'CONNECTING...';
-
       const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
       const body = authMode === 'login'
         ? { email, password }
         : { email, password, display_name: document.getElementById('auth-display').value.trim() || email.split('@')[0] };
-
       try {
         const res  = await fetch(endpoint, {
           method: 'POST',
@@ -563,17 +545,12 @@ async def index():
       } catch(e) {
         errorEl.textContent = 'CONNECTION ERROR';
       }
-
       btn.disabled = false;
       btn.textContent = authMode === 'login' ? 'ACCESS SYSTEM' : 'CREATE ACCOUNT';
     }
 
-    function logout() {
-      clearToken();
-      location.reload();
-    }
+    function logout() { clearToken(); location.reload(); }
 
-    /* ── Uptime clock ── */
     let _uptimeStarted = false;
     function startUptimeClock() {
       if (_uptimeStarted) return; _uptimeStarted = true;
@@ -587,34 +564,30 @@ async def index():
       }, 1000);
     }
 
-    /* ── HUD bootstrap ── */
     function showHUD() {
       document.getElementById('auth-overlay').style.display = 'none';
       document.getElementById('hud-header').classList.remove('hud-hidden');
       document.getElementById('hud-main').classList.remove('hud-hidden');
-
       const payload = parseJwt(getToken());
       const email   = payload.email || '';
       document.getElementById('operator-name').textContent =
         email ? email.split('@')[0].toUpperCase() : 'OPERATOR';
-
       loadHistory();
       startUptimeClock();
     }
 
     if (getToken()) { showHUD(); }
 
-    /* ── Chat UI ── */
-    const messagesEl = document.getElementById('messages');
-    const inputEl    = document.getElementById('input');
-    const sendBtn    = document.getElementById('send');
-    const micBtn     = document.getElementById('mic');
-    const wakeDot    = document.getElementById('wake-dot');
-    const wakeLabel  = document.getElementById('wake-label');
-    const atlasFace  = document.getElementById('atlas-face');
-    const atlasState = document.getElementById('atlas-state');
-    const centerSub  = document.getElementById('center-sub');
-    const voiceStat  = document.getElementById('voice-status');
+    const messagesEl      = document.getElementById('messages');
+    const inputEl         = document.getElementById('input');
+    const sendBtn         = document.getElementById('send');
+    const micBtn          = document.getElementById('mic');
+    const wakeDot         = document.getElementById('wake-dot');
+    const wakeLabel       = document.getElementById('wake-label');
+    const atlasFace       = document.getElementById('atlas-face');
+    const atlasState      = document.getElementById('atlas-state');
+    const centerSub       = document.getElementById('center-sub');
+    const voiceStat       = document.getElementById('voice-status');
     const imgInput        = document.getElementById('img-input');
     const imgPreviewBar   = document.getElementById('img-preview-bar');
     const imgPreviewThumb = document.getElementById('img-preview-thumb');
@@ -622,8 +595,7 @@ async def index():
     const clearImgBtn     = document.getElementById('clear-img');
     const uploadBtn       = document.getElementById('upload-btn');
 
-    let pendingImageB64     = null;
-    let pendingImageDataUrl = null;
+    let pendingImageB64 = null, pendingImageDataUrl = null;
 
     function clearPendingImage() {
       pendingImageB64 = null; pendingImageDataUrl = null;
@@ -651,7 +623,6 @@ async def index():
     clearImgBtn.addEventListener('click', clearPendingImage);
 
     function setTalking(on) {
-      /* Expose flag globally so the Three.js module can read it */
       window._solTalking = on;
       if (on) {
         atlasFace.classList.add('talking');
@@ -664,6 +635,7 @@ async def index():
       }
     }
 
+    /* ── FIX 2: recording status text updated — no "send" voice cmd ── */
     function setWakeStatus(state) {
       wakeDot.className = '';
       if (state === 'listening') {
@@ -672,7 +644,7 @@ async def index():
         atlasState.textContent = 'ACTIVE'; atlasState.style.color = 'var(--cyan)';
       } else if (state === 'recording') {
         wakeDot.classList.add('recording'); wakeLabel.textContent = 'RECORDING';
-        centerSub.textContent = 'RECORDING — SAY "SEND" TO SUBMIT';
+        centerSub.textContent = 'RECORDING — TAP MIC TO SEND';
         atlasState.textContent = 'LISTENING'; atlasState.style.color = '#ff3344';
       } else if (state === 'processing') {
         wakeDot.classList.add('processing'); wakeLabel.textContent = 'PROCESSING';
@@ -736,17 +708,14 @@ async def index():
       if (!text) return;
       inputEl.value = '';
       sendBtn.disabled = true;
-
       const imageToSend  = pendingImageB64;
       const imageDataUrl = pendingImageDataUrl;
       clearPendingImage();
-
       addMsg('user', text, imageDataUrl);
       feedLog('You: ' + text.slice(0, 40) + (text.length > 40 ? '...' : ''));
       const thinking = addMsg('atlas', 'Processing...', null);
       thinking.querySelector('div:last-child').style.color = 'var(--text-dim)';
       atlasState.textContent = 'THINKING'; atlasState.style.color = 'var(--orange)';
-
       try {
         const body = { message: text };
         if (imageToSend) body.image = imageToSend;
@@ -771,7 +740,6 @@ async def index():
       inputEl.focus();
     }
 
-    /* ── TTS with Web Audio analyser exposed for Three.js ── */
     async function speakReply(text) {
       try {
         const res = await fetch('/api/voice/speak', {
@@ -785,11 +753,9 @@ async def index():
           return;
         }
         const arrayBuffer = await res.arrayBuffer();
-        const blob = new Blob([arrayBuffer], { type: 'audio/mpeg' });
-        const url  = URL.createObjectURL(blob);
+        const blob  = new Blob([arrayBuffer], { type: 'audio/mpeg' });
+        const url   = URL.createObjectURL(blob);
         const audio = new Audio(url);
-
-        /* Wire up Web Audio analyser for Three.js talking animation */
         try {
           if (!_solAudioCtx) {
             _solAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -806,7 +772,6 @@ async def index():
           console.warn('Analyser setup failed:', e.message);
           window._solAnalyser = null;
         }
-
         audio.onplay  = () => setTalking(true);
         audio.onended = () => {
           setTalking(false);
@@ -814,8 +779,7 @@ async def index():
           URL.revokeObjectURL(url);
           if (!isRecording) resumeWakeWord();
         };
-        audio.onerror = (e) => {
-          console.warn('Audio element error:', e);
+        audio.onerror = () => {
           setTalking(false);
           window._solAnalyser = null;
           URL.revokeObjectURL(url);
@@ -836,10 +800,10 @@ async def index():
     }
 
     let isRecording = false, mediaRecorder = null, audioChunks = [];
+    /* ── FIX 1: wakeRecognition destroyed/recreated on each cycle ── */
     let wakeRecognition = null, wakeActive = false;
-    /* Secondary SR that listens for "send" WHILE mic is recording */
-    let sendRecognition = null;
 
+    /* ── FIX 2: startRecording — no secondary SR, tap mic to stop ── */
     async function startRecording() {
       if (isRecording) return;
       try {
@@ -850,7 +814,6 @@ async def index():
         mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
         mediaRecorder.onstop = async () => {
           stream.getTracks().forEach(t => t.stop());
-          stopSendListener();
           isRecording = false;
           micBtn.textContent = '\u23f3'; micBtn.className = 'processing';
           setWakeStatus('processing');
@@ -879,8 +842,7 @@ async def index():
         isRecording = true;
         micBtn.textContent = '\u{1F534}'; micBtn.className = 'recording';
         setWakeStatus('recording');
-        feedLog('Recording — say "send" to submit');
-        startSendListener();
+        feedLog('Recording — tap mic again to send');
       } catch(e) {
         console.warn('Mic denied:', e.message);
         alert('Microphone access denied.');
@@ -893,37 +855,6 @@ async def index():
       mediaRecorder.stop();
     }
 
-    /* "Send" voice command listener — active ONLY while recording */
-    function startSendListener() {
-      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SR) return;
-      try {
-        sendRecognition = new SR();
-        sendRecognition.continuous = true;
-        sendRecognition.interimResults = true;
-        sendRecognition.lang = 'en-US';
-        sendRecognition.onresult = (e) => {
-          const t = e.results[e.results.length - 1][0].transcript.toLowerCase().trim();
-          if (t === 'send' || t.endsWith(' send') || t.endsWith('. send')) {
-            feedLog('Voice command: SEND');
-            stopRecording();
-          }
-        };
-        sendRecognition.onend = () => {
-          if (isRecording) {
-            try { sendRecognition.start(); } catch(e) {}
-          }
-        };
-        sendRecognition.start();
-      } catch(e) { console.warn('Send listener failed:', e.message); }
-    }
-
-    function stopSendListener() {
-      if (!sendRecognition) return;
-      try { sendRecognition.stop(); } catch(e) {}
-      sendRecognition = null;
-    }
-
     micBtn.addEventListener('click', () => {
       unlockAudio();
       isRecording ? stopRecording() : startRecording();
@@ -932,24 +863,23 @@ async def index():
     function initWakeWord() {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SR) { setWakeStatus('unsupported'); return; }
+
       wakeRecognition = new SR();
       wakeRecognition.continuous = true;
       wakeRecognition.interimResults = true;
       wakeRecognition.lang = 'en-US';
+      wakeActive = true;
 
       let triggered = false;
-
       const WAKE_VARIANTS = [
         'hey sol','hey soul','hey saul','hey sal',
-        'hey so','hey soll','hey sol.',
-        'a sol','hey sol!','heysel','hey-sol'
+        'hey so','hey soll','a sol','heysel','hey-sol'
       ];
 
       wakeRecognition.onresult = (e) => {
-        if (triggered) return;
+        if (triggered || isRecording) return;
         const latest = e.results[e.results.length - 1][0].transcript.toLowerCase().trim();
-
-        if (!isRecording && WAKE_VARIANTS.some(v => latest.includes(v))) {
+        if (WAKE_VARIANTS.some(v => latest.includes(v))) {
           triggered = true;
           setTimeout(() => { triggered = false; }, 3000);
           feedLog('Wake word detected: Hey Sol');
@@ -957,8 +887,9 @@ async def index():
         }
       };
 
+      /* ── FIX 1: onend just restarts if still supposed to be active ── */
       wakeRecognition.onend = () => {
-        if (wakeActive) {
+        if (wakeActive && wakeRecognition) {
           try { wakeRecognition.start(); } catch(e) {}
         }
       };
@@ -966,11 +897,12 @@ async def index():
       wakeRecognition.onerror = (e) => {
         if (e.error === 'not-allowed') {
           wakeActive = false;
+          wakeRecognition = null;
           setWakeStatus('unsupported');
         }
+        /* all other errors: onend will auto-restart */
       };
 
-      wakeActive = true;
       try {
         wakeRecognition.start();
         setWakeStatus('listening');
@@ -980,17 +912,17 @@ async def index():
       }
     }
 
+    /* ── FIX 1: destroy the object on pause, recreate fresh on resume ── */
     function pauseWakeWord() {
-      if (!wakeRecognition) return;
       wakeActive = false;
-      try { wakeRecognition.stop(); } catch(e) {}
+      if (!wakeRecognition) return;
+      try { wakeRecognition.abort(); } catch(e) {}
+      wakeRecognition = null;
     }
 
     function resumeWakeWord() {
-      if (!wakeRecognition) return;
-      wakeActive = true;
-      try { wakeRecognition.start(); } catch(e) {}
-      setWakeStatus('listening');
+      if (wakeActive) return;
+      initWakeWord();
     }
 
     sendBtn.addEventListener('click', () => { unlockAudio(); sendMessage(); });
@@ -1005,7 +937,6 @@ async def index():
     document.addEventListener('click',   maybeStartWakeWord);
     document.addEventListener('keydown', maybeStartWakeWord);
   </script>
-
   <script type="importmap">
   {
     "imports": {
@@ -1033,7 +964,8 @@ async def index():
   const dir = new THREE.DirectionalLight(0xffffff, 1);
   dir.position.set(1, 2, 3); scene.add(dir);
 
-  let model;
+  /* ── FIX 3: jaw bone ref + morph target mesh ref ── */
+  let model, jawBone = null, mouthMesh = null;
   const SPIN_INTERVAL = 100000, SPIN_DURATION = 2500;
   let _lastSpin = Date.now(), _spinning = false, _spinStartAngle = 0, _spinStartTime = 0;
   const _t0 = Date.now();
@@ -1043,6 +975,41 @@ async def index():
     loader.setMeshoptDecoder(MeshoptDecoder);
     loader.load('/static/atlas-model.glb', function(gltf) {
       model = gltf.scene;
+
+      /* ── FIX 3: scan for jaw bone AND mouth morph targets ── */
+      model.traverse((node) => {
+        /* Log every bone so we know exact names */
+        if (node.isBone) {
+          console.log('[SOL BONE]', node.name);
+          const n = node.name.toLowerCase();
+          if (
+            n.includes('jaw') || n.includes('chin') ||
+            n.includes('mandible') || n.includes('lower') ||
+            n.includes('mouth') || n.includes('lip')
+          ) {
+            if (!jawBone) {
+              jawBone = node;
+              console.log('[SOL] Jaw bone selected:', node.name);
+            }
+          }
+        }
+        /* Also check for morph targets (blend shapes) on skinned meshes */
+        if (node.isMesh && node.morphTargetDictionary) {
+          console.log('[SOL MORPHS]', node.name, Object.keys(node.morphTargetDictionary));
+          const keys = Object.keys(node.morphTargetDictionary);
+          const mouthKey = keys.find(k => {
+            const kl = k.toLowerCase();
+            return kl.includes('jaw') || kl.includes('open') ||
+                   kl.includes('mouth') || kl.includes('aa') ||
+                   kl.includes('lip');
+          });
+          if (mouthKey && !mouthMesh) {
+            mouthMesh = { mesh: node, idx: node.morphTargetDictionary[mouthKey] };
+            console.log('[SOL] Mouth morph selected:', mouthKey, 'on', node.name);
+          }
+        }
+      });
+
       const box    = new THREE.Box3().setFromObject(model);
       const center = box.getCenter(new THREE.Vector3());
       const size   = box.getSize(new THREE.Vector3());
@@ -1053,6 +1020,9 @@ async def index():
     }, undefined, (e) => console.error('GLB error:', e));
   });
 
+  /* ── Smooth jaw value to avoid jitter ── */
+  let _smoothJaw = 0;
+
   (function animate() {
     requestAnimationFrame(animate);
     if (model) {
@@ -1060,15 +1030,35 @@ async def index():
       const now = Date.now();
 
       if (window._solTalking && window._solAnalyser) {
-        /* Audio-reactive talking animation */
+        /* ── FIX 3: audio-reactive jaw/morph — body stays STILL ── */
         window._solAnalyser.getByteFrequencyData(window._solTalkData);
         const bass = window._solTalkData.slice(0, 4).reduce((a, b) => a + b, 0) / 4 / 255;
-        const mid  = window._solTalkData.slice(4, 12).reduce((a, b) => a + b, 0) / 8 / 255;
-        model.rotation.x = Math.sin(t * 6) * bass * 0.05;
-        model.rotation.z = Math.sin(t * 4 + 1) * mid * 0.03;
-        model.position.y = Math.sin(t * 10) * bass * 0.025;
+        const mid  = window._solTalkData.slice(4, 8).reduce((a, b) => a + b, 0) / 4 / 255;
+        const raw  = Math.max(bass, mid * 0.6);
+
+        /* Smooth it so the jaw doesn't snap */
+        _smoothJaw += (raw - _smoothJaw) * 0.35;
+
+        if (jawBone) {
+          /* Rotate jaw bone open — axis depends on model rig.
+             X is correct for most humanoid rigs; flip sign if it closes instead */
+          jawBone.rotation.x = _smoothJaw * 0.4;
+        }
+        if (mouthMesh) {
+          mouthMesh.mesh.morphTargetInfluences[mouthMesh.idx] = Math.min(_smoothJaw * 1.2, 1);
+        }
+
+        /* Body: nearly frozen, just a tiny alive micro-sway */
+        model.rotation.x = Math.sin(t * 1.5) * 0.003;
+        model.rotation.z = Math.sin(t * 1.1) * 0.002;
+        model.position.y = Math.sin(t * 2.0) * 0.002;
+
       } else {
-        /* Idle: breathing + organic sway + float */
+        /* ── Idle: close jaw/morph, breathing + organic sway ── */
+        _smoothJaw += (0 - _smoothJaw) * 0.15;
+        if (jawBone)   jawBone.rotation.x = _smoothJaw * 0.4;
+        if (mouthMesh) mouthMesh.mesh.morphTargetInfluences[mouthMesh.idx] = Math.min(_smoothJaw * 1.2, 1);
+
         const breath = Math.sin(t * 1.1) * 0.004;
         const sway   = Math.sin(t * 0.37) * 0.006 + Math.sin(t * 0.91) * 0.003;
         const nod    = Math.sin(t * 0.6 + 0.8) * 0.004;
