@@ -19,12 +19,16 @@ ATLAS_MODEL_URL     = os.getenv("ATLAS_MODEL_URL", "")
 CHANNEL = "web"
 
 
-def get_system_prompt() -> str:
-    today = datetime.now(timezone.utc).strftime("%A, %B %d, %Y")
+# CHANGE 1: accept client_date, fall back to UTC if not provided
+def get_system_prompt(client_date: str = None) -> str:
+    if client_date:
+        date_str = client_date
+    else:
+        date_str = datetime.now(timezone.utc).strftime("%A, %B %d, %Y %H:%M UTC")
     return f"""You are AiBusSol, a personal AI hub and orchestrator built by Michael.
 You have persistent memory and can handle a wide range of tasks with intelligence and precision.
 You are not OpenJarvis — you are AiBusSol.
-Today's date is {today}.
+Today's date and time is {date_str}.
 Be direct, sharp, and helpful."""
 
 
@@ -39,7 +43,7 @@ def classify_model(message: str, has_image: bool) -> tuple:
         "write", "essay", "explain", "analyze", "analyse", "review",
         "summarize", "summarise", "compare", "code", "debug", "refactor",
         "implement", "design", "pros and cons", "difference between",
-        "how does", "why does", "step by step", "rewrite", "edit"
+        "how does", "why does", "haiku", "poem", "sonnet", "verse", "rhyme", "story", "creative", "step by step", "rewrite", "edit"
     ]
     gemini_signals = [
         "research", "find", "search", "latest", "current", "news",
@@ -78,9 +82,11 @@ def _get_user_id(request: Request) -> str:
     return getattr(request.state, "user_id", "system")
 
 
+# CHANGE 2: add client_date field
 class ChatRequest(BaseModel):
     message: str
     image: Optional[str] = None
+    client_date: Optional[str] = None
 
 
 @router.get("/static/atlas-model.glb")
@@ -757,6 +763,7 @@ async def index():
       }
     }
 
+    // CHANGE 3: add client_date to the fetch body
     async function sendMessage(text) {
       if (!text) text = inputEl.value.trim();
       if (!text) return;
@@ -771,7 +778,10 @@ async def index():
       thinking.querySelector('div:last-child').style.color = 'var(--text-dim)';
       atlasState.textContent = 'THINKING'; atlasState.style.color = 'var(--orange)';
       try {
-        const body = { message: text };
+        const body = {
+          message: text,
+          client_date: new Date().toLocaleString('en-US', { timeZoneName: 'short' })
+        };
         if (imageToSend) body.image = imageToSend;
         const res  = await fetch('/api/chat', {
           method: 'POST',
@@ -1115,7 +1125,8 @@ async def chat(req: ChatRequest, request: Request):
 
     model_id, model_display, model_color = classify_model(req.message, bool(req.image))
 
-    messages = [{"role": "system", "content": get_system_prompt()}]
+    # CHANGE 4: pass client_date to get_system_prompt
+    messages = [{"role": "system", "content": get_system_prompt(req.client_date)}]
     for m in session["conversation_history"][-10:]:
         if m["role"] in ("user", "assistant"):
             content = m["content"]
