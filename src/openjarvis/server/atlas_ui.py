@@ -22,6 +22,39 @@ You are not OpenJarvis — you are AiBusSol.
 Be direct, sharp, and helpful."""
 
 
+# ── Model router ──────────────────────────────────────────────────────────────
+def classify_model(message: str, has_image: bool) -> tuple:
+    """Returns (litellm_model_id, display_name, color_class)"""
+    if has_image:
+        return "gpt-4o", "GPT-4O", "cyan"
+
+    msg = message.lower()
+
+    claude_signals = [
+        "write", "essay", "explain", "analyze", "analyse", "review",
+        "summarize", "summarise", "compare", "code", "debug", "refactor",
+        "implement", "design", "pros and cons", "difference between",
+        "how does", "why does", "step by step", "rewrite", "edit"
+    ]
+    gemini_signals = [
+        "research", "find", "search", "latest", "current", "news",
+        "who is", "what is", "when did", "where is", "how many",
+        "statistics", "data", "list", "examples of", "types of",
+        "look up", "fact"
+    ]
+
+    claude_score = sum(1 for s in claude_signals if s in msg)
+    gemini_score = sum(1 for s in gemini_signals if s in msg)
+
+    if claude_score > gemini_score and claude_score > 0:
+        return "claude-3-5-sonnet-20241022", "CLAUDE-3.5", "orange"
+    elif gemini_score >= claude_score and gemini_score > 0:
+        return "gemini/gemini-1.5-pro", "GEMINI-1.5", "green"
+    else:
+        return "gpt-4o", "GPT-4O", "cyan"
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _MODEL_CANDIDATES = [
     os.path.join(_HERE, "static", "atlas-model.glb"),
@@ -240,6 +273,18 @@ async def index():
     .stat-row .val.g { color: #00ff88; }
     .stat-row .val.o { color: var(--orange); }
     .stat-row .val.d { color: #335566; }
+    /* ── Engine indicator colors + flash ── */
+    #engine-val.engine-cyan   { color: var(--cyan); }
+    #engine-val.engine-orange { color: var(--orange); }
+    #engine-val.engine-green  { color: #00ff88; }
+    @keyframes engineFlash {
+      0%   { opacity: 1; }
+      25%  { opacity: 0.05; }
+      60%  { opacity: 1; }
+      80%  { opacity: 0.3; }
+      100% { opacity: 1; }
+    }
+    #engine-val.flash { animation: engineFlash 0.45s ease; }
     #live-feed { flex: 1; padding: 14px 16px; overflow: hidden; font-size: 10px; line-height: 1.9; letter-spacing: 0.5px; }
     .feed-line { color: var(--text-dim); transition: color 0.5s, opacity 0.5s; }
     @keyframes blink { 0%,100%{opacity:1}50%{opacity:0.3} }
@@ -360,8 +405,6 @@ async def index():
     }
   </style>
 </head>
-Thought (106s)
-PART 2 of 3 — HTML body + main script (both fixes applied)
 <body>
 
   <!-- ══ AUTH OVERLAY ══ -->
@@ -412,7 +455,8 @@ PART 2 of 3 — HTML body + main script (both fixes applied)
         <div class="p-label">System Vitals</div>
         <div class="stat-row"><span class="lbl">STATUS</span><span class="val g">NOMINAL</span></div>
         <div class="stat-row"><span class="lbl">MEMORY</span><span class="val">ACTIVE</span></div>
-        <div class="stat-row"><span class="lbl">ENGINE</span><span class="val">GPT-4O</span></div>
+        <!-- ── ENGINE row: id added, color class added ── -->
+        <div class="stat-row"><span class="lbl">ENGINE</span><span class="val engine-cyan" id="engine-val">GPT-4O</span></div>
         <div class="stat-row"><span class="lbl">VOICE</span><span class="val" id="voice-status">READY</span></div>
         <div class="stat-row"><span class="lbl">PROTOCOL</span><span class="val d">JSON-RPC</span></div>
       </div>
@@ -645,7 +689,6 @@ PART 2 of 3 — HTML body + main script (both fixes applied)
         atlasState.textContent = 'ACTIVE'; atlasState.style.color = 'var(--cyan)';
       } else if (state === 'recording') {
         wakeDot.classList.add('recording'); wakeLabel.textContent = 'RECORDING';
-        /* UPDATED: voice send is back */
         centerSub.textContent = 'RECORDING — SAY "SEND" OR TAP MIC';
         atlasState.textContent = 'LISTENING'; atlasState.style.color = '#ff3344';
       } else if (state === 'processing') {
@@ -705,6 +748,18 @@ PART 2 of 3 — HTML body + main script (both fixes applied)
       } catch(e) { console.warn('History load failed:', e.message); }
     }
 
+    /* ── Engine indicator updater ── */
+    function updateEngineIndicator(modelDisplay, modelColor) {
+      const el  = document.getElementById('engine-val');
+      const prev = el.textContent;
+      el.textContent = modelDisplay;
+      el.className = 'val engine-' + (modelColor || 'cyan');
+      if (prev !== modelDisplay) {
+        el.classList.add('flash');
+        el.addEventListener('animationend', () => el.classList.remove('flash'), { once: true });
+      }
+    }
+
     async function sendMessage(text) {
       if (!text) text = inputEl.value.trim();
       if (!text) return;
@@ -732,6 +787,13 @@ PART 2 of 3 — HTML body + main script (both fixes applied)
         const reply = data.reply || data.detail || 'No response';
         addMsg('atlas', reply, null);
         feedLog('AiBusSol responded');
+
+        /* ── Update ENGINE indicator ── */
+        if (data.model_display) {
+          updateEngineIndicator(data.model_display, data.model_color);
+          feedLog('Engine: ' + data.model_display);
+        }
+
         speakReply(reply);
       } catch(e) {
         thinking.querySelector('div:last-child').textContent = 'Error: ' + e.message;
@@ -787,7 +849,6 @@ PART 2 of 3 — HTML body + main script (both fixes applied)
           URL.revokeObjectURL(url);
           resumeWakeWord();
         };
-        /* Destroy SR during TTS to avoid echo pickup */
         pauseWakeWord();
         audio.play().catch(e => {
           console.warn('Play blocked:', e.message);
@@ -803,8 +864,6 @@ PART 2 of 3 — HTML body + main script (both fixes applied)
     }
 
     let isRecording = false, mediaRecorder = null, audioChunks = [];
-
-    /* ── Single SR instance. _srMode switches between 'wake' and 'send' ── */
     let wakeRecognition = null, wakeActive = false;
     let _srMode = 'wake';
 
@@ -819,10 +878,7 @@ PART 2 of 3 — HTML body + main script (both fixes applied)
       wakeActive = true;
       _srMode = 'wake';
 
-      /* Capture this instance — prevents stale onend closures from
-         restarting a newer instance after pauseWakeWord destroys us */
       const thisInst = wakeRecognition;
-
       let triggered = false;
       const WAKE_VARIANTS = [
         'hey sol','hey soul','hey saul','hey sal',
@@ -831,9 +887,7 @@ PART 2 of 3 — HTML body + main script (both fixes applied)
 
       wakeRecognition.onresult = (e) => {
         const latest = e.results[e.results.length - 1][0].transcript.toLowerCase().trim();
-
         if (_srMode === 'wake') {
-          /* ── Wake-word detection ── */
           if (triggered || isRecording) return;
           if (WAKE_VARIANTS.some(v => latest.includes(v))) {
             triggered = true;
@@ -842,7 +896,6 @@ PART 2 of 3 — HTML body + main script (both fixes applied)
             startRecording();
           }
         } else if (_srMode === 'send') {
-          /* ── Send-command detection (same SR, different mode) ── */
           if (!isRecording) return;
           if (
             latest === 'send' ||
@@ -856,7 +909,6 @@ PART 2 of 3 — HTML body + main script (both fixes applied)
         }
       };
 
-      /* FIX: only auto-restart if THIS instance is still current */
       wakeRecognition.onend = () => {
         if (wakeActive && wakeRecognition === thisInst) {
           try { wakeRecognition.start(); } catch(e) {}
@@ -869,7 +921,6 @@ PART 2 of 3 — HTML body + main script (both fixes applied)
           wakeRecognition = null;
           setWakeStatus('unsupported');
         }
-        /* all other errors: onend will auto-restart */
       };
 
       try {
@@ -881,7 +932,6 @@ PART 2 of 3 — HTML body + main script (both fixes applied)
       }
     }
 
-    /* Destroys SR — used by speakReply to block echo pickup during TTS */
     function pauseWakeWord() {
       wakeActive = false;
       if (!wakeRecognition) return;
@@ -889,7 +939,6 @@ PART 2 of 3 — HTML body + main script (both fixes applied)
       wakeRecognition = null;
     }
 
-    /* Recreates SR after TTS finishes */
     function resumeWakeWord() {
       if (wakeActive) return;
       initWakeWord();
@@ -898,10 +947,7 @@ PART 2 of 3 — HTML body + main script (both fixes applied)
     async function startRecording() {
       if (isRecording) return;
       try {
-        /* Switch SR to send-detection mode — DO NOT destroy it.
-           One instance handles both wake and send. */
         _srMode = 'send';
-
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         audioChunks  = [];
         mediaRecorder = new MediaRecorder(stream);
@@ -909,7 +955,6 @@ PART 2 of 3 — HTML body + main script (both fixes applied)
         mediaRecorder.onstop = async () => {
           stream.getTracks().forEach(t => t.stop());
           isRecording = false;
-          /* Switch back to wake mode before transcribing */
           _srMode = 'wake';
           micBtn.textContent = '\u23f3'; micBtn.className = 'processing';
           setWakeStatus('processing');
@@ -932,7 +977,6 @@ PART 2 of 3 — HTML body + main script (both fixes applied)
             }
           } catch(e) { console.warn('Transcribe failed:', e.message); }
           micBtn.textContent = '\u{1F399}'; micBtn.className = '';
-          /* SR is still alive in wake mode — just update the status dot */
           setTimeout(() => { if (!isRecording && wakeActive) setWakeStatus('listening'); }, 500);
         };
         mediaRecorder.start();
@@ -942,7 +986,7 @@ PART 2 of 3 — HTML body + main script (both fixes applied)
         feedLog('Recording — say "send" or tap mic to stop');
       } catch(e) {
         console.warn('Mic denied:', e.message);
-        _srMode = 'wake'; /* reset mode, SR still running */
+        _srMode = 'wake';
         alert('Microphone access denied.');
       }
     }
@@ -969,7 +1013,7 @@ PART 2 of 3 — HTML body + main script (both fixes applied)
     document.addEventListener('click',   maybeStartWakeWord);
     document.addEventListener('keydown', maybeStartWakeWord);
   </script>
-  <script type="importmap">
+   <script type="importmap">
   {
     "imports": {
       "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
@@ -1106,53 +1150,3 @@ PART 2 of 3 — HTML body + main script (both fixes applied)
 </html>
 """
     return HTMLResponse(content=html, headers={"Permissions-Policy": "microphone=*"})
-
-
-@router.post("/api/chat")
-async def chat(req: ChatRequest, request: Request):
-    user_id = _get_user_id(request)
-    store = request.app.state.session_store
-    session = await store.get_or_create(user_id, CHANNEL)
-
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for m in session["conversation_history"][-10:]:
-        if m["role"] in ("user", "assistant"):
-            content = m["content"]
-            if isinstance(content, list):
-                content = next((c.get("text","") for c in content if c.get("type")=="text"), "")
-            messages.append({"role": m["role"], "content": content})
-
-    if req.image:
-        user_content = [
-            {"type": "text", "text": req.message},
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{req.image}"}}
-        ]
-    else:
-        user_content = req.message
-
-    messages.append({"role": "user", "content": user_content})
-
-    try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            res = await client.post(
-                "http://localhost:10000/v1/chat/completions",
-                headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
-                json={"model": "gpt-4o", "messages": messages}
-            )
-            try:
-                data = res.json()
-            except Exception:
-                return JSONResponse({"reply": f"Backend error: {res.text[:200]}"})
-
-            if "choices" not in data:
-                err = data.get("error", {})
-                return JSONResponse({"reply": f"Model error: {err.get('message', str(data)[:200])}"})
-
-            reply = data["choices"][0]["message"]["content"]
-    except Exception as e:
-        return JSONResponse({"reply": f"Connection error: {str(e)[:200]}"})
-
-    await store.append_message(user_id, CHANNEL, "user",      req.message)
-    await store.append_message(user_id, CHANNEL, "assistant", reply)
-
-    return JSONResponse({"reply": reply})
