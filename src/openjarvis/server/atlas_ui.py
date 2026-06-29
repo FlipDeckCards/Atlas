@@ -710,9 +710,6 @@ async def index():
       wrap.appendChild(tag); wrap.appendChild(body);
       if (imageDataUrl) {
         const thumb = document.createElement('div');
-        Thought (77s)
-Picked up right where it cut off. Here's the rest:
-
         thumb.className = 'msg-thumb';
         const img = document.createElement('img');
         img.src = imageDataUrl; img.alt = 'attached image';
