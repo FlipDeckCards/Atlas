@@ -56,6 +56,13 @@ class SessionStore:
                     created_at    TIMESTAMPTZ DEFAULT NOW()
                 );
                 CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
+
+                CREATE TABLE IF NOT EXISTS daily_spend (
+                    user_id TEXT    NOT NULL,
+                    day     DATE    NOT NULL,
+                    usd     NUMERIC(12,6) NOT NULL DEFAULT 0,
+                    PRIMARY KEY (user_id, day)
+                );
             """)
 
     async def close(self) -> None:
@@ -111,6 +118,28 @@ class SessionStore:
                 "display_name": row["display_name"],
                 "created_at":   row["created_at"],
             }
+
+    # ------------------------------------------------------------------
+    # Daily spend (paid model calls), per user per UTC day
+    # ------------------------------------------------------------------
+
+    async def get_spend_today(self, user_id: str, day: str) -> float:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT usd FROM daily_spend WHERE user_id = $1 AND day = $2::date",
+                user_id, day,
+            )
+            return float(row["usd"]) if row else 0.0
+
+    async def add_spend(self, user_id: str, day: str, usd: float) -> None:
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO daily_spend (user_id, day, usd) VALUES ($1, $2::date, $3)
+                ON CONFLICT (user_id, day) DO UPDATE SET usd = daily_spend.usd + EXCLUDED.usd
+                """,
+                user_id, day, usd,
+            )
 
     # ------------------------------------------------------------------
     # Session methods

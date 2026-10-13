@@ -156,7 +156,14 @@ def create_app(
     api_key: str = "",
     webhook_config: dict | None = None,
     cors_origins: list[str] | None = None,
+    require_auth: bool = False,
 ) -> FastAPI:
+    if require_auth and not api_key:
+        from openjarvis.server.hardening import StartupConfigError
+
+        raise StartupConfigError(
+            "Refusing to build the server without an API key: auth must be enforced on /api/* and /v1/*."
+        )
     app = FastAPI(
         title="OpenJarvis API",
         description="OpenAI-compatible API server for OpenJarvis",

@@ -27,6 +27,13 @@ from openjarvis.cli import cli
 pytest.importorskip("fastapi")
 pytest.importorskip("uvicorn")
 
+
+@pytest.fixture(autouse=True)
+def _serve_secrets(monkeypatch):
+    """``jarvis serve`` now refuses to start without JWT_SECRET_KEY and OPENJARVIS_API_KEY."""
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-jwt-secret-0123456789abcdef0123456789")
+    monkeypatch.setenv("OPENJARVIS_API_KEY", "test-system-key-0123456789")
+
 # ``openjarvis.cli.serve`` as an attribute resolves to the click *command*
 # (re-exported on the package); grab the real module to monkeypatch its globals.
 serve_mod = importlib.import_module("openjarvis.cli.serve")
