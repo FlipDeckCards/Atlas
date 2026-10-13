@@ -30,6 +30,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self._api_key = api_key or os.environ.get("OPENJARVIS_API_KEY", "")
 
     async def dispatch(self, request: Request, call_next):  # noqa: ANN001
+        from openjarvis.server.hardening import too_large_for_path
+
+        if too_large_for_path(request.url.path, request.headers.get("content-length")):
+            return JSONResponse({"detail": "Request too large"}, status_code=413)
         if self._api_key and self._requires_auth(request.url.path):
             auth = request.headers.get("Authorization", "")
             if not auth:

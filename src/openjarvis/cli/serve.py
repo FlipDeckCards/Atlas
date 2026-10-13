@@ -110,6 +110,16 @@ def serve(
     print_banner(quiet=(ctx.obj or {}).get("quiet", False))
     console = Console(stderr=True)
 
+    # Secrets first: no JWT_SECRET_KEY or no OPENJARVIS_API_KEY means no server (auth is never optional)
+    from openjarvis.server.hardening import StartupConfigError, validate_startup
+
+    try:
+        validate_startup()
+    except StartupConfigError as exc:
+        logger.error("%s", exc)
+        console.print(f"[red bold]{exc}[/red bold]")
+        sys.exit(1)
+
     # Check for server dependencies
     try:
         import uvicorn  # noqa: F401
@@ -673,6 +683,7 @@ def serve(
         api_key=api_key,
         webhook_config=webhook_config,
         cors_origins=config.server.cors_origins,
+        require_auth=True,
     )
 
     console.print(

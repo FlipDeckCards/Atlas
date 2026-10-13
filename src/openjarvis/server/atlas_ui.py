@@ -1,11 +1,22 @@
+import logging
 import os
+from datetime import datetime, timezone
+from typing import Optional
+
 import httpx
 import litellm
-from datetime import datetime, timezone
-from fastapi import APIRouter, File, UploadFile, Request
-from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse, FileResponse
-from pydantic import BaseModel
-from typing import Optional
+from fastapi import APIRouter, File, Request, UploadFile
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    StreamingResponse,
+)
+from pydantic import BaseModel, Field
+
+from openjarvis.server import hardening
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter()
@@ -32,10 +43,13 @@ Today's date and time is {date_str}.
 Be direct, sharp, and helpful."""
 
 
-def classify_model(message: str, has_image: bool) -> tuple:
-    """Returns (litellm_model_id, display_name, color_class)"""
+def classify_model(message: str, has_image: bool, models: Optional[dict] = None) -> tuple:
+    """Returns (litellm_model_id, display_name, color_class). Model names come from configuration
+    (ATLAS_DEFAULT_MODEL, ATLAS_WRITING_MODEL, ATLAS_LOOKUP_MODEL); see hardening.model_config.
+    The keyword routing is unchanged. NOTE: the "lookup" route is a plain model call with NO web access."""
+    m = models or hardening.model_config()
     if has_image:
-        return "gpt-4o", "GPT-4O", "cyan"
+        return m["default"], hardening.display_name(m["default"]), "cyan"
 
     msg = message.lower()
 
@@ -56,11 +70,11 @@ def classify_model(message: str, has_image: bool) -> tuple:
     gemini_score = sum(1 for s in gemini_signals if s in msg)
 
     if claude_score > gemini_score and claude_score > 0:
-        return "claude-sonnet-4-5-20250929", "CLAUDE-4.5", "orange"
+        return m["writing"], hardening.display_name(m["writing"]), "orange"
     elif gemini_score >= claude_score and gemini_score > 0:
-        return "gemini/gemini-2.5-flash", "GEMINI-2.5", "green"
+        return m["lookup"], hardening.display_name(m["lookup"]), "green"
     else:
-        return "gpt-4o", "GPT-4O", "cyan"
+        return m["default"], hardening.display_name(m["default"]), "cyan"
 
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -84,9 +98,24 @@ def _get_user_id(request: Request) -> str:
 
 # CHANGE 2: add client_date field
 class ChatRequest(BaseModel):
-    message: str
-    image: Optional[str] = None
-    client_date: Optional[str] = None
+    message: str = Field(..., max_length=hardening.MAX_MESSAGE_CHARS)
+    image: Optional[str] = Field(None, max_length=hardening.MAX_IMAGE_B64_CHARS)
+    client_date: Optional[str] = Field(None, max_length=100)
+
+
+def _limited(request: Request, rules: dict):
+    """A 429 response when a rate limit is hit, otherwise None. rules: {rule_name: key}."""
+    hit = hardening.enforce(rules)
+    if hit:
+        return JSONResponse(
+            {"detail": "Too many requests. Please slow down.", "reply": "Too many requests. Please slow down."},
+            status_code=429, headers={"Retry-After": str(hit[1])},
+        )
+    return None
+
+
+def _spend_error(body: dict) -> JSONResponse:
+    return JSONResponse(dict(body, reply=body["detail"]), status_code=429)
 
 
 @router.get("/static/atlas-model.glb")
@@ -130,8 +159,23 @@ async def session_history(request: Request):
 
 
 @router.post("/api/voice/transcribe")
-async def transcribe(audio: UploadFile = File(...)):
-    audio_bytes = await audio.read()
+async def transcribe(request: Request, audio: UploadFile = File(...)):
+    user_id = _get_user_id(request)
+    limited = _limited(request, {"voice_user": user_id, "voice_ip": hardening.client_ip(request)})
+    if limited:
+        return limited
+    if not OPENAI_API_KEY:
+        return JSONResponse({"detail": "Speech-to-text is not configured"}, status_code=503)
+    # read at most MAX_AUDIO_BYTES (+1 to notice an oversize upload) instead of the whole body
+    audio_bytes = await audio.read(hardening.MAX_AUDIO_BYTES + 1)
+    if len(audio_bytes) > hardening.MAX_AUDIO_BYTES:
+        return JSONResponse({"detail": "Audio file too large (limit %d MB)" % (hardening.MAX_AUDIO_BYTES // (1024 * 1024))}, status_code=413)
+    store = request.app.state.session_store
+    cost = hardening.whisper_cost_usd(len(audio_bytes))
+    blocked = await hardening.spend_blocked(store, user_id, cost)
+    if blocked:
+        return _spend_error(blocked)
+    await store.add_spend(user_id, hardening.utc_day(), cost)
     async with httpx.AsyncClient(timeout=30) as client:
         res = await client.post(
             "https://api.openai.com/v1/audio/transcriptions",
@@ -143,13 +187,28 @@ async def transcribe(audio: UploadFile = File(...)):
 
 
 @router.post("/api/voice/speak")
-async def speak(req: ChatRequest):
+async def speak(req: ChatRequest, request: Request):
+    user_id = _get_user_id(request)
+    limited = _limited(request, {"voice_user": user_id, "voice_ip": hardening.client_ip(request)})
+    if limited:
+        return limited
+    if not ELEVENLABS_API_KEY:
+        return JSONResponse({"detail": "Text-to-speech is not configured"}, status_code=503)
+    text = req.message
+    if len(text) > hardening.MAX_TTS_CHARS:
+        return JSONResponse({"detail": "Text too long for speech (limit %d characters)" % hardening.MAX_TTS_CHARS}, status_code=413)
+    store = request.app.state.session_store
+    cost = hardening.tts_cost_usd(len(text))
+    blocked = await hardening.spend_blocked(store, user_id, cost)
+    if blocked:
+        return _spend_error(blocked)
+    await store.add_spend(user_id, hardening.utc_day(), cost)
     async with httpx.AsyncClient(timeout=30) as client:
         res = await client.post(
             f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
             headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
             json={
-                "text": req.message,
+                "text": text,
                 "model_id": "eleven_turbo_v2",
                 "voice_settings": {
                     "stability": 0.5,
@@ -244,6 +303,7 @@ async def index():
     #auth-toggle-link { color: var(--cyan); cursor: pointer; text-decoration: underline; }
     #auth-toggle-link:hover { color: #fff; }
     #auth-display-wrap { display: none; }
+    #auth-invite-wrap { display: none; }
     .hud-hidden { display: none !important; }
     #hud-header {
       background: var(--panel); border-bottom: 1px solid var(--border);
@@ -426,6 +486,10 @@ async def index():
         <label>Display Name</label>
         <input id="auth-display" type="text" placeholder="e.g. Michael" autocomplete="name"/>
       </div>
+      <div class="auth-field" id="auth-invite-wrap">
+        <label>Invite Code</label>
+        <input id="auth-invite" type="password" placeholder="required to register" autocomplete="off"/>
+      </div>
       <div class="auth-field">
         <label>Email</label>
         <input id="auth-email" type="email" placeholder="[email]" autocomplete="email"/>
@@ -558,6 +622,8 @@ async def index():
         authMode === 'login' ? 'REGISTER' : 'LOGIN';
       document.getElementById('auth-display-wrap').style.display =
         authMode === 'register' ? 'flex' : 'none';
+      document.getElementById('auth-invite-wrap').style.display =
+        authMode === 'register' ? 'flex' : 'none';
       document.getElementById('auth-error').textContent = '';
     }
 
@@ -578,7 +644,7 @@ async def index():
       const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
       const body = authMode === 'login'
         ? { email, password }
-        : { email, password, display_name: document.getElementById('auth-display').value.trim() || email.split('@')[0] };
+        : { email, password, invite_code: document.getElementById('auth-invite').value.trim(), display_name: document.getElementById('auth-display').value.trim() || email.split('@')[0] };
       try {
         const res  = await fetch(endpoint, {
           method: 'POST',
@@ -1120,7 +1186,16 @@ async def index():
 @router.post("/api/chat")
 async def chat(req: ChatRequest, request: Request):
     user_id = _get_user_id(request)
+    limited = _limited(request, {"chat_user": user_id, "chat_ip": hardening.client_ip(request)})
+    if limited:
+        return limited
+    if req.image and len(req.image) > hardening.MAX_IMAGE_B64_CHARS:
+        return JSONResponse({"detail": "Image too large (limit %d MB)" % (hardening.MAX_IMAGE_BYTES // (1024 * 1024)), "reply": "Image too large."}, status_code=413)
     store = request.app.state.session_store
+    # the daily spend cap is checked BEFORE the provider is called
+    blocked = await hardening.spend_blocked(store, user_id, hardening.FLAT_CHAT_ESTIMATE_USD)
+    if blocked:
+        return _spend_error(blocked)
     session = await store.get_or_create(user_id, CHANNEL)
 
     model_id, model_display, model_color = classify_model(req.message, bool(req.image))
@@ -1145,10 +1220,12 @@ async def chat(req: ChatRequest, request: Request):
     messages.append({"role": "user", "content": user_content})
 
     try:
-        response = await litellm.acompletion(model=model_id, messages=messages)
+        response = await litellm.acompletion(model=model_id, messages=messages, max_tokens=hardening.CHAT_MAX_TOKENS)
         reply = response.choices[0].message.content
-    except Exception as e:
-        return JSONResponse({"reply": f"Model error: {str(e)[:200]}", "model_display": model_display, "model_color": model_color})
+    except Exception:
+        logger.exception("model call failed (%s)", model_id)       # details stay in the server log, not in the answer
+        return JSONResponse({"reply": "The model could not answer right now. Please try again.", "model_display": model_display, "model_color": model_color})
+    await store.add_spend(user_id, hardening.utc_day(), hardening.chat_cost_usd(response))
 
     await store.append_message(user_id, CHANNEL, "user", req.message)
     await store.append_message(user_id, CHANNEL, "assistant", reply)
