@@ -574,7 +574,7 @@ async def index():
           <button id="mic" title="Record">&#127897;</button>
           <label id="upload-btn" for="img-input" title="Attach image">📎</label>
           <input id="img-input" type="file" accept="image/*"/>
-          <input id="input" type="text" placeholder='Type or say "Hey Sol..."' autocomplete="off"/>
+          <input id="input" type="text" placeholder='Type, say "Hey Sol...", or /image /sound' autocomplete="off"/>
           <button id="send">SEND</button>
         </div>
       </div>
@@ -829,10 +829,46 @@ async def index():
       }
     }
 
+    // "/image a red fox" and "/sound hello there": generated media is shown in the chat (it is not saved; it is gone on reload)
+    async function sendMedia(kind, prompt) {
+      addMsg('user', '/' + kind + ' ' + prompt, null);
+      feedLog('Media: ' + kind);
+      const pending = addMsg('atlas', kind === 'image' ? 'Making the image...' : 'Making the sound...', null);
+      sendBtn.disabled = true;
+      try {
+        const res  = await fetch('/api/media/' + kind, {
+          method: 'POST', headers: jsonAuthHeader(),
+          body: JSON.stringify(kind === 'image' ? { prompt: prompt } : { text: prompt })
+        });
+        if (res.status === 401) { pending.remove(); sendBtn.disabled = false; return; }
+        const data = await res.json().catch(() => ({}));
+        const body = pending.querySelector('div:last-child');
+        if (!res.ok || !data.data_base64) {
+          body.textContent = (data.detail && typeof data.detail === 'string') ? data.detail : 'That could not be made right now.';
+          body.style.color = '#ff3344';
+        } else {
+          body.textContent = data.note || '';
+          const el = document.createElement(kind === 'image' ? 'img' : 'audio');
+          el.src = 'data:' + data.mime + ';base64,' + data.data_base64;
+          if (kind === 'image') { el.alt = prompt; el.style.maxWidth = '100%'; el.style.marginTop = '6px'; }
+          else { el.controls = true; el.style.marginTop = '6px'; el.style.width = '100%'; }
+          pending.appendChild(el);
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+      } catch (e) {
+        const body = pending.querySelector('div:last-child');
+        body.textContent = 'Error: ' + e.message; body.style.color = '#ff3344';
+      }
+      sendBtn.disabled = false;
+      inputEl.focus();
+    }
+
     // CHANGE 3: add client_date to the fetch body
     async function sendMessage(text) {
       if (!text) text = inputEl.value.trim();
       if (!text) return;
+      const mediaCmd = text.match(/^\/(image|sound)\s+([\s\S]+)/i);
+      if (mediaCmd) { inputEl.value = ''; return sendMedia(mediaCmd[1].toLowerCase(), mediaCmd[2].trim()); }
       inputEl.value = '';
       sendBtn.disabled = true;
       const imageToSend  = pendingImageB64;
