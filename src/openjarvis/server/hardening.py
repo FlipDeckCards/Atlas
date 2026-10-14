@@ -146,6 +146,8 @@ def rate_limits() -> Dict[str, Tuple[int, float]]:
             60.0,
         ),  # 30 voice calls / min per user
         "voice_ip": (_int_env("RL_VOICE_IP_MAX", 90), 60.0),
+        "media_user": (_int_env("RL_MEDIA_USER_MAX", 6), 60.0),        # 6 image / sound generations per minute per user
+        "media_ip": (_int_env("RL_MEDIA_IP_MAX", 20), 60.0),
     }
 
 

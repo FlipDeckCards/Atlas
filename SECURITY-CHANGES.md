@@ -113,3 +113,51 @@ Flags I can raise from the code alone: `JWT_SECRET_KEY` and `OPENJARVIS_API_KEY`
 - JWTs last 30 days and cannot be revoked.
 - Chunked uploads have no `Content-Length` to check up front (field-level caps still apply).
 - I left `Aibussol-analysis.md` untracked on purpose.
+
+---
+
+# Stage 2 — media generation (branch `media-stage-2`)
+
+Provider research, licenses, quotas, source URLs and dates: see `MEDIA-PROVIDERS.md`. Summary: images use Cloudflare Workers AI FLUX.1 [schnell] (Apache-2.0); speech uses Cloudflare Workers AI MeloTTS (MIT); **video is left out and has no route** (no provider passed the license and free-quota checks); music and sound effects are not offered.
+
+## What was added
+| Item | Detail |
+|---|---|
+| `POST /api/media/image` | `{prompt (1–500 chars), steps (1–8, default 4)}` → base64 JPEG |
+| `POST /api/media/sound` | `{text (1–1,000 chars), lang (en, fr, es, zh, jp, kr)}` → base64 MP3 (speech only) |
+| `GET /api/media/status` | which of image / sound are on; `video` is always false |
+| Chat | typing `/image a red fox` or `/sound hello there` in the chat shows the image or an audio player in the conversation |
+| Code | `server/media/` (`base.py` interface, `cloudflare.py`, `image.py`, `sound.py`, `routes.py`); providers are chosen by `MEDIA_IMAGE_PROVIDER` / `MEDIA_SOUND_PROVIDER` |
+
+## Rules enforced
+- **Off by default, two switches.** `MEDIA_ENABLED` must be on **and** `DAILY_MEDIA_SPEND_CAP_USD` must be above 0 (default 0). Either missing: every media call answers 403 and no provider is called.
+- **Its own spend cap.** Media is checked against `DAILY_MEDIA_SPEND_CAP_USD` per user per UTC day, **before** any provider call; at the cap: 429, no provider call. It is tracked separately from chat (`DAILY_SPEND_CAP_USD`, default $1, unchanged). A second ceiling for all users together, `MEDIA_GLOBAL_DAILY_CAP_USD` (default $1.00), protects the shared account. Costs are estimated at Cloudflare's paid-plan prices (an image about $0.0006, a 1,000-character clip about $0.0004), even while the free quota makes the real charge $0, so the cap also limits use of the free quota.
+- **Same protection as chat.** The auth middleware, the per-IP and per-user rate limits (new rules `media_user` 6/min and `media_ip` 20/min; `RL_MEDIA_USER_MAX`, `RL_MEDIA_IP_MAX`), and input caps (above).
+- **Errors.** A provider failure returns a fixed sentence (502 or 503); details go to the server log as an HTTP status only. A failed call costs nothing.
+- **Keys.** `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` are read only from the environment, sent only in the `Authorization` header, never logged and never returned (tests send the token through success and every failure path and search the response and the log for it).
+- **No storage.** Generated files are returned in the answer and shown in the chat; they are not written to Render's disk or to the database and are gone when the page reloads. (Saving them needs object storage: still open.)
+
+## New environment variables
+| Name | Needed? | Meaning |
+|---|---|---|
+| `MEDIA_ENABLED` | Yes, to turn media on | off unless 1 / true / yes / on |
+| `DAILY_MEDIA_SPEND_CAP_USD` | Yes, above 0 | per user per UTC day; 0 = off |
+| `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | Yes | Cloudflare account id and an API token with Workers AI permission |
+| `MEDIA_GLOBAL_DAILY_CAP_USD` | Optional (default 1.00) | all users together per UTC day |
+| `MEDIA_IMAGE_PROVIDER`, `MEDIA_SOUND_PROVIDER` | Optional | provider ids (only the Cloudflare ones exist) |
+| `RL_MEDIA_USER_MAX`, `RL_MEDIA_IP_MAX` | Optional | rate limits |
+
+## Still open
+- The real Cloudflare calls have not been run (no token on this machine); the adapter is tested against mocked Cloudflare responses. `scripts/check_media_providers.py` makes one real call per provider when you set the two Cloudflare variables.
+- Cloudflare's docs do not say whether the Free plan needs a payment card to sign up. Check once.
+- The free allowance is shared by the whole Cloudflare account (10,000 neurons per day, about 170 images). When it is used up Cloudflare returns an error and the app says the provider is busy.
+- No music or sound effects, and no video.
+- **ElevenLabs:** the existing spoken replies use `ELEVENLABS_API_KEY`. ElevenLabs' Free plan has no commercial license (Starter and above do). Not changed here; see `MEDIA-PROVIDERS.md`.
+- Generated media is not saved (see above), and the same login/IP rate limits are in memory, so they reset on restart.
+
+## Stage 2 test results
+- **New:** `tests/server/test_atlas_media.py`, 23 tests, all pass. They cover: flag off blocks image and sound (403, provider not called); cap 0 or unset blocks everything even with the flag on; the cost is recorded under a media key, separate from chat; cap reached returns 429 without calling the provider (per user, and the global ceiling); chat cap and media cap independent; not-configured provider returns 503 with no call; auth required; per-user rate limit; input caps (prompt, text, steps, language); provider errors show only a fixed sentence and a failed call costs nothing; the Cloudflare token appears only in the request's Authorization header, never in the response, the headers or the log, including on 401, 429, 500 and connection failures; no video route; nothing written to disk.
+- **With the Stage 1 tests:** 67 passed.
+- **Full suite** (`uv run pytest`, Windows, no Rust extension, no Postgres, no network): 6,853 passed, 200 failed, 30 errors, 82 skipped.
+- **Pre-existing failures:** the same suite on `main` (`f17e6af`, run from a separate checkout) gives 6,830 passed, 200 failed, 30 errors. The two failing sets are identical except for one test in `tests/agents/test_manager.py::TestCheckpoints` that fails on a different one of its two checkpoint cases from run to run (a same-second timestamp race on Windows; both fail when run alone, on both branches). So Stage 2 adds no failures; the 23 extra passes are the new tests. The causes of the pre-existing failures are environmental (no Rust extension, no Postgres, Windows paths, live-network tests).
+- **Not run:** a real call to Cloudflare (no token here). `scripts/check_media_providers.py` does it once you set the two Cloudflare variables.
