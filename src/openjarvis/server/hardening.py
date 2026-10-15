@@ -38,6 +38,29 @@ def jwt_secret_problem(value: Optional[str]) -> Optional[str]:
     return None
 
 
+MIN_JWT_SECRET_BYTES = 32  # HS256 signs with a 256-bit key; PyJWT warns below 32 bytes
+_STRICT_HINT = (
+    " Set JWT_SECRET_STRICT=1 to make the server refuse to start with a short key."
+)
+
+
+def _truthy(v: Optional[str]) -> bool:
+    return (v or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def jwt_secret_length_warning(env: Optional[Mapping[str, str]] = None) -> Optional[str]:
+    """A sentence when JWT_SECRET_KEY is under 32 BYTES (counted in bytes, not characters), else None."""
+    e = os.environ if env is None else env
+    n = len((e.get("JWT_SECRET_KEY") or "").strip().encode("utf-8"))
+    if 0 < n < MIN_JWT_SECRET_BYTES:
+        return (
+            f"JWT_SECRET_KEY is only {n} bytes long; use at least {MIN_JWT_SECRET_BYTES} "
+            'bytes (for example: python -c "import secrets; print(secrets.token_urlsafe(48))").'
+            + _STRICT_HINT
+        )
+    return None
+
+
 def validate_startup(env: Optional[Mapping[str, str]] = None) -> None:
     """Refuse to start without JWT_SECRET_KEY and OPENJARVIS_API_KEY. Raises StartupConfigError with a clear message."""
     e = os.environ if env is None else env
@@ -52,12 +75,13 @@ def validate_startup(env: Optional[Mapping[str, str]] = None) -> None:
         problems.append(
             "OPENJARVIS_API_KEY is not set, so /api/* and /v1/* would not require authentication. Set it (or run: jarvis auth generate-key)."
         )
+    short = jwt_secret_length_warning(e)
+    if short and _truthy(e.get("JWT_SECRET_STRICT")):
+        problems.append(short.replace(_STRICT_HINT, ""))
     if problems:
         raise StartupConfigError("Refusing to start: " + " ".join(problems))
-    if len((e.get("JWT_SECRET_KEY") or "").strip()) < 32:
-        logger.warning(
-            "JWT_SECRET_KEY is shorter than 32 characters; use a longer random value."
-        )
+    if short:
+        logger.warning(short)  # still starts: refusing would take a running service down
 
 
 def get_jwt_secret(env: Optional[Mapping[str, str]] = None) -> str:

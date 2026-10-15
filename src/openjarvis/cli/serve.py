@@ -119,6 +119,11 @@ def serve(
         logger.error("%s", exc)
         console.print(f"[red bold]{exc}[/red bold]")
         sys.exit(1)
+    from openjarvis.server.hardening import jwt_secret_length_warning
+
+    _short = jwt_secret_length_warning()
+    if _short:
+        console.print(f"[yellow bold]Warning: {_short}[/yellow bold]")
 
     # Check for server dependencies
     try:

@@ -52,16 +52,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
             if secrets.compare_digest(token, self._api_key):
                 return await call_next(request)
 
-            # 2. Accept valid user JWT
+            # 2. Accept valid user JWT. Only the token check is inside the try: the route
+            # runs OUTSIDE it, so an error inside a route is a 500 (and is logged), never
+            # reported to the person as "Invalid or expired token".
+            payload = None
             try:
                 from openjarvis.server.auth_routes import decode_token
                 payload = decode_token(token)
-                if payload:
-                    request.state.user_id    = payload["sub"]
-                    request.state.user_email = payload.get("email", "")
-                    return await call_next(request)
             except Exception as exc:
                 logger.debug("JWT decode error: %s", exc)
+            if payload and payload.get("sub"):
+                request.state.user_id    = payload["sub"]
+                request.state.user_email = payload.get("email", "")
+                return await call_next(request)
 
             return JSONResponse(
                 {"detail": "Invalid or expired token"},
