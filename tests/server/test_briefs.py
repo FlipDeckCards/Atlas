@@ -304,10 +304,125 @@ class TestChatMessage:
 
     def test_listen_calls_speakreply_with_the_spoken_summary_the_server_returns_and_nothing_else(self, page):
         block = page[page.index("function addBriefMessage(b)"):page.index("async function checkBriefs")]
-        assert "speakReply(r.data.text)" in block and "speakReply(b.body" not in block and "speakReply(b.spoken" not in block
+        assert "speakReply(r.data.text, wrap)" in block and "speakReply(b.body" not in block and "speakReply(b.spoken" not in block
         assert "/listen'" in block and "r.data.detail" in block                                          # the refusal message is shown
         assert block.count("speakReply(") == 1
 
     def test_the_brief_text_is_set_as_text_not_html(self, page):
         block = page[page.index("function addBriefMessage(b)"):page.index("async function checkBriefs")]
         assert "innerHTML" not in block
+
+
+# ── chat: "read me the brief" ───────────────────────────────────────────────────────────────────
+
+from openjarvis.server import briefs as briefs_mod  # noqa: E402
+
+
+class TestWantsBrief:
+    @pytest.mark.parametrize("msg,want", [
+        ("Read me the Daily Brief.", "latest"),
+        ("read me the daily brief", "latest"),
+        ("What's in my brief?", "latest"),
+        ("play the morning brief", "morning"),
+        ("I didn't get the am brief", "morning"),
+        ("give me the afternoon briefing", "afternoon"),
+        ("read tonight's brief", "evening"),
+        ("any new briefs?", "latest"),
+    ])
+    def test_requests_for_the_brief(self, msg, want):
+        assert briefs_mod.wants_brief(msg) == want
+
+    @pytest.mark.parametrize("msg", [
+        "give me a brief summary of the French revolution",
+        "write me a brief email to my landlord",
+        "can you draft the brief for the client",
+        "keep it brief",
+        "generate me an image of a bear in the woods",
+        "",
+        "read me the brief " + "x" * 200,
+    ])
+    def test_other_messages_are_not_brief_requests(self, msg):
+        assert briefs_mod.wants_brief(msg) is None
+
+
+class TestChatReadsTheBrief:
+    def _chat(self, w, msg, uid="alice"):
+        return w.client.post("/api/chat", json={"message": msg}, headers=user(uid))
+
+    def test_the_latest_brief_is_read_from_the_feed_without_a_model_call_or_spend(self, world, monkeypatch):
+        called = []
+        monkeypatch.setattr(atlas_ui.litellm, "acompletion", lambda *a, **k: called.append(1))
+        post(world, brief(spoken_summary="Reconnect the Meta token first."))
+        r = self._chat(world, "Read me the Daily Brief.")
+        assert r.status_code == 200
+        assert r.json()["reply"] == "Morning brief for Marnyx and FlipDeck. Reconnect the Meta token first."
+        assert called == [] and world.session.spent("alice") == 0
+
+    def test_the_newest_period_wins_for_latest_and_a_named_period_is_honoured(self, world):
+        post(world, brief(spoken_summary="Morning summary."))
+        world.clock[0] = world.clock[0] + dt.timedelta(hours=6)
+        post(world, brief(period="afternoon", spoken_summary="Afternoon summary."))
+        assert self._chat(world, "read me the brief").json()["reply"].endswith("Afternoon summary.")
+        assert self._chat(world, "read me the morning brief").json()["reply"].endswith("Morning summary.")
+
+    def test_a_clear_answer_when_there_is_no_brief(self, world):
+        assert self._chat(world, "read me the evening brief").json()["reply"] == "There's no evening brief in the feed yet."
+        assert self._chat(world, "read me the brief").json()["reply"] == "There's no brief in the feed yet."
+
+    def test_the_exchange_is_kept_in_the_conversation(self, world):
+        post(world)
+        self._chat(world, "read me the brief")
+        hist = world.session.history["alice"]
+        assert hist[-2] == {"role": "user", "content": "read me the brief"}
+        assert hist[-1]["role"] == "assistant" and hist[-1]["content"].startswith("Morning brief for")
+
+    def test_a_follow_up_gets_the_full_brief_as_context(self, world, monkeypatch):
+        seen = {}
+
+        async def fake(model, messages, **kw):
+            seen["system"] = messages[0]["content"]
+            msg = MagicMock(); msg.content = "Meta and TikTok are pending."
+            resp = MagicMock(); resp.choices = [MagicMock(message=msg)]
+            return resp
+
+        monkeypatch.setattr(atlas_ui.litellm, "acompletion", fake)
+        monkeypatch.setattr(atlas_ui.helix_tools, "tools_available", lambda state: False)
+        monkeypatch.setattr(hardening, "chat_cost_usd", lambda resp, litellm_module=None: 0.001)
+        post(world, brief(body_markdown="# Morning\n- Pending: Meta review, TikTok review"))
+        self._chat(world, "read me the brief")
+        r = self._chat(world, "what's pending?")
+        assert r.status_code == 200
+        assert "<brief>" in seen["system"] and "Pending: Meta review" in seen["system"]
+
+    def test_unrelated_chat_gets_no_brief_context(self, world, monkeypatch):
+        seen = {}
+
+        async def fake(model, messages, **kw):
+            seen["system"] = messages[0]["content"]
+            msg = MagicMock(); msg.content = "Hi."
+            resp = MagicMock(); resp.choices = [MagicMock(message=msg)]
+            return resp
+
+        monkeypatch.setattr(atlas_ui.litellm, "acompletion", fake)
+        monkeypatch.setattr(atlas_ui.helix_tools, "tools_available", lambda state: False)
+        monkeypatch.setattr(hardening, "chat_cost_usd", lambda resp, litellm_module=None: 0.001)
+        post(world)
+        self._chat(world, "hello there")
+        assert "<brief>" not in seen["system"]
+
+
+class TestVoiceFailureIsShown:
+    @pytest.fixture
+    def page(self):
+        return Path(atlas_ui.__file__).read_text(encoding="utf-8")
+
+    def test_a_failed_spoken_reply_shows_a_note_under_the_message(self, page):
+        block = page[page.index("async function speakReply(text, el)"):]
+        block = block[:block.index("const arrayBuffer")]
+        assert "voiceNote(el, res, data)" in block
+        assert "'Voice unavailable: '" in page and "daily_spend_cap_reached" in page
+        assert "speakReply(reply, replyEl)" in page
+
+    def test_the_note_is_set_as_text_not_html(self, page):
+        block = page[page.index("function voiceNote("):page.index("async function speakReply(")]
+        assert "innerHTML" not in block and "textContent" in block

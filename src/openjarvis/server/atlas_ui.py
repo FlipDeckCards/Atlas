@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -14,7 +15,7 @@ from fastapi.responses import (
 )
 from pydantic import BaseModel, Field
 
-from openjarvis.server import hardening
+from openjarvis.server import briefs, hardening
 from openjarvis.server.media import service as media_service
 from openjarvis.server.media import helix_tools
 from openjarvis.server.media.service import MediaServiceError
@@ -104,6 +105,9 @@ class ChatRequest(BaseModel):
     message: str = Field(..., max_length=hardening.MAX_MESSAGE_CHARS)
     image: Optional[str] = Field(None, max_length=hardening.MAX_IMAGE_B64_CHARS)
     client_date: Optional[str] = Field(None, max_length=100)
+
+
+_BRIEF_REPLY = re.compile(r"^(Morning|Afternoon|Evening) brief for ")      # how briefs.brief_reply starts
 
 
 def _limited(request: Request, rules: dict):
@@ -1049,7 +1053,7 @@ async def index():
         listen.disabled = true; note.textContent = ''; note.style.color = '';
         const r = await libApi('/api/briefs/' + encodeURIComponent(b.id) + '/listen', 'POST');
         if (!r.ok || !r.data.text) { note.textContent = r.data.detail || 'This brief could not be played right now.'; note.style.color = '#ff3344'; }
-        else { note.textContent = r.data.remaining + ' listens left today'; speakReply(r.data.text); }   // the spoken summary only, never the full text
+        else { note.textContent = r.data.remaining + ' listens left today'; speakReply(r.data.text, wrap); }   // the spoken summary only, never the full text
         listen.disabled = false;
       });
       row.append(listen, note); wrap.appendChild(row);
@@ -1135,7 +1139,7 @@ async def index():
           updateEngineIndicator(data.model_display, data.model_color);
           feedLog('Engine: ' + data.model_display);
         }
-        speakReply(reply);
+        speakReply(reply, replyEl);
       } catch(e) {
         thinking.querySelector('div:last-child').textContent = 'Error: ' + e.message;
         thinking.querySelector('div:last-child').style.color = '#ff3344';
@@ -1145,7 +1149,24 @@ async def index():
       inputEl.focus();
     }
 
-    async function speakReply(text) {
+    // A spoken reply that fails says so under the message instead of failing silently.
+    function voiceNote(el, res, data) {
+      let why = (data && typeof data.detail === 'string' && data.detail) ? data.detail : '';
+      if (res.status === 429 && data && data.error === 'daily_spend_cap_reached') why = 'daily usage limit reached; voice resumes at midnight UTC.';
+      else if (res.status === 429) why = why || 'too many requests; try again in a minute.';
+      else if (res.status === 503) why = why || 'text-to-speech is not configured.';
+      else if (res.status === 413) why = why || 'reply too long to speak.';
+      else why = 'the voice service failed (HTTP ' + res.status + ').';
+      feedLog('Voice off: HTTP ' + res.status);
+      if (!el) return;
+      const n = document.createElement('div');
+      n.className = 'v-meta voice-note';
+      n.style.color = '#ff3344'; n.style.marginTop = '6px'; n.style.fontSize = '0.8em';
+      n.textContent = 'Voice unavailable: ' + why;
+      el.appendChild(n);
+    }
+
+    async function speakReply(text, el) {
       try {
         const res = await fetch('/api/voice/speak', {
           method: 'POST',
@@ -1153,7 +1174,10 @@ async def index():
           body: JSON.stringify({ message: text })
         });
         if (!res.ok) {
-          console.warn('TTS HTTP error:', res.status, await res.text());
+          const raw = await res.text();
+          let data = null; try { data = JSON.parse(raw); } catch (e) { /* not JSON */ }
+          console.warn('TTS HTTP error:', res.status, raw);
+          voiceNote(el, res, data);
           resumeWakeWord();
           return;
         }
@@ -1463,6 +1487,21 @@ async def chat(req: ChatRequest, request: Request):
     if req.image and len(req.image) > hardening.MAX_IMAGE_B64_CHARS:
         return JSONResponse({"detail": "Image too large (limit %d MB)" % (hardening.MAX_IMAGE_BYTES // (1024 * 1024)), "reply": "Image too large."}, status_code=413)
     store = request.app.state.session_store
+
+    # "read me the brief": answered from the brief feed, with no model call and no spend
+    brief_period = None if req.image else briefs.wants_brief(req.message)
+    if brief_period:
+        try:
+            found = await briefs.find_brief(briefs.store_for(request), brief_period)
+            reply = briefs.brief_reply(found, brief_period)
+        except Exception:
+            logger.exception("brief lookup failed")
+            reply = "I couldn't load the brief feed right now. Please try again."
+        await store.get_or_create(user_id, CHANNEL)
+        await store.append_message(user_id, CHANNEL, "user", req.message)
+        await store.append_message(user_id, CHANNEL, "assistant", reply)
+        return JSONResponse({"reply": reply, "model_display": "BRIEF FEED", "model_color": "#00e5ff"})
+
     # the daily spend cap is checked BEFORE the provider is called
     blocked = await hardening.spend_blocked(store, user_id, hardening.FLAT_CHAT_ESTIMATE_USD)
     if blocked:
@@ -1470,6 +1509,17 @@ async def chat(req: ChatRequest, request: Request):
     session = await store.get_or_create(user_id, CHANNEL)
 
     model_id, model_display, model_color = classify_model(req.message, bool(req.image))
+
+    # a follow-up about the brief ("what's pending?" right after it was read) gets the full brief as context
+    brief_ctx = ""
+    recent = [m for m in session["conversation_history"][-4:] if m["role"] == "assistant" and isinstance(m["content"], str)]
+    if re.search(r"\bbrief(?:ing)?s?\b", req.message, re.I) or any(_BRIEF_REPLY.match(m["content"]) for m in recent):
+        try:
+            latest_brief = await briefs.find_brief(briefs.store_for(request), "latest")
+            if latest_brief:
+                brief_ctx = briefs.brief_context(latest_brief)
+        except Exception:
+            logger.exception("brief context lookup failed")
 
     # CHANGE 4: pass client_date to get_system_prompt
     # Helix's media tools are offered only when media is fully on (flag, budget above zero, storage configured); otherwise chat is exactly as before
@@ -1486,7 +1536,7 @@ async def chat(req: ChatRequest, request: Request):
             await store.append_message(user_id, CHANNEL, "assistant", early["reply"])
             return JSONResponse({"reply": early["reply"], "ui_actions": early["ui"], "model_display": model_display, "model_color": model_color})
 
-    system_text = get_system_prompt(req.client_date) + (helix_tools.SYSTEM_ADDENDUM if media_ctx is not None else "")
+    system_text = get_system_prompt(req.client_date) + (helix_tools.SYSTEM_ADDENDUM if media_ctx is not None else "") + brief_ctx
     messages = [{"role": "system", "content": system_text}]
     for m in session["conversation_history"][-10:]:
         if m["role"] in ("user", "assistant"):
