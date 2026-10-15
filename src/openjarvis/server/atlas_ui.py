@@ -501,6 +501,8 @@ async def index():
       #hud-header { padding: 0 12px; }
       #hud-title { font-size: 13px; letter-spacing: 2px; }
       .hud-meta { gap: 8px; }
+      .hud-extra { display: none; }
+      #operator-name { white-space: nowrap; }
       #hud-main { grid-template-columns: 1fr; height: 100%; overflow: hidden; }
       #panel-left, #panel-center { display: none; }
       #panel-right { border-left: none; width: 100%; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
@@ -569,8 +571,8 @@ async def index():
     <div id="hud-title">AIBUS<span>SOL</span></div>
     <div class="hud-meta">
       <span>OPERATOR: <span class="v" id="operator-name">—</span></span>
-      <span>SESSION: <span class="v">WEB-01</span></span>
-      <span>UPTIME: <span class="v" id="uptime">00:00:00</span></span>
+      <span class="hud-extra">SESSION: <span class="v">WEB-01</span></span>
+      <span class="hud-extra">UPTIME: <span class="v" id="uptime">00:00:00</span></span>
       <button id="logout-btn" onclick="logout()">LOGOUT</button>
     </div>
   </div>
