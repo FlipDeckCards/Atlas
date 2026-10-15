@@ -422,6 +422,7 @@ async def index():
     }
     #messages::-webkit-scrollbar{width:3px}
     #messages::-webkit-scrollbar-thumb{background:var(--cyan-dim);border-radius:2px}
+    .voice-note { color:#ff3344; margin-top:6px; font-size:11px; line-height:1.5; white-space:normal; overflow-wrap:anywhere; }
     .msg { max-width:92%; padding:10px 12px; font-size:12px; line-height:1.6; border-radius:2px; }
     .msg-tag { font-size:9px; letter-spacing:2px; margin-bottom:4px; opacity:0.5; }
     .msg-thumb { margin-top:6px; border-radius:2px; overflow:hidden; border:1px solid rgba(0,229,255,0.2); display:inline-block; }
@@ -1165,8 +1166,7 @@ async def index():
       feedLog('Voice off: HTTP ' + res.status);
       if (!el) return;
       const n = document.createElement('div');
-      n.className = 'v-meta voice-note';
-      n.style.color = '#ff3344'; n.style.marginTop = '6px'; n.style.fontSize = '0.8em';
+      n.className = 'voice-note';
       n.textContent = 'Voice unavailable: ' + why;
       el.appendChild(n);
     }
