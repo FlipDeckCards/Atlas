@@ -352,16 +352,17 @@ class TestChatReadsTheBrief:
     def test_the_latest_brief_is_read_from_the_feed_without_a_model_call_or_spend(self, world, monkeypatch):
         called = []
         monkeypatch.setattr(atlas_ui.litellm, "acompletion", lambda *a, **k: called.append(1))
-        post(world, brief(spoken_summary="Reconnect the Meta token first."))
+        post(world, brief(body_markdown="# Status\n**Reconnect** the Meta token first.", spoken_summary="Short."))
         r = self._chat(world, "Read me the Daily Brief.")
         assert r.status_code == 200
-        assert r.json()["reply"] == "Morning brief for Marnyx and FlipDeck. Reconnect the Meta token first."
+        assert r.json()["reply"] == "Morning brief for Marnyx and FlipDeck.\n\nStatus\nReconnect the Meta token first."
+        assert "Short." not in r.json()["reply"]
         assert called == [] and world.session.spent("alice") == 0
 
     def test_the_newest_period_wins_for_latest_and_a_named_period_is_honoured(self, world):
-        post(world, brief(spoken_summary="Morning summary."))
+        post(world, brief(body_markdown="Morning summary."))
         world.clock[0] = world.clock[0] + dt.timedelta(hours=6)
-        post(world, brief(period="afternoon", spoken_summary="Afternoon summary."))
+        post(world, brief(period="afternoon", body_markdown="Afternoon summary."))
         assert self._chat(world, "read me the brief").json()["reply"].endswith("Afternoon summary.")
         assert self._chat(world, "read me the morning brief").json()["reply"].endswith("Morning summary.")
 

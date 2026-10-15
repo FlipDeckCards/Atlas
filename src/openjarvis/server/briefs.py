@@ -205,7 +205,14 @@ def brief_reply(b: Optional[Dict[str, Any]], period: str) -> str:
     if b is None:
         which = "" if period == "latest" else period + " "
         return f"There's no {which}brief in the feed yet."
-    return f"{b['period'].capitalize()} brief for {b['product']}. {b['spoken_summary']}"
+    return f"{b['period'].capitalize()} brief for {b['product']}.\n\n{_plain(b['body'])}"
+
+
+def _plain(body: str) -> str:
+    """The full brief as plain text: the markdown marks are dropped so it reads cleanly aloud and in the chat."""
+    text = re.sub(r"(?m)^\s{0,3}#{1,6}\s*", "", body or "")
+    text = re.sub(r"\*\*|__|`", "", text)
+    return text.strip()
 
 
 def brief_context(b: Dict[str, Any]) -> str:

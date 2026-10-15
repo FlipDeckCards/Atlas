@@ -1203,22 +1203,42 @@ async def index():
       el.appendChild(n);
     }
 
+    // Long text (a full brief) is spoken in chunks of whole sentences; the mp3 parts are joined into one clip.
+    const SPEECH_CHUNK = 1400;
+    function speechChunks(text) {
+      const sentences = (String(text).match(/[^.!?\n]+[.!?]*|\n+/g) || []).map(x => x.trim()).filter(Boolean);
+      const out = []; let cur = '';
+      for (let snip of sentences) {
+        while (snip.length > SPEECH_CHUNK) { if (cur) { out.push(cur); cur = ''; } out.push(snip.slice(0, SPEECH_CHUNK)); snip = snip.slice(SPEECH_CHUNK); }
+        if (cur && (cur + ' ' + snip).length > SPEECH_CHUNK) { out.push(cur); cur = snip; }
+        else cur = cur ? cur + ' ' + snip : snip;
+      }
+      if (cur) out.push(cur);
+      return out.length ? out : [''];
+    }
     async function speakReply(text, el) {
       try {
-        const res = await fetch('/api/voice/speak', {
-          method: 'POST',
-          headers: jsonAuthHeader(),
-          body: JSON.stringify({ message: text })
-        });
-        if (!res.ok) {
-          const raw = await res.text();
-          let data = null; try { data = JSON.parse(raw); } catch (e) { /* not JSON */ }
-          console.warn('TTS HTTP error:', res.status, raw);
-          voiceNote(el, res, data);
-          resumeWakeWord();
-          return;
+        const parts = [];
+        for (const chunk of speechChunks(text)) {
+          const res = await fetch('/api/voice/speak', {
+            method: 'POST',
+            headers: jsonAuthHeader(),
+            body: JSON.stringify({ message: chunk })
+          });
+          if (!res.ok) {
+            const raw = await res.text();
+            let data = null; try { data = JSON.parse(raw); } catch (e) { /* not JSON */ }
+            console.warn('TTS HTTP error:', res.status, raw);
+            voiceNote(el, res, data);
+            resumeWakeWord();
+            return;
+          }
+          parts.push(await res.arrayBuffer());
         }
-        const arrayBuffer = await res.arrayBuffer();
+        const total = parts.reduce((n, p) => n + p.byteLength, 0);
+        const joined = new Uint8Array(total); let off = 0;
+        for (const p of parts) { joined.set(new Uint8Array(p), off); off += p.byteLength; }
+        const arrayBuffer = joined.buffer;
         const blob  = new Blob([arrayBuffer], { type: 'audio/mpeg' });
         const url   = URL.createObjectURL(blob);
         const audio = new Audio(url);
