@@ -244,7 +244,7 @@ async def index():
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
   <title>Aibussol</title>
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
   <style>
@@ -512,7 +512,22 @@ async def index():
       #send { padding: 10px 10px; font-size: 8px; letter-spacing: 1px; }
       #mic, #upload-btn { padding: 10px 10px; font-size: 14px; }
       #auth-box { width: 92vw; padding: 28px 20px; }
+      #input-area { padding-bottom: env(safe-area-inset-bottom); }
+      #mob-lib-btn { display: none; }
+      #mob-lib-btn.on { display: inline-block; }
+      #hud-main.mob-lib #panel-right { display: none; }
+      #hud-main.mob-lib #panel-left { display: flex; position: fixed; top: 40px; bottom: 0; left: 0; right: 0; z-index: 40; background: var(--bg); flex-direction: column; overflow: hidden; }
+      #hud-main.mob-lib #panel-left .sys-block, #hud-main.mob-lib #live-feed { display: none; }
+      #hud-main.mob-lib #library-block { display: flex; flex: 1; min-height: 0; border-bottom: 1px solid var(--border); }
+      #hud-main.mob-lib #mob-lib-close { display: inline-block; }
+      #hud-main.mob-lib #panel-center { display: none; }
+      #hud-main.mob-lib.has-viewer #panel-left { bottom: auto; height: calc(50dvh - 40px); }
+      #hud-main.mob-lib.has-viewer #panel-center { display: flex; flex-direction: column; position: fixed; top: 50dvh; bottom: 0; left: 0; right: 0; z-index: 40; background: var(--bg); }
+      #hud-main.mob-lib #core-area { display: none; }
+      #hud-main.mob-lib #viewer-panel { flex: 1 1 auto; border-top: none; }
     }
+    #mob-lib-btn, #mob-lib-close { font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: 1px; color: var(--cyan); background: transparent; border: 1px solid var(--cyan-dim); padding: 4px 8px; border-radius: 2px; cursor: pointer; }
+    #mob-lib-close { display: none; margin-left: auto; }
   </style>
 </head>
 <body>
@@ -572,7 +587,7 @@ async def index():
         <div class="stat-row"><span class="lbl">PROTOCOL</span><span class="val d">JSON-RPC</span></div>
       </div>
       <div id="library-block" style="display:none">
-        <div class="p-label">Library</div>
+        <div style="display:flex;align-items:center;"><div class="p-label">Library</div><button id="mob-lib-close">CLOSE</button></div>
         <div class="lib-filters">
           <button class="lib-f active" data-kind="all">All</button>
           <button class="lib-f" data-kind="image">Images</button>
@@ -614,9 +629,12 @@ async def index():
     <div id="panel-right">
       <div id="chat-hdr">
         <div class="p-label" style="margin:0">Command Console</div>
-        <div id="wake-ind">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <button id="mob-lib-btn" title="Media library">LIBRARY</button>
+          <div id="wake-ind">
           <div id="wake-dot"></div>
           <span id="wake-label">INITIALIZING</span>
+          </div>
         </div>
       </div>
       <div id="messages"></div>
@@ -905,12 +923,24 @@ async def index():
       lib.on = !!(st && st.data && st.data.enabled);
       lib.estimates = (st && st.data && st.data.estimates) || null;
       document.getElementById('library-block').style.display = lib.on ? '' : 'none';
+      document.getElementById('mob-lib-btn').classList.toggle('on', lib.on);
       if (!lib.on) { viewerEl.style.display = 'none'; return; }
       viewerEl.style.display = '';
       const r = await libApi('/api/media/library' + (lib.kind === 'all' ? '' : '?kind=' + lib.kind));
       lib.items = r.ok ? (r.data.items || []) : [];
       renderLibrary(r.ok ? '' : (r.data.detail || 'The library is unavailable.'));
     }
+    document.getElementById('mob-lib-btn').addEventListener('click', () => {
+      document.getElementById('hud-main').classList.add('mob-lib');
+      loadLibrary();
+    });
+    // The library list fills the screen until an item is open; then the viewer takes the lower half.
+    new MutationObserver(() => document.getElementById('hud-main').classList.toggle('has-viewer',
+      viewerEl.childElementCount > 0 && viewerEl.style.display !== 'none'))
+      .observe(viewerEl, { attributes: true, childList: true, attributeFilter: ['style'] });
+    document.getElementById('mob-lib-close').addEventListener('click', () => {
+      document.getElementById('hud-main').classList.remove('mob-lib');
+    });
     function renderLibrary(note) {
       libList.textContent = '';
       if (note) libList.appendChild(mk('div', 'lib-note', note));
