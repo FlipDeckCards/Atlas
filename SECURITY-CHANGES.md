@@ -161,3 +161,17 @@ Provider research, licenses, quotas, source URLs and dates: see `MEDIA-PROVIDERS
 - **Full suite** (`uv run pytest`, Windows, no Rust extension, no Postgres, no network): 6,853 passed, 200 failed, 30 errors, 82 skipped.
 - **Pre-existing failures:** the same suite on `main` (`f17e6af`, run from a separate checkout) gives 6,830 passed, 200 failed, 30 errors. The two failing sets are identical except for one test in `tests/agents/test_manager.py::TestCheckpoints` that fails on a different one of its two checkpoint cases from run to run (a same-second timestamp race on Windows; both fail when run alone, on both branches). So Stage 2 adds no failures; the 23 extra passes are the new tests. The causes of the pre-existing failures are environmental (no Rust extension, no Postgres, Windows paths, live-network tests).
 - **Not run:** a real call to Cloudflare (no token here). `scripts/check_media_providers.py` does it once you set the two Cloudflare variables.
+
+---
+
+# Fix: media and voice routes returned 401 for a logged-in user (branch `auth-fix-media`)
+
+**Root cause.** `AuthMiddleware` ran the route *inside* its token-check `try/except`, so any error raised by a route was caught and answered as `401 Invalid or expired token` (and only logged at debug level, so nothing showed in Render). The error itself came from the daily-spend queries added in Stage 1: they passed the day as a text string to a `$2::date` parameter, and asyncpg only accepts a real date object. Chat, media and voice all check the spend first, so they failed; `/api/session/history` does not, so it kept working.
+
+**Changes.**
+- `server/auth_middleware.py`: the token is checked in the `try`; the route runs outside it. A route error is now a 500 with a logged traceback, never a 401. Auth is not weakened (no token, bad scheme, forged, expired, or a token without a user id are all still 401).
+- `server/session_store.py`: `get_spend_today` and `add_spend` convert the day to a `datetime.date` (accepting a string or a date) and the SQL no longer casts a text parameter.
+- `server/hardening.py`, `cli/serve.py`: `JWT_SECRET_KEY` shorter than 32 **bytes** now produces a clear startup warning (printed in yellow by `jarvis serve` and logged) that gives the length; it still starts. Setting `JWT_SECRET_STRICT=1` makes the server refuse to start with a short key. The Render value was not changed.
+- Tests: `tests/server/test_auth_media_fix.py` (18 tests, real `create_app`).
+
+**New environment variable (optional).** `JWT_SECRET_STRICT`: set to 1 once the secret is 32 bytes or longer.

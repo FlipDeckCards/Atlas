@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import logging
 import os
@@ -123,22 +124,27 @@ class SessionStore:
     # Daily spend (paid model calls), per user per UTC day
     # ------------------------------------------------------------------
 
-    async def get_spend_today(self, user_id: str, day: str) -> float:
+    @staticmethod
+    def _as_date(day) -> _dt.date:
+        """asyncpg wants a real date for a DATE parameter; a 'YYYY-MM-DD' string raises DataError."""
+        return day if isinstance(day, _dt.date) else _dt.date.fromisoformat(str(day)[:10])
+
+    async def get_spend_today(self, user_id: str, day) -> float:
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT usd FROM daily_spend WHERE user_id = $1 AND day = $2::date",
-                user_id, day,
+                "SELECT usd FROM daily_spend WHERE user_id = $1 AND day = $2",
+                user_id, self._as_date(day),
             )
             return float(row["usd"]) if row else 0.0
 
-    async def add_spend(self, user_id: str, day: str, usd: float) -> None:
+    async def add_spend(self, user_id: str, day, usd: float) -> None:
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO daily_spend (user_id, day, usd) VALUES ($1, $2::date, $3)
+                INSERT INTO daily_spend (user_id, day, usd) VALUES ($1, $2, $3)
                 ON CONFLICT (user_id, day) DO UPDATE SET usd = daily_spend.usd + EXCLUDED.usd
                 """,
-                user_id, day, usd,
+                user_id, self._as_date(day), usd,
             )
 
     # ------------------------------------------------------------------
