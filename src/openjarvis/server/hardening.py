@@ -292,10 +292,24 @@ def chat_cost_usd(response, litellm_module=None) -> float:
     return FLAT_CHAT_ESTIMATE_USD
 
 
+OWNER_EMAIL = "michael.dano1523@gmail.com"
+
+
+def spend_exempt(email: str, env: Optional[Mapping[str, str]] = None) -> bool:
+    """True for the owner accounts listed in SPEND_CAP_EXEMPT_EMAILS (comma-separated; default: the owner).
+    They skip the daily spend cap and the daily briefing-Listen limit. Everyone else is unchanged."""
+    e = os.environ if env is None else env
+    raw = (e.get("SPEND_CAP_EXEMPT_EMAILS") or "").strip() or OWNER_EMAIL
+    allowed = {x.strip().lower() for x in raw.split(",") if x.strip()}
+    return bool(email) and email.strip().lower() in allowed
+
+
 async def spend_blocked(
-    store, user_id: str, estimate: float = 0.0, cap: Optional[float] = None
+    store, user_id: str, estimate: float = 0.0, cap: Optional[float] = None, exempt: bool = False
 ) -> Optional[dict]:
     """None when the user may make another paid call today; otherwise the error body (the provider must NOT be called)."""
+    if exempt:
+        return None
     cap = daily_spend_cap_usd() if cap is None else cap
     spent = float(await store.get_spend_today(user_id, utc_day()))
     if cap <= 0 or spent >= cap or spent + estimate > cap:

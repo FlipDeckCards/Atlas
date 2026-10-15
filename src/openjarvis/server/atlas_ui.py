@@ -110,6 +110,11 @@ class ChatRequest(BaseModel):
 _BRIEF_REPLY = re.compile(r"^(Morning|Afternoon|Evening) brief for ")      # how briefs.brief_reply starts
 
 
+def _exempt(request: Request) -> bool:
+    """Owner accounts (SPEND_CAP_EXEMPT_EMAILS) skip the daily spend cap."""
+    return hardening.spend_exempt(getattr(request.state, "user_email", "") or "")
+
+
 def _limited(request: Request, rules: dict):
     """A 429 response when a rate limit is hit, otherwise None. rules: {rule_name: key}."""
     hit = hardening.enforce(rules)
@@ -179,7 +184,7 @@ async def transcribe(request: Request, audio: UploadFile = File(...)):
         return JSONResponse({"detail": "Audio file too large (limit %d MB)" % (hardening.MAX_AUDIO_BYTES // (1024 * 1024))}, status_code=413)
     store = request.app.state.session_store
     cost = hardening.whisper_cost_usd(len(audio_bytes))
-    blocked = await hardening.spend_blocked(store, user_id, cost)
+    blocked = await hardening.spend_blocked(store, user_id, cost, exempt=_exempt(request))
     if blocked:
         return _spend_error(blocked)
     await store.add_spend(user_id, hardening.utc_day(), cost)
@@ -206,7 +211,7 @@ async def speak(req: ChatRequest, request: Request):
         return JSONResponse({"detail": "Text too long for speech (limit %d characters)" % hardening.MAX_TTS_CHARS}, status_code=413)
     store = request.app.state.session_store
     cost = hardening.tts_cost_usd(len(text))
-    blocked = await hardening.spend_blocked(store, user_id, cost)
+    blocked = await hardening.spend_blocked(store, user_id, cost, exempt=_exempt(request))
     if blocked:
         return _spend_error(blocked)
     await store.add_spend(user_id, hardening.utc_day(), cost)
@@ -1503,7 +1508,7 @@ async def chat(req: ChatRequest, request: Request):
         return JSONResponse({"reply": reply, "model_display": "BRIEF FEED", "model_color": "#00e5ff"})
 
     # the daily spend cap is checked BEFORE the provider is called
-    blocked = await hardening.spend_blocked(store, user_id, hardening.FLAT_CHAT_ESTIMATE_USD)
+    blocked = await hardening.spend_blocked(store, user_id, hardening.FLAT_CHAT_ESTIMATE_USD, exempt=_exempt(request))
     if blocked:
         return _spend_error(blocked)
     session = await store.get_or_create(user_id, CHANNEL)

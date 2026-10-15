@@ -240,12 +240,14 @@ async def listen(brief_id: str, request: Request):
     store = request.app.state.session_store
     day = hardening.utc_day()
     key, limit = "brief_listen:" + user_id, listen_limit()
-    used = float(await store.get_spend_today(key, day))
-    if used >= limit:
+    exempt = hardening.spend_exempt(getattr(request.state, "user_email", "") or "")
+    used = 0.0 if exempt else float(await store.get_spend_today(key, day))
+    if used >= limit and not exempt:
         return JSONResponse({"error": "listen_limit_reached", "detail": f"You have used your {limit} briefing listens for today. They reset at midnight UTC.", "limit": limit}, status_code=429)
     text = brief["spoken_summary"]
-    blocked = await hardening.spend_blocked(store, user_id, hardening.tts_cost_usd(len(text)))       # the speech costs money: the daily spend cap applies
+    blocked = await hardening.spend_blocked(store, user_id, hardening.tts_cost_usd(len(text)), exempt=exempt)       # the speech costs money: the daily spend cap applies
     if blocked:
         return JSONResponse(dict(blocked, detail=blocked["detail"]), status_code=429)
-    await store.add_spend(key, day, 1.0)                       # the existing spend tracker used as a per-day counter (1.0 per Listen)
+    if not exempt:
+        await store.add_spend(key, day, 1.0)                   # the existing spend tracker used as a per-day counter (1.0 per Listen)
     return JSONResponse({"success": True, "text": text, "remaining": max(0, int(limit - used - 1)), "estimated_cost_usd": hardening.tts_cost_usd(len(text))})

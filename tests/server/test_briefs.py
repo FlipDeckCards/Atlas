@@ -426,3 +426,20 @@ class TestVoiceFailureIsShown:
     def test_the_note_is_set_as_text_not_html(self, page):
         block = page[page.index("function voiceNote("):page.index("async function speakReply(")]
         assert "innerHTML" not in block and "textContent" in block
+
+
+class TestOwnerExemption:
+    def test_only_the_listed_emails_are_exempt(self):
+        assert hardening.spend_exempt("michael.dano1523@gmail.com")
+        assert hardening.spend_exempt("Michael.Dano1523@Gmail.com ")
+        assert not hardening.spend_exempt("someone@else.com")
+        assert not hardening.spend_exempt("")
+        assert hardening.spend_exempt("a@x.io", env={"SPEND_CAP_EXEMPT_EMAILS": "a@x.io, b@x.io"})
+        assert not hardening.spend_exempt("michael.dano1523@gmail.com", env={"SPEND_CAP_EXEMPT_EMAILS": "a@x.io"})
+
+    @pytest.mark.asyncio
+    async def test_an_exempt_user_is_not_blocked_by_the_cap(self):
+        store = FakeStore()
+        store.spend[("m", hardening.utc_day())] = 99.0
+        assert await hardening.spend_blocked(store, "m", 1.0, cap=1.0) is not None
+        assert await hardening.spend_blocked(store, "m", 1.0, cap=1.0, exempt=True) is None
