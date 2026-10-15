@@ -69,6 +69,10 @@ class SessionStore:
             from openjarvis.server.media.catalog import MEDIA_ITEMS_DDL
 
             await conn.execute(MEDIA_ITEMS_DDL)
+            # scheduled briefs (table briefs): add-only, IF NOT EXISTS
+            from openjarvis.server.briefs import BRIEFS_DDL
+
+            await conn.execute(BRIEFS_DDL)
 
     async def close(self) -> None:
         if self._pool:

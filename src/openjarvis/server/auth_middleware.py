@@ -34,7 +34,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         if too_large_for_path(request.url.path, request.headers.get("content-length")):
             return JSONResponse({"detail": "Request too large"}, status_code=413)
-        if self._api_key and self._requires_auth(request.url.path):
+        # POST /api/briefs is the ONE route outside the login: it checks its own ingest token (see briefs.py). No other path or method is exempt.
+        ingest = request.method == "POST" and request.url.path == "/api/briefs"
+        if self._api_key and not ingest and self._requires_auth(request.url.path):
             auth = request.headers.get("Authorization", "")
             if not auth:
                 return JSONResponse(

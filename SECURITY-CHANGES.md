@@ -223,3 +223,36 @@ New packages: `pillow` and `imageio-ffmpeg` (a static ffmpeg binary inside the w
 - Previews of edits are returned to the browser as base64 and are not stored.
 - Spend estimates are Cloudflare's paid-plan prices; the free quota makes the real charge $0.
 - The ElevenLabs free-plan licensing question from Stage 2 is unchanged.
+
+---
+
+# Stage 4 — brief feed (branch `brief-feed`)
+
+Scheduled morning, afternoon and evening briefs are posted to the app, stored, and shown in the chat. Nothing here turns on by itself: ingest works only when `BRIEF_INGEST_TOKEN` is set, and Listen only when `ELEVENLABS_API_KEY` is set.
+
+## What was added
+| Item | Detail |
+|---|---|
+| `POST /api/briefs` | **Ingest.** The `Authorization: Bearer` token must equal `BRIEF_INGEST_TOKEN` (compared in constant time). If the variable is unset or blank, or the token is missing, wrong or the wrong scheme, the answer is **401** and nothing is stored. The token is checked **before** the body is read, so a caller without it learns nothing about the body rules. Per-IP rate limit (`RL_BRIEF_IP_MAX`, default 60 a minute), which also slows token guessing. |
+| Body | `product` (1–100 characters), `period` (`morning`, `afternoon` or `evening`), `body_markdown` (1–20,000), `spoken_summary` (1–600). Anything else is 422; the error names the field but does not echo the text. |
+| Table `briefs` | `id`, `created_at`, `product`, `period`, `body`, `spoken_summary`; created add-only (`IF NOT EXISTS`) with the other tables when the app connects. |
+| `GET /api/briefs/latest` | The latest brief of each period (and a newest-first list). Needs a logged-in session (the normal auth middleware). |
+| Chat | A new brief appears as a message with the full text (shown as plain text, not HTML) and a **Listen** button. The page checks every 60 seconds and shows each brief once per browser. |
+| `POST /api/briefs/{id}/listen` | Reserves one Listen and returns the `spoken_summary`; the page passes that text (and only that text) to `speakReply()`. **5 Listens per user per UTC day** (`BRIEF_LISTEN_DAILY_LIMIT`), counted with the existing spend tracker (key `brief_listen:<user>`, 1.0 per Listen). Before a Listen is allowed the speech cost, `tts_cost_usd(len(text))`, is checked against the user's daily spend cap (`DAILY_SPEND_CAP_USD`); the speech call itself is charged by the existing `/api/voice/speak` route. At the limit the answer is 429 with a clear message; with `ELEVENLABS_API_KEY` unset it is **503** and nothing is counted. |
+| Favicon / static page | `static/index.html` was git-ignored, so it was missing on Render and every request that fell through to the page (such as `/favicon.ico`) failed with a 500. A minimal `index.html` is now tracked (the ignore rule has an exception), a missing page now answers 404, and `/favicon.ico` returns a small inline icon. |
+
+## The one auth exemption
+The auth middleware exempts **exactly** `POST /api/briefs` from the login (it has its own token check). Every other path and method, including `GET /api/briefs`, `/api/briefs/latest` and the Listen route, still needs a user login; the ingest token opens nothing else, and the system key and user logins do not work for ingest. Tests cover all of these.
+
+## New environment variables
+| Name | Needed? | Meaning |
+|---|---|---|
+| `BRIEF_INGEST_TOKEN` | Yes, for ingest | long random value; sent only by the scheduled briefs. Unset = ingest answers 401 |
+| `BRIEF_LISTEN_DAILY_LIMIT` | Optional (default 5) | Listens per user per day |
+| `RL_BRIEF_IP_MAX` | Optional (default 60) | ingest attempts per IP per minute |
+
+## Still open
+- The ingest token is a shared secret held by the scheduled tasks; rotate it by changing `BRIEF_INGEST_TOKEN` and the tasks together.
+- Brief text is shown as plain text (markdown symbols are not rendered).
+- Brief posts are not deduplicated: a task that posts twice stores two rows (the page shows only the latest per period).
+- Listens are counted when reserved; if the speech call itself then fails, the Listen is still used.
