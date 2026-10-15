@@ -1234,8 +1234,14 @@ async def index():
     }
 
     let isRecording = false, mediaRecorder = null, audioChunks = [];
-    let wakeRecognition = null, wakeActive = false;
+    let wakeRecognition = null, wakeActive = false, _srRunning = false;
     let _srMode = 'wake';
+    // Watchdog: if the listener should be on but is not running (the browser dropped it), start it again.
+    setInterval(() => {
+      if (wakeActive && wakeRecognition && !_srRunning && !isRecording) {
+        try { wakeRecognition.start(); } catch(e) { /* already starting */ }
+      }
+    }, 2000);
 
     function initWakeWord() {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1248,15 +1254,18 @@ async def index():
       _srMode = 'wake';
       const thisInst = wakeRecognition;
       let triggered = false;
-      const WAKE_VARIANTS = [
-        'hey helix','hey helics','hey helic','hey helixs','hey helex','hey hellix','hey helicks','hey heliks','hey healix',
-        'a helix','heyhelix','hey-helix'
-      ];
+      // "hey helix" and the usual misrecognitions (helics, helex, hellix, healix, heyhelix). Matched on the whole recent
+      // speech, not just the last fragment, because the browser splits a phrase across results.
+      const WAKE_RE = /\b(?:he?y|hi|ok|a)\s*h[aeiou]{0,2}l+[aeiou]?[xcks]s?\b/;
+      const norm = s => s.toLowerCase().replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim();
+      wakeRecognition.onstart = () => { _srRunning = true; };
       wakeRecognition.onresult = (e) => {
-        const latest = e.results[e.results.length - 1][0].transcript.toLowerCase().trim();
+        let heard = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) heard += ' ' + e.results[i][0].transcript;
+        const latest = norm(heard);
         if (_srMode === 'wake') {
           if (triggered || isRecording) return;
-          if (WAKE_VARIANTS.some(v => latest.includes(v))) {
+          if (WAKE_RE.test(latest)) {
             triggered = true;
             setTimeout(() => { triggered = false; }, 3000);
             feedLog('Wake word detected: Hey Helix');
@@ -1264,15 +1273,18 @@ async def index():
           }
         } else if (_srMode === 'send') {
           if (!isRecording) return;
-          if (latest === 'send' || latest.endsWith(' send') || latest.endsWith('. send') || latest.includes('send')) {
+          if (/\bsend\b/.test(latest)) {
             feedLog('Voice command: SEND');
             stopRecording();
           }
         }
       };
       wakeRecognition.onend = () => {
+        _srRunning = false;
+        // the browser ends a session after a pause; restart it at once, and retry if the browser is still settling
         if (wakeActive && wakeRecognition === thisInst) {
-          try { wakeRecognition.start(); } catch(e) {}
+          const again = () => { if (wakeActive && wakeRecognition === thisInst && !_srRunning) { try { wakeRecognition.start(); } catch(e) { setTimeout(again, 400); } } };
+          again();
         }
       };
       wakeRecognition.onerror = (e) => {
