@@ -15,7 +15,7 @@ from fastapi.responses import (
 )
 from pydantic import BaseModel, Field
 
-from openjarvis.server import briefs, hardening
+from openjarvis.server import admin_analytics, briefs, hardening
 from openjarvis.server.media import service as media_service
 from openjarvis.server.media import helix_tools
 from openjarvis.server.media.service import MediaServiceError
@@ -237,6 +237,26 @@ async def speak(req: ChatRequest, request: Request):
             )
         return StreamingResponse(iter([res.content]), media_type="audio/mpeg",
                                  headers={"Content-Disposition": "inline; filename=speech.mp3"})
+@router.get("/admin/analytics")
+async def admin_analytics_page():
+    """The owner's analytics page. The numbers come from /api/admin/analytics, which checks the login."""
+    return HTMLResponse(admin_analytics.PAGE)
+
+
+@router.get("/api/admin/analytics")
+async def admin_analytics_data(request: Request):
+    email = getattr(request.state, "user_email", "") or ""
+    if not email:
+        return JSONResponse({"detail": "Sign in first."}, status_code=401)
+    if not admin_analytics.is_admin(email):
+        return JSONResponse({"detail": "Owner only."}, status_code=403)
+    try:
+        return await admin_analytics.gather(request.app.state.session_store._pool)
+    except Exception:
+        logger.exception("analytics query failed")
+        return JSONResponse({"detail": "Analytics are unavailable right now."}, status_code=503)
+
+
 @router.get("/")
 async def index():
     html = r"""
