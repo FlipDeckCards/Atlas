@@ -175,3 +175,51 @@ Provider research, licenses, quotas, source URLs and dates: see `MEDIA-PROVIDERS
 - Tests: `tests/server/test_auth_media_fix.py` (18 tests, real `create_app`).
 
 **New environment variable (optional).** `JWT_SECRET_STRICT`: set to 1 once the secret is 32 bytes or longer.
+
+---
+
+# Stage 3 — media library and Helix tool control (branch `media-library`)
+
+Everything below is OFF unless `MEDIA_ENABLED` is on (and, for anything that calls a provider, `DAILY_MEDIA_SPEND_CAP_USD` is above 0). With media off the chat behaves exactly as before and gets no tools.
+
+## What was added
+| Area | Detail |
+|---|---|
+| **Storage** | Cloudflare R2, private bucket (`R2_BUCKET`, default `aibussol-media`). Files live at `users/<user_id>/<item_id>.<ext>`. The browser only ever gets a **presigned GET URL valid 15 minutes** (signed by `server/media/sigv4.py`, written by hand to avoid boto3's memory cost; checked against the example in AWS's documentation). Nothing is written to Render's disk. |
+| **Catalog** | Table `media_items` (id, user_id, kind, title, prompt, provider, mime_type, size_bytes, storage_key, duration_seconds, edited_from_id, created_at; index on `(user_id, created_at)`), created add-only with the other tables when the app connects (`IF NOT EXISTS`). Every successful generation is stored **and** recorded; a result is never returned without a catalog row, and a failed catalog write removes the file. |
+| **Access** | Every lookup is scoped to the logged-in user. Another user's id (or a malformed id) is **404** for read, edit, regenerate and delete. Answers never contain the owner id or the storage key. |
+| **Quota** | 1 GB per user (`MEDIA_USER_QUOTA_BYTES`), counted from `media_items`. Checked before paying for a generation (a full library blocks it) and again before saving any result or edit: **413** with a plain message. |
+| **Edits** (server-side, always a NEW item with `edited_from_id`; the original is never changed) | Images (Pillow): crop, resize, brightness, contrast. Sound (ffmpeg): trim, fade in, fade out, volume. A `preview` option returns the edited result without saving. Edits cost no provider call and do not touch the media cap; they do count against the quota and have their own rate limit. |
+| **Re-generate** | New item from an edited prompt: calls the provider, so it goes through the same media cap, global ceiling and rate limit as any generation; the original is kept. |
+| **Routes** | `GET /api/media/library`, `GET /api/media/items/{id}[?download=true]`, `POST /api/media/items/{id}/edit`, `POST /api/media/items/{id}/regenerate`, `DELETE /api/media/items/{id}`; `/api/media/image` and `/api/media/sound` now save to the library and return the item (no file). Delete removes the file first, then the row (if the file cannot be removed the row is kept). |
+| **UI** | Left sidebar "Library" (All / Images / Sound / Video filters, thumbnails). The lower half of the center column is the viewer: image controls (crop, resize, brightness, contrast) or sound player (trim, fades, volume), each with Preview → Save as new / Discard, plus Download, Re-generate (asks first, showing the estimated cost) and Delete. In the chat, saved media appears as one line "Saved: <title>" with an Open button; the file is never put in the chat. `/image` and `/sound` still work. |
+| **Helix tools** | `generate_image`, `generate_speech`, `list_library`, `open_item`, `edit_item` (function calling through the existing chat provider). Only offered when media is fully on. |
+
+## Rules enforced by the server (not by the model)
+- **Confirmation for paid actions.** A paid tool call never runs on the model's say-so: it is recorded as a pending action, the server appends a read-back with the estimated cost ("Ready to make an image: … estimated cost about $0.0100. Reply 'yes' to go ahead."), and the action runs only when the person's **next** message is a plain "yes" (or "yeah", "go ahead", "do it" …). Anything else, including "yes, but make it blue", cancels it. A yes in the same turn cannot confirm (the action is armed only after the read-back is produced); it expires after 10 minutes; one person cannot confirm another's. A spoken answer goes through the same check on its transcript. The Re-generate button asks for confirmation in the page.
+- **Own library only.** The user id comes from the logged-in request; tool arguments cannot name another owner.
+- **Caps before the provider.** Tool-run generations go through the same gates as the routes (media flag, budget above zero, rate limit, per-user daily cap, global ceiling, storage quota) before any provider call.
+- **Unknown tool names are refused** and logged; bad arguments do nothing.
+- **Speech only.** `generate_speech` refuses sound-effect and music requests (a message that asks to make a gunshot, explosion, thunder, a jingle, background music, a "sound effect" …); such a message is answered with a fixed reply that offers speech or a library search, without calling the model or a provider. No sound-effects provider was added.
+
+## Environment variables for this stage
+| Name | Needed? | Meaning |
+|---|---|---|
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Yes (to use the library) | R2 API token credentials (object read and write on the bucket) |
+| `CLOUDFLARE_ACCOUNT_ID` | Yes | already needed for Workers AI; also forms the R2 endpoint |
+| `R2_BUCKET` | Optional | default `aibussol-media` |
+| `MEDIA_USER_QUOTA_BYTES` | Optional | default 1073741824 (1 GB) |
+| `RL_MEDIA_READ_USER_MAX`, `RL_MEDIA_READ_IP_MAX`, `RL_MEDIA_EDIT_USER_MAX`, `RL_MEDIA_EDIT_IP_MAX` | Optional | browsing 60/min and 180/min, edits 30/min and 90/min by default |
+
+New packages: `pillow` and `imageio-ffmpeg` (a static ffmpeg binary inside the wheel; no apt or Dockerfile change was needed).
+
+## Still open
+- **R2 is untested against the real service** (no credentials here). The signer is verified against AWS's published example and the storage calls against mocked responses; run one upload / download / delete against the real bucket after setting the variables. The bucket must be private (no public access).
+- **Browser fetch of presigned URLs** works for images and audio players; no waveform is drawn because reading the file from script would need CORS rules on the bucket.
+- **Video** is not supported: no provider passed the license and free-quota checks (see `MEDIA-PROVIDERS.md`), so there is no video route, trim, or filter content.
+- **Sound effects and music** are not available.
+- **Pending confirmations are kept in memory** (one Render instance); a restart drops them and the user is asked again.
+- **The library panel is hidden on phone-width screens** (the existing layout hides the side and center panels there).
+- Previews of edits are returned to the browser as base64 and are not stored.
+- Spend estimates are Cloudflare's paid-plan prices; the free quota makes the real charge $0.
+- The ElevenLabs free-plan licensing question from Stage 2 is unchanged.

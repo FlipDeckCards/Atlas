@@ -1,4 +1,4 @@
-"""User authentication routes for AiBusSol."""
+"""User authentication routes for Aibussol."""
 from __future__ import annotations
 
 import logging

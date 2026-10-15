@@ -1,4 +1,4 @@
-"""Media generation for the AiBusSol web app (images and speech). Video is not offered: no provider passed the license and free-quota checks.
+"""Media generation for the Aibussol web app (images and speech). Video is not offered: no provider passed the license and free-quota checks.
 
 Everything is OFF unless MEDIA_ENABLED is on AND DAILY_MEDIA_SPEND_CAP_USD is above 0. Chat keeps its own cap (DAILY_SPEND_CAP_USD).
 """

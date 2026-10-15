@@ -15,6 +15,9 @@ from fastapi.responses import (
 from pydantic import BaseModel, Field
 
 from openjarvis.server import hardening
+from openjarvis.server.media import service as media_service
+from openjarvis.server.media import helix_tools
+from openjarvis.server.media.service import MediaServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +39,9 @@ def get_system_prompt(client_date: str = None) -> str:
         date_str = client_date
     else:
         date_str = datetime.now(timezone.utc).strftime("%A, %B %d, %Y %H:%M UTC")
-    return f"""You are AiBusSol, a personal AI hub and orchestrator built by Michael.
+    return f"""You are Helix, the assistant of Aibussol (AI Business Solutions), a personal AI hub and orchestrator built by Michael.
 You have persistent memory and can handle a wide range of tasks with intelligence and precision.
-You are not OpenJarvis — you are AiBusSol.
+You are not OpenJarvis — you are Helix.
 Today's date and time is {date_str}.
 Be direct, sharp, and helpful."""
 
@@ -233,7 +236,7 @@ async def index():
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>AiBusSol</title>
+  <title>Aibussol</title>
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
   <style>
     :root {
@@ -352,7 +355,7 @@ async def index():
       100% { opacity: 1; }
     }
     #engine-val.flash { animation: engineFlash 0.45s ease; }
-    #live-feed { flex: 1; padding: 14px 16px; overflow: hidden; font-size: 10px; line-height: 1.9; letter-spacing: 0.5px; }
+    #live-feed { flex: 0 0 150px; padding: 14px 16px; overflow: hidden; font-size: 10px; line-height: 1.9; letter-spacing: 0.5px; }
     .feed-line { color: var(--text-dim); transition: color 0.5s, opacity 0.5s; }
     @keyframes blink { 0%,100%{opacity:1}50%{opacity:0.3} }
     #panel-center {
@@ -373,7 +376,7 @@ async def index():
       font-family:'Orbitron',monospace; font-size:9px; letter-spacing:4px;
       color:var(--text-dim); margin-bottom:16px; text-transform:uppercase;
     }
-    #face-wrap { position:relative; width:780px; height:960px; }
+    #face-wrap { position:relative; height:min(960px, 100%); aspect-ratio: 780 / 960; max-width:100%; flex: 0 1 auto; min-height:0; }
     .f-ring {
       position:absolute; inset:-16px; border:1px solid rgba(0,229,255,0.15);
       border-radius:50%; animation:spin 20s linear infinite;
@@ -453,6 +456,36 @@ async def index():
     #upload-btn:hover { border-color:var(--cyan); color:var(--cyan); }
     #upload-btn.has-image { border-color:#00ff88; color:#00ff88; }
     #img-input { display:none; }
+    /* media library (left) and viewer (center, lower half) */
+    #core-area { flex: 1 1 54%; min-height: 0; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; }
+    #viewer-panel { flex: 0 0 44%; min-height: 0; width: 100%; border-top: 1px solid var(--border); padding: 10px 14px; overflow-y: auto; font-size: 11px; position: relative; z-index: 2; background: var(--panel); }
+    #library-block { flex: 1; min-height: 0; display: flex; flex-direction: column; border-bottom: 1px solid var(--border); padding: 12px 12px 8px; }
+    .lib-filters { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+    .lib-f, .v-btn { background: transparent; border: 1px solid var(--border); color: var(--text-dim); padding: 4px 7px; font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: 1px; cursor: pointer; border-radius: 2px; }
+    .lib-f.active, .lib-f:hover, .v-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+    .v-btn.danger:hover { border-color: #ff3344; color: #ff3344; }
+    #lib-list { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+    .lib-row { display: flex; align-items: center; gap: 8px; padding: 5px 4px; cursor: pointer; border-bottom: 1px solid rgba(0,229,255,0.05); }
+    .lib-row:hover, .lib-row.sel { background: rgba(0,229,255,0.07); }
+    .lib-thumb { width: 30px; height: 30px; object-fit: cover; border-radius: 2px; border: 1px solid var(--border); flex-shrink: 0; }
+    .lib-icon { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 2px; flex-shrink: 0; color: var(--orange); }
+    .lib-t { font-size: 10px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lib-k { font-size: 9px; color: var(--text-dim); letter-spacing: 1px; text-transform: uppercase; }
+    .lib-note { font-size: 10px; color: var(--text-dim); padding: 6px 2px; }
+    .v-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+    .v-title { color: var(--cyan); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .v-meta { color: var(--text-dim); white-space: nowrap; }
+    .v-stage { display: flex; justify-content: center; margin-bottom: 8px; }
+    .v-stage img { max-width: 100%; max-height: 150px; border: 1px solid var(--border); }
+    .v-stage audio { width: 100%; }
+    .v-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+    .v-row label { color: var(--text-dim); font-size: 10px; }
+    .v-row input[type=number], .v-row input[type=text], .v-row select { background: rgba(0,229,255,0.03); border: 1px solid var(--border); color: var(--text); padding: 3px 5px; font-family: inherit; font-size: 11px; width: 70px; }
+    .v-row input[type=text] { width: 100%; flex: 1; }
+    .v-row input[type=range] { width: 150px; }
+    .v-status { color: #00ff88; font-size: 10px; min-height: 14px; }
+    .v-status.err { color: #ff3344; }
+    .saved-open { margin-left: 8px; }
     @media (max-width: 768px) {
       body { grid-template-rows: 40px 1fr; overflow: hidden; height: 100dvh; }
       #hud-header { padding: 0 12px; }
@@ -528,9 +561,19 @@ async def index():
         <div class="stat-row"><span class="lbl">VOICE</span><span class="val" id="voice-status">READY</span></div>
         <div class="stat-row"><span class="lbl">PROTOCOL</span><span class="val d">JSON-RPC</span></div>
       </div>
+      <div id="library-block" style="display:none">
+        <div class="p-label">Library</div>
+        <div class="lib-filters">
+          <button class="lib-f active" data-kind="all">All</button>
+          <button class="lib-f" data-kind="image">Images</button>
+          <button class="lib-f" data-kind="sound">Sound</button>
+          <button class="lib-f" data-kind="video" title="Video is not available">Video</button>
+        </div>
+        <div id="lib-list"></div>
+      </div>
       <div id="live-feed">
         <div class="p-label">Live Feed</div>
-        <div class="feed-line">&#9656; AiBusSol core initialized</div>
+        <div class="feed-line">&#9656; Aibussol core initialized</div>
         <div class="feed-line">&#9656; Neon DB connected</div>
         <div class="feed-line">&#9656; Voice engine loaded</div>
         <div class="feed-line" id="feed-last">&#9656; Awaiting input...</div>
@@ -540,6 +583,7 @@ async def index():
     <div id="panel-center">
       <div class="corner tl"></div><div class="corner tr"></div>
       <div class="corner bl"></div><div class="corner br"></div>
+      <div id="core-area">
       <div class="face-label">CORE INTERFACE</div>
       <div id="face-wrap">
         <div class="f-ring"></div>
@@ -553,6 +597,8 @@ async def index():
         <div id="atlas-state">STANDBY</div>
         <div>&#9656; <span id="center-sub">WAITING FOR INPUT</span></div>
       </div>
+      </div>
+      <div id="viewer-panel" style="display:none"></div>
     </div>
 
     <div id="panel-right">
@@ -574,7 +620,7 @@ async def index():
           <button id="mic" title="Record">&#127897;</button>
           <label id="upload-btn" for="img-input" title="Attach image">📎</label>
           <input id="img-input" type="file" accept="image/*"/>
-          <input id="input" type="text" placeholder='Type, say "Hey Sol...", or /image /sound' autocomplete="off"/>
+          <input id="input" type="text" placeholder='Type, or say "Hey Helix"...' autocomplete="off"/>
           <button id="send">SEND</button>
         </div>
       </div>
@@ -607,7 +653,7 @@ async def index():
       } catch(e) {}
     }
 
-    let _solAudioCtx = null;
+    let _helixAudioCtx = null;
     let authMode = 'login';
 
     function toggleAuthMode() {
@@ -689,6 +735,7 @@ async def index():
       document.getElementById('operator-name').textContent =
         email ? email.split('@')[0].toUpperCase() : 'OPERATOR';
       loadHistory();
+      loadLibrary().then(renderViewer);
       startUptimeClock();
     }
 
@@ -739,7 +786,7 @@ async def index():
     clearImgBtn.addEventListener('click', clearPendingImage);
 
     function setTalking(on) {
-      window._solTalking = on;
+      window._helixTalking = on;
       if (on) {
         atlasFace.classList.add('talking');
         atlasState.textContent = 'SPEAKING'; atlasState.style.color = 'var(--orange)';
@@ -755,7 +802,7 @@ async def index():
       wakeDot.className = '';
       if (state === 'listening') {
         wakeDot.classList.add('listening'); wakeLabel.textContent = 'LISTENING';
-        centerSub.textContent = 'SAY "HEY SOL" TO WAKE';
+        centerSub.textContent = 'SAY "HEY HELIX" TO WAKE';
         atlasState.textContent = 'ACTIVE'; atlasState.style.color = 'var(--cyan)';
       } else if (state === 'recording') {
         wakeDot.classList.add('recording'); wakeLabel.textContent = 'RECORDING';
@@ -791,7 +838,7 @@ async def index():
       wrap.className = 'msg ' + (role === 'user' ? 'user' : 'atlas');
       const tag = document.createElement('div');
       tag.className = 'msg-tag';
-      tag.textContent = role === 'user' ? 'YOU' : 'AIBUSSOL';
+      tag.textContent = role === 'user' ? 'YOU' : 'HELIX';
       const body = document.createElement('div');
       body.textContent = text;
       wrap.appendChild(tag); wrap.appendChild(body);
@@ -829,7 +876,161 @@ async def index():
       }
     }
 
-    // "/image a red fox" and "/sound hello there": generated media is shown in the chat (it is not saved; it is gone on reload)
+    // ── Media library (left sidebar) and viewer (center, lower half) ──────────────────────────
+    const lib = { kind: 'all', items: [], selected: null, on: false, estimates: null, preview: null };
+    const libList = document.getElementById('lib-list');
+    const viewerEl = document.getElementById('viewer-panel');
+    function libApi(path, method, body) {
+      return fetch(path, { method: method || 'GET', headers: jsonAuthHeader(), body: body ? JSON.stringify(body) : undefined })
+        .then(async r => ({ ok: r.ok, status: r.status, data: await r.json().catch(() => ({})) }));
+    }
+    function mk(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+    function fmtBytes(n) { return n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
+    function money(x) { return '$' + Number(x).toFixed(4); }
+
+    async function loadLibrary() {
+      const st = await libApi('/api/media/status').catch(() => null);
+      lib.on = !!(st && st.data && st.data.enabled);
+      lib.estimates = (st && st.data && st.data.estimates) || null;
+      document.getElementById('library-block').style.display = lib.on ? '' : 'none';
+      if (!lib.on) { viewerEl.style.display = 'none'; return; }
+      viewerEl.style.display = '';
+      const r = await libApi('/api/media/library' + (lib.kind === 'all' ? '' : '?kind=' + lib.kind));
+      lib.items = r.ok ? (r.data.items || []) : [];
+      renderLibrary(r.ok ? '' : (r.data.detail || 'The library is unavailable.'));
+    }
+    function renderLibrary(note) {
+      libList.textContent = '';
+      if (note) libList.appendChild(mk('div', 'lib-note', note));
+      if (!note && !lib.items.length) libList.appendChild(mk('div', 'lib-note', lib.kind === 'video' ? 'Video is not available.' : 'Nothing saved yet. Ask Helix to make something.'));
+      lib.items.forEach(it => {
+        const row = mk('div', 'lib-row' + (lib.selected && lib.selected.id === it.id ? ' sel' : ''));
+        if (it.kind === 'image') { const im = mk('img', 'lib-thumb'); im.src = it.url; im.alt = ''; row.appendChild(im); }
+        else row.appendChild(mk('span', 'lib-icon', it.kind === 'sound' ? '\u266a' : '\u25b6'));
+        const box = mk('div'); box.style.minWidth = '0';
+        box.appendChild(mk('div', 'lib-t', it.title)); box.appendChild(mk('div', 'lib-k', it.kind));
+        row.appendChild(box);
+        row.addEventListener('click', () => openItem(it.id));
+        libList.appendChild(row);
+      });
+    }
+    document.querySelectorAll('.lib-f').forEach(b => b.addEventListener('click', () => {
+      document.querySelectorAll('.lib-f').forEach(x => x.classList.toggle('active', x === b));
+      lib.kind = b.dataset.kind; loadLibrary();
+    }));
+
+    async function openItem(id) {
+      const r = await libApi('/api/media/items/' + encodeURIComponent(id));
+      if (!r.ok) { setViewerStatus(r.data.detail || 'That item could not be opened.', true); return; }
+      lib.selected = r.data.item; lib.preview = null;
+      renderViewer(); renderLibrary('');
+    }
+    function setViewerStatus(msg, bad) { const s = document.getElementById('v-status'); if (s) { s.textContent = msg; s.className = 'v-status' + (bad ? ' err' : ''); } }
+
+    const OPS = {
+      image: { crop: ['left', 'top', 'right', 'bottom'], resize: ['width', 'height'], brightness: ['factor'], contrast: ['factor'] },
+      sound: { trim: ['start', 'end'], fade_in: ['seconds'], fade_out: ['seconds'], volume: ['factor'] },
+    };
+    function renderViewer() {
+      const v = viewerEl; v.textContent = '';
+      const it = lib.selected;
+      if (!it) { v.appendChild(mk('div', 'lib-note', 'Select an item in the Library, or ask Helix to make one.')); return; }
+      const head = mk('div', 'v-head');
+      head.appendChild(mk('span', 'v-title', it.title));
+      head.appendChild(mk('span', 'v-meta', it.kind + ' \u00b7 ' + fmtBytes(it.size_bytes) + (it.duration_seconds ? ' \u00b7 ' + it.duration_seconds + 's' : '')));
+      v.appendChild(head);
+      const stage = mk('div', 'v-stage');
+      const media = document.createElement(it.kind === 'image' ? 'img' : 'audio');
+      media.id = 'v-media'; if (it.kind === 'sound') media.controls = true;
+      media.src = it.url; stage.appendChild(media); v.appendChild(stage);
+      if (it.kind !== 'image' && it.kind !== 'sound') return;
+
+      const ops = OPS[it.kind];
+      const row1 = mk('div', 'v-row');
+      const sel = document.createElement('select');
+      Object.keys(ops).forEach(o => { const op = document.createElement('option'); op.value = o; op.textContent = o.replace('_', ' '); sel.appendChild(op); });
+      row1.appendChild(mk('label', null, 'Edit')); row1.appendChild(sel); v.appendChild(row1);
+      const params = mk('div', 'v-row'); v.appendChild(params);
+      let inputs = {};
+      function buildParams() {
+        params.textContent = ''; inputs = {};
+        ops[sel.value].forEach(name => {
+          const lab = mk('label', null, name);
+          const inp = document.createElement('input');
+          if (name === 'factor' && (sel.value === 'brightness' || sel.value === 'contrast')) { inp.type = 'range'; inp.min = '0.1'; inp.max = '3'; inp.step = '0.05'; inp.value = '1'; }
+          else { inp.type = 'number'; inp.step = 'any'; }
+          const defaults = { start: '0', end: it.duration_seconds ? String(it.duration_seconds) : '', seconds: '1', factor: '1' };
+          if (name in defaults && inp.type === 'number') inp.value = defaults[name];
+          if (it.kind === 'image' && sel.value === 'crop' && media.naturalWidth) { inp.value = { left: 0, top: 0, right: media.naturalWidth, bottom: media.naturalHeight }[name]; }
+          if (it.kind === 'image' && sel.value === 'resize' && media.naturalWidth) { inp.value = name === 'width' ? media.naturalWidth : media.naturalHeight; }
+          params.appendChild(lab); params.appendChild(inp);
+          if (inp.type === 'range') { const val = mk('span', 'v-meta', inp.value); inp.addEventListener('input', () => { val.textContent = inp.value; }); params.appendChild(val); }
+          inputs[name] = inp;
+        });
+      }
+      sel.addEventListener('change', buildParams); buildParams();
+      if (it.kind === 'image') media.addEventListener('load', buildParams, { once: true });
+      function collect() { const p = {}; Object.keys(inputs).forEach(k => { if (inputs[k].value !== '') p[k] = Number(inputs[k].value); }); return p; }
+
+      const row2 = mk('div', 'v-row');
+      const bPrev = mk('button', 'v-btn', 'Preview'), bSave = mk('button', 'v-btn', 'Save as new'), bDisc = mk('button', 'v-btn', 'Discard');
+      bSave.style.display = bDisc.style.display = 'none';
+      row2.append(bPrev, bSave, bDisc); v.appendChild(row2);
+      bPrev.addEventListener('click', async () => {
+        setViewerStatus('Making a preview...');
+        const r = await libApi('/api/media/items/' + it.id + '/edit', 'POST', { operation: sel.value, params: collect(), preview: true });
+        if (!r.ok) { setViewerStatus(r.data.detail || 'That edit could not be previewed.', true); return; }
+        lib.preview = { id: it.id, op: sel.value, params: collect() };
+        media.src = 'data:' + r.data.preview.mime + ';base64,' + r.data.preview.data_base64;
+        bSave.style.display = bDisc.style.display = ''; setViewerStatus('Preview only. Nothing is saved yet.');
+      });
+      bDisc.addEventListener('click', () => { lib.preview = null; media.src = it.url; bSave.style.display = bDisc.style.display = 'none'; setViewerStatus(''); });
+      bSave.addEventListener('click', async () => {
+        if (!lib.preview) return;
+        const r = await libApi('/api/media/items/' + it.id + '/edit', 'POST', { operation: lib.preview.op, params: lib.preview.params, preview: false });
+        if (!r.ok) { setViewerStatus(r.data.detail || 'Could not save the edit.', true); return; }
+        await loadLibrary(); await openItem(r.data.item.id); setViewerStatus('Saved as a new item: ' + r.data.item.title);
+      });
+
+      const row3 = mk('div', 'v-row');
+      const prompt = document.createElement('input'); prompt.type = 'text'; prompt.value = it.prompt || ''; prompt.maxLength = 500; prompt.placeholder = it.kind === 'sound' ? 'Text to speak' : 'Describe the image';
+      row3.appendChild(prompt); v.appendChild(row3);
+      const row4 = mk('div', 'v-row');
+      const bDown = mk('button', 'v-btn', 'Download'), bRegen = mk('button', 'v-btn', 'Re-generate'), bDel = mk('button', 'v-btn danger', 'Delete');
+      row4.append(bDown, bRegen, bDel); v.appendChild(row4);
+      v.appendChild(Object.assign(mk('div', 'v-status'), { id: 'v-status' }));
+      bDown.addEventListener('click', async () => {
+        const r = await libApi('/api/media/items/' + it.id + '?download=true');
+        if (r.ok) window.open(r.data.item.url, '_blank', 'noopener'); else setViewerStatus(r.data.detail || 'Could not download.', true);
+      });
+      bRegen.addEventListener('click', async () => {
+        const text = prompt.value.trim(); if (!text) { setViewerStatus('Write a prompt first.', true); return; }
+        const est = lib.estimates ? (it.kind === 'image' ? lib.estimates.image : lib.estimates.sound_per_1000_chars * Math.max(text.length, 1) / 1000) : null;
+        if (!confirm('Re-generate from this prompt?' + (est != null ? '\nEstimated cost about ' + money(est) + ' (counts against your daily media budget).' : '') + '\nThe original stays in your library.')) return;
+        setViewerStatus('Generating...');
+        const r = await libApi('/api/media/items/' + it.id + '/regenerate', 'POST', { prompt: text });
+        if (!r.ok) { setViewerStatus(r.data.detail || 'That could not be made.', true); return; }
+        await loadLibrary(); await openItem(r.data.item.id); setViewerStatus('Saved: ' + r.data.item.title);
+      });
+      bDel.addEventListener('click', async () => {
+        if (!confirm('Delete "' + it.title + '"? This removes the file for good.')) return;
+        const r = await libApi('/api/media/items/' + it.id, 'DELETE');
+        if (!r.ok) { setViewerStatus(r.data.detail || 'Could not delete.', true); return; }
+        lib.selected = null; await loadLibrary(); renderViewer();
+      });
+    }
+    // chat: one line "Saved: <title>" with a button that opens the item in the panel (the file itself is never put in the chat)
+    function addOpenButton(wrap, itemId) {
+      const b = mk('button', 'v-btn saved-open', 'Open'); b.addEventListener('click', () => openItem(itemId)); wrap.appendChild(b);
+    }
+    function handleUiActions(actions, wrap) {
+      (actions || []).forEach(a => {
+        if (a.type === 'saved' && a.item) { addOpenButton(wrap, a.item.id); loadLibrary(); }
+        else if (a.type === 'open_item' && a.id) openItem(a.id);
+      });
+    }
+
+    // "/image a red fox" and "/sound hello there": shortcuts. The result is saved to the library; the chat shows one line with an Open button.
     async function sendMedia(kind, prompt) {
       addMsg('user', '/' + kind + ' ' + prompt, null);
       feedLog('Media: ' + kind);
@@ -843,17 +1044,13 @@ async def index():
         if (res.status === 401) { pending.remove(); sendBtn.disabled = false; return; }
         const data = await res.json().catch(() => ({}));
         const body = pending.querySelector('div:last-child');
-        if (!res.ok || !data.data_base64) {
+        if (!res.ok || !data.item) {
           body.textContent = (data.detail && typeof data.detail === 'string') ? data.detail : 'That could not be made right now.';
           body.style.color = '#ff3344';
         } else {
-          body.textContent = data.note || '';
-          const el = document.createElement(kind === 'image' ? 'img' : 'audio');
-          el.src = 'data:' + data.mime + ';base64,' + data.data_base64;
-          if (kind === 'image') { el.alt = prompt; el.style.maxWidth = '100%'; el.style.marginTop = '6px'; }
-          else { el.controls = true; el.style.marginTop = '6px'; el.style.width = '100%'; }
-          pending.appendChild(el);
-          messagesEl.scrollTop = messagesEl.scrollHeight;
+          body.textContent = 'Saved: ' + data.item.title;
+          addOpenButton(pending, data.item.id);
+          loadLibrary();
         }
       } catch (e) {
         const body = pending.querySelector('div:last-child');
@@ -894,8 +1091,9 @@ async def index():
         const data = await res.json();
         thinking.remove();
         const reply = data.reply || data.detail || 'No response';
-        addMsg('atlas', reply, null);
-        feedLog('AiBusSol responded');
+        const replyEl = addMsg('atlas', reply, null);
+        handleUiActions(data.ui_actions, replyEl);
+        feedLog('Helix responded');
         if (data.model_display) {
           updateEngineIndicator(data.model_display, data.model_color);
           feedLog('Engine: ' + data.model_display);
@@ -927,31 +1125,31 @@ async def index():
         const url   = URL.createObjectURL(blob);
         const audio = new Audio(url);
         try {
-          if (!_solAudioCtx) {
-            _solAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          if (!_helixAudioCtx) {
+            _helixAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
           }
-          if (_solAudioCtx.state === 'suspended') await _solAudioCtx.resume();
-          const analyser = _solAudioCtx.createAnalyser();
+          if (_helixAudioCtx.state === 'suspended') await _helixAudioCtx.resume();
+          const analyser = _helixAudioCtx.createAnalyser();
           analyser.fftSize = 64;
-          const src = _solAudioCtx.createMediaElementSource(audio);
+          const src = _helixAudioCtx.createMediaElementSource(audio);
           src.connect(analyser);
-          analyser.connect(_solAudioCtx.destination);
-          window._solAnalyser = analyser;
-          window._solTalkData = new Uint8Array(analyser.frequencyBinCount);
+          analyser.connect(_helixAudioCtx.destination);
+          window._helixAnalyser = analyser;
+          window._helixTalkData = new Uint8Array(analyser.frequencyBinCount);
         } catch(e) {
           console.warn('Analyser setup failed:', e.message);
-          window._solAnalyser = null;
+          window._helixAnalyser = null;
         }
         audio.onplay  = () => setTalking(true);
         audio.onended = () => {
           setTalking(false);
-          window._solAnalyser = null;
+          window._helixAnalyser = null;
           URL.revokeObjectURL(url);
           if (!isRecording) resumeWakeWord();
         };
         audio.onerror = () => {
           setTalking(false);
-          window._solAnalyser = null;
+          window._helixAnalyser = null;
           URL.revokeObjectURL(url);
           resumeWakeWord();
         };
@@ -959,7 +1157,7 @@ async def index():
         audio.play().catch(e => {
           console.warn('Play blocked:', e.message);
           setTalking(false);
-          window._solAnalyser = null;
+          window._helixAnalyser = null;
           URL.revokeObjectURL(url);
           resumeWakeWord();
         });
@@ -985,8 +1183,8 @@ async def index():
       const thisInst = wakeRecognition;
       let triggered = false;
       const WAKE_VARIANTS = [
-        'hey sol','hey soul','hey saul','hey sal',
-        'hey so','hey soll','a sol','heysel','hey-sol'
+        'hey helix','hey helics','hey helic','hey helixs','hey helex','hey hellix','hey helicks','hey heliks','hey healix',
+        'a helix','heyhelix','hey-helix'
       ];
       wakeRecognition.onresult = (e) => {
         const latest = e.results[e.results.length - 1][0].transcript.toLowerCase().trim();
@@ -995,7 +1193,7 @@ async def index():
           if (WAKE_VARIANTS.some(v => latest.includes(v))) {
             triggered = true;
             setTimeout(() => { triggered = false; }, 3000);
-            feedLog('Wake word detected: Hey Sol');
+            feedLog('Wake word detected: Hey Helix');
             startRecording();
           }
         } else if (_srMode === 'send') {
@@ -1019,7 +1217,7 @@ async def index():
       try {
         wakeRecognition.start();
         setWakeStatus('listening');
-        feedLog('Say "Hey Sol" to wake');
+        feedLog('Say "Hey Helix" to wake');
       } catch(e) { setWakeStatus('unsupported'); }
     }
 
@@ -1059,7 +1257,7 @@ async def index():
             const data = await res.json();
             if (data.text) {
               let clean = data.text.trim()
-                .replace(/^(hey\s+sol|hey\s+soul)[,.]?\s*/i, '')
+                .replace(/^(hey\s+helix|hey\s+helics|hey\s+helic|a\s+helix)[,.]?\s*/i, '')
                 .replace(/[,.]?\s*send\.?\s*$/i, '')
                 .trim();
               if (clean) await sendMessage(clean);
@@ -1173,10 +1371,10 @@ async def index():
       const t   = (Date.now() - _t0) / 1000;
       const now = Date.now();
 
-      if (window._solTalking && window._solAnalyser) {
-        window._solAnalyser.getByteFrequencyData(window._solTalkData);
-        const bass = window._solTalkData.slice(0, 4).reduce((a, b) => a + b, 0) / 4 / 255;
-        const mid  = window._solTalkData.slice(4, 8).reduce((a, b) => a + b, 0) / 4 / 255;
+      if (window._helixTalking && window._helixAnalyser) {
+        window._helixAnalyser.getByteFrequencyData(window._helixTalkData);
+        const bass = window._helixTalkData.slice(0, 4).reduce((a, b) => a + b, 0) / 4 / 255;
+        const mid  = window._helixTalkData.slice(4, 8).reduce((a, b) => a + b, 0) / 4 / 255;
         const raw  = Math.max(bass, mid * 0.6);
         _smoothJaw += (raw - _smoothJaw) * 0.35;
         if (jawBone)   jawBone.rotation.x = _smoothJaw * 0.4;
@@ -1237,7 +1435,22 @@ async def chat(req: ChatRequest, request: Request):
     model_id, model_display, model_color = classify_model(req.message, bool(req.image))
 
     # CHANGE 4: pass client_date to get_system_prompt
-    messages = [{"role": "system", "content": get_system_prompt(req.client_date)}]
+    # Helix's media tools are offered only when media is fully on (flag, budget above zero, storage configured); otherwise chat is exactly as before
+    media_ctx = None
+    if helix_tools.tools_available(request.app.state):
+        try:
+            media_ctx = media_service.ctx_from_request(request, paid=True)
+        except MediaServiceError:
+            media_ctx = None
+    if media_ctx is not None and not req.image:
+        early = await helix_tools.pre_turn(media_ctx, req.message)         # a yes to a read-back action, a cancel, a sound-effect request
+        if early is not None:
+            await store.append_message(user_id, CHANNEL, "user", req.message)
+            await store.append_message(user_id, CHANNEL, "assistant", early["reply"])
+            return JSONResponse({"reply": early["reply"], "ui_actions": early["ui"], "model_display": model_display, "model_color": model_color})
+
+    system_text = get_system_prompt(req.client_date) + (helix_tools.SYSTEM_ADDENDUM if media_ctx is not None else "")
+    messages = [{"role": "system", "content": system_text}]
     for m in session["conversation_history"][-10:]:
         if m["role"] in ("user", "assistant"):
             content = m["content"]
@@ -1254,6 +1467,22 @@ async def chat(req: ChatRequest, request: Request):
         user_content = req.message
 
     messages.append({"role": "user", "content": user_content})
+
+    if media_ctx is not None:
+        async def _cost(resp):
+            await store.add_spend(user_id, hardening.utc_day(), hardening.chat_cost_usd(resp))
+
+        try:
+            out = await helix_tools.run_model_with_tools(
+                media_ctx, messages, model_id, req.message,
+                acompletion=litellm.acompletion, on_cost=_cost, max_tokens=hardening.CHAT_MAX_TOKENS,
+            )
+        except Exception:
+            logger.exception("model call with tools failed (%s)", model_id)
+            return JSONResponse({"reply": "The model could not answer right now. Please try again.", "model_display": model_display, "model_color": model_color})
+        await store.append_message(user_id, CHANNEL, "user", req.message)
+        await store.append_message(user_id, CHANNEL, "assistant", out["reply"])
+        return JSONResponse({"reply": out["reply"], "ui_actions": out["ui"], "model_display": model_display, "model_color": model_color})
 
     try:
         response = await litellm.acompletion(model=model_id, messages=messages, max_tokens=hardening.CHAT_MAX_TOKENS)
