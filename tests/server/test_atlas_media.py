@@ -21,6 +21,8 @@ from openjarvis.server.media import cloudflare as cf
 from openjarvis.server.media import image as image_mod
 from openjarvis.server.media import sound as sound_mod
 from openjarvis.server.media.base import MediaError, MediaResult
+from openjarvis.server.media.catalog import MemoryCatalog
+from openjarvis.server.media.storage import MemoryStorage
 from openjarvis.server.media.routes import router as media_router
 
 API_KEY = "test-system-key-0123456789"
@@ -102,6 +104,8 @@ def client(store):
     app.include_router(media_router)
     app.include_router(atlas_ui.router)
     app.state.session_store = store
+    app.state.media_storage = MemoryStorage()
+    app.state.media_catalog = MemoryCatalog()
     app.add_middleware(AuthMiddleware, api_key=API_KEY)
     return TestClient(app)
 
@@ -125,6 +129,13 @@ def on(monkeypatch, cap="0.05", glob=None):
     monkeypatch.setenv("DAILY_MEDIA_SPEND_CAP_USD", cap)
     if glob is not None:
         monkeypatch.setenv("MEDIA_GLOBAL_DAILY_CAP_USD", glob)
+
+
+def saved_bytes(client, resp):
+    """The bytes stored for the item an answer names (the answer itself carries no file)."""
+    item = resp.json()["item"]
+    row = client.app.state.media_catalog.items[item["id"]]
+    return client.app.state.media_storage.objects[row.storage_key][0]
 
 
 H = {"Authorization": "Bearer " + API_KEY}
@@ -188,19 +199,11 @@ class TestSwitchAndCap:
         r = post_image(client)
         assert r.status_code == 200
         j = r.json()
-        assert (
-            j["success"]
-            and j["kind"] == "image"
-            and j["mime"] == "image/jpeg"
-            and j["stored"] is False
-        )
-        assert base64.b64decode(j["data_base64"]) == PNG
+        assert j["success"] and j["item"]["kind"] == "image" and j["item"]["mime_type"] == "image/jpeg"
+        assert "data_base64" not in j and "storage_key" not in j["item"] and "user_id" not in j["item"]
+        assert saved_bytes(client, r) == PNG
         s = post_sound(client)
-        assert (
-            s.status_code == 200
-            and base64.b64decode(s.json()["data_base64"]) == MP3
-            and s.json()["mime"] == "audio/mpeg"
-        )
+        assert s.status_code == 200 and saved_bytes(client, s) == MP3 and s.json()["item"]["mime_type"] == "audio/mpeg"
         assert (
             round(store.spent("media:system"), 4) == 0.012
             and round(store.spent("media:__all__"), 4) == 0.012
@@ -280,13 +283,9 @@ class TestSwitchAndCap:
         assert s["enabled"] is False and s["image"] is False and s["video"] is False
         on(monkeypatch)
         s = client.get("/api/media/status", headers=H).json()
-        assert s == {
-            "enabled": True,
-            "image": True,
-            "sound": True,
-            "video": False,
-            "video_note": "Video generation is not available.",
-        }
+        assert s["enabled"] is True and s["generation"] is True and s["image"] is True and s["sound"] is True
+        assert s["video"] is False and s["video_note"] == "Video generation is not available."
+        assert s["estimates"]["image"] > 0
 
 
 # ── protection shared with the chat ─────────────────────────────────────────────────────────────
@@ -358,18 +357,13 @@ class TestProtection:
         ).status_code in (404, 405)
         paths = {getattr(r, "path", "") for r in client.app.routes}
         assert not any("video" in p for p in paths)
-        src = "\n".join(
-            p.read_text(encoding="utf-8") for p in Path(cf.__file__).parent.glob("*.py")
-        )
-        for needle in (
-            "open(",
-            "write_bytes",
-            "write_text",
-            "tempfile",
-            "os.makedirs",
-            "shutil",
-        ):
+        pkg = Path(cf.__file__).parent
+        src = "\n".join(p.read_text(encoding="utf-8") for p in pkg.glob("*.py") if p.name != "edits.py")
+        for needle in ("open(", "write_bytes", "write_text", "tempfile", "os.makedirs", "shutil"):
             assert needle not in src, needle
+        edit_src = (pkg / "edits.py").read_text(encoding="utf-8")        # Image.open reads from memory; nothing is written to disk
+        for needle in ("write_bytes", "write_text", "tempfile", "os.makedirs", "NamedTemporaryFile", "open(\"w"):
+            assert needle not in edit_src, needle
 
 
 # ── errors and keys ─────────────────────────────────────────────────────────────────────────────
@@ -433,7 +427,7 @@ class TestErrorsAndKeys:
         )
         with caplog.at_level(logging.DEBUG):
             r = post_image(client, prompt="a red fox", steps=3)
-        assert r.status_code == 200 and base64.b64decode(r.json()["data_base64"]) == PNG
+        assert r.status_code == 200 and saved_bytes(client, r) == PNG
         sent = route.calls[0].request
         assert sent.headers["authorization"] == "Bearer " + CF_TOKEN
         assert CF_TOKEN not in str(sent.url) and CF_TOKEN not in sent.content.decode()
@@ -491,7 +485,7 @@ class TestErrorsAndKeys:
             )
         )
         r = post_sound(client, text="hi", lang="fr")
-        assert r.status_code == 200 and base64.b64decode(r.json()["data_base64"]) == MP3
+        assert r.status_code == 200 and saved_bytes(client, r) == MP3
         import json as _json
 
         assert _json.loads(route.calls[0].request.content) == {
@@ -503,7 +497,7 @@ class TestErrorsAndKeys:
                 200, content=MP3, headers={"content-type": "audio/mpeg"}
             )
         )
-        assert base64.b64decode(post_sound(client).json()["data_base64"]) == MP3
+        assert saved_bytes(client, post_sound(client)) == MP3
         respx.post(url).mock(return_value=httpx.Response(200, json={"result": {}}))
         assert post_sound(client).status_code == 502
 

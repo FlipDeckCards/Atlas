@@ -20,6 +20,8 @@ from openjarvis.server.app import create_app
 from openjarvis.server.media import image as image_mod
 from openjarvis.server.media import sound as sound_mod
 from openjarvis.server.media.base import MediaResult
+from openjarvis.server.media.catalog import MemoryCatalog
+from openjarvis.server.media.storage import MemoryStorage
 from openjarvis.server.session_store import SessionStore
 
 API_KEY = "test-system-key-0123456789"
@@ -78,6 +80,8 @@ def store():
 def client(store):
     app = create_app(MagicMock(), "m", api_key=API_KEY, require_auth=True)
     app.state.session_store = store
+    app.state.media_storage = MemoryStorage()
+    app.state.media_catalog = MemoryCatalog()
 
     @app.get("/api/_boom")
     async def boom():                                   # a route that fails
@@ -124,7 +128,7 @@ class TestValidUser:
         r = client.post("/api/media/image", json={"prompt": "a fox"}, headers=h)
         assert r.status_code == 200 and r.json()["success"] is True
         r = client.post("/api/media/sound", json={"text": "hello"}, headers=h)
-        assert r.status_code == 200 and r.json()["kind"] == "sound"
+        assert r.status_code == 200 and r.json()["item"]["kind"] == "sound"
         assert client.get("/api/media/status", headers=h).status_code == 200
         assert len(img.calls) == 1 and len(snd.calls) == 1
 

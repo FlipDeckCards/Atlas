@@ -52,6 +52,10 @@ dependencies = [
     "bcrypt>=4.0",
     "PyJWT>=2.8",
     "python-dotenv>=1.0",
+    # Media library: image edits (Pillow) and audio edits (ffmpeg). imageio-ffmpeg ships a static ffmpeg binary inside the wheel, so audio
+    # editing needs no apt package or Dockerfile on Render's native Python runtime.
+    "pillow>=10.0",
+    "imageio-ffmpeg>=0.5",
 ]
 
 [project.optional-dependencies]
@@ -242,6 +246,9 @@ select = ["E", "F", "I", "W"]
 "tests/server/test_atlas_hardening.py" = ["E501"]
 "tests/server/test_atlas_media.py" = ["E501"]
 "tests/server/test_auth_media_fix.py" = ["E501", "E701"]
+"tests/server/test_media_library.py" = ["E501", "E701"]
+"tests/server/test_sol_tools.py" = ["E501", "E701"]
+"tests/server/_media_fakes.py" = ["E501"]
 "src/openjarvis/server/media/*.py" = ["E501"]
 "scripts/check_media_providers.py" = ["E501"]
 "src/openjarvis/server/atlas_ui.py" = ["E501", "E701", "E702"]

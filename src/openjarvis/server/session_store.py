@@ -65,6 +65,10 @@ class SessionStore:
                     PRIMARY KEY (user_id, day)
                 );
             """)
+            # media library catalog (table media_items): created here with the other tables, IF NOT EXISTS, add-only
+            from openjarvis.server.media.catalog import MEDIA_ITEMS_DDL
+
+            await conn.execute(MEDIA_ITEMS_DDL)
 
     async def close(self) -> None:
         if self._pool:

@@ -172,6 +172,10 @@ def rate_limits() -> Dict[str, Tuple[int, float]]:
         "voice_ip": (_int_env("RL_VOICE_IP_MAX", 90), 60.0),
         "media_user": (_int_env("RL_MEDIA_USER_MAX", 6), 60.0),        # 6 image / sound generations per minute per user
         "media_ip": (_int_env("RL_MEDIA_IP_MAX", 20), 60.0),
+        "media_read_user": (_int_env("RL_MEDIA_READ_USER_MAX", 60), 60.0),     # library browsing
+        "media_read_ip": (_int_env("RL_MEDIA_READ_IP_MAX", 180), 60.0),
+        "media_edit_user": (_int_env("RL_MEDIA_EDIT_USER_MAX", 30), 60.0),     # edit previews and saves (no provider cost)
+        "media_edit_ip": (_int_env("RL_MEDIA_EDIT_IP_MAX", 90), 60.0),
     }
 
 
