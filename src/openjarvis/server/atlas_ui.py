@@ -107,7 +107,7 @@ class ChatRequest(BaseModel):
     client_date: Optional[str] = Field(None, max_length=100)
 
 
-_BRIEF_REPLY = re.compile(r"^(Morning|Afternoon|Evening) brief for ")      # how briefs.brief_reply starts
+_BRIEF_REPLY = re.compile(r"^(?:Good (?:morning|afternoon|evening|day)[^\n]*\n\n)?(Morning|Afternoon|Evening) brief for ")      # how briefs.brief_reply starts (after its greeting)
 
 
 def _exempt(request: Request) -> bool:

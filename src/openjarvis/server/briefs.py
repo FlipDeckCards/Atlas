@@ -205,14 +205,32 @@ def brief_reply(b: Optional[Dict[str, Any]], period: str) -> str:
     if b is None:
         which = "" if period == "latest" else period + " "
         return f"There's no {which}brief in the feed yet."
-    return f"{b['period'].capitalize()} brief for {b['product']}.\n\n{_plain(b['body'])}"
+    greeting = {"morning": "Good morning, Michael.", "afternoon": "Good afternoon, Michael.",
+                "evening": "Good evening, Michael."}.get(b["period"], "Hello, Michael.")
+    return f"{greeting}\n\n{b['period'].capitalize()} brief for {b['product']}.\n\n{_plain(b['body'])}"
 
 
 def _plain(body: str) -> str:
-    """The full brief as plain text: the markdown marks are dropped so it reads cleanly aloud and in the chat."""
-    text = re.sub(r"(?m)^\s{0,3}#{1,6}\s*", "", body or "")
-    text = re.sub(r"\*\*|__|`", "", text)
-    return text.strip()
+    """The full brief as plain sentences, one per line, so it reads cleanly aloud and in the chat.
+    Headings, bullets and numbered items become their own lines; table rows become comma-separated lines;
+    markdown marks are dropped; every line ends with punctuation so the voice pauses between items."""
+    out = []
+    for line in (body or "").splitlines():
+        s = line.strip()
+        if not s or re.fullmatch(r"\|?[\s:\-|]+\|?", s):            # blank line or table separator row
+            continue
+        if s.startswith("|") and s.endswith("|"):
+            s = ", ".join(c.strip() for c in s.strip("|").split("|") if c.strip())
+        s = re.sub(r"^#{1,6}\s*", "", s)
+        s = re.sub(r"^[-*+]\s+", "", s)
+        s = re.sub(r"^\d+[.)]\s+", "", s)
+        s = re.sub(r"\*\*|__|`", "", s).strip()
+        if not s:
+            continue
+        if s[-1] not in ".!?:":
+            s += "."
+        out.append(s)
+    return "\n".join(out)
 
 
 def brief_context(b: Dict[str, Any]) -> str:

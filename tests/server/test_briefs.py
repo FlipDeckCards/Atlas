@@ -355,7 +355,7 @@ class TestChatReadsTheBrief:
         post(world, brief(body_markdown="# Status\n**Reconnect** the Meta token first.", spoken_summary="Short."))
         r = self._chat(world, "Read me the Daily Brief.")
         assert r.status_code == 200
-        assert r.json()["reply"] == "Morning brief for Marnyx and FlipDeck.\n\nStatus\nReconnect the Meta token first."
+        assert r.json()["reply"] == "Good morning, Michael.\n\nMorning brief for Marnyx and FlipDeck.\n\nStatus.\nReconnect the Meta token first."
         assert "Short." not in r.json()["reply"]
         assert called == [] and world.session.spent("alice") == 0
 
