@@ -736,6 +736,8 @@ async def index():
         email ? email.split('@')[0].toUpperCase() : 'OPERATOR';
       loadHistory();
       loadLibrary().then(renderViewer);
+      checkBriefs();
+      if (!_briefTimer) _briefTimer = setInterval(checkBriefs, 60000);
       startUptimeClock();
     }
 
@@ -1029,6 +1031,41 @@ async def index():
         else if (a.type === 'open_item' && a.id) openItem(a.id);
       });
     }
+
+    // ── Briefs: each new scheduled brief appears in the chat with its full text and a Listen button ──
+    const BRIEF_SEEN_KEY = 'aibussol_seen_briefs';
+    function seenBriefs() { try { return JSON.parse(localStorage.getItem(BRIEF_SEEN_KEY) || '[]'); } catch (e) { return []; } }
+    function markBriefSeen(id) {
+      try { const s = seenBriefs(); if (!s.includes(id)) { s.push(id); localStorage.setItem(BRIEF_SEEN_KEY, JSON.stringify(s.slice(-60))); } } catch (e) { /* the list is only a convenience */ }
+    }
+    function addBriefMessage(b) {
+      const wrap = mk('div', 'msg atlas');
+      wrap.appendChild(mk('div', 'msg-tag', 'HELIX \u00b7 ' + String(b.period).toUpperCase() + ' BRIEF \u00b7 ' + b.product + ' \u00b7 ' + new Date(b.created_at).toLocaleString()));
+      const body = mk('div', null, b.body); body.style.whiteSpace = 'pre-wrap';
+      wrap.appendChild(body);
+      const row = mk('div'); row.style.marginTop = '8px';
+      const listen = mk('button', 'v-btn', 'Listen'); const note = mk('span', 'v-meta'); note.style.marginLeft = '8px';
+      listen.addEventListener('click', async () => {
+        listen.disabled = true; note.textContent = ''; note.style.color = '';
+        const r = await libApi('/api/briefs/' + encodeURIComponent(b.id) + '/listen', 'POST');
+        if (!r.ok || !r.data.text) { note.textContent = r.data.detail || 'This brief could not be played right now.'; note.style.color = '#ff3344'; }
+        else { note.textContent = r.data.remaining + ' listens left today'; speakReply(r.data.text); }   // the spoken summary only, never the full text
+        listen.disabled = false;
+      });
+      row.append(listen, note); wrap.appendChild(row);
+      messagesEl.appendChild(wrap); messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+    async function checkBriefs() {
+      try {
+        const r = await fetch('/api/briefs/latest', { headers: authHeader() });
+        if (!r.ok) return;
+        const d = await r.json();
+        const fresh = (d.items || []).filter(b => !seenBriefs().includes(b.id)).reverse();      // oldest first
+        fresh.forEach(b => { addBriefMessage(b); markBriefSeen(b.id); });
+        if (fresh.length) feedLog('New brief: ' + fresh[fresh.length - 1].period);
+      } catch (e) { /* try again at the next check */ }
+    }
+    var _briefTimer = null;      // var: showHUD() runs before this line during page load
 
     // "/image a red fox" and "/sound hello there": shortcuts. The result is saved to the library; the chat shows one line with an Open button.
     async function sendMedia(kind, prompt) {

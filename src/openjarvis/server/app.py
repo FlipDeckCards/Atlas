@@ -9,7 +9,7 @@ import time
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -21,6 +21,7 @@ from openjarvis.server.comparison import comparison_router
 from openjarvis.server.connectors_router import create_connectors_router
 from openjarvis.server.dashboard import dashboard_router
 from openjarvis.server.digest_routes import create_digest_router
+from openjarvis.server.briefs import router as briefs_router
 from openjarvis.server.media.routes import router as media_router
 from openjarvis.server.research_router import router as research_router
 from openjarvis.server.routes import router
@@ -117,6 +118,10 @@ def _restore_sendblue_bindings(app: FastAPI) -> None:
         logger.debug("SendBlue binding restore skipped: %s", exc)
 
 
+_FAVICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#050508"/>'
+    '<text x="16" y="22" font-family="monospace" font-size="18" font-weight="700" text-anchor="middle" fill="#00e5ff">A</text></svg>'
+)
 _NO_CACHE_HEADERS = {
     "Cache-Control": "no-cache, no-store, must-revalidate",
     "Pragma": "no-cache",
@@ -269,6 +274,7 @@ def create_app(
     app.include_router(analytics_router)
     app.include_router(atlas_ui_router)
     app.include_router(media_router)
+    app.include_router(briefs_router)
     app.include_router(auth_router)
     include_all_routes(app)
 
@@ -329,6 +335,11 @@ def create_app(
                 name="static-assets",
             )
 
+        @app.get("/favicon.ico", include_in_schema=False)
+        async def favicon():
+            # a small inline icon: browsers ask for /favicon.ico on every visit, and it used to fall through to the page below and fail
+            return Response(content=_FAVICON_SVG, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+
         @app.get("/{full_path:path}")
         async def spa_catch_all(full_path: str):
             if full_path:
@@ -336,10 +347,10 @@ def create_app(
                 resolved_root = static_dir.resolve()
                 if candidate.is_relative_to(resolved_root) and candidate.is_file():
                     return FileResponse(candidate, headers=_NO_CACHE_HEADERS)
-            return FileResponse(
-                static_dir / "index.html",
-                headers=_NO_CACHE_HEADERS,
-            )
+            index = static_dir / "index.html"
+            if not index.is_file():          # a missing page is a 404, never a 500
+                return JSONResponse({"detail": "Not found"}, status_code=404)
+            return FileResponse(index, headers=_NO_CACHE_HEADERS)
 
     return app
 

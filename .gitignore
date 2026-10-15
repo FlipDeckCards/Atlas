@@ -71,7 +71,8 @@ frontend/dist/
 # Desktop
 desktop/node_modules/
 desktop/dist/
-src/openjarvis/server/static/
+src/openjarvis/server/static/*
+!src/openjarvis/server/static/index.html
 
 # Desktop (Tauri)
 frontend/src-tauri/target/
