@@ -1,4 +1,4 @@
-"""Security hardening for the AiBusSol web app: required secrets, rate limits, size caps, spend cap, model names.
+"""Security hardening for the Aibussol web app: required secrets, rate limits, size caps, spend cap, model names.
 
 Everything here is plain Python with no network or database access of its own, so it is easy to test.
 Environment variable NAMES are documented in SECURITY-CHANGES.md; values are never logged.

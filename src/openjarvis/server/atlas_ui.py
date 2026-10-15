@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from openjarvis.server import hardening
 from openjarvis.server.media import service as media_service
-from openjarvis.server.media import sol_tools
+from openjarvis.server.media import helix_tools
 from openjarvis.server.media.service import MediaServiceError
 
 logger = logging.getLogger(__name__)
@@ -39,9 +39,9 @@ def get_system_prompt(client_date: str = None) -> str:
         date_str = client_date
     else:
         date_str = datetime.now(timezone.utc).strftime("%A, %B %d, %Y %H:%M UTC")
-    return f"""You are AiBusSol, a personal AI hub and orchestrator built by Michael.
+    return f"""You are Helix, the assistant of Aibussol (AI Business Solutions), a personal AI hub and orchestrator built by Michael.
 You have persistent memory and can handle a wide range of tasks with intelligence and precision.
-You are not OpenJarvis — you are AiBusSol.
+You are not OpenJarvis — you are Helix.
 Today's date and time is {date_str}.
 Be direct, sharp, and helpful."""
 
@@ -236,7 +236,7 @@ async def index():
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>AiBusSol</title>
+  <title>Aibussol</title>
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
   <style>
     :root {
@@ -573,7 +573,7 @@ async def index():
       </div>
       <div id="live-feed">
         <div class="p-label">Live Feed</div>
-        <div class="feed-line">&#9656; AiBusSol core initialized</div>
+        <div class="feed-line">&#9656; Aibussol core initialized</div>
         <div class="feed-line">&#9656; Neon DB connected</div>
         <div class="feed-line">&#9656; Voice engine loaded</div>
         <div class="feed-line" id="feed-last">&#9656; Awaiting input...</div>
@@ -620,7 +620,7 @@ async def index():
           <button id="mic" title="Record">&#127897;</button>
           <label id="upload-btn" for="img-input" title="Attach image">📎</label>
           <input id="img-input" type="file" accept="image/*"/>
-          <input id="input" type="text" placeholder='Type, say "Hey Sol...", or /image /sound' autocomplete="off"/>
+          <input id="input" type="text" placeholder='Type, or say "Hey Helix"...' autocomplete="off"/>
           <button id="send">SEND</button>
         </div>
       </div>
@@ -653,7 +653,7 @@ async def index():
       } catch(e) {}
     }
 
-    let _solAudioCtx = null;
+    let _helixAudioCtx = null;
     let authMode = 'login';
 
     function toggleAuthMode() {
@@ -786,7 +786,7 @@ async def index():
     clearImgBtn.addEventListener('click', clearPendingImage);
 
     function setTalking(on) {
-      window._solTalking = on;
+      window._helixTalking = on;
       if (on) {
         atlasFace.classList.add('talking');
         atlasState.textContent = 'SPEAKING'; atlasState.style.color = 'var(--orange)';
@@ -802,7 +802,7 @@ async def index():
       wakeDot.className = '';
       if (state === 'listening') {
         wakeDot.classList.add('listening'); wakeLabel.textContent = 'LISTENING';
-        centerSub.textContent = 'SAY "HEY SOL" TO WAKE';
+        centerSub.textContent = 'SAY "HEY HELIX" TO WAKE';
         atlasState.textContent = 'ACTIVE'; atlasState.style.color = 'var(--cyan)';
       } else if (state === 'recording') {
         wakeDot.classList.add('recording'); wakeLabel.textContent = 'RECORDING';
@@ -838,7 +838,7 @@ async def index():
       wrap.className = 'msg ' + (role === 'user' ? 'user' : 'atlas');
       const tag = document.createElement('div');
       tag.className = 'msg-tag';
-      tag.textContent = role === 'user' ? 'YOU' : 'AIBUSSOL';
+      tag.textContent = role === 'user' ? 'YOU' : 'HELIX';
       const body = document.createElement('div');
       body.textContent = text;
       wrap.appendChild(tag); wrap.appendChild(body);
@@ -902,7 +902,7 @@ async def index():
     function renderLibrary(note) {
       libList.textContent = '';
       if (note) libList.appendChild(mk('div', 'lib-note', note));
-      if (!note && !lib.items.length) libList.appendChild(mk('div', 'lib-note', lib.kind === 'video' ? 'Video is not available.' : 'Nothing saved yet. Ask Sol to make something.'));
+      if (!note && !lib.items.length) libList.appendChild(mk('div', 'lib-note', lib.kind === 'video' ? 'Video is not available.' : 'Nothing saved yet. Ask Helix to make something.'));
       lib.items.forEach(it => {
         const row = mk('div', 'lib-row' + (lib.selected && lib.selected.id === it.id ? ' sel' : ''));
         if (it.kind === 'image') { const im = mk('img', 'lib-thumb'); im.src = it.url; im.alt = ''; row.appendChild(im); }
@@ -934,7 +934,7 @@ async def index():
     function renderViewer() {
       const v = viewerEl; v.textContent = '';
       const it = lib.selected;
-      if (!it) { v.appendChild(mk('div', 'lib-note', 'Select an item in the Library, or ask Sol to make one.')); return; }
+      if (!it) { v.appendChild(mk('div', 'lib-note', 'Select an item in the Library, or ask Helix to make one.')); return; }
       const head = mk('div', 'v-head');
       head.appendChild(mk('span', 'v-title', it.title));
       head.appendChild(mk('span', 'v-meta', it.kind + ' \u00b7 ' + fmtBytes(it.size_bytes) + (it.duration_seconds ? ' \u00b7 ' + it.duration_seconds + 's' : '')));
@@ -1093,7 +1093,7 @@ async def index():
         const reply = data.reply || data.detail || 'No response';
         const replyEl = addMsg('atlas', reply, null);
         handleUiActions(data.ui_actions, replyEl);
-        feedLog('AiBusSol responded');
+        feedLog('Helix responded');
         if (data.model_display) {
           updateEngineIndicator(data.model_display, data.model_color);
           feedLog('Engine: ' + data.model_display);
@@ -1125,31 +1125,31 @@ async def index():
         const url   = URL.createObjectURL(blob);
         const audio = new Audio(url);
         try {
-          if (!_solAudioCtx) {
-            _solAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          if (!_helixAudioCtx) {
+            _helixAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
           }
-          if (_solAudioCtx.state === 'suspended') await _solAudioCtx.resume();
-          const analyser = _solAudioCtx.createAnalyser();
+          if (_helixAudioCtx.state === 'suspended') await _helixAudioCtx.resume();
+          const analyser = _helixAudioCtx.createAnalyser();
           analyser.fftSize = 64;
-          const src = _solAudioCtx.createMediaElementSource(audio);
+          const src = _helixAudioCtx.createMediaElementSource(audio);
           src.connect(analyser);
-          analyser.connect(_solAudioCtx.destination);
-          window._solAnalyser = analyser;
-          window._solTalkData = new Uint8Array(analyser.frequencyBinCount);
+          analyser.connect(_helixAudioCtx.destination);
+          window._helixAnalyser = analyser;
+          window._helixTalkData = new Uint8Array(analyser.frequencyBinCount);
         } catch(e) {
           console.warn('Analyser setup failed:', e.message);
-          window._solAnalyser = null;
+          window._helixAnalyser = null;
         }
         audio.onplay  = () => setTalking(true);
         audio.onended = () => {
           setTalking(false);
-          window._solAnalyser = null;
+          window._helixAnalyser = null;
           URL.revokeObjectURL(url);
           if (!isRecording) resumeWakeWord();
         };
         audio.onerror = () => {
           setTalking(false);
-          window._solAnalyser = null;
+          window._helixAnalyser = null;
           URL.revokeObjectURL(url);
           resumeWakeWord();
         };
@@ -1157,7 +1157,7 @@ async def index():
         audio.play().catch(e => {
           console.warn('Play blocked:', e.message);
           setTalking(false);
-          window._solAnalyser = null;
+          window._helixAnalyser = null;
           URL.revokeObjectURL(url);
           resumeWakeWord();
         });
@@ -1183,8 +1183,8 @@ async def index():
       const thisInst = wakeRecognition;
       let triggered = false;
       const WAKE_VARIANTS = [
-        'hey sol','hey soul','hey saul','hey sal',
-        'hey so','hey soll','a sol','heysel','hey-sol'
+        'hey helix','hey helics','hey helic','hey helixs','hey helex','hey hellix','hey helicks','hey heliks','hey healix',
+        'a helix','heyhelix','hey-helix'
       ];
       wakeRecognition.onresult = (e) => {
         const latest = e.results[e.results.length - 1][0].transcript.toLowerCase().trim();
@@ -1193,7 +1193,7 @@ async def index():
           if (WAKE_VARIANTS.some(v => latest.includes(v))) {
             triggered = true;
             setTimeout(() => { triggered = false; }, 3000);
-            feedLog('Wake word detected: Hey Sol');
+            feedLog('Wake word detected: Hey Helix');
             startRecording();
           }
         } else if (_srMode === 'send') {
@@ -1217,7 +1217,7 @@ async def index():
       try {
         wakeRecognition.start();
         setWakeStatus('listening');
-        feedLog('Say "Hey Sol" to wake');
+        feedLog('Say "Hey Helix" to wake');
       } catch(e) { setWakeStatus('unsupported'); }
     }
 
@@ -1257,7 +1257,7 @@ async def index():
             const data = await res.json();
             if (data.text) {
               let clean = data.text.trim()
-                .replace(/^(hey\s+sol|hey\s+soul)[,.]?\s*/i, '')
+                .replace(/^(hey\s+helix|hey\s+helics|hey\s+helic|a\s+helix)[,.]?\s*/i, '')
                 .replace(/[,.]?\s*send\.?\s*$/i, '')
                 .trim();
               if (clean) await sendMessage(clean);
@@ -1371,10 +1371,10 @@ async def index():
       const t   = (Date.now() - _t0) / 1000;
       const now = Date.now();
 
-      if (window._solTalking && window._solAnalyser) {
-        window._solAnalyser.getByteFrequencyData(window._solTalkData);
-        const bass = window._solTalkData.slice(0, 4).reduce((a, b) => a + b, 0) / 4 / 255;
-        const mid  = window._solTalkData.slice(4, 8).reduce((a, b) => a + b, 0) / 4 / 255;
+      if (window._helixTalking && window._helixAnalyser) {
+        window._helixAnalyser.getByteFrequencyData(window._helixTalkData);
+        const bass = window._helixTalkData.slice(0, 4).reduce((a, b) => a + b, 0) / 4 / 255;
+        const mid  = window._helixTalkData.slice(4, 8).reduce((a, b) => a + b, 0) / 4 / 255;
         const raw  = Math.max(bass, mid * 0.6);
         _smoothJaw += (raw - _smoothJaw) * 0.35;
         if (jawBone)   jawBone.rotation.x = _smoothJaw * 0.4;
@@ -1435,21 +1435,21 @@ async def chat(req: ChatRequest, request: Request):
     model_id, model_display, model_color = classify_model(req.message, bool(req.image))
 
     # CHANGE 4: pass client_date to get_system_prompt
-    # Sol's media tools are offered only when media is fully on (flag, budget above zero, storage configured); otherwise chat is exactly as before
+    # Helix's media tools are offered only when media is fully on (flag, budget above zero, storage configured); otherwise chat is exactly as before
     media_ctx = None
-    if sol_tools.tools_available(request.app.state):
+    if helix_tools.tools_available(request.app.state):
         try:
             media_ctx = media_service.ctx_from_request(request, paid=True)
         except MediaServiceError:
             media_ctx = None
     if media_ctx is not None and not req.image:
-        early = await sol_tools.pre_turn(media_ctx, req.message)         # a yes to a read-back action, a cancel, a sound-effect request
+        early = await helix_tools.pre_turn(media_ctx, req.message)         # a yes to a read-back action, a cancel, a sound-effect request
         if early is not None:
             await store.append_message(user_id, CHANNEL, "user", req.message)
             await store.append_message(user_id, CHANNEL, "assistant", early["reply"])
             return JSONResponse({"reply": early["reply"], "ui_actions": early["ui"], "model_display": model_display, "model_color": model_color})
 
-    system_text = get_system_prompt(req.client_date) + (sol_tools.SYSTEM_ADDENDUM if media_ctx is not None else "")
+    system_text = get_system_prompt(req.client_date) + (helix_tools.SYSTEM_ADDENDUM if media_ctx is not None else "")
     messages = [{"role": "system", "content": system_text}]
     for m in session["conversation_history"][-10:]:
         if m["role"] in ("user", "assistant"):
@@ -1473,7 +1473,7 @@ async def chat(req: ChatRequest, request: Request):
             await store.add_spend(user_id, hardening.utc_day(), hardening.chat_cost_usd(resp))
 
         try:
-            out = await sol_tools.run_model_with_tools(
+            out = await helix_tools.run_model_with_tools(
                 media_ctx, messages, model_id, req.message,
                 acompletion=litellm.acompletion, on_cost=_cost, max_tokens=hardening.CHAT_MAX_TOKENS,
             )

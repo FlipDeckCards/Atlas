@@ -19,7 +19,7 @@ async def main() -> int:
     bad = 0
     for label, provider, request in (
         ("image", image_mod.get_provider(), {"prompt": "a small red fox sitting in snow, soft light", "steps": 4}),
-        ("sound", sound_mod.get_provider(), {"text": "Hello from AiBusSol.", "lang": "en"}),
+        ("sound", sound_mod.get_provider(), {"text": "Hello from Helix.", "lang": "en"}),
     ):
         if not provider.configured():
             print(f"{label}: {provider.id}: NOT CONFIGURED (set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN)")

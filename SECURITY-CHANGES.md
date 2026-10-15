@@ -178,7 +178,7 @@ Provider research, licenses, quotas, source URLs and dates: see `MEDIA-PROVIDERS
 
 ---
 
-# Stage 3 — media library and Sol tool control (branch `media-library`)
+# Stage 3 — media library and Helix tool control (branch `media-library`)
 
 Everything below is OFF unless `MEDIA_ENABLED` is on (and, for anything that calls a provider, `DAILY_MEDIA_SPEND_CAP_USD` is above 0). With media off the chat behaves exactly as before and gets no tools.
 
@@ -193,7 +193,7 @@ Everything below is OFF unless `MEDIA_ENABLED` is on (and, for anything that cal
 | **Re-generate** | New item from an edited prompt: calls the provider, so it goes through the same media cap, global ceiling and rate limit as any generation; the original is kept. |
 | **Routes** | `GET /api/media/library`, `GET /api/media/items/{id}[?download=true]`, `POST /api/media/items/{id}/edit`, `POST /api/media/items/{id}/regenerate`, `DELETE /api/media/items/{id}`; `/api/media/image` and `/api/media/sound` now save to the library and return the item (no file). Delete removes the file first, then the row (if the file cannot be removed the row is kept). |
 | **UI** | Left sidebar "Library" (All / Images / Sound / Video filters, thumbnails). The lower half of the center column is the viewer: image controls (crop, resize, brightness, contrast) or sound player (trim, fades, volume), each with Preview → Save as new / Discard, plus Download, Re-generate (asks first, showing the estimated cost) and Delete. In the chat, saved media appears as one line "Saved: <title>" with an Open button; the file is never put in the chat. `/image` and `/sound` still work. |
-| **Sol tools** | `generate_image`, `generate_speech`, `list_library`, `open_item`, `edit_item` (function calling through the existing chat provider). Only offered when media is fully on. |
+| **Helix tools** | `generate_image`, `generate_speech`, `list_library`, `open_item`, `edit_item` (function calling through the existing chat provider). Only offered when media is fully on. |
 
 ## Rules enforced by the server (not by the model)
 - **Confirmation for paid actions.** A paid tool call never runs on the model's say-so: it is recorded as a pending action, the server appends a read-back with the estimated cost ("Ready to make an image: … estimated cost about $0.0100. Reply 'yes' to go ahead."), and the action runs only when the person's **next** message is a plain "yes" (or "yeah", "go ahead", "do it" …). Anything else, including "yes, but make it blue", cancels it. A yes in the same turn cannot confirm (the action is armed only after the read-back is produced); it expires after 10 minutes; one person cannot confirm another's. A spoken answer goes through the same check on its transcript. The Re-generate button asks for confirmation in the page.

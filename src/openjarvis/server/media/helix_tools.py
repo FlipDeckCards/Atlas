@@ -1,4 +1,4 @@
-"""Sol's tools: lets the chat model create and manage media, with the server (not the model) enforcing every rule.
+"""Helix's tools: lets the chat model create and manage media, with the server (not the model) enforcing every rule.
 
 Tools: generate_image, generate_speech (paid), list_library, open_item, edit_item (free).
 

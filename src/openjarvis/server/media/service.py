@@ -1,4 +1,4 @@
-"""The media library's logic, shared by the HTTP routes and Sol's tools so both obey the same rules:
+"""The media library's logic, shared by the HTTP routes and Helix's tools so both obey the same rules:
 
   flag and media cap -> rate limit -> provider configured -> per-user and global daily cap -> storage quota -> (provider call) -> save.
 

@@ -1,4 +1,4 @@
-"""Shared test doubles for the media library and Sol tool tests (no network, no database)."""
+"""Shared test doubles for the media library and Helix tool tests (no network, no database)."""
 
 from __future__ import annotations
 

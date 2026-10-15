@@ -42,7 +42,7 @@ dependencies = [
     "websockets>=15.0.1",
     "litellm",
     "anthropic>=0.30",
-    # The AiBusSol web app (server/atlas_ui.py, auth_routes.py, session_store.py) imports these at startup,
+    # The Aibussol web app (server/atlas_ui.py, auth_routes.py, session_store.py) imports these at startup,
     # so they are core dependencies: a plain `uv sync` / `pip install .` must be enough to run and test it.
     "fastapi>=0.110",
     "uvicorn>=0.30",
@@ -241,13 +241,13 @@ select = ["E", "F", "I", "W"]
 # research_loop.py carries long prompt strings too (documented in CLAUDE.md);
 # the ignore was missing here.
 "src/openjarvis/agents/research_loop.py" = ["E501"]
-# AiBusSol web app: long explanatory comments/docstrings (hardening) and the HTML/CSS page string (atlas_ui)
+# Aibussol web app: long explanatory comments/docstrings (hardening) and the HTML/CSS page string (atlas_ui)
 "src/openjarvis/server/hardening.py" = ["E501"]
 "tests/server/test_atlas_hardening.py" = ["E501"]
 "tests/server/test_atlas_media.py" = ["E501"]
 "tests/server/test_auth_media_fix.py" = ["E501", "E701"]
 "tests/server/test_media_library.py" = ["E501", "E701"]
-"tests/server/test_sol_tools.py" = ["E501", "E701"]
+"tests/server/test_helix_tools.py" = ["E501", "E701"]
 "tests/server/_media_fakes.py" = ["E501"]
 "src/openjarvis/server/media/*.py" = ["E501"]
 "scripts/check_media_providers.py" = ["E501"]

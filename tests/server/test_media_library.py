@@ -501,3 +501,4 @@ class TestSchemaAndUi:
         from openjarvis.server.media.routes import router
 
         assert not any("video" in getattr(r, "path", "") for r in router.routes)
+

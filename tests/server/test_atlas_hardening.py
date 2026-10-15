@@ -1,4 +1,4 @@
-"""Security hardening of the AiBusSol web app: required secrets, invite-only registration, rate limits, size caps, spend cap, model config.
+"""Security hardening of the Aibussol web app: required secrets, invite-only registration, rate limits, size caps, spend cap, model config.
 
 Everything runs offline: the database is an in-memory fake and the model provider is mocked, so no key or network is needed.
 """
