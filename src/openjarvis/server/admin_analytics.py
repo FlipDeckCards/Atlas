@@ -24,7 +24,8 @@ SELECT
   (SELECT count(*) FROM media_items WHERE created_at > now() - interval '24 hours')  AS media_24h,
   (SELECT count(*) FROM media_items WHERE created_at > now() - interval '7 days')    AS media_7d,
   (SELECT count(*) FROM media_items)                                                  AS media_total,
-  (SELECT count(*) FROM briefs WHERE created_at > now() - interval '7 days')         AS briefs_7d
+  (SELECT count(*) FROM briefs WHERE created_at > now() - interval '7 days')         AS briefs_7d,
+  (SELECT count(*) FROM subscriptions WHERE status IN ('active','trialing'))          AS subscribers_active
 """
 
 
@@ -43,6 +44,7 @@ async def gather(pool) -> dict:
     async with pool.acquire() as conn:
         row = await conn.fetchrow(GATHER_SQL)
     out = dict(row)
+    out["subscribers_active"] = int(out.get("subscribers_active") or 0)
     for k in ("spend_today", "spend_7d"):
         out[k] = float(out[k] or 0)
     return out
@@ -76,7 +78,7 @@ PAGE = r"""<!DOCTYPE html>
   <div class="grid" id="cards"></div>
   <div class="note">
     Active users are people with a chat session updated in the period. Spend is the daily cost of voice and
-    media generation. Subscriber numbers appear here once Stripe is connected.
+    media generation. Subscribers are people with an active or trial Aibussol subscription in Stripe.
   </div>
 <script>
 (function () {
@@ -99,7 +101,7 @@ PAGE = r"""<!DOCTYPE html>
   }
   function show(d) {
     statusEl.textContent = '';
-    card('Users', [['Total', num(d.users_total)], ['New, 24 hours', num(d.new_users_24h)], ['New, 7 days', num(d.new_users_7d)], ['Subscribers', 'Stripe not set up']]);
+    card('Users', [['Total', num(d.users_total)], ['New, 24 hours', num(d.new_users_24h)], ['New, 7 days', num(d.new_users_7d)], ['Active subscribers', num(d.subscribers_active)]]);
     card('Activity', [['Active, 24 hours', num(d.active_24h)], ['Active, 7 days', num(d.active_7d)], ['Briefs posted, 7 days', num(d.briefs_7d)]]);
     card('Spend', [['Today', money(d.spend_today)], ['Last 7 days', money(d.spend_7d)]]);
     card('Media made', [['Last 24 hours', num(d.media_24h)], ['Last 7 days', num(d.media_7d)], ['All time', num(d.media_total)]]);
