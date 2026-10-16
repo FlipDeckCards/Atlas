@@ -354,6 +354,13 @@ async def index():
       letter-spacing: 2px; cursor: pointer; transition: all 0.2s; border-radius: 2px;
     }
     #logout-btn:hover { border-color: #ff3344; color: #ff3344; }
+    #sub-btn {
+      background: transparent; border: 1px solid var(--cyan); color: var(--cyan);
+      padding: 4px 10px; font-family: 'Orbitron', monospace; font-size: 8px;
+      letter-spacing: 2px; cursor: pointer; transition: all 0.2s; border-radius: 2px;
+    }
+    #sub-btn:hover { background: var(--cyan); color: var(--bg, #000); }
+    #sub-btn[disabled] { border-color: var(--border); color: var(--text-dim); cursor: default; background: transparent; }
     #hud-main { display: grid; grid-template-columns: 200px 1fr 400px; gap: 1px; overflow: hidden; }
     #panel-left {
       background: var(--panel); border-right: 1px solid var(--border);
@@ -593,6 +600,7 @@ async def index():
       <span>OPERATOR: <span class="v" id="operator-name">—</span></span>
       <span class="hud-extra">SESSION: <span class="v">WEB-01</span></span>
       <span class="hud-extra">UPTIME: <span class="v" id="uptime">00:00:00</span></span>
+      <button id="sub-btn" onclick="subscribe()" hidden>SUBSCRIBE</button>
       <button id="logout-btn" onclick="logout()">LOGOUT</button>
     </div>
   </div>
@@ -763,6 +771,29 @@ async def index():
 
     function logout() { clearToken(); location.reload(); }
 
+    async function refreshSubscription() {
+      const btn = document.getElementById('sub-btn');
+      try {
+        const r = await fetch('/api/billing/status', { headers: { 'Authorization': 'Bearer ' + getToken() } });
+        if (!r.ok) return;
+        const d = await r.json();
+        btn.hidden = !d.enabled;
+        btn.disabled = !!d.active;
+        btn.textContent = d.active ? 'SUBSCRIBED' : 'SUBSCRIBE';
+      } catch (e) { btn.hidden = true; }
+    }
+    async function subscribe() {
+      const btn = document.getElementById('sub-btn');
+      btn.disabled = true; btn.textContent = 'OPENING...';
+      try {
+        const r = await fetch('/api/billing/checkout', { method: 'POST', headers: jsonAuthHeader(), body: '{}' });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok && d.url) { window.location.href = d.url; return; }
+        btn.textContent = (d && d.detail) ? d.detail.slice(0, 40).toUpperCase() : 'UNAVAILABLE';
+      } catch (e) { btn.textContent = 'NO CONNECTION'; }
+      setTimeout(() => { btn.disabled = false; btn.textContent = 'SUBSCRIBE'; }, 4000);
+    }
+
     let _uptimeStarted = false;
     function startUptimeClock() {
       if (_uptimeStarted) return; _uptimeStarted = true;
@@ -786,6 +817,7 @@ async def index():
         email ? email.split('@')[0].toUpperCase() : 'OPERATOR';
       loadHistory();
       loadLibrary().then(renderViewer);
+      refreshSubscription();
       checkBriefs();
       if (!_briefTimer) _briefTimer = setInterval(checkBriefs, 60000);
       startUptimeClock();

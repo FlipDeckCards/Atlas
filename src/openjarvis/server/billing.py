@@ -146,6 +146,16 @@ async def active_subscribers(pool) -> int:
         return int(await conn.fetchval("SELECT count(*) FROM subscriptions WHERE status = ANY($1)", list(ACTIVE)) or 0)
 
 
+@router.get("/api/billing/status")
+async def status(request: Request):
+    user_id = getattr(request.state, "user_id", "") or ""
+    if not user_id:
+        return JSONResponse({"detail": "Sign in first."}, status_code=401)
+    async with request.app.state.session_store._pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT status FROM subscriptions WHERE user_id = $1", user_id)
+    return {"enabled": enabled(), "active": bool(row and row["status"] in ACTIVE), "status": row["status"] if row else None}
+
+
 @router.post("/api/billing/checkout")
 async def checkout(request: Request):
     if not enabled():
@@ -154,6 +164,10 @@ async def checkout(request: Request):
     email = getattr(request.state, "user_email", "") or ""
     if not user_id or not email:
         return JSONResponse({"detail": "Sign in first."}, status_code=401)
+    async with request.app.state.session_store._pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT status FROM subscriptions WHERE user_id = $1", user_id)
+    if row and row["status"] in ACTIVE:
+        return JSONResponse({"detail": "You already have an active subscription."}, status_code=409)
     base = str(request.base_url).rstrip("/")
     try:
         url = await create_checkout(config(), user_id, email, f"{base}/?subscribed=1", f"{base}/?subscribed=0")
