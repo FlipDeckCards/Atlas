@@ -1493,13 +1493,22 @@ async def index():
 
   const canvas = document.getElementById('atlas-canvas');
   const wrap   = document.getElementById('face-wrap');
-  const w = wrap.offsetWidth, h = wrap.offsetHeight;
+  // Size the drawing buffer from the panel's real size, and keep it in step when the layout changes.
+  // (Sizing once at load could lock in a stale size, which pushed the head off-centre.)
   const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-  renderer.setSize(w, h);
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setClearColor(0x000000, 0);
   const scene  = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(35, w / h, 0.1, 100);
+  const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
+  function fitToPanel() {
+    const w = wrap.clientWidth, h = wrap.clientHeight;
+    if (!w || !h) return;
+    renderer.setSize(w, h, false);      // false: CSS (width/height 100%) controls the displayed size
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  new ResizeObserver(fitToPanel).observe(wrap);
+  fitToPanel();
   camera.position.set(0, 0.5, 3);
   scene.add(new THREE.AmbientLight(0x00e5ff, 0.8));
   const dir = new THREE.DirectionalLight(0xffffff, 1);
