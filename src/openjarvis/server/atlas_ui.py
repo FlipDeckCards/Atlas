@@ -478,6 +478,7 @@ async def index():
     .v-stage { display: flex; justify-content: center; margin-bottom: 8px; }
     .v-stage img { max-width: 100%; max-height: 150px; border: 1px solid var(--border); }
     .v-stage audio { width: 100%; }
+    .v-stage video { max-width: 100%; max-height: 150px; border: 1px solid var(--border); }
     .v-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
     .v-row label { color: var(--text-dim); font-size: 10px; }
     .v-row input[type=number], .v-row input[type=text], .v-row select { background: rgba(0,229,255,0.03); border: 1px solid var(--border); color: var(--text); padding: 3px 5px; font-family: inherit; font-size: 11px; width: 70px; }
@@ -569,6 +570,7 @@ async def index():
           <button class="lib-f" data-kind="sound">Sound</button>
           <button class="lib-f" data-kind="video" title="Video is not available">Video</button>
         </div>
+        <div id="media-limits" class="lib-note" style="display:none"></div>
         <div id="lib-list"></div>
       </div>
       <div id="live-feed">
@@ -879,7 +881,7 @@ async def index():
     }
 
     // ── Media library (left sidebar) and viewer (center, lower half) ──────────────────────────
-    const lib = { kind: 'all', items: [], selected: null, on: false, estimates: null, preview: null };
+    const lib = { kind: 'all', items: [], selected: null, on: false, estimates: null, preview: null, status: null };
     const libList = document.getElementById('lib-list');
     const viewerEl = document.getElementById('viewer-panel');
     function libApi(path, method, body) {
@@ -890,10 +892,23 @@ async def index():
     function fmtBytes(n) { return n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
     function money(x) { return '$' + Number(x).toFixed(4); }
 
+    // The hard limits the server enforces, shown next to the controls: "Sound FX: up to 10 s. Video: up to 5 s, 720p max."
+    function limitsText(st) {
+      const l = st && st.limits;
+      if (!l || !st.generation) return '';
+      return 'Sound FX: up to ' + l.sfx.max_seconds + ' s' + (st.sfx ? '' : ' (not set up)') + '. Video: up to ' + l.video.max_seconds + ' s, ' + l.video.max_height + 'p max'
+        + (st.video ? '' : ' (not set up)') + '. Type /sfx or /video and a description.';
+    }
+
     async function loadLibrary() {
       const st = await libApi('/api/media/status').catch(() => null);
       lib.on = !!(st && st.data && st.data.enabled);
       lib.estimates = (st && st.data && st.data.estimates) || null;
+      lib.status = (st && st.data) || null;
+      const limEl = document.getElementById('media-limits');
+      limEl.textContent = limitsText(lib.status); limEl.style.display = limEl.textContent ? '' : 'none';
+      const vb = document.querySelector('.lib-f[data-kind="video"]');
+      if (vb) vb.title = (lib.status && lib.status.video) ? 'Videos you made' : 'Video is not available';
       document.getElementById('library-block').style.display = lib.on ? '' : 'none';
       if (!lib.on) { viewerEl.style.display = 'none'; return; }
       viewerEl.style.display = '';
@@ -904,7 +919,7 @@ async def index():
     function renderLibrary(note) {
       libList.textContent = '';
       if (note) libList.appendChild(mk('div', 'lib-note', note));
-      if (!note && !lib.items.length) libList.appendChild(mk('div', 'lib-note', lib.kind === 'video' ? 'Video is not available.' : 'Nothing saved yet. Ask Helix to make something.'));
+      if (!note && !lib.items.length) libList.appendChild(mk('div', 'lib-note', lib.kind === 'video' ? ((lib.status && lib.status.video) ? 'No videos yet. Type /video and a description.' : 'Video is not available.') : 'Nothing saved yet. Ask Helix to make something.'));
       lib.items.forEach(it => {
         const row = mk('div', 'lib-row' + (lib.selected && lib.selected.id === it.id ? ' sel' : ''));
         if (it.kind === 'image') { const im = mk('img', 'lib-thumb'); im.src = it.url; im.alt = ''; row.appendChild(im); }
@@ -942,8 +957,8 @@ async def index():
       head.appendChild(mk('span', 'v-meta', it.kind + ' \u00b7 ' + fmtBytes(it.size_bytes) + (it.duration_seconds ? ' \u00b7 ' + it.duration_seconds + 's' : '')));
       v.appendChild(head);
       const stage = mk('div', 'v-stage');
-      const media = document.createElement(it.kind === 'image' ? 'img' : 'audio');
-      media.id = 'v-media'; if (it.kind === 'sound') media.controls = true;
+      const media = document.createElement(it.kind === 'image' ? 'img' : it.kind === 'video' ? 'video' : 'audio');
+      media.id = 'v-media'; if (it.kind === 'sound' || it.kind === 'video') media.controls = true;
       media.src = it.url; stage.appendChild(media); v.appendChild(stage);
       if (it.kind !== 'image' && it.kind !== 'sound') return;
 
@@ -1067,21 +1082,25 @@ async def index():
     }
     var _briefTimer = null;      // var: showHUD() runs before this line during page load
 
-    // "/image a red fox" and "/sound hello there": shortcuts. The result is saved to the library; the chat shows one line with an Open button.
+    // "/image a red fox", "/sound hello there", "/sfx a door slamming" and "/video a fox running": shortcuts. The result is saved to the library;
+    // the chat shows one line with an Open button. A video takes minutes: the server answers with a job id and this page checks the job every few seconds.
     async function sendMedia(kind, prompt) {
       addMsg('user', '/' + kind + ' ' + prompt, null);
       feedLog('Media: ' + kind);
-      const pending = addMsg('atlas', kind === 'image' ? 'Making the image...' : 'Making the sound...', null);
+      const labels = { image: 'Making the image...', sound: 'Making the sound...', sfx: 'Making the sound effect...', video: 'Starting the video...' };
+      const pending = addMsg('atlas', labels[kind] || 'Working...', null);
       sendBtn.disabled = true;
       try {
         const res  = await fetch('/api/media/' + kind, {
           method: 'POST', headers: jsonAuthHeader(),
-          body: JSON.stringify(kind === 'image' ? { prompt: prompt } : { text: prompt })
+          body: JSON.stringify(kind === 'sound' ? { text: prompt } : { prompt: prompt })
         });
         if (res.status === 401) { pending.remove(); sendBtn.disabled = false; return; }
         const data = await res.json().catch(() => ({}));
         const body = pending.querySelector('div:last-child');
-        if (!res.ok || !data.item) {
+        if (kind === 'video' && res.ok && data.job) {
+          await followVideoJob(pending, data.job.job_id);
+        } else if (!res.ok || !data.item) {
           body.textContent = (data.detail && typeof data.detail === 'string') ? data.detail : 'That could not be made right now.';
           body.style.color = '#ff3344';
         } else {
@@ -1097,12 +1116,30 @@ async def index():
       inputEl.focus();
     }
 
+    // Checks a video job every 4 seconds (for up to 20 minutes) and shows how it is going.
+    async function followVideoJob(pending, jobId) {
+      const body = pending.querySelector('div:last-child');
+      const started = Date.now();
+      while (Date.now() - started < 20 * 60 * 1000) {
+        body.textContent = 'Making the video... ' + Math.round((Date.now() - started) / 1000) + ' s (you can keep chatting)';
+        await new Promise(r => setTimeout(r, 4000));
+        const r = await libApi('/api/media/jobs/' + encodeURIComponent(jobId));
+        if (!r.ok) { body.textContent = (r.data.detail && typeof r.data.detail === 'string') ? r.data.detail : 'The video could not be checked.'; body.style.color = '#ff3344'; return; }
+        const job = r.data.job || {};
+        if (job.status === 'succeeded' && r.data.item) { body.textContent = 'Saved: ' + r.data.item.title; addOpenButton(pending, r.data.item.id); loadLibrary(); return; }
+        if (job.status === 'failed') { body.textContent = job.error || 'The video could not be made.'; body.style.color = '#ff3344'; return; }
+      }
+      body.textContent = 'The video is taking too long. Check the Video tab in the Library later.'; body.style.color = '#ff3344';
+    }
+
     // CHANGE 3: add client_date to the fetch body
     async function sendMessage(text) {
       if (!text) text = inputEl.value.trim();
       if (!text) return;
       const mediaCmd = text.match(/^\/(image|sound)\s+([\s\S]+)/i);
       if (mediaCmd) { inputEl.value = ''; return sendMedia(mediaCmd[1].toLowerCase(), mediaCmd[2].trim()); }
+      const fxCmd = text.match(/^\/(sfx|video)\s+([\s\S]+)/i);
+      if (fxCmd) { inputEl.value = ''; return sendMedia(fxCmd[1].toLowerCase(), fxCmd[2].trim()); }
       inputEl.value = '';
       sendBtn.disabled = true;
       const imageToSend  = pendingImageB64;
