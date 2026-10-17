@@ -348,15 +348,12 @@ class TestProtection:
         assert img.calls[0]["prompt"] == "a red fox"
         assert post_image(client, prompt="   \n ").status_code == 422
 
-    def test_there_is_no_video_route_and_nothing_is_written_to_disk(
+    def test_video_without_a_provider_is_refused_and_nothing_is_written_to_disk(
         self, client, monkeypatch
     ):
         on(monkeypatch)
-        assert client.post(
-            "/api/media/video", json={"prompt": "x"}, headers=H
-        ).status_code in (404, 405)
-        paths = {getattr(r, "path", "") for r in client.app.routes}
-        assert not any("video" in p for p in paths)
+        r = client.post("/api/media/video", json={"prompt": "x"}, headers=H)
+        assert r.status_code in (503, 500) and r.status_code != 202        # no provider is selected: nothing is started
         pkg = Path(cf.__file__).parent
         src = "\n".join(p.read_text(encoding="utf-8") for p in pkg.glob("*.py") if p.name != "edits.py")
         for needle in ("open(", "write_bytes", "write_text", "tempfile", "os.makedirs", "shutil"):

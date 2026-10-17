@@ -497,8 +497,11 @@ class TestSchemaAndUi:
         assert "data:" not in send and "createElement('img')" not in send and "createElement('audio')" not in send      # the file is never put in the chat
         assert "/image" in html and "/sound" in html and "(image|sound)" in html                                       # the shortcuts still work
 
-    def test_video_is_not_offered(self):
+    def test_video_routes_exist_but_no_provider_is_selected(self):
+        from openjarvis.server.media import video as video_mod
         from openjarvis.server.media.routes import router
 
-        assert not any("video" in getattr(r, "path", "") for r in router.routes)
+        paths = {getattr(r, "path", "") for r in router.routes}
+        assert {"/api/media/video", "/api/media/jobs/{job_id}", "/api/media/sfx"} <= paths
+        assert video_mod.DEFAULT_PROVIDER == "none" and not video_mod.get_provider().configured()      # nothing is configured until a provider is approved
 
