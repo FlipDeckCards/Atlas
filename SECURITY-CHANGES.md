@@ -146,6 +146,9 @@ Provider research, licenses, quotas, source URLs and dates: see `MEDIA-PROVIDERS
 | `MEDIA_GLOBAL_DAILY_CAP_USD` | Optional (default 1.00) | all users together per UTC day |
 | `MEDIA_IMAGE_PROVIDER`, `MEDIA_SOUND_PROVIDER` | Optional | provider ids (only the Cloudflare ones exist) |
 | `RL_MEDIA_USER_MAX`, `RL_MEDIA_IP_MAX` | Optional | rate limits |
+| `MEDIA_SFX_PROVIDER`, `MEDIA_VIDEO_PROVIDER` | Only after a provider is approved | provider ids; the only ones registered are `none` (never configured), so `/api/media/sfx` and `/api/media/video` answer 503 until one is added |
+| `MEDIA_SFX_MAX_SECONDS` | Optional (default 10, never above 15) | hard length limit for sound effects |
+| `VIDEO_MAX_SECONDS`, `VIDEO_MAX_HEIGHT` | Optional (defaults 5 s and 720 px; never above 10 s and 1080 px) | hard length and resolution limits for video; shown in the UI and enforced by the server |
 
 ## Still open
 - The real Cloudflare calls have not been run (no token on this machine); the adapter is tested against mocked Cloudflare responses. `scripts/check_media_providers.py` makes one real call per provider when you set the two Cloudflare variables.
