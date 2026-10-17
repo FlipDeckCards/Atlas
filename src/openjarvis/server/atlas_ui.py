@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -14,7 +15,7 @@ from fastapi.responses import (
 )
 from pydantic import BaseModel, Field
 
-from openjarvis.server import hardening
+from openjarvis.server import admin_analytics, briefs, hardening
 from openjarvis.server.media import service as media_service
 from openjarvis.server.media import helix_tools
 from openjarvis.server.media.service import MediaServiceError
@@ -106,6 +107,14 @@ class ChatRequest(BaseModel):
     client_date: Optional[str] = Field(None, max_length=100)
 
 
+_BRIEF_REPLY = re.compile(r"^(?:Good (?:morning|afternoon|evening|day)[^\n]*\n\n)?(Morning|Afternoon|Evening) brief for ")      # how briefs.brief_reply starts (after its greeting)
+
+
+def _exempt(request: Request) -> bool:
+    """Owner accounts (SPEND_CAP_EXEMPT_EMAILS) skip the daily spend cap."""
+    return hardening.spend_exempt(getattr(request.state, "user_email", "") or "")
+
+
 def _limited(request: Request, rules: dict):
     """A 429 response when a rate limit is hit, otherwise None. rules: {rule_name: key}."""
     hit = hardening.enforce(rules)
@@ -175,7 +184,7 @@ async def transcribe(request: Request, audio: UploadFile = File(...)):
         return JSONResponse({"detail": "Audio file too large (limit %d MB)" % (hardening.MAX_AUDIO_BYTES // (1024 * 1024))}, status_code=413)
     store = request.app.state.session_store
     cost = hardening.whisper_cost_usd(len(audio_bytes))
-    blocked = await hardening.spend_blocked(store, user_id, cost)
+    blocked = await hardening.spend_blocked(store, user_id, cost, exempt=_exempt(request))
     if blocked:
         return _spend_error(blocked)
     await store.add_spend(user_id, hardening.utc_day(), cost)
@@ -202,7 +211,7 @@ async def speak(req: ChatRequest, request: Request):
         return JSONResponse({"detail": "Text too long for speech (limit %d characters)" % hardening.MAX_TTS_CHARS}, status_code=413)
     store = request.app.state.session_store
     cost = hardening.tts_cost_usd(len(text))
-    blocked = await hardening.spend_blocked(store, user_id, cost)
+    blocked = await hardening.spend_blocked(store, user_id, cost, exempt=_exempt(request))
     if blocked:
         return _spend_error(blocked)
     await store.add_spend(user_id, hardening.utc_day(), cost)
@@ -228,6 +237,26 @@ async def speak(req: ChatRequest, request: Request):
             )
         return StreamingResponse(iter([res.content]), media_type="audio/mpeg",
                                  headers={"Content-Disposition": "inline; filename=speech.mp3"})
+@router.get("/admin/analytics")
+async def admin_analytics_page():
+    """The owner's analytics page. The numbers come from /api/admin/analytics, which checks the login."""
+    return HTMLResponse(admin_analytics.PAGE)
+
+
+@router.get("/api/admin/analytics")
+async def admin_analytics_data(request: Request):
+    email = getattr(request.state, "user_email", "") or ""
+    if not email:
+        return JSONResponse({"detail": "Sign in first."}, status_code=401)
+    if not admin_analytics.is_admin(email):
+        return JSONResponse({"detail": "Owner only."}, status_code=403)
+    try:
+        return await admin_analytics.gather(request.app.state.session_store._pool)
+    except Exception:
+        logger.exception("analytics query failed")
+        return JSONResponse({"detail": "Analytics are unavailable right now."}, status_code=503)
+
+
 @router.get("/")
 async def index():
     html = r"""
@@ -235,7 +264,7 @@ async def index():
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
   <title>Aibussol</title>
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
   <style>
@@ -325,6 +354,13 @@ async def index():
       letter-spacing: 2px; cursor: pointer; transition: all 0.2s; border-radius: 2px;
     }
     #logout-btn:hover { border-color: #ff3344; color: #ff3344; }
+    #sub-btn {
+      background: transparent; border: 1px solid var(--cyan); color: var(--cyan);
+      padding: 4px 10px; font-family: 'Orbitron', monospace; font-size: 8px;
+      letter-spacing: 2px; cursor: pointer; transition: all 0.2s; border-radius: 2px;
+    }
+    #sub-btn:hover { background: var(--cyan); color: var(--bg, #000); }
+    #sub-btn[disabled] { border-color: var(--border); color: var(--text-dim); cursor: default; background: transparent; }
     #hud-main { display: grid; grid-template-columns: 200px 1fr 400px; gap: 1px; overflow: hidden; }
     #panel-left {
       background: var(--panel); border-right: 1px solid var(--border);
@@ -413,6 +449,7 @@ async def index():
     }
     #messages::-webkit-scrollbar{width:3px}
     #messages::-webkit-scrollbar-thumb{background:var(--cyan-dim);border-radius:2px}
+    .voice-note { color:#ff3344; margin-top:6px; font-size:11px; line-height:1.5; white-space:normal; overflow-wrap:anywhere; }
     .msg { max-width:92%; padding:10px 12px; font-size:12px; line-height:1.6; border-radius:2px; }
     .msg-tag { font-size:9px; letter-spacing:2px; margin-bottom:4px; opacity:0.5; }
     .msg-thumb { margin-top:6px; border-radius:2px; overflow:hidden; border:1px solid rgba(0,229,255,0.2); display:inline-block; }
@@ -491,6 +528,8 @@ async def index():
       #hud-header { padding: 0 12px; }
       #hud-title { font-size: 13px; letter-spacing: 2px; }
       .hud-meta { gap: 8px; }
+      .hud-extra { display: none; }
+      #operator-name { white-space: nowrap; }
       #hud-main { grid-template-columns: 1fr; height: 100%; overflow: hidden; }
       #panel-left, #panel-center { display: none; }
       #panel-right { border-left: none; width: 100%; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
@@ -502,7 +541,22 @@ async def index():
       #send { padding: 10px 10px; font-size: 8px; letter-spacing: 1px; }
       #mic, #upload-btn { padding: 10px 10px; font-size: 14px; }
       #auth-box { width: 92vw; padding: 28px 20px; }
+      #input-area { padding-bottom: env(safe-area-inset-bottom); }
+      #mob-lib-btn { display: none; }
+      #mob-lib-btn.on { display: inline-block; }
+      #hud-main.mob-lib #panel-right { display: none; }
+      #hud-main.mob-lib #panel-left { display: flex; position: fixed; top: 40px; bottom: 0; left: 0; right: 0; z-index: 40; background: var(--bg); flex-direction: column; overflow: hidden; }
+      #hud-main.mob-lib #panel-left .sys-block, #hud-main.mob-lib #live-feed { display: none; }
+      #hud-main.mob-lib #library-block { display: flex; flex: 1; min-height: 0; border-bottom: 1px solid var(--border); }
+      #hud-main.mob-lib #mob-lib-close { display: inline-block; }
+      #hud-main.mob-lib #panel-center { display: none; }
+      #hud-main.mob-lib.has-viewer #panel-left { bottom: auto; height: calc(50dvh - 40px); }
+      #hud-main.mob-lib.has-viewer #panel-center { display: flex; flex-direction: column; position: fixed; top: 50dvh; bottom: 0; left: 0; right: 0; z-index: 40; background: var(--bg); }
+      #hud-main.mob-lib #core-area { display: none; }
+      #hud-main.mob-lib #viewer-panel { flex: 1 1 auto; border-top: none; }
     }
+    #mob-lib-btn, #mob-lib-close { font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: 1px; color: var(--cyan); background: transparent; border: 1px solid var(--cyan-dim); padding: 4px 8px; border-radius: 2px; cursor: pointer; }
+    #mob-lib-close { display: none; margin-left: auto; }
   </style>
 </head>
 <body>
@@ -544,8 +598,9 @@ async def index():
     <div id="hud-title">AIBUS<span>SOL</span></div>
     <div class="hud-meta">
       <span>OPERATOR: <span class="v" id="operator-name">—</span></span>
-      <span>SESSION: <span class="v">WEB-01</span></span>
-      <span>UPTIME: <span class="v" id="uptime">00:00:00</span></span>
+      <span class="hud-extra">SESSION: <span class="v">WEB-01</span></span>
+      <span class="hud-extra">UPTIME: <span class="v" id="uptime">00:00:00</span></span>
+      <button id="sub-btn" onclick="subscribe()" hidden>SUBSCRIBE</button>
       <button id="logout-btn" onclick="logout()">LOGOUT</button>
     </div>
   </div>
@@ -562,7 +617,7 @@ async def index():
         <div class="stat-row"><span class="lbl">PROTOCOL</span><span class="val d">JSON-RPC</span></div>
       </div>
       <div id="library-block" style="display:none">
-        <div class="p-label">Library</div>
+        <div style="display:flex;align-items:center;"><div class="p-label">Library</div><button id="mob-lib-close">CLOSE</button></div>
         <div class="lib-filters">
           <button class="lib-f active" data-kind="all">All</button>
           <button class="lib-f" data-kind="image">Images</button>
@@ -604,9 +659,12 @@ async def index():
     <div id="panel-right">
       <div id="chat-hdr">
         <div class="p-label" style="margin:0">Command Console</div>
-        <div id="wake-ind">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <button id="mob-lib-btn" title="Media library">LIBRARY</button>
+          <div id="wake-ind">
           <div id="wake-dot"></div>
           <span id="wake-label">INITIALIZING</span>
+          </div>
         </div>
       </div>
       <div id="messages"></div>
@@ -713,6 +771,29 @@ async def index():
 
     function logout() { clearToken(); location.reload(); }
 
+    async function refreshSubscription() {
+      const btn = document.getElementById('sub-btn');
+      try {
+        const r = await fetch('/api/billing/status', { headers: { 'Authorization': 'Bearer ' + getToken() } });
+        if (!r.ok) return;
+        const d = await r.json();
+        btn.hidden = !d.enabled;
+        btn.disabled = !!d.active;
+        btn.textContent = d.active ? 'SUBSCRIBED' : 'SUBSCRIBE';
+      } catch (e) { btn.hidden = true; }
+    }
+    async function subscribe() {
+      const btn = document.getElementById('sub-btn');
+      btn.disabled = true; btn.textContent = 'OPENING...';
+      try {
+        const r = await fetch('/api/billing/checkout', { method: 'POST', headers: jsonAuthHeader(), body: '{}' });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok && d.url) { window.location.href = d.url; return; }
+        btn.textContent = (d && d.detail) ? d.detail.slice(0, 40).toUpperCase() : 'UNAVAILABLE';
+      } catch (e) { btn.textContent = 'NO CONNECTION'; }
+      setTimeout(() => { btn.disabled = false; btn.textContent = 'SUBSCRIBE'; }, 4000);
+    }
+
     let _uptimeStarted = false;
     function startUptimeClock() {
       if (_uptimeStarted) return; _uptimeStarted = true;
@@ -736,6 +817,7 @@ async def index():
         email ? email.split('@')[0].toUpperCase() : 'OPERATOR';
       loadHistory();
       loadLibrary().then(renderViewer);
+      refreshSubscription();
       checkBriefs();
       if (!_briefTimer) _briefTimer = setInterval(checkBriefs, 60000);
       startUptimeClock();
@@ -895,12 +977,24 @@ async def index():
       lib.on = !!(st && st.data && st.data.enabled);
       lib.estimates = (st && st.data && st.data.estimates) || null;
       document.getElementById('library-block').style.display = lib.on ? '' : 'none';
+      document.getElementById('mob-lib-btn').classList.toggle('on', lib.on);
       if (!lib.on) { viewerEl.style.display = 'none'; return; }
       viewerEl.style.display = '';
       const r = await libApi('/api/media/library' + (lib.kind === 'all' ? '' : '?kind=' + lib.kind));
       lib.items = r.ok ? (r.data.items || []) : [];
       renderLibrary(r.ok ? '' : (r.data.detail || 'The library is unavailable.'));
     }
+    document.getElementById('mob-lib-btn').addEventListener('click', () => {
+      document.getElementById('hud-main').classList.add('mob-lib');
+      loadLibrary();
+    });
+    // The library list fills the screen until an item is open; then the viewer takes the lower half.
+    new MutationObserver(() => document.getElementById('hud-main').classList.toggle('has-viewer',
+      viewerEl.childElementCount > 0 && viewerEl.style.display !== 'none'))
+      .observe(viewerEl, { attributes: true, childList: true, attributeFilter: ['style'] });
+    document.getElementById('mob-lib-close').addEventListener('click', () => {
+      document.getElementById('hud-main').classList.remove('mob-lib');
+    });
     function renderLibrary(note) {
       libList.textContent = '';
       if (note) libList.appendChild(mk('div', 'lib-note', note));
@@ -1060,7 +1154,7 @@ async def index():
         listen.disabled = true; note.textContent = ''; note.style.color = '';
         const r = await libApi('/api/briefs/' + encodeURIComponent(b.id) + '/listen', 'POST');
         if (!r.ok || !r.data.text) { note.textContent = r.data.detail || 'This brief could not be played right now.'; note.style.color = '#ff3344'; }
-        else { note.textContent = r.data.remaining + ' listens left today'; speakReply(r.data.text); }   // the spoken summary only, never the full text
+        else { note.textContent = r.data.remaining + ' listens left today'; speakReply(r.data.text, wrap); }   // the spoken summary only, never the full text
         listen.disabled = false;
       });
       row.append(listen, note); wrap.appendChild(row);
@@ -1146,7 +1240,7 @@ async def index():
           updateEngineIndicator(data.model_display, data.model_color);
           feedLog('Engine: ' + data.model_display);
         }
-        speakReply(reply);
+        speakReply(reply, replyEl);
       } catch(e) {
         thinking.querySelector('div:last-child').textContent = 'Error: ' + e.message;
         thinking.querySelector('div:last-child').style.color = '#ff3344';
@@ -1156,19 +1250,58 @@ async def index():
       inputEl.focus();
     }
 
-    async function speakReply(text) {
+    // A spoken reply that fails says so under the message instead of failing silently.
+    function voiceNote(el, res, data) {
+      let why = (data && typeof data.detail === 'string' && data.detail) ? data.detail : '';
+      if (res.status === 429 && data && data.error === 'daily_spend_cap_reached') why = 'daily usage limit reached; voice resumes at midnight UTC.';
+      else if (res.status === 429) why = why || 'too many requests; try again in a minute.';
+      else if (res.status === 503) why = why || 'text-to-speech is not configured.';
+      else if (res.status === 413) why = why || 'reply too long to speak.';
+      else why = 'the voice service failed (HTTP ' + res.status + ').';
+      feedLog('Voice off: HTTP ' + res.status);
+      if (!el) return;
+      const n = document.createElement('div');
+      n.className = 'voice-note';
+      n.textContent = 'Voice unavailable: ' + why;
+      el.appendChild(n);
+    }
+
+    // Long text (a full brief) is spoken in chunks of whole sentences; the mp3 parts are joined into one clip.
+    const SPEECH_CHUNK = 1400;
+    function speechChunks(text) {
+      const sentences = (String(text).match(/[^.!?\n]+[.!?]*|\n+/g) || []).map(x => x.trim()).filter(Boolean);
+      const out = []; let cur = '';
+      for (let snip of sentences) {
+        while (snip.length > SPEECH_CHUNK) { if (cur) { out.push(cur); cur = ''; } out.push(snip.slice(0, SPEECH_CHUNK)); snip = snip.slice(SPEECH_CHUNK); }
+        if (cur && (cur + ' ' + snip).length > SPEECH_CHUNK) { out.push(cur); cur = snip; }
+        else cur = cur ? cur + ' ' + snip : snip;
+      }
+      if (cur) out.push(cur);
+      return out.length ? out : [''];
+    }
+    async function speakReply(text, el) {
       try {
-        const res = await fetch('/api/voice/speak', {
-          method: 'POST',
-          headers: jsonAuthHeader(),
-          body: JSON.stringify({ message: text })
-        });
-        if (!res.ok) {
-          console.warn('TTS HTTP error:', res.status, await res.text());
-          resumeWakeWord();
-          return;
+        const parts = [];
+        for (const chunk of speechChunks(text)) {
+          const res = await fetch('/api/voice/speak', {
+            method: 'POST',
+            headers: jsonAuthHeader(),
+            body: JSON.stringify({ message: chunk })
+          });
+          if (!res.ok) {
+            const raw = await res.text();
+            let data = null; try { data = JSON.parse(raw); } catch (e) { /* not JSON */ }
+            console.warn('TTS HTTP error:', res.status, raw);
+            voiceNote(el, res, data);
+            resumeWakeWord();
+            return;
+          }
+          parts.push(await res.arrayBuffer());
         }
-        const arrayBuffer = await res.arrayBuffer();
+        const total = parts.reduce((n, p) => n + p.byteLength, 0);
+        const joined = new Uint8Array(total); let off = 0;
+        for (const p of parts) { joined.set(new Uint8Array(p), off); off += p.byteLength; }
+        const arrayBuffer = joined.buffer;
         const blob  = new Blob([arrayBuffer], { type: 'audio/mpeg' });
         const url   = URL.createObjectURL(blob);
         const audio = new Audio(url);
@@ -1216,8 +1349,14 @@ async def index():
     }
 
     let isRecording = false, mediaRecorder = null, audioChunks = [];
-    let wakeRecognition = null, wakeActive = false;
+    let wakeRecognition = null, wakeActive = false, _srRunning = false;
     let _srMode = 'wake';
+    // Watchdog: if the listener should be on but is not running (the browser dropped it), start it again.
+    setInterval(() => {
+      if (wakeActive && wakeRecognition && !_srRunning && !isRecording) {
+        try { wakeRecognition.start(); } catch(e) { /* already starting */ }
+      }
+    }, 2000);
 
     function initWakeWord() {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1230,15 +1369,18 @@ async def index():
       _srMode = 'wake';
       const thisInst = wakeRecognition;
       let triggered = false;
-      const WAKE_VARIANTS = [
-        'hey helix','hey helics','hey helic','hey helixs','hey helex','hey hellix','hey helicks','hey heliks','hey healix',
-        'a helix','heyhelix','hey-helix'
-      ];
+      // "hey helix" and the usual misrecognitions (helics, helex, hellix, healix, heyhelix). Matched on the whole recent
+      // speech, not just the last fragment, because the browser splits a phrase across results.
+      const WAKE_RE = /\b(?:he?y|hi|ok|a)\s*h[aeiou]{0,2}l+[aeiou]?[xcks]s?\b/;
+      const norm = s => s.toLowerCase().replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim();
+      wakeRecognition.onstart = () => { _srRunning = true; };
       wakeRecognition.onresult = (e) => {
-        const latest = e.results[e.results.length - 1][0].transcript.toLowerCase().trim();
+        let heard = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) heard += ' ' + e.results[i][0].transcript;
+        const latest = norm(heard);
         if (_srMode === 'wake') {
           if (triggered || isRecording) return;
-          if (WAKE_VARIANTS.some(v => latest.includes(v))) {
+          if (WAKE_RE.test(latest)) {
             triggered = true;
             setTimeout(() => { triggered = false; }, 3000);
             feedLog('Wake word detected: Hey Helix');
@@ -1246,15 +1388,18 @@ async def index():
           }
         } else if (_srMode === 'send') {
           if (!isRecording) return;
-          if (latest === 'send' || latest.endsWith(' send') || latest.endsWith('. send') || latest.includes('send')) {
+          if (/\bsend\b/.test(latest)) {
             feedLog('Voice command: SEND');
             stopRecording();
           }
         }
       };
       wakeRecognition.onend = () => {
+        _srRunning = false;
+        // the browser ends a session after a pause; restart it at once, and retry if the browser is still settling
         if (wakeActive && wakeRecognition === thisInst) {
-          try { wakeRecognition.start(); } catch(e) {}
+          const again = () => { if (wakeActive && wakeRecognition === thisInst && !_srRunning) { try { wakeRecognition.start(); } catch(e) { setTimeout(again, 400); } } };
+          again();
         }
       };
       wakeRecognition.onerror = (e) => {
@@ -1359,13 +1504,22 @@ async def index():
 
   const canvas = document.getElementById('atlas-canvas');
   const wrap   = document.getElementById('face-wrap');
-  const w = wrap.offsetWidth, h = wrap.offsetHeight;
+  // Size the drawing buffer from the panel's real size, and keep it in step when the layout changes.
+  // (Sizing once at load could lock in a stale size, which pushed the head off-centre.)
   const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-  renderer.setSize(w, h);
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setClearColor(0x000000, 0);
   const scene  = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(35, w / h, 0.1, 100);
+  const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
+  function fitToPanel() {
+    const w = wrap.clientWidth, h = wrap.clientHeight;
+    if (!w || !h) return;
+    renderer.setSize(w, h, false);      // false: CSS (width/height 100%) controls the displayed size
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  new ResizeObserver(fitToPanel).observe(wrap);
+  fitToPanel();
   camera.position.set(0, 0.5, 3);
   scene.add(new THREE.AmbientLight(0x00e5ff, 0.8));
   const dir = new THREE.DirectionalLight(0xffffff, 1);
@@ -1474,13 +1628,39 @@ async def chat(req: ChatRequest, request: Request):
     if req.image and len(req.image) > hardening.MAX_IMAGE_B64_CHARS:
         return JSONResponse({"detail": "Image too large (limit %d MB)" % (hardening.MAX_IMAGE_BYTES // (1024 * 1024)), "reply": "Image too large."}, status_code=413)
     store = request.app.state.session_store
+
+    # "read me the brief": answered from the brief feed, with no model call and no spend
+    brief_period = None if req.image else briefs.wants_brief(req.message)
+    if brief_period:
+        try:
+            found = await briefs.find_brief(briefs.store_for(request), brief_period)
+            reply = briefs.brief_reply(found, brief_period)
+        except Exception:
+            logger.exception("brief lookup failed")
+            reply = "I couldn't load the brief feed right now. Please try again."
+        await store.get_or_create(user_id, CHANNEL)
+        await store.append_message(user_id, CHANNEL, "user", req.message)
+        await store.append_message(user_id, CHANNEL, "assistant", reply)
+        return JSONResponse({"reply": reply, "model_display": "BRIEF FEED", "model_color": "#00e5ff"})
+
     # the daily spend cap is checked BEFORE the provider is called
-    blocked = await hardening.spend_blocked(store, user_id, hardening.FLAT_CHAT_ESTIMATE_USD)
+    blocked = await hardening.spend_blocked(store, user_id, hardening.FLAT_CHAT_ESTIMATE_USD, exempt=_exempt(request))
     if blocked:
         return _spend_error(blocked)
     session = await store.get_or_create(user_id, CHANNEL)
 
     model_id, model_display, model_color = classify_model(req.message, bool(req.image))
+
+    # a follow-up about the brief ("what's pending?" right after it was read) gets the full brief as context
+    brief_ctx = ""
+    recent = [m for m in session["conversation_history"][-4:] if m["role"] == "assistant" and isinstance(m["content"], str)]
+    if re.search(r"\bbrief(?:ing)?s?\b", req.message, re.I) or any(_BRIEF_REPLY.match(m["content"]) for m in recent):
+        try:
+            latest_brief = await briefs.find_brief(briefs.store_for(request), "latest")
+            if latest_brief:
+                brief_ctx = briefs.brief_context(latest_brief)
+        except Exception:
+            logger.exception("brief context lookup failed")
 
     # CHANGE 4: pass client_date to get_system_prompt
     # Helix's media tools are offered only when media is fully on (flag, budget above zero, storage configured); otherwise chat is exactly as before
@@ -1497,7 +1677,7 @@ async def chat(req: ChatRequest, request: Request):
             await store.append_message(user_id, CHANNEL, "assistant", early["reply"])
             return JSONResponse({"reply": early["reply"], "ui_actions": early["ui"], "model_display": model_display, "model_color": model_color})
 
-    system_text = get_system_prompt(req.client_date) + (helix_tools.SYSTEM_ADDENDUM if media_ctx is not None else "")
+    system_text = get_system_prompt(req.client_date) + (helix_tools.SYSTEM_ADDENDUM if media_ctx is not None else "") + brief_ctx
     messages = [{"role": "system", "content": system_text}]
     for m in session["conversation_history"][-10:]:
         if m["role"] in ("user", "assistant"):

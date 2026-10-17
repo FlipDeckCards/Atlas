@@ -73,6 +73,10 @@ class SessionStore:
             from openjarvis.server.briefs import BRIEFS_DDL
 
             await conn.execute(BRIEFS_DDL)
+            # Aibussol subscriptions and processed Stripe events (add-only, IF NOT EXISTS)
+            from openjarvis.server.billing import BILLING_DDL
+
+            await conn.execute(BILLING_DDL)
 
     async def close(self) -> None:
         if self._pool:
