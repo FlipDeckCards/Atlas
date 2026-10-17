@@ -25,5 +25,7 @@ There is no separate "plan" file for sound effects and video on disk. The scope 
 5. **No background worker**: a job advances only when polled. A job nobody polls stays "running" and is stopped as "took too long" after 15 minutes on the next poll. If you want videos to finish while the browser is closed, a worker is needed.
 6. **Two existing tests were changed** because they asserted that no video route exists (`test_video_is_not_offered`, `test_there_is_no_video_route_and_nothing_is_written_to_disk`). They now assert that the routes exist, no provider is configured and nothing is started. No other test was changed.
 
+7. **The `/sfx` and `/video` shortcuts are hidden until a provider works.** The page offers them (in the limits line under the library filters) and intercepts them only when `/api/media/status` says that feature is available; the Video filter is hidden too. With no provider, typing `/sfx ...` is an ordinary chat message, so nobody reaches a dead end. The routes themselves keep answering 503 until a provider is configured. No provider was chosen.
+
 ## Environment variable names (placeholders in `deploy/docker/.env.example`, rows in `SECURITY-CHANGES.md`)
 `MEDIA_SFX_PROVIDER`, `MEDIA_VIDEO_PROVIDER`, `MEDIA_SFX_MAX_SECONDS`, `VIDEO_MAX_SECONDS`, `VIDEO_MAX_HEIGHT` (plus the existing `MEDIA_ENABLED`, `DAILY_MEDIA_SPEND_CAP_USD`, `MEDIA_GLOBAL_DAILY_CAP_USD`). Nothing needs to be set in Render for this branch to be safe: with no provider named, both features stay off.

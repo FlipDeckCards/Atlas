@@ -893,12 +893,16 @@ async def index():
     function money(x) { return '$' + Number(x).toFixed(4); }
 
     // The hard limits the server enforces, shown next to the controls: "Sound FX: up to 10 s. Video: up to 5 s, 720p max."
+    // A feature with no provider is not mentioned at all (no dead end): its shortcut is not offered, and typing it just sends a normal chat message.
     function limitsText(st) {
       const l = st && st.limits;
       if (!l || !st.generation) return '';
-      return 'Sound FX: up to ' + l.sfx.max_seconds + ' s' + (st.sfx ? '' : ' (not set up)') + '. Video: up to ' + l.video.max_seconds + ' s, ' + l.video.max_height + 'p max'
-        + (st.video ? '' : ' (not set up)') + '. Type /sfx or /video and a description.';
+      const parts = [], cmds = [];
+      if (st.sfx) { parts.push('Sound FX: up to ' + l.sfx.max_seconds + ' s'); cmds.push('/sfx'); }
+      if (st.video) { parts.push('Video: up to ' + l.video.max_seconds + ' s, ' + l.video.max_height + 'p max'); cmds.push('/video'); }
+      return parts.length ? parts.join('. ') + '. Type ' + cmds.join(' or ') + ' and a description.' : '';
     }
+    function mediaShortcutOn(name) { return !!(lib.status && lib.status.generation && lib.status[name]); }
 
     async function loadLibrary() {
       const st = await libApi('/api/media/status').catch(() => null);
@@ -908,7 +912,8 @@ async def index():
       const limEl = document.getElementById('media-limits');
       limEl.textContent = limitsText(lib.status); limEl.style.display = limEl.textContent ? '' : 'none';
       const vb = document.querySelector('.lib-f[data-kind="video"]');
-      if (vb) vb.title = (lib.status && lib.status.video) ? 'Videos you made' : 'Video is not available';
+      if (vb) { vb.title = (lib.status && lib.status.video) ? 'Videos you made' : 'Video is not available'; vb.style.display = (lib.status && lib.status.video) ? '' : 'none'; }
+      if (vb && !(lib.status && lib.status.video) && lib.kind === 'video') { lib.kind = 'all'; document.querySelectorAll('.lib-f').forEach(x => x.classList.toggle('active', x.dataset.kind === 'all')); }
       document.getElementById('library-block').style.display = lib.on ? '' : 'none';
       if (!lib.on) { viewerEl.style.display = 'none'; return; }
       viewerEl.style.display = '';
@@ -1139,7 +1144,7 @@ async def index():
       const mediaCmd = text.match(/^\/(image|sound)\s+([\s\S]+)/i);
       if (mediaCmd) { inputEl.value = ''; return sendMedia(mediaCmd[1].toLowerCase(), mediaCmd[2].trim()); }
       const fxCmd = text.match(/^\/(sfx|video)\s+([\s\S]+)/i);
-      if (fxCmd) { inputEl.value = ''; return sendMedia(fxCmd[1].toLowerCase(), fxCmd[2].trim()); }
+      if (fxCmd && mediaShortcutOn(fxCmd[1].toLowerCase())) { inputEl.value = ''; return sendMedia(fxCmd[1].toLowerCase(), fxCmd[2].trim()); }     // only when that feature is available
       inputEl.value = '';
       sendBtn.disabled = true;
       const imageToSend  = pendingImageB64;
