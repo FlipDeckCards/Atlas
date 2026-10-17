@@ -7,8 +7,11 @@ Nothing is returned to the browser without a catalog row; every item belongs to 
 from __future__ import annotations
 
 import base64
+import datetime as dt
 import logging
 import os
+import asyncio
+import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -24,7 +27,16 @@ from openjarvis.server.media import (
     image as image_mod,
 )
 from openjarvis.server.media import (
+    jobs as jobs_mod,
+)
+from openjarvis.server.media import (
+    sfx as sfx_mod,
+)
+from openjarvis.server.media import (
     sound as sound_mod,
+)
+from openjarvis.server.media import (
+    video as video_mod,
 )
 from openjarvis.server.media.base import MediaError
 from openjarvis.server.media.catalog import (
@@ -68,6 +80,7 @@ class Ctx:
     store: Any            # the session store (spend ledger)
     catalog: Any
     storage: Any
+    jobs: Any = None      # video jobs (media_jobs); MemoryJobs in tests
 
 
 def ctx_from_request(request, paid: bool = False) -> Ctx:
@@ -84,7 +97,10 @@ def ctx_from_request(request, paid: bool = False) -> Ctx:
     catalog = getattr(app.state, "media_catalog", None)
     if catalog is None:
         catalog = MediaCatalog(store._pool)
-    return Ctx(getattr(request.state, "user_id", "system"), hardening.client_ip(request), store, catalog, storage)
+    jobs = getattr(app.state, "media_jobs", None)
+    if jobs is None and getattr(store, "_pool", None) is not None:
+        jobs = jobs_mod.MediaJobs(store._pool)
+    return Ctx(getattr(request.state, "user_id", "system"), hardening.client_ip(request), store, catalog, storage, jobs)
 
 
 # ── gates ───────────────────────────────────────────────────────────────────────────────────────
@@ -129,7 +145,7 @@ async def gate_generation(ctx: Ctx, provider, estimate: float) -> None:
 
 
 def estimate_cost(kind: str, **request: Any) -> float:
-    provider = image_mod.get_provider() if kind == "image" else sound_mod.get_provider()
+    provider = {"image": image_mod.get_provider, "sound": sound_mod.get_provider, "sfx": sfx_mod.get_provider, "video": video_mod.get_provider}[kind]()
     return provider.estimate_cost_usd(**request)
 
 
@@ -176,7 +192,7 @@ async def generate_and_save(ctx: Ctx, kind: str, *, prompt: str = "", steps: Opt
             raise MediaServiceError(422, "bad_request", "Give the text to turn into speech.")
         request, estimate, label = {"text": t, "lang": sound_mod.clean_lang(lang)}, provider.estimate_cost_usd(text=t), t
     else:
-        raise MediaServiceError(400, "unsupported", "Video is not supported.")
+        raise MediaServiceError(400, "unsupported", "That kind of media is not supported.")
     await gate_generation(ctx, provider, estimate)
     try:
         result = await provider.generate(**request)
@@ -201,6 +217,137 @@ async def _duration(data: bytes) -> Optional[float]:
         return await asyncio.to_thread(edits.probe_duration, data)
     except Exception:
         return None
+
+
+# ── sound effects ───────────────────────────────────────────────────────
+
+async def generate_sfx(ctx: Ctx, prompt: str, seconds: Optional[int], edited_from_id: Optional[str] = None) -> MediaItem:
+    """A sound effect (not speech), saved as a 'sound' item whose provider starts with 'sfx:'. Obeys the same gates as every paid call."""
+    provider, p = sfx_mod.get_provider(), sfx_mod.clean_prompt(prompt)
+    if not p:
+        raise MediaServiceError(422, "bad_request", "Describe the sound effect you want.")
+    if len(p) > sfx_mod.MAX_PROMPT_CHARS:
+        raise MediaServiceError(422, "bad_request", f"Keep the description under {sfx_mod.MAX_PROMPT_CHARS} characters.")
+    try:
+        secs = sfx_mod.check_seconds(seconds)
+    except ValueError as exc:
+        raise MediaServiceError(422, "sfx_limit", str(exc), **sfx_mod.limits()) from None
+    estimate = provider.estimate_cost_usd(seconds=secs)
+    await gate_generation(ctx, provider, estimate)
+    try:
+        result = await provider.generate(prompt=p, seconds=secs)
+    except MediaError as exc:
+        raise MediaServiceError(exc.status_code, "media_failed", exc.public_message) from None
+    except Exception:
+        logger.exception("sound effect generation failed")
+        raise MediaServiceError(502, "media_failed", "That could not be made. Please try again.") from None
+    day = hardening.utc_day()                                   # the provider call happened: the cost counts even if saving fails
+    await ctx.store.add_spend("media:" + ctx.user_id, day, estimate)
+    await ctx.store.add_spend(GLOBAL_KEY, day, estimate)
+    duration = await _duration(result.data)
+    return await save_item(ctx, kind="sound", data=result.data, mime=result.mime, title=p, prompt=p, provider="sfx:" + result.provider,
+                           duration=duration, edited_from_id=edited_from_id)
+
+
+# ── video (asynchronous jobs) ───────────────────────────────────────────
+
+JOB_TIMEOUT_S = 15 * 60
+_job_locks: Dict[str, "asyncio.Lock"] = {}                      # one poll at a time per job in this process, so a file is never saved twice
+
+
+async def create_video_job(ctx: Ctx, prompt: str, seconds: Optional[int], height: Optional[int]) -> "jobs_mod.MediaJob":
+    """Starts a video job and returns at once with its id. The hard length and resolution limits come first, then every gate of a paid call."""
+    provider, p = video_mod.get_provider(), video_mod.clean_prompt(prompt)
+    if not p:
+        raise MediaServiceError(422, "bad_request", "Describe the video you want.")
+    if len(p) > video_mod.MAX_PROMPT_CHARS:
+        raise MediaServiceError(422, "bad_request", f"Keep the description under {video_mod.MAX_PROMPT_CHARS} characters.")
+    try:
+        secs, h = video_mod.check_request(seconds, height)
+    except ValueError as exc:
+        raise MediaServiceError(422, "video_limit", str(exc), **video_mod.limits()) from None
+    estimate = provider.estimate_cost_usd(seconds=secs, height=h)
+    await gate_generation(ctx, provider, estimate)
+    if await ctx.jobs.count_running(ctx.user_id) >= video_mod.MAX_ACTIVE_JOBS_PER_USER:
+        raise MediaServiceError(429, "too_many_jobs", f"You already have {video_mod.MAX_ACTIVE_JOBS_PER_USER} videos being made. Wait for one to finish.")
+    try:
+        provider_job_id = await provider.start(prompt=p, seconds=secs, height=h)
+    except MediaError as exc:
+        raise MediaServiceError(exc.status_code, "media_failed", exc.public_message) from None
+    except Exception:
+        logger.exception("video start failed")
+        raise MediaServiceError(502, "media_failed", "The video could not be started. Please try again.") from None
+    day = hardening.utc_day()                                   # the provider accepted the job: the estimated cost counts now, even if the job later fails
+    await ctx.store.add_spend("media:" + ctx.user_id, day, estimate)
+    await ctx.store.add_spend(GLOBAL_KEY, day, estimate)
+    job = jobs_mod.MediaJob(id=new_id(), user_id=ctx.user_id, prompt=p, seconds=secs, height=h, provider=provider.id,
+                            provider_job_id=str(provider_job_id), cost_usd=estimate)
+    await ctx.jobs.insert(job)
+    return job
+
+
+async def get_job(ctx: Ctx, job_id: str) -> Dict[str, Any]:
+    """The job as the browser may see it. A running job is advanced first: ask the provider, and when it is done save the video to the library."""
+    require_flag()
+    rate_limit(ctx, "media_read")
+    job = await ctx.jobs.get(ctx.user_id, job_id) if valid_id(job_id) else None
+    if job is None:
+        raise MediaServiceError(404, "not_found", "That job was not found.")           # also what another user's job id gets
+    if job.status == jobs_mod.RUNNING:
+        lock = _job_locks.setdefault(job.id, asyncio.Lock())
+        async with lock:
+            job = await ctx.jobs.get(ctx.user_id, job_id) or job                      # another poll may have finished it while this one waited
+            if job.status == jobs_mod.RUNNING:
+                await _advance(ctx, job)
+        if job.status != jobs_mod.RUNNING:
+            _job_locks.pop(job.id, None)
+    out: Dict[str, Any] = {"job": job.public()}
+    if job.status == jobs_mod.SUCCEEDED and job.item_id:
+        item = await ctx.catalog.get(ctx.user_id, job.item_id)
+        if item is not None:
+            out["item"] = with_url(ctx, item)
+    return out
+
+
+async def _advance(ctx: Ctx, job: "jobs_mod.MediaJob") -> None:
+    provider = video_mod.PROVIDERS.get(job.provider)
+    age = (dt.datetime.now(dt.timezone.utc) - job.created_at).total_seconds()
+    if provider is None or not provider.configured():
+        await _finish(ctx, job, jobs_mod.FAILED, error="The video provider is not available any more.")
+        return
+    try:
+        st = await provider.status(job.provider_job_id)
+    except MediaError:
+        if age > JOB_TIMEOUT_S:
+            await _finish(ctx, job, jobs_mod.FAILED, error="The video took too long and was stopped.")
+        return                                                                       # the provider could not be reached: stay running, the next poll tries again
+    except Exception:
+        logger.exception("video status failed")
+        return
+    if st.state == "failed":
+        await _finish(ctx, job, jobs_mod.FAILED, error=st.error or "The video could not be made.")
+    elif st.state == "succeeded":
+        try:
+            result = await provider.fetch(job.provider_job_id)
+        except Exception:
+            logger.exception("video fetch failed")
+            if age > JOB_TIMEOUT_S:
+                await _finish(ctx, job, jobs_mod.FAILED, error="The finished video could not be downloaded.")
+            return
+        try:
+            item = await save_item(ctx, kind="video", data=result.data, mime=result.mime, title=job.prompt, prompt=job.prompt, provider=result.provider,
+                                   duration=float(job.seconds))
+        except MediaServiceError as exc:
+            await _finish(ctx, job, jobs_mod.FAILED, error=exc.detail)
+            return
+        await _finish(ctx, job, jobs_mod.SUCCEEDED, item_id=item.id)
+    elif age > JOB_TIMEOUT_S:
+        await _finish(ctx, job, jobs_mod.FAILED, error="The video took too long and was stopped.")
+
+
+async def _finish(ctx: Ctx, job: "jobs_mod.MediaJob", status: str, item_id: Optional[str] = None, error: Optional[str] = None) -> None:
+    job.status, job.item_id, job.error = status, item_id, error
+    await ctx.jobs.update(job)
 
 
 # ── library ─────────────────────────────────────────────────────────────────────────────────────
@@ -245,7 +392,7 @@ async def edit_item(ctx: Ctx, item_id: str, operation: str, params: Optional[Dic
     rate_limit(ctx, "media_edit")
     item = await get_owned(ctx, item_id)
     if item.kind not in ("image", "sound"):
-        raise MediaServiceError(400, "unsupported", "Video cannot be edited: video is not supported.")
+        raise MediaServiceError(400, "unsupported", "Video cannot be edited. Make a new video instead.")
     try:
         original = await ctx.storage.get(item.storage_key)
     except StorageError as exc:
@@ -267,6 +414,8 @@ async def regenerate_item(ctx: Ctx, item_id: str, prompt: str) -> MediaItem:
     item = await get_owned(ctx, item_id)
     if item.kind == "image":
         return await generate_and_save(ctx, "image", prompt=prompt, edited_from_id=item.id)
+    if item.kind == "sound" and (item.provider or "").startswith("sfx:"):
+        return await generate_sfx(ctx, prompt, None, edited_from_id=item.id)
     if item.kind == "sound":
         return await generate_and_save(ctx, "sound", text=prompt, edited_from_id=item.id)
-    raise MediaServiceError(400, "unsupported", "Video is not supported.")
+    raise MediaServiceError(400, "unsupported", "Make a new video instead: a video is not re-generated in place.")

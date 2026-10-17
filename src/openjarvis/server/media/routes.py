@@ -1,6 +1,9 @@
 """Media routes. All need the user's token (the auth middleware covers /api/*), and every item belongs to one user.
 
   POST   /api/media/image, /api/media/sound      make something and save it to the library (shortcuts used by /image and /sound)
+  POST   /api/media/sfx                          make a sound effect (not speech) and save it to the library (/sfx)
+  POST   /api/media/video                        start a video job: answers 202 with a job id at once (/video)
+  GET    /api/media/jobs/{job_id}                the job's state; polling it advances the job and, when done, saves the video to the library
   GET    /api/media/status                       what is switched on
   GET    /api/media/library?kind=&limit=&cursor= the caller's own items, newest first
   GET    /api/media/items/{id}[?download=1]      metadata and a presigned URL (15 minutes)
@@ -8,7 +11,8 @@
   POST   /api/media/items/{id}/regenerate        make a new item from an edited prompt (counts against the daily media cap)
   DELETE /api/media/items/{id}                   remove the file and the row
 
-There is no video route. Nothing is returned without a catalog row.
+Video and sound-effect providers are NOT selected yet: until one is approved and configured these routes answer 503.
+Nothing is returned without a catalog row.
 """
 from __future__ import annotations
 
@@ -21,7 +25,9 @@ from pydantic import BaseModel, Field
 
 from openjarvis.server.media import image as image_mod
 from openjarvis.server.media import media_cap_usd, media_enabled, service
+from openjarvis.server.media import sfx as sfx_mod
 from openjarvis.server.media import sound as sound_mod
+from openjarvis.server.media import video as video_mod
 from openjarvis.server.media.service import MediaServiceError
 
 logger = logging.getLogger(__name__)
@@ -36,6 +42,17 @@ class ImageRequest(BaseModel):
 class SoundRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=sound_mod.MAX_TEXT_CHARS)
     lang: Optional[str] = "en"
+
+
+class SfxRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=sfx_mod.MAX_PROMPT_CHARS)
+    seconds: Optional[int] = None
+
+
+class VideoRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=video_mod.MAX_PROMPT_CHARS)
+    seconds: Optional[int] = None
+    height: Optional[int] = None
 
 
 class EditRequest(BaseModel):
@@ -66,15 +83,22 @@ async def _guard(fn):
 async def media_status(request: Request):
     on = media_enabled() and media_cap_usd() > 0
     img, snd = image_mod.get_provider(), sound_mod.get_provider()
+    sfx, vid = sfx_mod.get_provider(), video_mod.get_provider()
     return JSONResponse({
         "enabled": media_enabled(),
         "generation": on,
         "image": bool(on and img.configured()),
         "sound": bool(on and snd.configured()),
-        "video": False,
-        "video_note": "Video generation is not available.",
+        "sfx": bool(on and sfx.configured()),
+        "video": bool(on and vid.configured()),
+        "video_note": None if (on and vid.configured()) else "Video generation is not available.",
+        "sfx_note": None if (on and sfx.configured()) else "Sound effects are not available: no sound-effects provider is set up.",
+        # the hard limits: shown next to the controls, and enforced by the server whatever the browser sends
+        "limits": {"video": video_mod.limits(), "sfx": sfx_mod.limits()},
         # what one paid action is estimated to cost (the Re-generate button shows it before asking)
-        "estimates": {"image": img.estimate_cost_usd(steps=image_mod.DEFAULT_STEPS), "sound_per_1000_chars": snd.estimate_cost_usd(text="x" * 1000)},
+        "estimates": {"image": img.estimate_cost_usd(steps=image_mod.DEFAULT_STEPS), "sound_per_1000_chars": snd.estimate_cost_usd(text="x" * 1000),
+                      "sfx": sfx.estimate_cost_usd(seconds=sfx_mod.max_seconds()),
+                      "video": vid.estimate_cost_usd(seconds=video_mod.max_seconds(), height=video_mod.max_height())},
     })
 
 
@@ -93,6 +117,33 @@ async def make_sound(req: SoundRequest, request: Request):
         ctx = service.ctx_from_request(request, paid=True)
         item = await service.generate_and_save(ctx, "sound", text=req.text, lang=req.lang)
         return JSONResponse({"success": True, "item": service.with_url(ctx, item)})
+    return await _guard(go)
+
+
+@router.post("/api/media/sfx")
+async def make_sfx(req: SfxRequest, request: Request):
+    async def go():
+        ctx = service.ctx_from_request(request, paid=True)
+        item = await service.generate_sfx(ctx, req.prompt, req.seconds)
+        return JSONResponse({"success": True, "item": service.with_url(ctx, item)})
+    return await _guard(go)
+
+
+@router.post("/api/media/video")
+async def make_video(req: VideoRequest, request: Request):
+    """Starts a job and returns at once (202) with its id; poll GET /api/media/jobs/{job_id}."""
+    async def go():
+        ctx = service.ctx_from_request(request, paid=True)
+        job = await service.create_video_job(ctx, req.prompt, req.seconds, req.height)
+        return JSONResponse({"success": True, "job": job.public(), "limits": video_mod.limits()}, status_code=202)
+    return await _guard(go)
+
+
+@router.get("/api/media/jobs/{job_id}")
+async def get_job(job_id: str, request: Request):
+    async def go():
+        ctx = service.ctx_from_request(request)
+        return JSONResponse({"success": True, **await service.get_job(ctx, job_id)})
     return await _guard(go)
 
 

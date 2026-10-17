@@ -69,6 +69,10 @@ class SessionStore:
             from openjarvis.server.media.catalog import MEDIA_ITEMS_DDL
 
             await conn.execute(MEDIA_ITEMS_DDL)
+            # video jobs (table media_jobs): add-only, IF NOT EXISTS
+            from openjarvis.server.media.jobs import MEDIA_JOBS_DDL
+
+            await conn.execute(MEDIA_JOBS_DDL)
             # scheduled briefs (table briefs): add-only, IF NOT EXISTS
             from openjarvis.server.briefs import BRIEFS_DDL
 
