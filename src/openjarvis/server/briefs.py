@@ -22,7 +22,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
-from openjarvis.server import hardening
+from openjarvis.server import brief_content, hardening
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -79,6 +79,11 @@ class BriefStore:
             rows = await conn.fetch("SELECT DISTINCT ON (period) id, created_at, product, period, body, spoken_summary FROM briefs ORDER BY period, created_at DESC, id DESC")
         return [_public(dict(r)) for r in rows]
 
+    async def latest_for_product(self, product: str) -> Optional[Dict[str, Any]]:
+        async with self._pool.acquire() as conn:
+            r = await conn.fetchrow("SELECT id, created_at, product, period, body, spoken_summary FROM briefs WHERE product = $1 ORDER BY created_at DESC, id DESC LIMIT 1", product)
+        return _public(dict(r)) if r else None
+
     async def get(self, brief_id: str) -> Optional[Dict[str, Any]]:
         try:
             uuid.UUID(brief_id)
@@ -106,6 +111,10 @@ class MemoryBriefStore:
             if mine:
                 out.append(_public(max(mine, key=lambda r: (r["created_at"], r["id"]))))
         return out
+
+    async def latest_for_product(self, product: str) -> Optional[Dict[str, Any]]:
+        mine = [r for r in self.rows if r["product"] == product]
+        return _public(max(mine, key=lambda r: (r["created_at"], r["id"]))) if mine else None
 
     async def get(self, brief_id: str) -> Optional[Dict[str, Any]]:
         return next((_public(r) for r in self.rows if r["id"] == brief_id), None)
@@ -144,8 +153,36 @@ async def post_brief(request: Request):
         return JSONResponse({"detail": "Invalid brief", "errors": [{"field": ".".join(str(p) for p in e["loc"]), "problem": e["msg"]} for e in exc.errors(include_input=False)]}, status_code=422)
     except ValueError:
         return JSONResponse({"detail": "The body must be JSON."}, status_code=400)
-    saved = await _store(request).insert(brief.product.strip(), brief.period, brief.body_markdown, brief.spoken_summary.strip())
+    store, product = _store(request), brief.product.strip()
+    body, spoken = clean_for_storage(brief.body_markdown, brief.spoken_summary.strip(), await _previous_body(store, product))
+    saved = await store.insert(product, brief.period, body, spoken)
     return JSONResponse({"success": True, "id": saved["id"], "created_at": saved["created_at"]}, status_code=201)
+
+
+REPEAT_WINDOW = dt.timedelta(hours=36)
+
+
+async def _previous_body(store, product: str) -> Optional[str]:
+    """The same product's previous brief (within 36 hours), so items already reported are not reported again."""
+    finder = getattr(store, "latest_for_product", None)
+    if finder is None:
+        return None
+    try:
+        prev = await finder(product)
+        if not prev:
+            return None
+        created = dt.datetime.fromisoformat(str(prev["created_at"]))
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=dt.timezone.utc)
+        return prev["body"] if dt.datetime.now(dt.timezone.utc) - created <= REPEAT_WINDOW else None
+    except Exception:
+        logger.exception("could not read the previous brief")
+        return None
+
+
+def clean_for_storage(body: str, spoken: str, previous_body: Optional[str]):
+    """What is stored for every posted brief, whoever wrote it (see brief_content.py): no wrong-time greeting, no Meta Ads, no repeats."""
+    return brief_content.sanitize_brief_body(body, previous_body), brief_content.sanitize_spoken(spoken)[:MAX_SPOKEN_CHARS]
 
 
 # ── read ────────────────────────────────────────────────────────────────────────────────────────

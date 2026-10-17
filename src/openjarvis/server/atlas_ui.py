@@ -1038,10 +1038,21 @@ async def index():
     function markBriefSeen(id) {
       try { const s = seenBriefs(); if (!s.includes(id)) { s.push(id); localStorage.setItem(BRIEF_SEEN_KEY, JSON.stringify(s.slice(-60))); } } catch (e) { /* the list is only a convenience */ }
     }
+    // The greeting comes from the time the brief was made, in Los Angeles: morning 05:00-11:59, afternoon 12:00-16:59, evening 17:00-04:59.
+    // (The scheduled slot's name is never used: a "morning" brief made at 10:30 PM still says "Good evening".)
+    function briefGreetingPeriod(hour) { return hour >= 5 && hour < 12 ? 'morning' : (hour >= 12 && hour < 17 ? 'afternoon' : 'evening'); }
+    function briefGreeting(iso) {
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      const h = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', hourCycle: 'h23' }).format(d), 10) % 24;
+      return 'Good ' + briefGreetingPeriod(h) + ', Michael.';
+    }
     function addBriefMessage(b) {
       const wrap = mk('div', 'msg atlas');
       wrap.appendChild(mk('div', 'msg-tag', 'HELIX \u00b7 ' + String(b.period).toUpperCase() + ' BRIEF \u00b7 ' + b.product + ' \u00b7 ' + new Date(b.created_at).toLocaleString()));
+      const plain = String(b.body || '').replace(/^\s*(?:#+\s*)?good\s+(?:morning|afternoon|evening|night)[^\n]*\n*/i, '');     // a greeting an older brief was stored with is dropped
       const body = mk('div', null, b.body); body.style.whiteSpace = 'pre-wrap';
+      body.textContent = briefGreeting(b.created_at) + '\n\n' + plain;                 // plain text, never HTML
       wrap.appendChild(body);
       const row = mk('div'); row.style.marginTop = '8px';
       const listen = mk('button', 'v-btn', 'Listen'); const note = mk('span', 'v-meta'); note.style.marginLeft = '8px';
