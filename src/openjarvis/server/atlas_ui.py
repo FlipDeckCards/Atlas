@@ -16,6 +16,7 @@ from fastapi.responses import (
 from pydantic import BaseModel, Field
 
 from openjarvis.server import admin_analytics, briefs, hardening
+from openjarvis.server.crew import helix as crew_helix
 from openjarvis.server.media import service as media_service
 from openjarvis.server.media import helix_tools
 from openjarvis.server.media.service import MediaServiceError
@@ -361,6 +362,17 @@ async def index():
     }
     #sub-btn:hover { background: var(--cyan); color: var(--bg, #000); }
     #sub-btn[disabled] { border-color: var(--border); color: var(--text-dim); cursor: default; background: transparent; }
+    #station-btn {
+      background: transparent; border: 1px solid var(--orange); color: var(--orange);
+      padding: 4px 10px; font-family: 'Orbitron', monospace; font-size: 8px;
+      letter-spacing: 2px; cursor: pointer; transition: all 0.2s; border-radius: 2px; position: relative;
+    }
+    #station-btn:hover { background: var(--orange); color: var(--bg, #000); }
+    #station-badge { position: absolute; top: -7px; right: -7px; min-width: 15px; height: 15px; border-radius: 8px; background: var(--orange); color: #050508; font-family: 'Share Tech Mono', monospace; font-size: 10px; line-height: 15px; text-align: center; padding: 0 3px; letter-spacing: 0; }
+    .crew-card { border-color: rgba(255,109,0,0.35) !important; background: rgba(255,109,0,0.05) !important; }
+    .crew-card .msg-tag { color: var(--orange) !important; opacity: 0.9; }
+    .crew-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
+    .crew-ok:hover { border-color: #00ff88 !important; color: #00ff88 !important; }
     #hud-main { display: grid; grid-template-columns: 200px 1fr 400px; gap: 1px; overflow: hidden; }
     #panel-left {
       background: var(--panel); border-right: 1px solid var(--border);
@@ -600,6 +612,7 @@ async def index():
       <span>OPERATOR: <span class="v" id="operator-name">—</span></span>
       <span class="hud-extra">SESSION: <span class="v">WEB-01</span></span>
       <span class="hud-extra">UPTIME: <span class="v" id="uptime">00:00:00</span></span>
+      <button id="station-btn" onclick="location.href='/station'" title="Open the Station: your crew, live" hidden>STATION<span id="station-badge" hidden></span></button>
       <button id="sub-btn" onclick="subscribe()" hidden>SUBSCRIBE</button>
       <button id="logout-btn" onclick="logout()">LOGOUT</button>
     </div>
@@ -820,6 +833,8 @@ async def index():
       refreshSubscription();
       checkBriefs();
       if (!_briefTimer) _briefTimer = setInterval(checkBriefs, 60000);
+      checkCrew();
+      if (!_crewTimer) _crewTimer = setInterval(checkCrew, 20000);
       startUptimeClock();
     }
 
@@ -1123,6 +1138,7 @@ async def index():
       (actions || []).forEach(a => {
         if (a.type === 'saved' && a.item) { addOpenButton(wrap, a.item.id); loadLibrary(); }
         else if (a.type === 'open_item' && a.id) openItem(a.id);
+        else if (a.type === 'crew_refresh') setTimeout(checkCrew, 1500);
       });
     }
 
@@ -1171,6 +1187,52 @@ async def index():
       } catch (e) { /* try again at the next check */ }
     }
     var _briefTimer = null;      // var: showHUD() runs before this line during page load
+
+    // ── Crew: questions, approvals and budget requests from the agents arrive here as cards; STATION opens the live view ──
+    // Approve / Decline are buttons on purpose: a checkpoint is never approved by typing to the model.
+    var _crewTimer;              // no initializer: showHUD() may already have set it
+    const crewShown = new Map();     // open question id -> its card
+    function addCrewCard(q, missions) {
+      const m = (missions || []).find(x => x.id === q.mission_id);
+      const wrap = mk('div', 'msg atlas crew-card');
+      const kind = q.kind === 'checkpoint' ? 'APPROVAL NEEDED' : (q.kind === 'budget' ? 'BUDGET REQUEST' : 'QUESTION');
+      wrap.appendChild(mk('div', 'msg-tag', 'CREW \u00b7 ' + kind + (m ? ' \u00b7 ' + (m.title || 'mission') : '')));
+      wrap.appendChild(mk('div', null, q.text));
+      const row = mk('div', 'crew-row'); const note = mk('span', 'v-meta');
+      const send = async (body) => {
+        row.querySelectorAll('button').forEach(b => b.disabled = true);
+        const r = await libApi('/api/crew/questions/' + encodeURIComponent(q.id) + '/answer', 'POST', body);
+        note.textContent = r.ok ? (r.data.message || 'Done.') : (r.data.detail || 'That did not go through.');
+        note.style.color = r.ok ? '#00ff88' : '#ff3344';
+        if (!r.ok && r.status !== 409) row.querySelectorAll('button').forEach(b => b.disabled = false);
+        setTimeout(checkCrew, 1000);
+      };
+      if (q.kind === 'question') {
+        (q.options || []).forEach(o => { const b = mk('button', 'v-btn', o); b.addEventListener('click', () => send({ answer: o })); row.appendChild(b); });
+        note.textContent = (q.options || []).length ? 'or just answer me here' : 'Answer me here in chat.';
+      } else {
+        const ok = mk('button', 'v-btn crew-ok', 'Approve'), no = mk('button', 'v-btn danger', 'Decline');
+        ok.addEventListener('click', () => send({ approve: true })); no.addEventListener('click', () => send({ approve: false }));
+        row.append(ok, no);
+      }
+      row.appendChild(note); wrap.appendChild(row);
+      messagesEl.appendChild(wrap); messagesEl.scrollTop = messagesEl.scrollHeight;
+      return wrap;
+    }
+    async function checkCrew() {
+      const btn = document.getElementById('station-btn'), badge = document.getElementById('station-badge');
+      try {
+        const r = await fetch('/api/crew/state', { headers: authHeader() });
+        if (!r.ok) { btn.hidden = true; return; }
+        const d = await r.json();
+        btn.hidden = !d.enabled;
+        if (!d.enabled) return;
+        const qs = d.questions || [], open = new Set(qs.map(q => q.id));
+        crewShown.forEach((card, id) => { if (!open.has(id)) { card.querySelectorAll('button').forEach(b => b.disabled = true); crewShown.delete(id); } });
+        qs.forEach(q => { if (!crewShown.has(q.id)) { crewShown.set(q.id, addCrewCard(q, d.missions)); feedLog('Crew: ' + q.kind); } });
+        badge.hidden = !qs.length; badge.textContent = String(qs.length);
+      } catch (e) { /* try again at the next check */ }
+    }
 
     // "/image a red fox" and "/sound hello there": shortcuts. The result is saved to the library; the chat shows one line with an Open button.
     async function sendMedia(kind, prompt) {
@@ -1670,6 +1732,14 @@ async def chat(req: ChatRequest, request: Request):
             media_ctx = media_service.ctx_from_request(request, paid=True)
         except MediaServiceError:
             media_ctx = None
+    # the crew (owner accounts, CREW_ENABLED): a yes to a read-back mission start is handled here, with no model call
+    crew_ctx = crew_helix.ctx_for(request)
+    if crew_ctx is not None and not req.image:
+        early = await crew_helix.pre_turn(crew_ctx, req.message)
+        if early is not None:
+            await store.append_message(user_id, CHANNEL, "user", req.message)
+            await store.append_message(user_id, CHANNEL, "assistant", early["reply"])
+            return JSONResponse({"reply": early["reply"], "ui_actions": early["ui"], "model_display": model_display, "model_color": model_color})
     if media_ctx is not None and not req.image:
         early = await helix_tools.pre_turn(media_ctx, req.message)         # a yes to a read-back action, a cancel, a sound-effect request
         if early is not None:
@@ -1678,6 +1748,8 @@ async def chat(req: ChatRequest, request: Request):
             return JSONResponse({"reply": early["reply"], "ui_actions": early["ui"], "model_display": model_display, "model_color": model_color})
 
     system_text = get_system_prompt(req.client_date) + (helix_tools.SYSTEM_ADDENDUM if media_ctx is not None else "") + brief_ctx
+    if crew_ctx is not None:
+        system_text += await crew_helix.system_addendum(crew_ctx)
     messages = [{"role": "system", "content": system_text}]
     for m in session["conversation_history"][-10:]:
         if m["role"] in ("user", "assistant"):
@@ -1696,18 +1768,27 @@ async def chat(req: ChatRequest, request: Request):
 
     messages.append({"role": "user", "content": user_content})
 
-    if media_ctx is not None:
+    if media_ctx is not None or crew_ctx is not None:
         async def _cost(resp):
             await store.add_spend(user_id, hardening.utc_day(), hardening.chat_cost_usd(resp))
+
+        crew_before = crew_helix.CREW_PENDING.get(user_id) if crew_ctx is not None else None
+
+        async def _crew_exec(name, args):
+            return await crew_helix.execute(crew_ctx, name, args)
 
         try:
             out = await helix_tools.run_model_with_tools(
                 media_ctx, messages, model_id, req.message,
                 acompletion=litellm.acompletion, on_cost=_cost, max_tokens=hardening.CHAT_MAX_TOKENS,
+                extra_tools=crew_helix.CREW_TOOLS if crew_ctx is not None else None,
+                extra_executor=_crew_exec if crew_ctx is not None else None,
             )
         except Exception:
             logger.exception("model call with tools failed (%s)", model_id)
             return JSONResponse({"reply": "The model could not answer right now. Please try again.", "model_display": model_display, "model_color": model_color})
+        if crew_ctx is not None:
+            out["reply"] = crew_helix.after_turn(crew_ctx, out["reply"], crew_before)
         await store.append_message(user_id, CHANNEL, "user", req.message)
         await store.append_message(user_id, CHANNEL, "assistant", out["reply"])
         return JSONResponse({"reply": out["reply"], "ui_actions": out["ui"], "model_display": model_display, "model_color": model_color})

@@ -19,6 +19,7 @@ from openjarvis.server.atlas_ui import router as atlas_ui_router
 from openjarvis.server.auth_routes import router as auth_router
 from openjarvis.server.comparison import comparison_router
 from openjarvis.server.connectors_router import create_connectors_router
+from openjarvis.server.crew.routes import router as crew_router
 from openjarvis.server.dashboard import dashboard_router
 from openjarvis.server.digest_routes import create_digest_router
 from openjarvis.server.briefs import router as briefs_router
@@ -277,6 +278,7 @@ def create_app(
     app.include_router(atlas_ui_router)
     app.include_router(media_router)
     app.include_router(briefs_router)
+    app.include_router(crew_router)
     app.include_router(auth_router)
     include_all_routes(app)
 
@@ -286,6 +288,38 @@ def create_app(
         store = SessionStore()
         await store.connect()
         app.state.session_store = store
+
+    @app.on_event("startup")
+    async def _startup_crew() -> None:
+        # the crew engine (server/crew): only when CREW_ENABLED is true and the database is up; its tables are created add-only
+        from openjarvis.server.crew import crew_enabled
+
+        store = getattr(app.state, "session_store", None)
+        pool = getattr(store, "_pool", None)
+        if not crew_enabled() or pool is None or getattr(app.state, "crew_engine", None) is not None:
+            return
+        try:
+            import os
+
+            import litellm
+
+            from openjarvis.server.crew.engine import CrewEngine
+            from openjarvis.server.crew.notify import Notifier
+            from openjarvis.server.crew.store import CrewStore
+
+            engine = CrewEngine(CrewStore(pool), litellm.acompletion,
+                                notifier=Notifier(store, base_url=os.environ.get("PUBLIC_BASE_URL", "https://aibussol.com")))
+            await engine.start()
+            app.state.crew_engine = engine
+            logger.info("crew engine started")
+        except Exception:
+            logger.exception("crew engine did not start; the rest of Aibussol runs normally")
+
+    @app.on_event("shutdown")
+    async def _shutdown_crew() -> None:
+        engine = getattr(app.state, "crew_engine", None)
+        if engine is not None:
+            await engine.stop()
 
     @app.on_event("shutdown")
     async def _shutdown_session_store() -> None:

@@ -1,0 +1,71 @@
+# The crew and the Station
+
+Say "Helix, build me X" and Helix starts a **crew mission**: it plans the goal into tasks, and a crew of agents (Claude for building and
+writing, Gemini for research) works them in parallel. You watch it live in the **Station** (`/station`, the STATION button in the header),
+and the crew reaches you only through Helix: questions, approvals and budget requests appear as cards in the chat and in the Station.
+
+Nothing here is deployed until you deploy it on Render. The crew is **off** until `CREW_ENABLED=true` is set.
+
+## Turn it on (Render → Atlas service → Environment)
+
+| Variable | What it does | Suggested |
+|---|---|---|
+| `CREW_ENABLED` | turns the crew on | `true` |
+| `CREW_DAILY_CAP_USD` | most the crew may spend on model calls per day | `3` |
+| `CREW_MISSION_BUDGET_USD` | default budget of a new mission | `1` |
+| `CREW_MAX_MISSION_BUDGET_USD` | the most any one mission can be given | `25` |
+| `CREW_MAX_CONCURRENT` | tasks running at once | `3` |
+| `CREW_QUIET_HOURS` | LA hours with no new work unless Night Shift is on | `22-6` |
+| `CREW_NOTIFY_URL` | optional phone push: an ntfy.sh topic URL, e.g. `https://ntfy.sh/aibussol-<long-random-word>` (install the free ntfy app and subscribe to the same topic) | |
+| `PUBLIC_BASE_URL` | used for the push notification's link | `https://aibussol.com` |
+
+Then deploy manually. On start the server creates its tables (`crew_*`, add-only) and starts the engine inside the web service.
+
+Only owner accounts can use the crew (`ANALYTICS_ADMIN_EMAILS`, default michael.dano1523@gmail.com).
+
+## What the crew can and cannot do (phase 1)
+
+* **Can:** plan a goal into up to 8 tasks; research (Gemini, from its own knowledge: no live web browsing yet); write code, specs, copy,
+  listings, posts and design direction (Claude); save every deliverable to the mission's **outbox** (download it from the Station);
+  ask you questions; use **Stripe** (list products; create a product and price, create a payment link: both need your Approve) and
+  **Etsy** (read the shop; create **draft** listings, which buyers cannot see and cost nothing until you activate them).
+* **Cannot (yet):** deploy or run code, browse the web, generate images inside a mission, publish to Google Play or the App Store
+  (listed as "not built yet" in Connections), or do anything on a platform without an official API (Fiverr: none).
+
+## The limits, enforced by the server
+
+* Every model call is priced; the task budget, the mission budget and the daily cap are checked before the next call.
+  When a task runs out it **asks you** for more (Approve / Decline). At the daily cap the crew stops until midnight UTC.
+* Anything public, paid or permanent is a **checkpoint**: it runs only when you tap **Approve**. Helix cannot approve it for you,
+  and a model cannot approve its own action.
+* "Build me X" in chat is read back with its budget and starts only on a plain **yes** as your next message.
+* **Night Shift** (Station top bar): off = no new work starts 10 PM to 6 AM LA; on = the crew keeps working, inside the same limits.
+  **Pause all** stops all new work at once. Every step is in the Station's ledger.
+
+## Connecting Etsy
+
+1. Register an app at etsy.com/developers and wait for Etsy's approval.
+2. Set `ETSY_API_KEY` (the keystring), `ETSY_SHARED_SECRET` if Etsy shows one, and
+   `ETSY_REDIRECT_URI=https://aibussol.com/crew/connect/etsy/callback` (also add that exact URL as the app's callback on Etsy).
+3. Deploy, open the Station → Connections → **Connect** next to Etsy, and allow access. Tokens are stored in `crew_secrets` and refreshed automatically.
+
+Stripe uses the existing `STRIPE_SECRET_KEY`. Crew-made products carry `metadata app=crew`, so the Aibussol subscription webhook
+(which only reads `app=aibussol`) ignores them.
+
+## Code map
+
+| File | What |
+|---|---|
+| `src/openjarvis/server/crew/engine.py` | planning, the task loop, budgets, questions, checkpoints, the scheduler |
+| `src/openjarvis/server/crew/store.py` | Postgres tables and an in-memory twin for tests |
+| `src/openjarvis/server/crew/connections.py` | Stripe and Etsy through their official APIs; risk levels |
+| `src/openjarvis/server/crew/helix.py` | Helix's crew tools and the confirm-before-start rule |
+| `src/openjarvis/server/crew/routes.py` | `/api/crew/*`, the Etsy connect flow, `/station` |
+| `src/openjarvis/server/crew/station.py` | the Station page (all art drawn in code) |
+| `src/openjarvis/server/crew/notify.py` | notices into Helix chat, optional phone push |
+| `tests/server/test_crew.py`, `tests/server/test_crew_routes.py` | offline tests |
+
+## Next (phase 2 ideas)
+
+Google Play and App Store connections (official APIs), image generation inside missions through the media library, live web
+research for the researcher, and web push notifications from the Aibussol app itself.

@@ -226,14 +226,20 @@ async def pre_turn(ctx: Ctx, message: str, pending: Optional[PendingActions] = N
     return None
 
 
-async def run_model_with_tools(ctx: Ctx, messages: List[Dict[str, Any]], model_id: str, user_message: str, *, acompletion: Callable[..., Awaitable[Any]],
-                               on_cost: Callable[[Any], Awaitable[None]], max_tokens: int, pending: Optional[PendingActions] = None) -> Dict[str, Any]:
-    """Call the model with the tools; run what it asks; return {'reply', 'ui'}. A pending paid action is armed after the reply is produced."""
+async def run_model_with_tools(ctx: Optional[Ctx], messages: List[Dict[str, Any]], model_id: str, user_message: str, *, acompletion: Callable[..., Awaitable[Any]],
+                               on_cost: Callable[[Any], Awaitable[None]], max_tokens: int, pending: Optional[PendingActions] = None,
+                               extra_tools: Optional[List[Dict[str, Any]]] = None,
+                               extra_executor: Optional[Callable[[str, Dict[str, Any]], Awaitable[str]]] = None) -> Dict[str, Any]:
+    """Call the model with the tools; run what it asks; return {'reply', 'ui'}. A pending paid action is armed after the reply is produced.
+    ctx is None when media is off: then only extra_tools (the crew's, see server/crew/helix.py) are offered, run by extra_executor."""
     pending = pending or PENDING
     ui: List[Dict[str, Any]] = []
-    created_before = pending.get(ctx.user_id)
+    extra_tools = extra_tools or []
+    extra_names = {t["function"]["name"] for t in extra_tools}
+    tools = (TOOLS if ctx is not None else []) + extra_tools
+    created_before = pending.get(ctx.user_id) if ctx is not None else None
     for _ in range(MAX_TOOL_ROUNDS + 1):
-        resp = await acompletion(model=model_id, messages=messages, tools=TOOLS, max_tokens=max_tokens)
+        resp = await acompletion(model=model_id, messages=messages, tools=tools, max_tokens=max_tokens)
         await on_cost(resp)
         msg = resp.choices[0].message
         calls = getattr(msg, "tool_calls", None) or []
@@ -246,11 +252,20 @@ async def run_model_with_tools(ctx: Ctx, messages: List[Dict[str, Any]], model_i
                 args = json.loads(tc.function.arguments or "{}")
             except ValueError:
                 args = None
+            if tc.function.name in extra_names and extra_executor is not None:
+                text = await extra_executor(tc.function.name, args if isinstance(args, dict) else {})
+                messages.append({"role": "tool", "tool_call_id": tc.id, "content": text})
+                continue
+            if ctx is None:
+                messages.append({"role": "tool", "tool_call_id": tc.id, "content": f"Error: there is no tool named '{_clip(tc.function.name, 40)}'."})
+                continue
             out = await execute_tool(ctx, tc.function.name, args, user_message=user_message, pending=pending)
             ui += out["ui"]
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": out["text"]})
     else:
         reply = "I couldn't finish that. Please try again."
+    if ctx is None:
+        return {"reply": reply, "ui": ui}
     p = pending.get(ctx.user_id)
     if p and p is not created_before and not p.armed:
         # the read-back: always say what will happen and what it costs, in the server's own words, then wait for a yes

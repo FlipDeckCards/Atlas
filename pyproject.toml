@@ -252,6 +252,9 @@ select = ["E", "F", "I", "W"]
 "src/openjarvis/server/media/*.py" = ["E501"]
 "scripts/check_media_providers.py" = ["E501"]
 "src/openjarvis/server/atlas_ui.py" = ["E501", "E701", "E702"]
+"src/openjarvis/server/crew/*.py" = ["E501"]
+"tests/server/test_crew.py" = ["E501"]
+"tests/server/test_crew_routes.py" = ["E501"]
 
 [dependency-groups]
 dev = [
