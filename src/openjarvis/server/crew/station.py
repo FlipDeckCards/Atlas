@@ -760,10 +760,10 @@ function drawPlate(m, t) {
   ctx.font = '700 ' + fs + 'px Orbitron, monospace'; const name = fitText((m.isNew ? '◆ ' : '') + m.label, 190 * SC + 20), nw = ctx.measureText(name).width;
   ctx.font = fs2 + 'px Share Tech Mono, monospace'; const st = m.state || '', sw = ctx.measureText(st).width;
   const pw = Math.max(nw, sw) + 18 * SC + 6, ph = fs + fs2 + 12 * SC;
-  const ext = Math.abs(m.ux) * pw / 2 + Math.abs(m.uy) * ph / 2;
-  let ox = m.cx + m.ux * (m.h / 2 + 8 * SC + ext), oy = m.cy + m.uy * (m.h / 2 + 8 * SC + ext);
-  if (ox - pw / 2 < 2 || ox + pw / 2 > W - 2) { ox = m.cx; oy = m.cy - m.w / 2 - 6 - ph / 2; }      // no room at the side (phones): sit above the module
-  const x = ox - pw / 2, y = oy - ph / 2;
+  // the plate lies flat against the factory's outer end, centred on it, turned with the factory (never upside down)
+  ctx.save(); ctx.translate(m.cx, m.cy); ctx.rotate(m.rot); ctx.translate(0, -m.h / 2 - 5 * SC - ph / 2);
+  if (Math.cos(m.rot) < -0.01) ctx.rotate(Math.PI);
+  const ox = 0, x = -pw / 2, y = -ph / 2;
   ctx.fillStyle = 'rgba(6,11,18,0.94)'; rr(x, y, pw, ph, 3); ctx.fill();
   ctx.strokeStyle = alpha(m.color, 0.55); ctx.lineWidth = 1; rr(x, y, pw, ph, 3); ctx.stroke();
   ctx.fillStyle = m.color; ctx.fillRect(x, y + 3, 2, ph - 6);
@@ -772,6 +772,7 @@ function drawPlate(m, t) {
   ctx.font = fs2 + 'px Share Tech Mono, monospace';
   ctx.fillStyle = st === 'DOWN' ? '#ff3344' : st === 'NEEDS YOU' || st === 'OFFLINE' ? '#ff8a2a' : st === 'WORKING' || st === 'ONLINE' || st === 'LIVE' ? '#00ff99' : 'rgba(142,207,224,0.65)';
   ctx.fillText(st, ox, y + 7 * SC + fs + fs2);
+  ctx.restore();
 }
 
 function drawCore(t) {
