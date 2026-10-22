@@ -30,7 +30,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-VERSION = "1.1"
+VERSION = "1.2"
 CONFIG = Path.home() / ".aibussol_workbench.json"
 POLL_S, HELLO_S, PROGRESS_S = 20, 60, 120
 
@@ -123,11 +123,12 @@ def run_job(cfg: dict, job: dict) -> None:
                 pass
 
     threading.Thread(target=progress, daemon=True).start()
-    cmd = [claude, "-p", build_prompt(job, cfg, name), "--output-format", "json", "--permission-mode", "acceptEdits",
+    # the job goes in on stdin: on Windows, claude.cmd cuts a command-line argument at its first line break
+    cmd = [claude, "-p", "--output-format", "json", "--permission-mode", "acceptEdits",
            "--allowedTools", "Read,Edit,Write,Glob,Grep,Bash", "--max-turns", str(cfg.get("max_turns", 80))]
     ok, summary = False, ""
     try:
-        p = subprocess.run(cmd, cwd=folder, capture_output=True, text=True, timeout=int(job.get("timeout_s") or 4 * 3600),
+        p = subprocess.run(cmd, cwd=folder, input=build_prompt(job, cfg, name), capture_output=True, text=True, timeout=int(job.get("timeout_s") or 4 * 3600),
                            encoding="utf-8", errors="replace")
         try:
             out = json.loads(p.stdout.strip().splitlines()[-1]) if p.stdout.strip() else {}
