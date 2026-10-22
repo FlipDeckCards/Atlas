@@ -265,7 +265,7 @@ function rosterSec() {
     const c = mk('div', 'agent');
     const top = mk('div', 'agent-top'); const d = mk('span', 'avatar'); d.style.borderColor = alpha(ROLE_COLORS[a.role] || '#00e5ff', 0.5);
     if (a.role === 'lead') { d.style.backgroundImage = 'url(/crew/helix.jpg)'; d.style.backgroundSize = 'cover'; d.style.backgroundPosition = 'center 20%'; }
-    else { const row = BOT_ROWS.indexOf(a.role); d.style.backgroundImage = 'url(/crew/bots.png)'; const A = 38; d.style.backgroundSize = (17 * A) + 'px ' + (A * BOT_ROWS.length) + 'px'; d.style.backgroundPosition = '-4px ' + (-A * Math.max(0, row) - 1) + 'px'; }
+    else { const row = BOT_ROWS.indexOf(a.role); d.style.backgroundImage = 'url(/crew/bots.png?v=' + BOT_VER + ')'; const A = 38; d.style.backgroundSize = (17 * A) + 'px ' + (A * BOT_ROWS.length) + 'px'; d.style.backgroundPosition = '-4px ' + (-A * Math.max(0, row) - 1) + 'px'; }
     const nm = mk('span', 'agent-name', a.name); nm.style.color = ROLE_COLORS[a.role] || '#00e5ff';
     // compact card: face, name, role and status; what it can and cannot do shows on hover
     const who = mk('div', 'grow'); who.style.minWidth = '0'; who.append(nm, mk('div', 'agent-role', (a.role === 'lead' ? 'lead' : a.role) + ' · ' + a.model));
@@ -413,12 +413,13 @@ const bots = new Map();
 const helixImg = new Image(); let helixReady = false;
 helixImg.onload = () => { helixReady = true; }; helixImg.src = '/crew/helix.jpg';
 // the crew: Michael's robot model, rendered per role (front, facing right, facing left) into one sheet: crew/assets/bots.png
+const BOT_VER = '1c13d86a';   // changes whenever bots.png changes, so browsers never mix an old sheet with new code
 const BOT_ROWS = ['lead', 'researcher', 'builder', 'writer', 'designer', 'operator', 'reviewer'], BOT_CELL = 64;
 // sheet columns: 0 standing (front), then 4 walk frames each for front, back, right, left
 const BOT_DIRS = { front: 0, back: 1, right: 2, left: 3 };
 function dirOf(dx, dy, prev) { if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return prev || 'front'; return Math.abs(dx) >= Math.abs(dy) * 0.8 ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'front' : 'back'); }
 const botSheet = new Image(); let botReady = false;
-botSheet.onload = () => { botReady = true; }; botSheet.src = '/crew/bots.png';
+botSheet.onload = () => { botReady = true; }; botSheet.src = '/crew/bots.png?v=' + BOT_VER;
 const PRODUCTS = [
   { key: 'flipdeck', label: 'FLIPDECK', color: '#ff6d00' },
   { key: 'marnyx', label: 'MARNYX', color: '#b06cff' },
@@ -577,7 +578,7 @@ function factories() {                                                   // ever
 
 function layout() {
   SC = Math.max(0.34, Math.min(1.25, Math.min(W / 1060, H / 800)));
-  core = { x: W / 2, y: H / 2, r: 80 * SC };
+  core = { x: W / 2, y: H / 2, r: 94 * SC };
   const mw = 184 * SC, mh = 116 * SC, gap = 46 * SC;
   const D = Math.max(core.r + 52 * SC + mh / 2, (mw + gap) / (2 * Math.sin(Math.PI / 8)));
   const prod = {}; PRODUCTS.forEach(f => { prod[f.key] = fillBay(Object.assign({}, f)); });
@@ -704,6 +705,16 @@ function drawModule(m, t, dt) {
   m.tasks.forEach((tk, i) => {
     if (tk.status === 'waiting') return;
     const desk = desks[i % desks.length], b = botFor(tk, I, desk, t);
+    // a crew member starting work walks from Helix's deck down this factory's tube and in through the doorway
+    if (b.commute == null) b.commute = (tk.status === 'running' || tk.status === 'queued') ? 0 : 1;
+    if (b.commute < 1) {
+      const len = Math.max(40, m.D - m.h / 2 - core.r);
+      b.commute = Math.min(1, b.commute + (dt || 16) * 0.05 / len);
+      const r = core.r + 2 + (len + 10 * SC) * b.commute;
+      drawBot(core.x + m.ux * r, core.y + m.uy * r, ROLE_COLORS[tk.role] || col, tk.status, t, b.seed, dirOf(m.ux, m.uy, 'front'), sc * 0.85, true);
+      if (b.commute >= 1) { b.fx = 0.5; b.fy = 0.96; }                         // through the door: carry on inside
+      return;
+    }
     stepBot(b, tk, desk, dt);
     const [bx, by] = toWorld(m, I.x + b.fx * I.w, I.y + b.fy * I.h);
     if (b.lastX != null) b.wf = dirOf(bx - b.lastX, by - b.lastY, b.wf);                  // face where it walks on screen (modules are turned)
@@ -752,7 +763,7 @@ function drawCore(t) {
   const { x, y, r } = core, open = S ? S.questions.length : 0;
   const g = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * 1.8); g.addColorStop(0, 'rgba(0,229,255,0.18)'); g.addColorStop(1, 'rgba(0,229,255,0)');
   ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 1.8, 0, 6.29); ctx.fill();
-  const ring = Math.max(7, r * 0.17);
+  const ring = hallW() + 8 * SC;                         // the deck is as wide as the tubes (floor plus walls)
   // deck ring (where the crew walks) with an armored rim
   ctx.fillStyle = '#132636'; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.29); ctx.fill();
   ctx.strokeStyle = 'rgba(150,190,210,0.5)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.29); ctx.stroke();
@@ -779,16 +790,15 @@ function drawCore(t) {
   ctx.setLineDash([16, 10]); ctx.lineWidth = open ? 2.5 : 1; ctx.beginPath(); ctx.arc(0, 0, r - ring - 4, 0, 6.29); ctx.stroke(); ctx.setLineDash([]);
   ctx.restore();
   // crew on the deck: Aibussol's own work, then everyone with nothing to do, walking the ring
-  const track = r - ring / 2, sc = Math.max(0.7, Math.min(1.1, SC * 1.05));
+  const track = r - ring / 2, sc = Math.max(0.6, Math.min(0.95, SC * 0.85));
   const onDeck = [];
   if (core.bay) core.bay.tasks.filter(k => k.status !== 'waiting').forEach(tk => onDeck.push({ role: tk.role, status: tk.status }));
   (S && S.roster ? S.roster : []).filter(a => a.role !== 'lead' && !a.working && !a.waiting).forEach(a => onDeck.push({ role: a.role, status: 'idle' }));
   onDeck.forEach((a, i) => {
-    // each one strolls a while, then stops and looks at you, then strolls on (walking time only moves it along the ring)
-    const P = 9000, W = 5500, tt = t + i * 2300, walking = tt % P < W, walked = Math.floor(tt / P) * W + Math.min(tt % P, W);
-    const dir = i % 2 ? 1 : -1, ang = -Math.PI / 2 + i * (Math.PI * 2 / Math.max(onDeck.length, 1)) + walked * 0.00009 * dir;
+    // everyone keeps walking the ring; small enough to stay on the track
+    const dir = i % 2 ? 1 : -1, ang = -Math.PI / 2 + i * (Math.PI * 2 / Math.max(onDeck.length, 1)) + t * 0.00007 * dir;
     const face = dirOf(-Math.sin(ang) * dir, Math.cos(ang) * dir, 'front');
-    drawBot(x + Math.cos(ang) * track, y + Math.sin(ang) * track + 3, ROLE_COLORS[a.role] || '#00e5ff', a.status, t, i * 4.1, walking ? face : 'front', sc, walking);
+    drawBot(x + Math.cos(ang) * track, y + Math.sin(ang) * track + 4 * sc, ROLE_COLORS[a.role] || '#00e5ff', a.status, t, i * 4.1, face, sc, true);
   });
   // the open-items badge (no name plate: the portrait is Helix)
   ctx.textAlign = 'center';
