@@ -193,11 +193,11 @@ class TestRegister:
         "display_name": "N",
     }
 
-    def test_closed_when_invite_code_unset(self, client):
-        r = client.post(
-            "/api/auth/register", json=dict(self.BODY, invite_code="anything")
-        )
-        assert r.status_code == 403 and "closed" in r.json()["detail"].lower()
+    def test_open_when_invite_code_unset(self, client, store):
+        # open sign-up: no code needed; the crew and Helix chat need a subscription instead
+        r = client.post("/api/auth/register", json=self.BODY)
+        assert r.status_code == 200 and r.json()["token"]
+        assert "new@example.com" in store.users
 
     def test_refused_without_or_with_wrong_invite_code(
         self, client, monkeypatch, store

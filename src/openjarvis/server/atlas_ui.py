@@ -17,8 +17,8 @@ from pydantic import BaseModel, Field
 
 from openjarvis.server import admin_analytics, briefs, hardening
 from openjarvis.server.crew import helix as crew_helix
-from openjarvis.server.media import service as media_service
 from openjarvis.server.media import helix_tools
+from openjarvis.server.media import service as media_service
 from openjarvis.server.media.service import MediaServiceError
 
 logger = logging.getLogger(__name__)
@@ -593,7 +593,7 @@ async def index():
       </div>
       <div class="auth-field" id="auth-invite-wrap">
         <label>Invite Code</label>
-        <input id="auth-invite" type="password" placeholder="required to register" autocomplete="off"/>
+        <input id="auth-invite" type="password" placeholder="only if you were given one" autocomplete="off"/>
       </div>
       <div class="auth-field">
         <label>Email</label>
@@ -1696,6 +1696,13 @@ async def chat(req: ChatRequest, request: Request):
     if req.image and len(req.image) > hardening.MAX_IMAGE_B64_CHARS:
         return JSONResponse({"detail": "Image too large (limit %d MB)" % (hardening.MAX_IMAGE_BYTES // (1024 * 1024)), "reply": "Image too large."}, status_code=413)
     store = request.app.state.session_store
+
+    # Helix runs on the owner's AI keys: chat is for the owner and for accounts with an active subscription
+    from openjarvis.server.crew import crew_access
+
+    if not await crew_access(request):
+        return JSONResponse({"reply": "Subscribe to chat with Helix and run your own crew. Tap SUBSCRIBE on the Station to start.",
+                             "model_display": "HELIX", "model_color": "cyan", "ui_actions": []})
 
     # "read me the brief": answered from the brief feed, with no model call and no spend
     brief_period = None if req.image or not briefs.owner_request(request) else briefs.wants_brief(req.message)

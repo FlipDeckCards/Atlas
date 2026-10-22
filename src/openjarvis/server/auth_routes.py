@@ -64,13 +64,12 @@ def decode_token(token: str) -> dict | None:
 
 @router.post("/api/auth/register")
 async def register(req: RegisterRequest, request: Request):
-    # invite-only: with INVITE_CODE unset, registration is switched off
-    if not hardening.invite_code_configured():
-        raise HTTPException(status_code=403, detail="Registration is closed")
+    # open sign-up: anyone can create an account. The crew and Helix chat need an active subscription (see crew_access).
+    # If INVITE_CODE is set on the server, a matching code is still required (set it to close sign-up again).
     blocked = hardening.enforce({"register_ip": hardening.client_ip(request)})
     if blocked:
         raise HTTPException(status_code=429, detail="Too many attempts. Try again later.", headers={"Retry-After": str(blocked[1])})
-    if not hardening.invite_code_ok(req.invite_code):
+    if hardening.invite_code_configured() and not hardening.invite_code_ok(req.invite_code):
         raise HTTPException(status_code=403, detail="Invalid invite code")
     if len(req.password) < MIN_PASSWORD_LENGTH:
         raise HTTPException(status_code=400, detail="Password must be at least %d characters" % MIN_PASSWORD_LENGTH)
