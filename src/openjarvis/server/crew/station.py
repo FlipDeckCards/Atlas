@@ -81,7 +81,11 @@ STATION_PAGE = r"""<!DOCTYPE html>
   .cm.u { align-self:flex-end; background:rgba(255,109,0,0.08); border:1px solid rgba(255,109,0,0.25); color:#ffa040; }
   .cm.a { align-self:flex-start; background:rgba(0,229,255,0.04); border:1px solid rgba(0,229,255,0.14); }
   .cm .tg { font-size:9px; letter-spacing:2px; opacity:0.55; margin-bottom:3px; }
-  .agent { border:1px solid var(--border); border-radius:2px; padding:6px 8px; margin-bottom:6px; cursor:default; background:rgba(0,229,255,0.02); }
+  .agent.open { border-color:var(--cyan-dim); background:rgba(0,229,255,0.05); }
+  .agent-chev { color:var(--text-dim); font-size:10px; margin-left:4px; }
+  .agent-det { margin-top:6px; padding-top:6px; border-top:1px solid var(--border); }
+  .agent-k { font-size:8px; letter-spacing:2px; color:var(--text-dim); text-transform:uppercase; margin-top:5px; }
+  .agent { border:1px solid var(--border); border-radius:2px; padding:6px 8px; margin-bottom:6px; cursor:pointer; background:rgba(0,229,255,0.02); }
   .agent-top { display:flex; align-items:center; gap:7px; margin-bottom:5px; }
   .agent-name { font-family:'Orbitron',monospace; font-size:11px; letter-spacing:2px; font-weight:700; }
   .agent-role { font-size:9px; letter-spacing:1px; color:var(--text-dim); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -258,6 +262,7 @@ function questionCard(q) {
   return c;
 }
 
+const openAgents = new Set();
 function rosterSec() {
   const s = mk('div', 'sec');
   const l = mk('div', 'lbl'); l.append(mk('span', null, 'Crew roster'), mk('span', 'act', (S.roster || []).length + ' on the station')); s.append(l);
@@ -270,11 +275,21 @@ function rosterSec() {
     // compact card: face, name, role and status; what it can and cannot do shows on hover
     const who = mk('div', 'grow'); who.style.minWidth = '0'; who.append(nm, mk('div', 'agent-role', (a.role === 'lead' ? 'lead' : a.role) + ' · ' + a.model));
     top.append(d, who); top.style.marginBottom = '2px';
-    c.title = a.name + ': ' + a.can + '\nLimits: ' + a.cannot;
+    // click the card to open it: what this agent does and what it cannot do (stays open across refreshes)
+    const open = openAgents.has(a.role);
+    c.classList.toggle('open', open);
+    const chev = mk('span', 'agent-chev', open ? '▴' : '▾'); top.append(chev);
     c.append(top);
+    if (open) {
+      const det = mk('div', 'agent-det');
+      det.append(mk('div', 'agent-k', 'Does'), mk('div', 'agent-can', a.can), mk('div', 'agent-k', 'Limits'), mk('div', 'agent-cannot', a.cannot),
+                 mk('div', 'agent-k', 'Model'), mk('div', 'agent-cannot', a.model || '—'));
+      c._det = det;
+    }
+    c.onclick = () => { if (openAgents.has(a.role)) openAgents.delete(a.role); else openAgents.add(a.role); renderSide(true); };
     const st = a.working ? a.working + ' working' : a.waiting ? 'waiting on you' : 'standing by';
     const sl = mk('div', 'agent-st', st + (a.done ? ' · ' + a.done + ' done' : '')); if (a.working) sl.style.color = '#00ff88'; else if (a.waiting) sl.style.color = '#ff6d00';
-    c.append(sl); s.append(c);
+    c.append(sl); if (c._det) c.append(c._det); s.append(c);
   });
   return s;
 }
