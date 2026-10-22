@@ -30,7 +30,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-VERSION = "1.0"
+VERSION = "1.1"
 CONFIG = Path.home() / ".aibussol_workbench.json"
 POLL_S, HELLO_S, PROGRESS_S = 20, 60, 120
 
@@ -52,7 +52,9 @@ def save_config(cfg: dict) -> None:
 
 def call(cfg: dict, path: str, body: dict | None = None, timeout: int = 30) -> dict:
     req = urllib.request.Request(cfg["server"].rstrip("/") + path, data=json.dumps(body or {}).encode("utf-8"), method="POST",
-                                 headers={"Content-Type": "application/json", "Authorization": "Bearer " + cfg["token"]})
+                                 headers={"Content-Type": "application/json", "Authorization": "Bearer " + cfg["token"],
+                                          # a named client: the site's firewall refuses Python's default user agent
+                                          "User-Agent": f"AibussolWorkbench/{VERSION} (+https://aibussol.com)"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8") or "{}")
 
