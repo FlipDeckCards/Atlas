@@ -116,6 +116,11 @@ async def crew_state(request: Request):
         return {"enabled": False, "detail": "The crew is off. Set CREW_ENABLED=true on Render and redeploy."}
     st = await engine.state(uid)
     st["connections"] = await conns.status(engine.store, uid)
+    from openjarvis.server.crew import workbench
+
+    pc, paired = engine.presence.status(uid), bool(await engine.store.get_secret(uid, workbench.TOKEN_SECRET))
+    st["connections"]["workbench"].update(connected=bool(pc.get("online")), paired=paired, info=pc,
+                                          setup="" if pc.get("online") else ("Paired; start the helper on your PC." if paired else "Pair your PC so Rig can build in your real projects with Claude Code."))
     st["enabled"] = True
     return st
 
@@ -240,6 +245,115 @@ async def crew_brief_now(request: Request):
         return JSONResponse({"detail": "Herald is not running."}, status_code=503)
     out = await engine.herald.run()
     return out if out.get("ok") else JSONResponse(out, status_code=409 if "already" in out.get("detail", "") else 502)
+
+
+# ── the Workbench: Michael's PC as Rig (crew/workbench.py) ─────────────────────────────────────────────
+
+_HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workbench_helper.py")
+
+
+@router.post("/api/crew/workbench/pair")
+async def workbench_pair(request: Request):
+    """A new helper token for this account, shown once (any older token stops working)."""
+    g = _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    from openjarvis.server.crew import workbench
+
+    token = await workbench.pair(engine.store, uid)
+    await engine.store.add_event(uid, "connection", "Workbench paired (a new PC token was made).")
+    return {"token": token, "download": "/crew/workbench/aibussol_workbench.py"}
+
+
+@router.post("/api/crew/workbench/unpair")
+async def workbench_unpair(request: Request):
+    g = _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    from openjarvis.server.crew import workbench
+
+    await workbench.unpair(engine.store, uid)
+    await engine.store.add_event(uid, "connection", "Workbench unpaired.")
+    return {"ok": True}
+
+
+@router.get("/crew/workbench/aibussol_workbench.py")
+async def workbench_download():
+    """The helper script (no secrets in it: the token is given on the command line once)."""
+    return FileResponse(_HELPER, media_type="text/x-python", filename="aibussol_workbench.py", headers={"Cache-Control": "no-cache"})
+
+
+async def _pc(request: Request):
+    """(user_id, engine) for a helper request with a valid PC token, else an error response."""
+    engine = getattr(request.app.state, "crew_engine", None)
+    if engine is None:
+        return JSONResponse({"detail": "The crew is off."}, status_code=503)
+    hit = hardening.enforce({"chat_ip": hardening.client_ip(request)})
+    if hit:
+        return JSONResponse({"detail": "Too many requests."}, status_code=429, headers={"Retry-After": str(hit[1])})
+    scheme, _, token = request.headers.get("Authorization", "").partition(" ")
+    from openjarvis.server.crew import workbench
+
+    uid = await workbench.verify(engine.store, token) if scheme.lower() == "bearer" else None
+    if not uid:
+        return JSONResponse({"detail": "Not paired. Pair your PC on the Station."}, status_code=401)
+    return uid, engine
+
+
+async def _json(request: Request) -> dict:
+    try:
+        body = await request.json()
+        return body if isinstance(body, dict) else {}
+    except Exception:
+        return {}
+
+
+@router.post("/crew/workbench/hello")
+async def workbench_hello(request: Request):
+    g = await _pc(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    engine.presence.hello(uid, await _json(request))
+    return {"ok": True}
+
+
+@router.post("/crew/workbench/next")
+async def workbench_next(request: Request):
+    g = await _pc(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    return {"job": await engine.workbench_next(uid)}
+
+
+@router.post("/crew/workbench/{task_id}/progress")
+async def workbench_progress(task_id: str, request: Request):
+    g = await _pc(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    try:
+        await engine.workbench_progress(uid, task_id, str((await _json(request)).get("note") or "")[:300])
+    except (LookupError, ValueError) as exc:
+        return _err(exc, 404 if isinstance(exc, LookupError) else 409)
+    return {"ok": True}
+
+
+@router.post("/crew/workbench/{task_id}/done")
+async def workbench_done(task_id: str, request: Request):
+    g = await _pc(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    body = await _json(request)
+    try:
+        await engine.workbench_done(uid, task_id, bool(body.get("ok")), str(body.get("summary") or ""), int(body.get("minutes") or 0))
+    except (LookupError, ValueError) as exc:
+        return _err(exc, 404 if isinstance(exc, LookupError) else 409)
+    return {"ok": True}
 
 
 @router.post("/api/crew/run")

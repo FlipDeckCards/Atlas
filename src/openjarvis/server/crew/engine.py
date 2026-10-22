@@ -65,6 +65,9 @@ ROLES: Dict[str, Dict[str, str]] = {
     "operator": {"name": "Relay", "model": "writing", "about": "The only role that can use connected platforms (Stripe, Etsy...). Risky actions become checkpoints for the owner.",
                  "can": "Use connected platforms: Stripe products and payment links, Etsy draft listings",
                  "cannot": "Anything public, paid or permanent without your Approve"},
+    "workbench": {"name": "Rig", "model": "writing", "about": "Works on Michael's own computer through the Workbench helper: Claude Code in his real project folders with his Unity / Unreal editors, on his own Claude plan (no API cost). Builds, tests and fixes games (and anything that needs his machine) the way Deadzone Run was built. Rig's tasks wait until the PC is connected.",
+                  "can": "Build and test in your real projects on your PC: Unity, Unreal, Git, Claude Code (your plan, no API cost)",
+                  "cannot": "Publish, upload to a store or push to main; it runs only while the Workbench helper is on"},
     "reviewer": {"name": "Lens", "model": "writing", "about": "Checks the crew's work before it reaches Michael: reads every deliverable, fact-checks with web_search, and sends a task back once with request_changes when it is wrong or incomplete. Saves a short review.",
                  "can": "Read every deliverable, fact-check on the web, send work back once for fixes, write the review",
                  "cannot": "Change the work itself or approve anything for you"},
@@ -151,9 +154,10 @@ def _clip(v: Any, n: int) -> str:
 HOUSE_RULES = (
     "- Games: mobile games are built in Unity (C#, the Input System), never as a web prototype unless he asks for one; open-world games in Unreal. "
     "Every game must play with keyboard AND a connected PlayStation controller. Deadzone Run is the reference game.\n"
-    "- The Unity / Unreal editors run only on Michael's computer, not on this server. For a game, the crew writes the design doc, the C# "
-    "scripts, the input map and the asset list into a GitHub repo (Forge, on a crew/ branch); the last task is a checklist for Michael to open "
-    "it in Unity on his PC, build and test. Never claim a game was built or tested.\n"
+    "- The Unity / Unreal editors run only on Michael's computer. Game building and testing is Rig's job (role workbench): Rig runs Claude "
+    "Code in his real project folder on his PC, the way Deadzone Run was built. Plan the design, art and copy with the other agents, then "
+    "give Rig the build: 'in project <Name>, implement ..., build and test'. Set the mission project to the game's project name. If his PC "
+    "is not connected, Rig's task simply waits. Never write a web prototype for a game, and never claim a game was built unless Rig reports it.\n"
     "- Products: FlipDeck Cards (card-flipping subscription), Marnyx (AI social media manager), Deadzone Games (games site, mobile games "
     "go to Google Play first), Aibussol (this assistant). One shared Stripe account, tagged with metadata app=<product>."
 )
@@ -288,6 +292,9 @@ class CrewEngine:
         self.products: Dict[str, Dict[str, Any]] = {}
         self._product_task: Optional[asyncio.Task] = None
         self.herald = None                                  # crew/herald.py, set by the app: makes the briefs on schedule
+        from openjarvis.server.crew.workbench import Presence
+
+        self.presence = Presence()                          # which PCs (Workbench helpers) said hello recently
         self.owner_fn = None                                # async user_id -> bool, set by the app: the owner has no daily cap and auto top-ups
         self._owner_cache: Dict[str, bool] = {}
         self._herald_task: Optional[asyncio.Task] = None
@@ -370,6 +377,8 @@ class CrewEngine:
         for t in await self.store.queued_candidates():
             if started >= free:
                 break
+            if t["role"] == "workbench":                    # Rig's jobs run on Michael's PC: the Workbench helper collects them
+                continue
             uid = t["user_id"]
             if uid not in blocked:
                 blocked[uid] = await self.may_run(uid)
@@ -486,7 +495,7 @@ class CrewEngine:
             "store submissions are Michael's; plan around them. Keep briefs specific.\n"
             f"Michael's house rules (follow them):\n{house_rules(self.env)}\n"
             'Answer with JSON only: {"title": "short mission name", "project": "FlipDeck|Marnyx|Deadzone|Aibussol|New", '
-            '"tasks": [{"title": "...", "role": "researcher|builder|writer|designer|operator|reviewer", "brief": "what to do and what to deliver", '
+            '"tasks": [{"title": "...", "role": "researcher|builder|writer|designer|operator|reviewer|workbench", "brief": "what to do and what to deliver", '
             '"depends_on": [indexes of earlier tasks]}]}'
         )
 
@@ -502,6 +511,10 @@ class CrewEngine:
                 await self._notify(uid, "Mission waiting", f'"{_clip(m["goal"], 80)}" will be planned when the daily crew limit resets. Resume it from the Station.')
                 return
             conn_text = conns.describe_for_agent(await conns.status(self.store, uid, self.env))
+            pc = self.presence.status(uid)
+            conn_text += ("\n- Michael's PC (Workbench, for Rig): " + ("connected" + (", Unity" if pc.get("unity") else "") + (", Unreal" if pc.get("unreal") else "")
+                                                                         + (", projects: " + ", ".join(pc.get("projects") or []) if pc.get("projects") else "")
+                                                                         if pc.get("online") else "not connected right now (Rig tasks wait until it is)"))
             resp = await self.acompletion(model=self.models["writing"], max_tokens=PLANNER_MAX_TOKENS, messages=[
                 {"role": "system", "content": self._planner_prompt(conn_text)},
                 {"role": "user", "content": m["goal"]}])
@@ -745,6 +758,57 @@ class CrewEngine:
         await self.store.add_event(task["user_id"], "budget", f'"{task["title"]}" is waiting for more budget.', mission_id=mission["id"], task_id=task["id"])
         await self._notify(task["user_id"], "Budget needed", q["text"])
         return True
+
+    # ── Rig: jobs that run on Michael's PC through the Workbench helper (crew/workbench.py) ──────────────────
+
+    async def workbench_next(self, user_id: str) -> Optional[Dict[str, Any]]:
+        from openjarvis.server.crew.workbench import job_for
+
+        if await self.may_run(user_id) == "paused":
+            return None
+        for t in await self.store.queued_candidates():
+            if t["role"] != "workbench" or t["user_id"] != user_id:
+                continue
+            claimed = await self.store.claim(t["id"])
+            if not claimed:
+                continue
+            mission = await self.store.get_mission(t["mission_id"]) or {}
+            siblings = await self.store.list_tasks(t["mission_id"])
+            deps = "\n".join(f'- {d["title"]}: {d["result"][:1500]}' for d in siblings if d["idx"] in claimed["depends_on"]) or "- none"
+            outs = ", ".join(o["name"] for o in await self.store.list_outputs(t["mission_id"]))
+            if outs:
+                deps += f"\nFiles in the mission outbox (on aibussol.com): {outs}"
+            await self.store.add_event(user_id, "task", f'Rig started "{t["title"]}" on your PC.', mission_id=t["mission_id"], task_id=t["id"])
+            return job_for(claimed, mission, deps, house_rules(self.env))
+        return None
+
+    async def _own_running_pc_task(self, user_id: str, task_id: str) -> Dict[str, Any]:
+        t = await self.store.get_task(task_id)
+        if not t or t["user_id"] != user_id or t["role"] != "workbench":
+            raise LookupError("No such job.")
+        if t["status"] != "running":
+            raise ValueError("That job is not running.")
+        return t
+
+    async def workbench_progress(self, user_id: str, task_id: str, note: str) -> None:
+        t = await self._own_running_pc_task(user_id, task_id)
+        await self.store.update_task(t["id"], claimed_at=self.now())       # keeps it from counting as stuck
+        await self.store.add_event(user_id, "step", f'"{t["title"]}" on your PC: {_clip(note, 160)}', mission_id=t["mission_id"], task_id=t["id"])
+
+    async def workbench_done(self, user_id: str, task_id: str, ok: bool, summary: str, minutes: int = 0) -> None:
+        t = await self._own_running_pc_task(user_id, task_id)
+        summary = str(summary or "").strip()[:20000] or ("Finished." if ok else "It did not finish.")
+        slug = re.sub(r"[^a-z0-9]+", "-", t["title"].lower()).strip("-")[:40] or "job"
+        await self.store.add_output(t["mission_id"], t["id"], user_id, f"rig-{slug}.md", f"# {t['title']}\n\nOn Michael's PC, {minutes} min, "
+                                    f"{'finished' if ok else 'stopped'}.\n\n{summary}\n")
+        if ok:
+            await self._finish(t, summary[:4000], list(t["transcript"]), 0.0)
+            await self._notify(user_id, "Rig finished on your PC", f'"{t["title"]}" ({minutes} min). {_clip(summary, 600)}')
+        else:
+            await self.store.update_task(t["id"], status="failed", result=summary[:4000])
+            await self.store.add_event(user_id, "error", f'"{t["title"]}" stopped on your PC: {_clip(summary, 200)}', mission_id=t["mission_id"], task_id=t["id"])
+            await self._notify(user_id, "Rig stopped on your PC", f'"{t["title"]}": {_clip(summary, 600)}')
+            await self._check_mission(t["mission_id"])
 
     async def _finish(self, task: Dict[str, Any], summary: str, transcript: List[Dict[str, Any]], cost: float) -> None:
         await self.store.update_task(task["id"], status="done", result=summary[:4000], transcript=transcript)
@@ -1081,6 +1145,14 @@ class CrewEngine:
         roster = []
         for key, r in ROLES.items():
             mine = [t for m in out for t in m["tasks"] if t["role"] == key]
+            if key == "workbench":
+                pc = self.presence.status(user_id)
+                roster.append({"role": key, "name": r["name"], "model": "YOUR PC · CLAUDE CODE", "can": r["can"], "cannot": r["cannot"],
+                               "working": sum(1 for t in mine if t["status"] == "running"), "waiting": 0, "done": sum(1 for t in mine if t["status"] == "done"),
+                               "status_text": ("PC online" + (" · " + pc["host"] if pc.get("host") else "") if pc.get("online") else "PC offline")
+                               + (" · " + str(sum(1 for t in mine if t["status"] == "queued")) + " job(s) waiting" if any(t["status"] == "queued" for t in mine) else ""),
+                               "workbench": pc})
+                continue
             roster.append({"role": key, "name": r["name"], "model": hardening.display_name(self.models.get(r["model"], "")),
                            "can": r["can"], "cannot": r["cannot"],
                            "working": sum(1 for t in mine if t["status"] == "running"), "waiting": sum(1 for t in mine if t["status"] == "waiting"),

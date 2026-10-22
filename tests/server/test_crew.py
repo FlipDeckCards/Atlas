@@ -682,3 +682,50 @@ def test_product_stats_say_which_database_is_missing():
     out = run(ProductStats(pool=None, env={}).all())
     assert set(out) == {"aibussol", "flipdeck", "marnyx", "deadzone"}
     assert not out["flipdeck"]["connected"] and "FLIPDECK_READ_DATABASE_URL" in out["flipdeck"]["note"]
+
+
+# ── the Workbench: Rig's jobs run on Michael's PC ──
+
+class TestWorkbench:
+    def test_pairing_tokens_name_their_account_and_can_be_replaced(self):
+        from openjarvis.server.crew import workbench
+
+        store = MemoryCrewStore()
+        tok = run(workbench.pair(store, UID))
+        assert tok.startswith("wb." + UID + ".") and run(workbench.verify(store, tok)) == UID
+        assert run(workbench.verify(store, tok[:-2] + "xx")) is None and run(workbench.verify(store, "nonsense")) is None
+        tok2 = run(workbench.pair(store, UID))
+        assert run(workbench.verify(store, tok)) is None and run(workbench.verify(store, tok2)) == UID
+        run(workbench.unpair(store, UID))
+        assert run(workbench.verify(store, tok2)) is None
+
+    def test_rig_jobs_wait_for_the_pc_and_finish_from_it(self):
+        plan = {"title": "Runner level", "project": "Deadzone", "tasks": [
+            {"title": "Design the level", "role": "writer", "brief": "Design", "depends_on": []},
+            {"title": "Build the level in Unity", "role": "workbench", "brief": "Implement and test", "depends_on": [0]}]}
+        w = world(plan, {"Design the level": [resp(None, [("finish", {"summary": "Level design ready."})])]})
+        m = run(start(w))
+        tasks = run(w.store.list_tasks(m["id"]))
+        assert tasks[1]["status"] == "queued" and m["status"] == "active"           # the server never runs Rig's job itself
+        job = run(w.engine.workbench_next(UID))
+        assert job and job["project"] == "Deadzone" and "Level design ready." in job["results_so_far"] and "Unity" in job["house_rules"]
+        assert run(w.engine.workbench_next(UID)) is None                           # one claim per job
+        assert run(w.engine.workbench_next("someone-else")) is None
+        run(w.engine.workbench_progress(UID, job["task_id"], "Still working (2 min)."))
+        run(w.engine.workbench_done(UID, job["task_id"], True, "Built and play-tested with a controller.", 12))
+        tasks = run(w.store.list_tasks(m["id"]))
+        assert tasks[1]["status"] == "done"
+        outs = [o["name"] for o in run(w.store.list_outputs(m["id"]))]
+        assert any(n.startswith("rig-") for n in outs)
+        with pytest.raises(ValueError):
+            run(w.engine.workbench_done(UID, job["task_id"], True, "again"))
+
+    def test_presence_shows_the_pc_online(self):
+        from openjarvis.server.crew.workbench import Presence
+
+        t = [100.0]
+        p = Presence(clock=lambda: t[0])
+        p.hello(UID, {"host": "MIKE-PC", "projects": ["Deadzone"], "claude": True, "unity": True})
+        assert p.status(UID)["online"] and p.status(UID)["host"] == "MIKE-PC"
+        t[0] += 1000
+        assert not p.status(UID)["online"]

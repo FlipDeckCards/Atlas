@@ -275,7 +275,8 @@ class CrewStore:
         async with self._pool.acquire() as conn:
             res = await conn.execute(
                 "UPDATE crew_tasks SET status = 'queued', updated_at = NOW() WHERE status = 'running' "
-                "AND (claimed_at IS NULL OR claimed_at < NOW() - ($1 || ' seconds')::INTERVAL)", str(int(older_than_s)))
+                "AND (claimed_at IS NULL OR claimed_at < NOW() - ($1 || ' seconds')::INTERVAL) "
+                "AND (role <> 'workbench' OR claimed_at < NOW() - INTERVAL '5 hours')", str(int(older_than_s)))
         return int(res.split()[-1])
 
     async def set_mission_tasks_status(self, mission_id: str, from_statuses: Iterable[str], to_status: str) -> None:
@@ -490,7 +491,10 @@ class MemoryCrewStore:
     async def requeue_stale(self, older_than_s):
         n = 0
         for r in self.tasks.values():
-            if r["status"] == "running" and (r["claimed_at"] is None or (self.clock() - r["claimed_at"]).total_seconds() >= older_than_s):
+            age = None if r["claimed_at"] is None else (self.clock() - r["claimed_at"]).total_seconds()
+            if r["role"] == "workbench" and age is not None and age < 5 * 3600:
+                continue                                            # a PC job can run for hours; the PC reports when it is done
+            if r["status"] == "running" and (age is None or age >= older_than_s):
                 r.update(status="queued", updated_at=self._tick())
                 n += 1
         return n

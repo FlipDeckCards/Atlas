@@ -199,7 +199,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
 const TOKEN_KEY = 'aibussol_token';
 const token = () => localStorage.getItem(TOKEN_KEY) || '';
 const PROJECT_COLORS = { flipdeck:'#ff6d00', marnyx:'#b06cff', deadzone:'#ff3344', aibussol:'#00e5ff', 'new':'#ff4fb8' };
-const ROLE_COLORS = { lead:'#00e5ff', researcher:'#5ad1ff', builder:'#4dffc3', writer:'#ffc14d', designer:'#ff7ad9', operator:'#ff6d00', reviewer:'#c8ff4d', briefer:'#eef3ff' };
+const ROLE_COLORS = { lead:'#00e5ff', researcher:'#5ad1ff', builder:'#4dffc3', writer:'#ffc14d', designer:'#ff7ad9', operator:'#ff6d00', reviewer:'#c8ff4d', briefer:'#eef3ff', workbench:'#a970ff' };
 const STATUS_COLORS = { queued:'#2a5060', running:'#00e5ff', waiting:'#ff6d00', done:'#00ff88', failed:'#ff3344', cancelled:'#2a3a44' };
 let S = null, selected = 'hub', lastDraw = 0, pollTimer = null;
 
@@ -671,15 +671,45 @@ function linksSec() {
       const b = mk('button', 'b', 'Connect'); b.onclick = async () => { const x = await api('/api/crew/connect/etsy'); if (x.ok && x.data.url) location.href = x.data.url; else alert(x.data.detail || 'Etsy cannot be connected yet.'); };
       r.append(b);
     }
+    if (key === 'workbench') {
+      const b = mk('button', 'b', c.paired ? 'Re-pair' : 'Pair your PC');
+      b.onclick = async () => {
+        if (c.paired && !confirm('Make a new PC token? The old one stops working, so restart the helper with the new token.')) return;
+        const x = await api('/api/crew/workbench/pair', 'POST', {}); if (x.ok) { PAIR = x.data; renderSide(true); } else alert(x.data.detail || 'Could not pair right now.');
+      };
+      r.append(b);
+    }
     if (key === 'etsy' && c.connected) {
       const b = mk('button', 'b no', 'Disconnect'); b.onclick = async () => { if (confirm('Forget the Etsy connection?')) { await api('/api/crew/connect/etsy/disconnect', 'POST'); refresh(); } };
       r.append(b);
     }
     s.append(r);
   });
+  if (PAIR) {
+    // shown once: the token and the exact commands for the PC
+    const box = mk('div', 'pnl'); box.append(mk('div', 'pnl-t', 'Pair your PC (shown once)'));
+    const steps = [
+      '1. On your PC, install Python 3 (python.org) and Claude Code, and sign in to Claude Code.',
+      '2. Download the helper: ' + location.origin + PAIR.download,
+      '3. In the folder you saved it to, run (one line, your own paths):',
+    ];
+    steps.forEach(t => box.append(mk('div', 'dim', t)));
+    const cmd = 'python aibussol_workbench.py --server ' + location.origin + ' --token ' + PAIR.token +
+      ' --project "Deadzone=C:\\path\\to\\DeadzoneRun" --unity "C:\\Program Files\\Unity\\Hub\\Editor\\<version>\\Editor\\Unity.exe"';
+    const pre = mk('div', null, cmd); pre.style.cssText = 'font-size:10px;background:#050a12;border:1px solid var(--border);padding:8px;margin:6px 0;overflow-wrap:anywhere;user-select:all';
+    box.append(pre);
+    const row = mk('div'); row.style.cssText = 'display:flex;gap:6px';
+    const cp = mk('button', 'lib-f', 'Copy command'); cp.onclick = () => { try { navigator.clipboard.writeText(cmd); cp.textContent = 'Copied'; } catch (e) {} };
+    const dl = mk('a', 'lib-f', 'Download helper'); dl.href = PAIR.download; dl.setAttribute('download', 'aibussol_workbench.py');
+    const ok = mk('button', 'lib-f', 'Done'); ok.onclick = () => { PAIR = null; renderSide(true); };
+    row.append(cp, dl, ok); box.append(row);
+    box.append(mk('div', 'pnl-note', 'Add one --project NAME=FOLDER for each project (the name matches the mission project, e.g. Deadzone, FlipDeck). The token is not shown again; Re-pair makes a new one. After the first run, just: python aibussol_workbench.py'));
+    s.append(box);
+  }
   s.append(mk('div', 'dim', 'Official APIs only. Read and draft actions run on their own; anything public, paid or permanent waits for your Approve.'));
   return s;
 }
+let PAIR = null;
 
 function ledgerSec(events, title) {
   const s = mk('div', 'sec');
@@ -704,8 +734,8 @@ const bots = new Map();
 const helixImg = new Image(); let helixReady = false;
 helixImg.onload = () => { helixReady = true; }; helixImg.src = '/crew/helix.jpg';
 // the crew: Michael's robot model, rendered per role (front, facing right, facing left) into one sheet: crew/assets/bots.png
-const BOT_VER = '2acfeb9c';   // changes whenever bots.png changes, so browsers never mix an old sheet with new code
-const BOT_ROWS = ['lead', 'researcher', 'builder', 'writer', 'designer', 'operator', 'reviewer', 'briefer'], BOT_CELL = 64;
+const BOT_VER = '73849db9';   // changes whenever bots.png changes, so browsers never mix an old sheet with new code
+const BOT_ROWS = ['lead', 'researcher', 'builder', 'writer', 'designer', 'operator', 'reviewer', 'briefer', 'workbench'], BOT_CELL = 64;
 // sheet columns: 0 standing (front), then 4 walk frames each for front, back, right, left
 const BOT_DIRS = { front: 0, back: 1, right: 2, left: 3 };
 function dirOf(dx, dy, prev) { if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return prev || 'front'; return Math.abs(dx) >= Math.abs(dy) * 0.8 ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'front' : 'back'); }

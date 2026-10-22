@@ -105,6 +105,7 @@ async def status(store, user_id: str, env=None) -> Dict[str, Dict[str, Any]]:
 
     out["github"] = {"connected": github.configured(env), "built": True, "label": "GitHub (Forge's code)",
                      "setup": "" if github.configured(env) else github.SETUP, "actions": []}
+    out["workbench"] = {"connected": False, "built": True, "label": "Your PC (Workbench for Rig)", "setup": "", "actions": [], "pc": True}
     out["web_research"] = {"connected": research.configured(env), "built": True, "label": "Web research (GPT Researcher)",
                            "setup": "" if research.configured(env) else research.SETUP, "actions": []}
     return out

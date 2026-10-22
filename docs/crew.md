@@ -76,3 +76,17 @@ Stripe uses the existing `STRIPE_SECRET_KEY`. Crew-made products carry `metadata
 ## Next (phase 2 ideas)
 
 Google Play and App Store connections (official APIs) and web push notifications from the Aibussol app itself.
+
+## The Workbench (Rig): building on Michael's PC
+
+Game builds (Unity, Unreal) need the editors on Michael's computer, so they run there, through Claude Code on his own plan (no API
+cost), the way Deadzone Run was built. On the Station: Connections → Your PC → **Pair your PC** gives a token once and the command to
+run. The helper (`/crew/workbench/aibussol_workbench.py`, source `src/openjarvis/server/crew/workbench_helper.py`) needs Python 3.9+,
+Claude Code (signed in), Git, and Unity/Unreal for game projects:
+
+    python aibussol_workbench.py --server https://aibussol.com --token wb.… --project "Deadzone=C:\path\to\DeadzoneRun" --unity "C:\…\Unity.exe"
+
+It says hello every minute (the Station shows the PC online), collects Rig's jobs, runs `claude -p` in the mapped folder (edits,
+git, Unity batch builds), posts progress every 2 minutes and reports the result into the mission (`rig-*.md` in the outbox). Rules it
+gives Claude Code: that folder only, a `crew/<name>` branch, never push to main, never publish or upload. The server never runs Rig's
+tasks; they wait until the PC collects them. Re-pair makes a new token (the old one stops working).
