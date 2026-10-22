@@ -46,7 +46,7 @@ MAX_RUNS = 4
 STALE_RUNNING_S = 15 * 60
 MAX_OUTPUT_CHARS = 200_000
 MAX_OUTPUTS_PER_MISSION = 60
-PLANNER_MAX_TOKENS = 1600
+PLANNER_MAX_TOKENS = 5000
 AGENT_MAX_TOKENS = 8000          # room to write a whole file in one save_output call (only tokens used are paid)
 
 ROLES: Dict[str, Dict[str, str]] = {
@@ -739,11 +739,21 @@ class CrewEngine:
             conn_text += ("\n- Michael's PC (Workbench, for Rig): " + ("connected" + (", Unity" if pc.get("unity") else "") + (", Unreal" if pc.get("unreal") else "")
                                                                          + (", projects: " + ", ".join(pc.get("projects") or []) if pc.get("projects") else "")
                                                                          if pc.get("online") else "not connected right now (Rig tasks wait until it is)"))
-            resp = await self.acompletion(model=self.models["writing"], max_tokens=PLANNER_MAX_TOKENS, messages=[
-                {"role": "system", "content": self._for_person(self._planner_prompt(conn_text, envx), envx)},
-                {"role": "user", "content": m["goal"]}])
-            cost = await self._charge(uid, mission_id, "", resp)
-            plan = parse_plan(resp.choices[0].message.content or "", max_tasks(self.env))
+            msgs = [{"role": "system", "content": self._for_person(self._planner_prompt(conn_text, envx), envx)},
+                    {"role": "user", "content": m["goal"]}]
+            cost, plan = 0.0, None
+            for attempt in range(2):
+                resp = await self.acompletion(model=self.models["writing"], max_tokens=PLANNER_MAX_TOKENS, messages=msgs)
+                cost += await self._charge(uid, mission_id, "", resp)
+                text = resp.choices[0].message.content or ""
+                plan = parse_plan(text, max_tasks(self.env))
+                if plan:
+                    break
+                logger.warning("crew planner answer unusable (attempt %d, finish=%s, %d chars): %s", attempt + 1,
+                               getattr(resp.choices[0], "finish_reason", "?"), len(text), text[:300].replace("\n", " "))
+                msgs = msgs + [{"role": "assistant", "content": text[:2000]},
+                               {"role": "user", "content": "That was not valid JSON or was cut off. Answer again with ONLY the JSON object, "
+                                                           f"at most {max_tasks(self.env)} tasks, each brief under 80 words."}]
             if not plan:
                 await self.store.update_mission(mission_id, status="failed", summary="The planner did not return a usable plan.")
                 await self.store.add_event(uid, "error", "Planning failed: no usable plan came back.", mission_id=mission_id, cost_usd=cost)
