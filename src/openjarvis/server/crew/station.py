@@ -521,13 +521,22 @@ function librarySec() {
   else if (!LIB.items.length) s.append(mk('div', 'dim', 'Nothing saved yet. Ask Helix (or Prism) to make something.'));
   LIB.items.slice(0, 60).forEach(it => {
     const r = mk('div', 'lib-row' + (selected === 'm:' + it.id ? ' sel' : ''));
-    if (it.kind === 'image' && it.url) { const im = mk('img', 'lib-thumb'); im.src = it.url; im.alt = ''; im.loading = 'lazy'; r.append(im); }
+    if (it.kind === 'image') { const im = mk('img', 'lib-thumb'); im.alt = ''; im.loading = 'lazy'; mediaBlob(it).then(u => { im.src = u; }).catch(() => { im.style.opacity = '0.3'; }); r.append(im); }
     else r.append(mk('span', 'lib-ico', it.kind === 'sound' ? '♪' : '▶'));
     const box = mk('div'); box.style.minWidth = '0'; box.append(mk('div', 'lib-t', it.title), mk('div', 'lib-k', it.kind)); r.append(box);
     r.onclick = () => openMedia(it.id);
     s.append(r);
   });
   return s;
+}
+// the file for a library item, loaded with the owner's sign-in and kept as a local blob URL (see GET /api/media/items/{id}/file)
+const BLOBS = new Map();
+function mediaBlob(it) {
+  if (BLOBS.has(it.id)) return BLOBS.get(it.id);
+  const p = fetch('/api/media/items/' + encodeURIComponent(it.id) + '/file', { headers: { 'Authorization': 'Bearer ' + token() } })
+    .then(async r => { if (!r.ok) throw new Error(String(r.status)); return URL.createObjectURL(await r.blob()); });
+  BLOBS.set(it.id, p); p.catch(() => BLOBS.delete(it.id));
+  return p;
 }
 async function openMedia(id) {
   selected = 'm:' + id; LIB.open = null; renderSide(true);
@@ -545,7 +554,8 @@ function mediaSec() {
   s.append(mk('div', 'dim', it.kind + ' · ' + kb + (it.duration_seconds ? ' · ' + it.duration_seconds + 's' : '')));
   const media = document.createElement(it.kind === 'image' ? 'img' : 'audio');
   if (it.kind === 'sound') media.controls = true;
-  media.src = it.url; s.append(media);
+  mediaBlob(it).then(u => { media.src = u; }).catch(() => { media.alt = 'The file could not be loaded.'; });
+  s.append(media);
   if (it.kind === 'image' || it.kind === 'sound') {
     // edits make a NEW item (the original is kept): preview first, then save
     const OPS = { image: { crop: ['left', 'top', 'right', 'bottom'], resize: ['width', 'height'], brightness: ['factor'], contrast: ['factor'] },
@@ -580,7 +590,7 @@ function mediaSec() {
       prev = { op: sel.value, params: collect() }; media.src = 'data:' + r.data.preview.mime + ';base64,' + r.data.preview.data_base64;
       bSave.hidden = bDisc.hidden = false; st.textContent = 'Preview only. Nothing is saved yet.';
     };
-    bDisc.onclick = () => { prev = null; media.src = it.url; bSave.hidden = bDisc.hidden = true; st.textContent = ''; };
+    bDisc.onclick = () => { prev = null; mediaBlob(it).then(u => { media.src = u; }).catch(() => {}); bSave.hidden = bDisc.hidden = true; st.textContent = ''; };
     bSave.onclick = async () => {
       if (!prev) return;
       const r = await api('/api/media/items/' + it.id + '/edit', 'POST', { operation: prev.op, params: prev.params, preview: false }).catch(() => null);

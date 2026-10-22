@@ -16,7 +16,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from openjarvis.server.media import image as image_mod
@@ -112,6 +112,24 @@ async def get_item(item_id: str, request: Request, download: bool = False):
         service.rate_limit(ctx, "media_read")
         item = await service.get_owned(ctx, item_id)
         return JSONResponse({"success": True, "item": service.with_url(ctx, item, download=download)})
+    return await _guard(go)
+
+
+@router.get("/api/media/items/{item_id}/file")
+async def get_item_file(item_id: str, request: Request):
+    """The file itself, read by the server with its own signed request and sent with the owner's sign-in. The Station loads images
+    this way (a browser <img> cannot send the sign-in), so no storage link has to work in the browser."""
+    async def go():
+        ctx = service.ctx_from_request(request)
+        service.rate_limit(ctx, "media_read")
+        item = await service.get_owned(ctx, item_id)
+        try:
+            data = await ctx.storage.get(item.storage_key)
+        except Exception as exc:
+            logger.error("media file read failed for item %s: %s", item_id, getattr(exc, "public_message", None) or type(exc).__name__)
+            return JSONResponse({"error": "storage_failed", "detail": "The file could not be read from storage."}, status_code=502)
+        return Response(content=data, media_type=item.mime_type or "application/octet-stream",
+                        headers={"Cache-Control": "private, max-age=600"})
     return await _guard(go)
 
 
