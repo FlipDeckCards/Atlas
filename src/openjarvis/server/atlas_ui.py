@@ -258,7 +258,7 @@ async def admin_analytics_data(request: Request):
         return JSONResponse({"detail": "Analytics are unavailable right now."}, status_code=503)
 
 
-@router.get("/")
+@router.get("/classic")
 async def index():
     html = r"""
 <!DOCTYPE html>

@@ -116,6 +116,27 @@ STATION_PAGE = r"""<!DOCTYPE html>
   .msg { font-size:11px; min-height:14px; margin-top:6px; color:var(--green); overflow-wrap:anywhere; }
   .msg.err { color:var(--red); }
   a { color:var(--cyan); }
+  #auth { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(3,5,9,0.96); z-index:9; padding:20px; }
+  #auth .box { width:100%; max-width:380px; border:1px solid var(--cyan-dim); padding:28px; background:var(--panel); display:flex; flex-direction:column; gap:10px; }
+  #auth .box .h { font-family:'Orbitron',monospace; letter-spacing:4px; font-size:13px; color:var(--cyan); margin-bottom:6px; text-align:center; }
+  #auth input { background:#050a12; border:1px solid var(--border); color:var(--text); padding:10px; font:inherit; font-size:13px; border-radius:2px; }
+  #auth a { color:var(--cyan); }
+  #a-err { color:var(--red); min-height:14px; font-size:11px; }
+  .ans .b.tool { padding:6px 9px; font-size:14px; line-height:1; }
+  .ans .b.tool.rec { border-color:var(--red); color:var(--red); animation:blink 1s infinite; }
+  @keyframes blink { 50% { opacity:0.45; } }
+  #img-bar { display:flex; gap:8px; align-items:center; margin-top:6px; font-size:10px; color:var(--text-dim); }
+  #img-bar[hidden] { display:none; }
+  #img-bar img { width:34px; height:34px; object-fit:cover; border-radius:2px; }
+  .cm img.th { max-width:140px; max-height:100px; display:block; margin-top:6px; border-radius:2px; }
+  .cm .vn { font-size:10px; color:var(--orange); margin-top:4px; }
+  #wake { font-family:'Share Tech Mono',monospace; letter-spacing:1px; }
+  #wake.on { color:#00ff99; } #wake.rec { color:var(--red); } #wake.busy { color:var(--orange); }
+  .v-row { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:8px; font-size:10px; color:var(--text-dim); }
+  .v-row select, .v-row input { background:#050a12; border:1px solid var(--border); color:var(--text); padding:4px 6px; font:inherit; font-size:11px; max-width:110px; }
+  .v-row input[type=text] { max-width:none; flex:1; }
+  .xbtn { background:transparent; border:1px solid transparent; color:var(--text-dim); cursor:pointer; font-size:11px; padding:0 4px; }
+  .xbtn:hover { color:var(--red); border-color:var(--red); }
   #gate { position:fixed; inset:48px 0 0 0; display:none; align-items:center; justify-content:center; background:rgba(5,5,8,0.92); z-index:5; padding:20px; }
   #gate .box { max-width:460px; border:1px solid var(--cyan-dim); padding:28px; background:var(--panel); line-height:1.7; font-size:12px; }
   #gate .box .h { font-family:'Orbitron',monospace; letter-spacing:3px; font-size:12px; margin-bottom:12px; }
@@ -147,7 +168,6 @@ STATION_PAGE = r"""<!DOCTYPE html>
   <button class="tbtn" id="t-night" title="Let the crew keep working through quiet hours">NIGHT SHIFT</button>
   <button class="tbtn warn" id="t-pause" title="Stop the crew from starting any new work">PAUSE ALL</button>
   <button class="tbtn" id="t-sub" onclick="subscribe()" hidden>SUBSCRIBE</button>
-  <button class="tbtn" onclick="location.href='/'">← HELIX</button>
   <button class="tbtn" onclick="logout()">LOGOUT</button>
 </div>
 <div id="main">
@@ -155,13 +175,24 @@ STATION_PAGE = r"""<!DOCTYPE html>
   <div id="center">
     <div id="stage"><canvas id="cv"></canvas></div>
     <div id="chat" class="sec">
-      <div class="lbl"><span>Helix</span><span class="act">same chat as the main screen</span></div>
+      <div class="lbl"><span>Helix</span><span class="act"><span id="wake">VOICE: TAP TO WAKE</span> · <button class="lib-f" id="voice-tog" title="Helix reads her replies aloud">🔊 ON</button></span></div>
       <div id="chat-log"></div>
-      <div class="ans"><input id="chat-in" type="text" maxlength="8000" placeholder='Tell Helix… e.g. "build me…"' autocomplete="off"/><button class="b" id="chat-send">Send</button></div>
+      <div id="img-bar" hidden><img id="img-thumb" alt=""/><span id="img-name"></span><button class="xbtn" id="img-clear" title="Remove the image">✕</button></div>
+      <div class="ans"><button class="b tool" id="mic" title='Talk to Helix (or say "Hey Helix", then "send")'>🎙</button><label class="b tool" for="img-in" title="Attach an image">📎</label><input id="img-in" type="file" accept="image/*" hidden/><input id="chat-in" type="text" maxlength="8000" placeholder='Type, or say "Hey Helix"…' autocomplete="off"/><button class="b" id="chat-send">Send</button></div>
     </div>
   </div>
   <div id="right" class="col"><div id="links-box"></div><div id="side-body"></div></div>
 </div>
+<div id="auth"><div class="box">
+  <div class="h">AIBUS<span style="color:var(--orange)">SOL</span></div>
+  <div class="dim" id="a-mode" style="text-align:center;letter-spacing:2px;font-size:10px">SIGN IN</div>
+  <input id="a-email" type="email" placeholder="Email" autocomplete="email"/>
+  <input id="a-pass" type="password" placeholder="Password" autocomplete="current-password"/>
+  <div id="a-reg" style="display:none;flex-direction:column;gap:10px"><input id="a-name" placeholder="Display name" autocomplete="nickname"/><input id="a-invite" placeholder="Invite code (if you have one)" autocomplete="off"/></div>
+  <button class="b" id="a-go">SIGN IN</button>
+  <div id="a-err"></div>
+  <div class="dim" style="text-align:center;font-size:11px"><span id="a-q">No account yet?</span> <a href="#" id="a-tog">Create one</a></div>
+</div></div>
 <div id="gate"><div class="box"><div class="h" id="gate-h">STATION OFFLINE</div><div id="gate-t"></div></div></div>
 
 <script>
@@ -189,16 +220,69 @@ function gate(title, text) {
   document.getElementById('gate-h').textContent = title;
   const t = document.getElementById('gate-t'); t.textContent = '';
   t.appendChild(document.createTextNode(text + ' '));
-  const a = mk('a', null, 'Back to Helix'); a.href = '/'; t.appendChild(a);
+  const a = mk('a', null, 'Reload'); a.href = '/'; t.appendChild(a);
+}
+
+// ── sign in / create an account (the same /api/auth endpoints as before) ──
+let authMode = 'login', booted = false;
+function showAuth(msg) {
+  document.getElementById('auth').style.display = 'flex';
+  document.getElementById('a-err').textContent = msg || '';
+}
+function setAuthMode(m) {
+  authMode = m;
+  document.getElementById('a-mode').textContent = m === 'login' ? 'SIGN IN' : 'CREATE AN ACCOUNT';
+  document.getElementById('a-go').textContent = m === 'login' ? 'SIGN IN' : 'CREATE ACCOUNT';
+  document.getElementById('a-q').textContent = m === 'login' ? 'No account yet?' : 'Already have one?';
+  document.getElementById('a-tog').textContent = m === 'login' ? 'Create one' : 'Sign in';
+  document.getElementById('a-reg').style.display = m === 'register' ? 'flex' : 'none';
+  document.getElementById('a-pass').autocomplete = m === 'login' ? 'current-password' : 'new-password';
+  document.getElementById('a-err').textContent = '';
+}
+async function doAuth() {
+  const email = document.getElementById('a-email').value.trim(), password = document.getElementById('a-pass').value;
+  const err = document.getElementById('a-err'), btn = document.getElementById('a-go');
+  if (!email || !password) { err.textContent = 'Email and password, please.'; return; }
+  btn.disabled = true; btn.textContent = 'CONNECTING…'; err.textContent = '';
+  const body = authMode === 'login' ? { email, password }
+    : { email, password, invite_code: document.getElementById('a-invite').value.trim(), display_name: document.getElementById('a-name').value.trim() || email.split('@')[0] };
+  try {
+    const r = await fetch(authMode === 'login' ? '/api/auth/login' : '/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.token) {
+      try { localStorage.setItem(TOKEN_KEY, d.token); } catch (e) {}
+      document.getElementById('auth').style.display = 'none';
+      document.getElementById('a-pass').value = '';
+      boot();
+    } else err.textContent = typeof d.detail === 'string' ? d.detail : 'That did not work. Check your email and password.';
+  } catch (e) { err.textContent = 'No connection.'; }
+  btn.disabled = false; btn.textContent = authMode === 'login' ? 'SIGN IN' : 'CREATE ACCOUNT';
+}
+document.getElementById('a-go').onclick = doAuth;
+document.getElementById('a-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doAuth(); });
+document.getElementById('a-tog').onclick = (e) => { e.preventDefault(); setAuthMode(authMode === 'login' ? 'register' : 'login'); };
+function crewOff(msg) {
+  S = null; setState('CREW OFF');
+  document.getElementById('roster-box').replaceChildren();
+  document.getElementById('links-box').replaceChildren();
+  const side = document.getElementById('side-body'); side.textContent = '';
+  const sec = mk('div', 'sec'); sec.append(mk('div', 'lbl', 'Station'), mk('div', 'dim', msg)); side.append(sec);
+  document.getElementById('vitals-box').replaceChildren(vitalsSec());
+  document.getElementById('library-box').replaceChildren(librarySec());
+}
+function boot() {
+  if (booted || !token()) return;
+  booted = true;
+  refresh(); loadChat(true); loadFinance(); loadLibrary(); refreshSubscription(); checkBriefs();
 }
 
 async function refresh() {
-  if (!token()) { gate('SIGN IN FIRST', 'Open Aibussol and sign in, then come back to the Station.'); return; }
+  if (!token()) { showAuth(); return; }
   const r = await api('/api/crew/state').catch(() => null);
   if (!r) { setState('NO CONNECTION'); return; }
-  if (r.status === 401) { gate('SIGN IN FIRST', 'Your session ended. Sign in again in Aibussol.'); return; }
-  if (r.status === 403) { gate('OWNER ONLY', 'The crew is for the owner account.'); return; }
-  if (!r.data.enabled) { gate('CREW IS OFF', r.data.detail || 'The crew is not enabled on the server.'); return; }
+  if (r.status === 401) { try { localStorage.removeItem(TOKEN_KEY); } catch (e) {} showAuth('Your session ended. Sign in again.'); return; }
+  if (r.status === 403) { crewOff('The crew is not part of your plan yet. Chat, voice and your library work here.'); return; }
+  if (!r.data.enabled) { crewOff(r.data.detail || 'The crew is not switched on.'); return; }
   gate(null);
   S = r.data;
   document.getElementById('c-run').textContent = S.running;
@@ -223,6 +307,12 @@ function renderSide(force) {
   // never rebuild the panel under someone's fingers: wait until they leave the field they are typing in
   if (!force && ae && side.contains(ae) && /INPUT|TEXTAREA/.test(ae.tagName) && ae.value) { ae.onblur = () => renderSide(true); return; }
   const focused = document.activeElement && document.activeElement.id;
+  if (!S) {                                                    // no crew on this account: chat, vitals, library and the viewer still work
+    document.getElementById('vitals-box').replaceChildren(vitalsSec());
+    document.getElementById('library-box').replaceChildren(librarySec());
+    if (String(selected).startsWith('m:')) { side.textContent = ''; side.append(mediaSec()); }
+    return;
+  }
   side.textContent = '';
   document.getElementById('roster-box').replaceChildren(rosterSec());
   document.getElementById('links-box').replaceChildren(linksSec());
@@ -246,7 +336,7 @@ function vitalsSec() {
   const up = Math.floor((Date.now() - PAGE_START) / 1000), hh = String(Math.floor(up / 3600)).padStart(2, '0'), mm = String(Math.floor(up / 60) % 60).padStart(2, '0');
   const lead = (S && S.roster || []).find(a => a.role === 'lead');
   const queued = S ? S.missions.reduce((n, m) => n + m.tasks.filter(t => t.status === 'queued').length, 0) : 0;
-  row('Status', S ? (S.blocked ? String(S.blocked).split(' ')[0] : 'nominal') : 'connecting', S && !S.blocked ? 'g' : 'o');
+  row('Status', S ? (S.blocked ? String(S.blocked).split(' ')[0] : 'nominal') : (token() ? 'online' : 'connecting'), S && !S.blocked ? 'g' : 'o');
   row('Engine', lead ? lead.model : '—');
   row('Crew', S ? S.running + ' running · ' + queued + ' queued' : '—');
   row('Media', LIB.on ? 'on' : 'off', LIB.on ? 'g' : '');
@@ -264,7 +354,7 @@ async function loadLibrary() {
     LIB.items = r && r.ok ? (r.data.items || []) : [];
     LIB.note = r && r.ok ? '' : 'The library is unavailable right now.';
   }
-  if (S) renderSide();
+  renderSide();
 }
 function librarySec() {
   const s = mk('div', 'sec');
@@ -304,7 +394,58 @@ function mediaSec() {
   const media = document.createElement(it.kind === 'image' ? 'img' : 'audio');
   if (it.kind === 'sound') media.controls = true;
   media.src = it.url; s.append(media);
-  if (it.prompt) s.append(mk('div', 'dim', 'Prompt: ' + it.prompt));
+  if (it.kind === 'image' || it.kind === 'sound') {
+    // edits make a NEW item (the original is kept): preview first, then save
+    const OPS = { image: { crop: ['left', 'top', 'right', 'bottom'], resize: ['width', 'height'], brightness: ['factor'], contrast: ['factor'] },
+                  sound: { trim: ['start', 'end'], fade_in: ['seconds'], fade_out: ['seconds'], volume: ['factor'] } }[it.kind];
+    const r1 = mk('div', 'v-row'), sel = document.createElement('select');
+    Object.keys(OPS).forEach(o => { const op = document.createElement('option'); op.value = o; op.textContent = o.replace('_', ' '); sel.append(op); });
+    r1.append(mk('span', null, 'Edit'), sel); s.append(r1);
+    const params = mk('div', 'v-row'); s.append(params);
+    let inputs = {};
+    const build = () => {
+      params.textContent = ''; inputs = {};
+      OPS[sel.value].forEach(name => {
+        const inp = document.createElement('input'); inp.type = 'number'; inp.step = 'any'; inp.placeholder = name;
+        const dflt = { start: 0, end: it.duration_seconds || '', seconds: 1, factor: 1 };
+        if (name in dflt) inp.value = dflt[name];
+        if (it.kind === 'image' && media.naturalWidth) {
+          if (sel.value === 'crop') inp.value = { left: 0, top: 0, right: media.naturalWidth, bottom: media.naturalHeight }[name];
+          if (sel.value === 'resize') inp.value = name === 'width' ? media.naturalWidth : media.naturalHeight;
+        }
+        params.append(mk('span', null, name), inp); inputs[name] = inp;
+      });
+    };
+    sel.onchange = build; build(); if (it.kind === 'image') media.addEventListener('load', build, { once: true });
+    const collect = () => { const p2 = {}; Object.keys(inputs).forEach(k => { if (inputs[k].value !== '') p2[k] = Number(inputs[k].value); }); return p2; };
+    const r2 = mk('div', 'v-row'), bPrev = mk('button', 'lib-f', 'Preview'), bSave = mk('button', 'lib-f', 'Save as new'), bDisc = mk('button', 'lib-f', 'Discard');
+    bSave.hidden = bDisc.hidden = true; r2.append(bPrev, bSave, bDisc); s.append(r2);
+    const st = mk('div', 'dim'); st.style.marginTop = '6px'; let prev = null;
+    bPrev.onclick = async () => {
+      st.textContent = 'Making a preview…';
+      const r = await api('/api/media/items/' + it.id + '/edit', 'POST', { operation: sel.value, params: collect(), preview: true }).catch(() => null);
+      if (!r || !r.ok) { st.textContent = (r && r.data.detail) || 'That edit could not be previewed.'; return; }
+      prev = { op: sel.value, params: collect() }; media.src = 'data:' + r.data.preview.mime + ';base64,' + r.data.preview.data_base64;
+      bSave.hidden = bDisc.hidden = false; st.textContent = 'Preview only. Nothing is saved yet.';
+    };
+    bDisc.onclick = () => { prev = null; media.src = it.url; bSave.hidden = bDisc.hidden = true; st.textContent = ''; };
+    bSave.onclick = async () => {
+      if (!prev) return;
+      const r = await api('/api/media/items/' + it.id + '/edit', 'POST', { operation: prev.op, params: prev.params, preview: false }).catch(() => null);
+      if (!r || !r.ok) { st.textContent = (r && r.data.detail) || 'Could not save the edit.'; return; }
+      loadLibrary(); openMedia(r.data.item.id);
+    };
+    const r3 = mk('div', 'v-row'), pr = document.createElement('input'); pr.type = 'text'; pr.maxLength = 500; pr.value = it.prompt || ''; pr.placeholder = it.kind === 'sound' ? 'Text to speak' : 'Describe the image';
+    const bRegen = mk('button', 'lib-f', 'Re-generate'); r3.append(pr, bRegen); s.append(r3, st);
+    bRegen.onclick = async () => {
+      const text = pr.value.trim(); if (!text) { st.textContent = 'Write a prompt first.'; return; }
+      if (!confirm('Make a new version from this prompt? It costs a little and counts against your media budget. The original stays.')) return;
+      st.textContent = 'Generating…';
+      const r = await api('/api/media/items/' + it.id + '/regenerate', 'POST', { prompt: text }).catch(() => null);
+      if (!r || !r.ok) { st.textContent = (r && r.data.detail) || 'That could not be made.'; return; }
+      loadLibrary(); openMedia(r.data.item.id);
+    };
+  } else if (it.prompt) s.append(mk('div', 'dim', 'Prompt: ' + it.prompt));
   const btns = mk('div'); btns.style.cssText = 'display:flex;gap:8px;margin-top:10px';
   const dl = mk('button', 'b', 'Download');
   dl.onclick = async () => { const r = await api('/api/media/items/' + it.id + '?download=true').catch(() => null); if (r && r.ok) location.href = r.data.item.url; };
@@ -466,6 +607,11 @@ function missionsSec() {
     const d = mk('span', 'dot'); d.style.background = projColor(m.project);
     const done = m.tasks.filter(t => t.status === 'done').length;
     r.append(d, mk('span', 'grow', m.title || m.goal), mk('span', 'tag', m.status), mk('span', 'dim', done + '/' + m.tasks.length));
+    if (!['done', 'cancelled'].includes(m.status)) {
+      const x = mk('button', 'xbtn', '✕'); x.title = 'Cancel this mission';
+      x.onclick = async (ev) => { ev.stopPropagation(); if (!confirm('Cancel "' + (m.title || m.goal) + '"? Its open work stops.')) return; await api('/api/crew/missions/' + m.id + '/cancel', 'POST'); refresh(); };
+      r.append(x);
+    }
     s.append(r);
   });
   return s;
@@ -907,6 +1053,11 @@ function drawPlate(m, t) {
 
 function drawCore(t) {
   const { x, y, r } = core, open = S ? S.questions.length : 0;
+  if (window._helixTalking) {                                         // Helix is speaking: her core pulses
+    const pulse = 0.35 + 0.3 * Math.abs(Math.sin(t * 0.012));
+    ctx.save(); ctx.strokeStyle = 'rgba(255,138,42,' + pulse + ')'; ctx.lineWidth = 3 * SC + 1; ctx.shadowColor = '#ff8a2a'; ctx.shadowBlur = 18;
+    ctx.beginPath(); ctx.arc(x, y, r + 5 * SC, 0, 6.29); ctx.stroke(); ctx.restore();
+  }
   const g = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * 1.8); g.addColorStop(0, 'rgba(0,229,255,0.18)'); g.addColorStop(1, 'rgba(0,229,255,0)');
   ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 1.8, 0, 6.29); ctx.fill();
   const ring = hallW() + 8 * SC;                         // the deck is as wide as the tubes (floor plus walls)
@@ -982,24 +1133,165 @@ cv.addEventListener('mousemove', e => { const r = cv.getBoundingClientRect(); cv
 
 // ── one chat with Helix: the same conversation as the main screen ────────────────────────────────
 let chatSig = '', chatBusy = false, chatTick = 0;
+const LIVE = new Map();        // message text -> {img, openId}: things the history does not store, kept while the page is open
 function chatMsg(role, text) {
   const d = mk('div', 'cm ' + (role === 'user' ? 'u' : 'a'));
   d.append(mk('div', 'tg', role === 'user' ? 'YOU' : (String(text).startsWith('CREW ·') ? 'CREW' : 'HELIX')), mk('div', null, text));
+  const extra = LIVE.get(role + '|' + text);
+  if (extra && extra.img) { const im = mk('img', 'th'); im.src = extra.img; im.alt = 'attached image'; d.append(im); }
+  if (extra && extra.openId) { const b = mk('button', 'lib-f', 'Open'); b.style.marginTop = '6px'; b.onclick = () => openMedia(extra.openId); d.append(b); }
   return d;
 }
+// briefs from the feed show in the chat with a Listen button (what Herald and the old brief tasks post)
+const BRIEFS = [];
+const BRIEF_SEEN_KEY = 'aibussol_seen_briefs';
+function seenBriefs() { try { return JSON.parse(localStorage.getItem(BRIEF_SEEN_KEY) || '[]'); } catch (e) { return []; } }
+function markBriefSeen(id) { try { const s2 = seenBriefs(); if (!s2.includes(id)) { s2.push(id); localStorage.setItem(BRIEF_SEEN_KEY, JSON.stringify(s2.slice(-60))); } } catch (e) {} }
+async function checkBriefs() {
+  const r = await api('/api/briefs/latest').catch(() => null);
+  if (!r || !r.ok) return;
+  const fresh = (r.data.items || []).filter(b => !seenBriefs().includes(b.id)).reverse();
+  fresh.forEach(b => { BRIEFS.push(b); markBriefSeen(b.id); });
+  if (fresh.length) loadChat(true);
+}
+function briefCard(b) {
+  const d = mk('div', 'cm a');
+  d.append(mk('div', 'tg', 'HELIX · ' + String(b.period).toUpperCase() + ' BRIEF · ' + new Date(b.created_at).toLocaleString()));
+  const body = mk('div', null, String(b.body || '')); body.style.whiteSpace = 'pre-wrap'; d.append(body);
+  const row = mk('div'); row.style.marginTop = '6px';
+  const listen = mk('button', 'lib-f', '🔊 Listen'), note = mk('span', 'dim'); note.style.marginLeft = '8px';
+  listen.onclick = async () => {
+    listen.disabled = true;
+    const r = await api('/api/briefs/' + encodeURIComponent(b.id) + '/listen', 'POST').catch(() => null);
+    if (!r || !r.ok || !r.data.text) note.textContent = (r && r.data && r.data.detail) || 'It could not be played right now.';
+    else { note.textContent = r.data.remaining + ' listens left today'; speakReply(r.data.text, d, true); }
+    listen.disabled = false;
+  };
+  row.append(listen, note); d.append(row);
+  return d;
+}
+
+// images attached to a message
+let pendingImg = null;
+document.getElementById('img-in').addEventListener('change', () => {
+  const f = document.getElementById('img-in').files[0]; if (!f) return;
+  const rd = new FileReader();
+  rd.onload = (e) => { pendingImg = { url: e.target.result, b64: String(e.target.result).split(',')[1], name: f.name };
+    document.getElementById('img-thumb').src = pendingImg.url; document.getElementById('img-name').textContent = f.name.slice(0, 28); document.getElementById('img-bar').hidden = false; };
+  rd.readAsDataURL(f);
+});
+function clearImg() { pendingImg = null; document.getElementById('img-bar').hidden = true; document.getElementById('img-in').value = ''; }
+document.getElementById('img-clear').onclick = clearImg;
+
+// ── voice: "Hey Helix" wake word, the mic button, and Helix reading her replies aloud ──
+let voiceOn = true;
+try { voiceOn = localStorage.getItem('aibussol_voice') !== 'off'; } catch (e) {}
+function paintVoice() { const b = document.getElementById('voice-tog'); b.textContent = voiceOn ? '🔊 ON' : '🔇 OFF'; b.classList.toggle('on', voiceOn); }
+document.getElementById('voice-tog').onclick = () => { voiceOn = !voiceOn; try { localStorage.setItem('aibussol_voice', voiceOn ? 'on' : 'off'); } catch (e) {} paintVoice(); };
+paintVoice();
+function wakeLabel(text, cls) { const w = document.getElementById('wake'); w.textContent = text; w.className = cls || ''; }
+let _audioUnlocked = false;
+function unlockAudio() { if (_audioUnlocked) return; _audioUnlocked = true; try { const c = new (window.AudioContext || window.webkitAudioContext)(); c.resume().then(() => c.close()).catch(() => {}); } catch (e) {} }
+const SPEECH_CHUNK = 1400;
+function speechChunks(text) {
+  const sentences = (String(text).match(/[^.!?\n]+[.!?]*|\n+/g) || []).map(x => x.trim()).filter(Boolean);
+  const out = []; let cur = '';
+  for (let snip of sentences) {
+    while (snip.length > SPEECH_CHUNK) { if (cur) { out.push(cur); cur = ''; } out.push(snip.slice(0, SPEECH_CHUNK)); snip = snip.slice(SPEECH_CHUNK); }
+    if (cur && (cur + ' ' + snip).length > SPEECH_CHUNK) { out.push(cur); cur = snip; } else cur = cur ? cur + ' ' + snip : snip;
+  }
+  if (cur) out.push(cur);
+  return out.length ? out : [''];
+}
+async function speakReply(text, el, always) {
+  if (!voiceOn && !always) return;
+  try {
+    const parts = [];
+    for (const chunk of speechChunks(text)) {
+      const res = await fetch('/api/voice/speak', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token(), 'Content-Type': 'application/json' }, body: JSON.stringify({ message: chunk }) });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        if (el) el.append(mk('div', 'vn', 'Voice unavailable: ' + (typeof d.detail === 'string' ? d.detail : 'HTTP ' + res.status)));
+        resumeWake(); return;
+      }
+      parts.push(await res.arrayBuffer());
+    }
+    const total = parts.reduce((n, p2) => n + p2.byteLength, 0), joined = new Uint8Array(total); let off = 0;
+    for (const p2 of parts) { joined.set(new Uint8Array(p2), off); off += p2.byteLength; }
+    const url = URL.createObjectURL(new Blob([joined.buffer], { type: 'audio/mpeg' })), audio = new Audio(url);
+    const done = () => { window._helixTalking = false; URL.revokeObjectURL(url); wakeLabel(wakeOn ? 'SAY "HEY HELIX"' : 'VOICE: TAP TO WAKE', wakeOn ? 'on' : ''); if (!isRec) resumeWake(); };
+    audio.onplay = () => { window._helixTalking = true; wakeLabel('HELIX IS SPEAKING', 'busy'); };
+    audio.onended = done; audio.onerror = done;
+    pauseWake();
+    audio.play().catch(done);
+  } catch (e) { resumeWake(); }
+}
+let isRec = false, recorder = null, chunks = [], SR = null, wakeOn = false, srRunning = false, srMode = 'wake';
+const WAKE_RE = /\b(?:he?y|hi|ok|a)\s*h[aeiou]{0,2}l+[aeiou]?[xcks]s?\b/;
+const norm = t => t.toLowerCase().replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim();
+setInterval(() => { if (wakeOn && SR && !srRunning && !isRec) { try { SR.start(); } catch (e) {} } }, 2000);
+function initWake() {
+  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Rec) { wakeLabel('VOICE: USE THE MIC'); return; }
+  SR = new Rec(); SR.continuous = true; SR.interimResults = true; SR.lang = 'en-US';
+  wakeOn = true; srMode = 'wake';
+  const me = SR; let fired = false;
+  SR.onstart = () => { srRunning = true; };
+  SR.onresult = (e) => {
+    let heard = ''; for (let i = e.resultIndex; i < e.results.length; i++) heard += ' ' + e.results[i][0].transcript;
+    const t = norm(heard);
+    if (srMode === 'wake') { if (!fired && !isRec && WAKE_RE.test(t)) { fired = true; setTimeout(() => { fired = false; }, 3000); startRec(); } }
+    else if (srMode === 'send' && isRec && /\bsend\b/.test(t)) stopRec();
+  };
+  SR.onend = () => { srRunning = false; if (wakeOn && SR === me) { const again = () => { if (wakeOn && SR === me && !srRunning) { try { SR.start(); } catch (e) { setTimeout(again, 400); } } }; again(); } };
+  SR.onerror = (e) => { if (e.error === 'not-allowed') { wakeOn = false; SR = null; wakeLabel('MIC BLOCKED'); } };
+  try { SR.start(); wakeLabel('SAY "HEY HELIX"', 'on'); } catch (e) { wakeLabel('VOICE: USE THE MIC'); }
+}
+function pauseWake() { wakeOn = false; if (SR) { try { SR.abort(); } catch (e) {} SR = null; } }
+function resumeWake() { if (!wakeOn && _wakeStarted) initWake(); }
+async function startRec() {
+  if (isRec) return;
+  try {
+    srMode = 'send';
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    chunks = []; recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = e => chunks.push(e.data);
+    recorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop()); isRec = false; srMode = 'wake';
+      document.getElementById('mic').classList.remove('rec'); wakeLabel('LISTENING TO YOU…', 'busy');
+      const fd = new FormData(); fd.append('audio', new Blob(chunks, { type: 'audio/webm' }), 'recording.webm');
+      try {
+        const res = await fetch('/api/voice/transcribe', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token() }, body: fd });
+        const d = await res.json().catch(() => ({}));
+        const clean = String(d.text || '').trim().replace(/^(hey\s+helix|hey\s+helics|hey\s+helic|a\s+helix)[,.]?\s*/i, '').replace(/[,.]?\s*send\.?\s*$/i, '').trim();
+        if (clean) { document.getElementById('chat-in').value = clean; await sendChat(); }
+      } catch (e) {}
+      wakeLabel(wakeOn ? 'SAY "HEY HELIX"' : 'VOICE: TAP TO WAKE', wakeOn ? 'on' : '');
+    };
+    recorder.start(); isRec = true;
+    document.getElementById('mic').classList.add('rec'); wakeLabel('RECORDING · SAY "SEND" OR TAP 🎙', 'rec');
+  } catch (e) { srMode = 'wake'; wakeLabel('MIC BLOCKED'); }
+}
+function stopRec() { if (isRec && recorder) recorder.stop(); }
+document.getElementById('mic').onclick = () => { unlockAudio(); startWake(); isRec ? stopRec() : startRec(); };
+let _wakeStarted = false;
+function startWake() { if (_wakeStarted || !token()) return; _wakeStarted = true; initWake(); }
+document.addEventListener('click', () => { unlockAudio(); startWake(); });
+document.addEventListener('keydown', () => { unlockAudio(); startWake(); });
 async function loadChat(force) {
   if (chatBusy && !force) return;
   const r = await api('/api/session/history').catch(() => null);
   if (!r || !r.ok) return;
   const msgs = (r.data.messages || []).slice(-30);
-  const sig = msgs.length + '|' + (msgs.length ? String(msgs[msgs.length - 1].content).slice(-80) : '');
+  const sig = msgs.length + '|' + BRIEFS.length + '|' + (msgs.length ? String(msgs[msgs.length - 1].content).slice(-80) : '');
   if (sig === chatSig && !force) return;
   chatSig = sig;
   const log = document.getElementById('chat-log');
   const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
   log.textContent = '';
-  if (!msgs.length) log.append(mk('div', 'dim', 'Talk to Helix here. Say "build me…" to start a mission.'));
+  if (!msgs.length && !BRIEFS.length) log.append(mk('div', 'dim', 'Talk to Helix here, type or say "Hey Helix". Say "build me…" to start a mission.'));
   msgs.forEach(m => log.append(chatMsg(m.role, m.content)));
+  BRIEFS.forEach(b => log.append(briefCard(b)));
   if (atBottom || force) log.scrollTop = log.scrollHeight;
 }
 async function sendChat() {
@@ -1007,16 +1299,35 @@ async function sendChat() {
   if (!text || chatBusy) return;
   chatBusy = true; inp.value = '';
   const log = document.getElementById('chat-log');
+  const media = text.match(/^\/(image|sound)\s+([\s\S]+)/i);           // "/image a red fox", "/sound hello there"
+  if (media) {
+    log.append(chatMsg('user', text)); const wait = chatMsg('assistant', media[1].toLowerCase() === 'image' ? 'Making the image…' : 'Making the sound…'); log.append(wait); log.scrollTop = log.scrollHeight;
+    const kind = media[1].toLowerCase(), r = await api('/api/media/' + kind, 'POST', kind === 'image' ? { prompt: media[2].trim() } : { text: media[2].trim() }).catch(() => null);
+    if (r && r.ok && r.data.item) { wait.lastChild.textContent = 'Saved: ' + r.data.item.title; const b = mk('button', 'lib-f', 'Open'); b.style.marginTop = '6px'; b.onclick = () => openMedia(r.data.item.id); wait.append(b); loadLibrary(); }
+    else wait.lastChild.textContent = (r && typeof r.data.detail === 'string') ? r.data.detail : 'That could not be made right now.';
+    chatBusy = false; return;
+  }
+  const img = pendingImg; clearImg();
+  if (img) LIVE.set('user|' + text, { img: img.url });
   log.append(chatMsg('user', text)); const wait = chatMsg('assistant', '…'); log.append(wait); log.scrollTop = log.scrollHeight;
-  const r = await api('/api/chat', 'POST', { message: text, client_date: new Date().toLocaleString('en-US', { timeZoneName: 'short' }) }).catch(() => null);
-  wait.lastChild.textContent = r ? (r.data.reply || r.data.detail || 'No answer.') : 'No connection.';
+  const body = { message: text, client_date: new Date().toLocaleString('en-US', { timeZoneName: 'short' }) };
+  if (img) body.image = img.b64;
+  const r = await api('/api/chat', 'POST', body).catch(() => null);
+  const reply = r ? (r.data.reply || r.data.detail || 'No answer.') : 'No connection.';
+  wait.lastChild.textContent = typeof reply === 'string' ? reply : 'No answer.';
   log.scrollTop = log.scrollHeight;
   chatBusy = false;
-  if (r && (r.data.ui_actions || []).some(a => a.type === 'crew_refresh')) setTimeout(refresh, 1200);
+  const acts = (r && r.data.ui_actions) || [];
+  acts.forEach(a => {
+    if (a.type === 'saved' && a.item) { LIVE.set('assistant|' + reply, { openId: a.item.id }); loadLibrary(); }
+    else if (a.type === 'open_item' && a.id) openMedia(a.id);
+  });
+  if (acts.some(a => a.type === 'crew_refresh')) setTimeout(refresh, 1200);
+  if (r && r.ok && typeof reply === 'string') speakReply(reply, wait);
   setTimeout(() => loadChat(true), 500);
 }
 document.getElementById('chat-send').onclick = sendChat;
-document.getElementById('chat-in').addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
+document.getElementById('chat-in').addEventListener('keydown', e => { if (e.key === 'Enter') { unlockAudio(); sendChat(); } });
 
 // ── money: P&L per factory and in total (refreshed every minute; the server caches Stripe for 5) ──
 let FIN = null, finTick = 0;
@@ -1132,12 +1443,14 @@ function overviewSec() {
 
 function poll() {
   clearTimeout(pollTimer);
-  if (!document.hidden) { refresh(); if (chatTick++ % 3 === 0) loadChat(); if (finTick++ % 15 === 0) { loadFinance(); loadLibrary(); refreshSubscription(); } }
+  if (!document.hidden && token()) { refresh(); if (chatTick++ % 3 === 0) loadChat(); if (finTick++ % 15 === 0) { loadFinance(); loadLibrary(); refreshSubscription(); checkBriefs(); } }
   pollTimer = setTimeout(poll, 4000);
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
 if (new URLSearchParams(location.search).get('connected') === 'etsy') { selected = 'links'; history.replaceState(null, '', '/station'); }
-resize(); poll(); loadChat(true); requestAnimationFrame(frame);
+resize(); requestAnimationFrame(frame);
+if (token()) boot(); else showAuth();
+poll();
 </script>
 </body>
 </html>

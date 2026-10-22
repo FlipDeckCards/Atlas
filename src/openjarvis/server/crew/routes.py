@@ -77,8 +77,10 @@ def _err(exc: Exception, code: int = 400) -> JSONResponse:
     return JSONResponse({"detail": str(exc)}, status_code=code)
 
 
+@router.get("/")
 @router.get("/station")
 async def station_page():
+    """The Station is Aibussol's home page (sign-in, Helix chat with voice, the crew, the library). The old page lives at /classic."""
     return HTMLResponse(STATION_PAGE, headers={"Cache-Control": "no-cache"})
 
 
