@@ -128,6 +128,9 @@ STATION_PAGE = r"""<!DOCTYPE html>
     #center #stage { height:min(100vw, 68dvh); flex:0 0 auto; }
     #right { order:2; border-left:none; border-top:1px solid var(--border); overflow:visible; }
     #left { order:3; border-right:none; border-top:1px solid var(--border); overflow:visible; }
+    #main > * { flex:0 0 auto !important; min-height:auto !important; height:auto; }   /* stacked, never squeezed on top of each other */
+    #center { display:block; }
+    #center #chat { position:static; }
     #chat-log { height:210px; }
     #gate { inset:0; }
   }
@@ -199,7 +202,7 @@ async function refresh() {
   gate(null);
   S = r.data;
   document.getElementById('c-run').textContent = S.running;
-  document.getElementById('c-spend').textContent = money(S.spend.today_usd) + ' of ' + money(S.spend.daily_cap_usd) + ' cap';
+  document.getElementById('c-spend').textContent = money(S.spend.today_usd) + (S.spend.daily_cap_usd == null ? ' · no cap' : ' of ' + money(S.spend.daily_cap_usd) + ' cap');
   setState(S.blocked ? 'HOLD: ' + String(S.blocked).toUpperCase() : 'CREW READY');
   document.getElementById('t-night').classList.toggle('on', !!S.settings.night_shift);
   document.getElementById('t-pause').classList.toggle('on', !!S.settings.paused);
@@ -382,7 +385,7 @@ function rosterSec() {
   (S.roster || []).forEach(a => {
     const c = mk('div', 'agent');
     const top = mk('div', 'agent-top'); const d = mk('span', 'avatar'); d.style.borderColor = alpha(ROLE_COLORS[a.role] || '#00e5ff', 0.5);
-    if (a.role === 'lead') { d.style.backgroundImage = 'url(/crew/helix.jpg)'; d.style.backgroundSize = 'cover'; d.style.backgroundPosition = 'center 20%'; }
+    if (a.role === 'lead') { d.style.backgroundImage = 'url(/crew/helix.jpg)'; d.style.backgroundSize = '240%'; d.style.backgroundPosition = '50% 14%'; }
     else { const row = BOT_ROWS.indexOf(a.role); d.style.backgroundImage = 'url(/crew/bots.png?v=' + BOT_VER + ')'; const A = 38; d.style.backgroundSize = (17 * A) + 'px ' + (A * BOT_ROWS.length) + 'px'; d.style.backgroundPosition = '-4px ' + (-A * Math.max(0, row) - 1) + 'px'; }
     const nm = mk('span', 'agent-name', a.name); nm.style.color = ROLE_COLORS[a.role] || '#00e5ff';
     // compact card: face, name, role and status; what it can and cannot do shows on hover
@@ -845,7 +848,7 @@ function drawModule(m, t, dt) {
   // crew members, drawn upright wherever they are on the floor
   const sc = Math.max(0.7, Math.min(1.4, SC * 1.15));
   m.tasks.forEach((tk, i) => {
-    if (tk.status === 'waiting') return;
+    if (tk.status !== 'running' && tk.status !== 'queued') return;          // finished or failed: they head back to Helix's deck (the mission panel keeps the result)
     const desk = desks[i % desks.length], b = botFor(tk, I, desk, t);
     // a crew member starting work walks from Helix's deck down this factory's tube and in through the doorway
     if (b.commute == null) b.commute = (tk.status === 'running' || tk.status === 'queued') ? 0 : 1;

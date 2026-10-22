@@ -82,7 +82,7 @@ async def status_text(ctx: CrewCtx) -> str:
         how = "Michael can answer in chat" if q["kind"] == "question" else "needs Approve/Decline tap"
         lines.append(f'Open {q["kind"]} {q["id"]}: {q["text"]}' + (f' Options: {" / ".join(q["options"])}' if q["options"] and q["kind"] == "question" else "") + f" ({how})")
     sp = st["spend"]
-    lines.append(f'Crew spend today ${sp["today_usd"]:.2f} of ${sp["daily_cap_usd"]:.2f}. Night Shift {"on" if st["settings"]["night_shift"] else "off"}'
+    lines.append(f'Crew spend today ${sp["today_usd"]:.2f}' + (" (no daily cap)" if sp["daily_cap_usd"] is None else f' of ${sp["daily_cap_usd"]:.2f}') + f'. Night Shift {"on" if st["settings"]["night_shift"] else "off"}'
                  f'{", crew paused" if st["settings"]["paused"] else ""}{", not starting work now: " + st["blocked"] if st["blocked"] else ""}.')
     return "\n".join(lines) if st["missions"] or st["questions"] else "No missions yet. " + lines[-1]
 

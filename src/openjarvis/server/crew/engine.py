@@ -269,6 +269,8 @@ class CrewEngine:
         self.products: Dict[str, Dict[str, Any]] = {}
         self._product_task: Optional[asyncio.Task] = None
         self.herald = None                                  # crew/herald.py, set by the app: makes the briefs on schedule
+        self.owner_fn = None                                # async user_id -> bool, set by the app: the owner has no daily cap and auto top-ups
+        self._owner_cache: Dict[str, bool] = {}
         self._herald_task: Optional[asyncio.Task] = None
 
     # ── lifecycle ────────────────────────────────────────────────────────────────────────────────
@@ -299,7 +301,22 @@ class CrewEngine:
     def _day(self) -> str:
         return self.now().strftime("%Y-%m-%d")
 
+    async def is_owner(self, user_id: str) -> bool:
+        if user_id in self._owner_cache:
+            return self._owner_cache[user_id]
+        ok = False
+        if self.owner_fn is not None:
+            try:
+                ok = bool(await self.owner_fn(user_id))
+            except Exception:
+                logger.exception("crew owner check failed")
+                return False
+        self._owner_cache[user_id] = ok
+        return ok
+
     async def _day_room(self, user_id: str) -> float:
+        if await self.is_owner(user_id):
+            return 1e9                                      # the owner's own crew has no daily cap
         return daily_cap_usd(self.env) - float(await self.store.get_day_spend(user_id, self._day()))
 
     async def may_run(self, user_id: str) -> Optional[str]:
@@ -692,6 +709,13 @@ class CrewEngine:
             await self._check_mission(mission["id"])
             return True
         add = min(add, round(room, 2))
+        if await self.is_owner(task["user_id"]):
+            # the owner's missions top themselves up (up to the per-mission maximum) instead of asking every few minutes
+            await self.store.update_task(task["id"], budget_usd=round(task["budget_usd"] + add, 6))
+            if mission["budget_usd"] - mission["spent_usd"] < add:
+                await self.store.update_mission(mission["id"], budget_usd=round(mission["budget_usd"] + add, 6))
+            await self.store.add_event(task["user_id"], "budget", f'Auto-added ${add:.2f} for "{task["title"]}".', mission_id=mission["id"], task_id=task["id"])
+            return False
         which = "its own budget" if task_left < EST_CALL_USD else "the mission budget"
         q = await self.store.add_question(mission["id"], task["id"], task["user_id"], "budget",
                                           f'"{task["title"]}" used {which} (task ${task["spent_usd"]:.2f} of ${task["budget_usd"]:.2f}; mission ${mission["spent_usd"]:.2f} of ${mission["budget_usd"]:.2f}). Add ${add:.2f} so it can keep going?',
@@ -1032,6 +1056,7 @@ class CrewEngine:
                             outputs=await self.store.list_outputs(m["id"])))
         settings = await self.store.get_settings(user_id)
         spent = float(await self.store.get_day_spend(user_id, self._day()))
+        uncapped = await self.is_owner(user_id)
         roster = []
         for key, r in ROLES.items():
             mine = [t for m in out for t in m["tasks"] if t["role"] == key]
@@ -1060,7 +1085,7 @@ class CrewEngine:
             "questions": await self.store.list_questions(user_id, "open"),
             "events": await self.store.list_events(user_id, limit=60),
             "settings": settings,
-            "spend": {"today_usd": round(spent, 4), "daily_cap_usd": daily_cap_usd(self.env),
+            "spend": {"today_usd": round(spent, 4), "daily_cap_usd": None if uncapped else daily_cap_usd(self.env), "auto_topup": uncapped,
                       "default_mission_budget_usd": default_mission_budget(self.env), "max_mission_budget_usd": max_mission_budget(self.env)},
             "limits": {"max_concurrent": max_concurrent(self.env), "max_tasks": max_tasks(self.env)},
             "running": len([t for t in self.running.values() if not t.done()]),

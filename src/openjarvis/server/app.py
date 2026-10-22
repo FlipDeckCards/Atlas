@@ -324,6 +324,15 @@ def create_app(
             from openjarvis.server.briefs import BriefStore
             from openjarvis.server.crew.herald import Herald
 
+            async def crew_is_owner(uid: str) -> bool:
+                # owner / admin accounts (ANALYTICS_ADMIN_EMAILS, default the owner's email): no daily cap, budgets top up on their own
+                from openjarvis.server.admin_analytics import is_admin
+
+                async with pool.acquire() as conn:
+                    row = await conn.fetchrow("SELECT email FROM users WHERE id = $1", uid)
+                return bool(row) and is_admin(row["email"])
+
+            engine.owner_fn = crew_is_owner
             engine.herald = Herald(engine, getattr(app.state, "brief_store", None) or BriefStore(pool), pool=pool, notifier=notifier)
             await engine.start()
             app.state.crew_engine = engine
