@@ -935,3 +935,20 @@ def test_rig_works_in_the_pc_project_the_mission_names_not_the_factory():
     assert pc_project(names, {"title": "WebGL build", "brief": "Build it"}, m1) == "MergeDungeon"
     assert pc_project(names, {"title": "Fix the jump", "brief": "In project Deadzone, fix the jump"}, m1) == "Deadzone"
     assert pc_project([], {"title": "x", "brief": "y"}, {"project": "Deadzone", "goal": "z"}) == "Deadzone"
+
+
+def test_a_task_moves_to_the_writing_model_when_the_lookup_provider_is_out_of_quota():
+    calls = []
+
+    class Flaky(Model):
+        async def __call__(self, model, messages, max_tokens=None, tools=None):
+            calls.append(model)
+            if tools and model == "gemini-x":
+                raise RuntimeError("RateLimitError: 429 You exceeded your current quota")
+            return await super().__call__(model, messages, max_tokens, tools)
+
+    w = world({"tasks": [{"title": "Research buyers", "role": "researcher", "brief": "b"}]},
+              {"Research buyers": [resp(None, [("finish", {"summary": "Found them."})])]})
+    w.engine.acompletion = Flaky(w.model.plan, w.model.agents)
+    m = run(start(w))
+    assert run(w.store.list_tasks(m["id"]))[0]["status"] == "done" and "gemini-x" in calls and "claude-x" in calls

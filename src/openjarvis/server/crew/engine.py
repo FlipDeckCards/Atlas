@@ -184,6 +184,12 @@ REVIEW_MARK = "REVIEW: changes requested."
 AcompletionFn = Callable[..., Awaitable[Any]]
 
 
+def _provider_unavailable(exc: Exception) -> bool:
+    """Out of quota, rate limited or down: worth retrying on another provider."""
+    text = f"{type(exc).__name__} {exc}".lower()
+    return any(k in text for k in ("429", "503", "ratelimit", "rate limit", "quota", "resource_exhausted", "overloaded", "unavailable"))
+
+
 def pc_project(names: List[str], task: Dict[str, Any], mission: Dict[str, Any]) -> str:
     """Which folder on the PC Rig works in: the PC project the task (or else the mission goal) names, preferring 'in project X',
     then the first one mentioned; otherwise the mission's project. Factories and PC folders are separate: a game is in the Deadzone
@@ -855,8 +861,16 @@ class CrewEngine:
             if await self._day_room(uid) < EST_CALL_USD:
                 await self.store.update_task(tid, status="queued", transcript=transcript)
                 return
-            resp = await self.acompletion(model=model, messages=[{"role": "system", "content": self._system(task, conn_text, envx)}] + transcript,
-                                          tools=tools, max_tokens=AGENT_MAX_TOKENS)
+            call_msgs = [{"role": "system", "content": self._system(task, conn_text, envx)}] + transcript
+            try:
+                resp = await self.acompletion(model=model, messages=call_msgs, tools=tools, max_tokens=AGENT_MAX_TOKENS)
+            except Exception as exc:
+                # a provider out of quota or down (Gemini 429 / 503): finish the task on the writing model instead of failing it
+                if model == self.models["writing"] or not _provider_unavailable(exc):
+                    raise
+                logger.warning("crew: %s unavailable (%s); task %s continues on %s", model, type(exc).__name__, tid, self.models["writing"])
+                model = self.models["writing"]
+                resp = await self.acompletion(model=model, messages=call_msgs, tools=tools, max_tokens=AGENT_MAX_TOKENS)
             cost = await self._charge(uid, mid, tid, resp)
             msg = resp.choices[0].message
             calls = getattr(msg, "tool_calls", None) or []
