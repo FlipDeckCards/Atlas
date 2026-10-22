@@ -148,6 +148,25 @@ def _clip(v: Any, n: int) -> str:
     return " ".join(str(v if v is not None else "").split())[:n]
 
 
+HOUSE_RULES = (
+    "- Games: mobile games are built in Unity (C#, the Input System), never as a web prototype unless he asks for one; open-world games in Unreal. "
+    "Every game must play with keyboard AND a connected PlayStation controller. Deadzone Run is the reference game.\n"
+    "- The Unity / Unreal editors run only on Michael's computer, not on this server. For a game, the crew writes the design doc, the C# "
+    "scripts, the input map and the asset list into a GitHub repo (Forge, on a crew/ branch); the last task is a checklist for Michael to open "
+    "it in Unity on his PC, build and test. Never claim a game was built or tested.\n"
+    "- Products: FlipDeck Cards (card-flipping subscription), Marnyx (AI social media manager), Deadzone Games (games site, mobile games "
+    "go to Google Play first), Aibussol (this assistant). One shared Stripe account, tagged with metadata app=<product>."
+)
+
+
+def house_rules(env=None) -> str:
+    """CREW_HOUSE_RULES replaces the built-in rules when set."""
+    import os
+
+    e = os.environ if env is None else env
+    return (e.get("CREW_HOUSE_RULES") or "").strip() or HOUSE_RULES
+
+
 def tools_for(role: str) -> List[Dict[str, Any]]:
     extra: List[Dict[str, Any]] = [_READ_OUTPUT_TOOL]
     if role == "operator":
@@ -465,6 +484,7 @@ class CrewEngine:
             "Rules: each task produces something concrete (a file in the outbox, a draft, a decision for Michael). Do not plan work on a platform that is "
             "not connected; plan a task that prepares it instead and says what Michael must set up. Account creation, identity checks, payouts and app "
             "store submissions are Michael's; plan around them. Keep briefs specific.\n"
+            f"Michael's house rules (follow them):\n{house_rules(self.env)}\n"
             'Answer with JSON only: {"title": "short mission name", "project": "FlipDeck|Marnyx|Deadzone|Aibussol|New", '
             '"tasks": [{"title": "...", "role": "researcher|builder|writer|designer|operator|reviewer", "brief": "what to do and what to deliver", '
             '"depends_on": [indexes of earlier tasks]}]}'
@@ -611,7 +631,8 @@ class CrewEngine:
         s = (f"You are {role['name']}, the {task['role']} agent in Aibussol's crew, working for Michael. {role['about']}\n"
              "Work only on your task. Save every deliverable with save_output (complete files, not outlines). If you truly need Michael's decision, "
              "use ask_michael with one concrete question and short options; do not ask for things you can decide sensibly yourself. "
-             "Never claim something was published, paid, uploaded or sent unless a tool result says so. When done, call finish with a short summary.")
+             "Never claim something was published, paid, uploaded or sent unless a tool result says so. When done, call finish with a short summary.\n"
+             f"Michael's house rules:\n{house_rules(self.env)}")
         if task["role"] == "operator":
             s += f"\nConnected platforms and actions:\n{conn_text}\nRisky actions become checkpoints: say so in your summary and wait for the result."
         if task["role"] == "builder":
