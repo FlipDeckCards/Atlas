@@ -31,7 +31,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
   .tbtn:hover { border-color:var(--cyan); color:var(--cyan); }
   .tbtn.on { border-color:var(--cyan); color:var(--cyan); background:rgba(0,229,255,0.08); }
   .tbtn.warn.on { border-color:var(--orange); color:var(--orange); background:rgba(255,109,0,0.08); }
-  #main { display:grid; grid-template-columns:300px 1fr 360px; min-height:0; }
+  #main { display:grid; grid-template-columns:210px 1fr 340px; min-height:0; }
   .col { background:var(--panel); overflow-y:auto; min-height:0; scrollbar-width:thin; scrollbar-color:var(--cyan-dim) transparent; }
   #left { border-right:1px solid var(--border); }
   #right { border-left:1px solid var(--border); }
@@ -76,17 +76,18 @@ STATION_PAGE = r"""<!DOCTYPE html>
   .ev { font-size:10px; line-height:1.55; padding:4px 0; color:var(--text-dim); border-bottom:1px solid rgba(0,229,255,0.04); overflow-wrap:anywhere; }
   .ev b { color:var(--text); font-weight:400; }
   .ev .c { color:var(--orange); }
-  #chat-log { height:190px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; padding-right:2px; scrollbar-width:thin; scrollbar-color:var(--cyan-dim) transparent; }
+  #chat-log { height:118px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; padding-right:2px; scrollbar-width:thin; scrollbar-color:var(--cyan-dim) transparent; }
   .cm { max-width:92%; padding:8px 10px; font-size:12px; line-height:1.5; border-radius:2px; white-space:pre-wrap; overflow-wrap:anywhere; }
   .cm.u { align-self:flex-end; background:rgba(255,109,0,0.08); border:1px solid rgba(255,109,0,0.25); color:#ffa040; }
   .cm.a { align-self:flex-start; background:rgba(0,229,255,0.04); border:1px solid rgba(0,229,255,0.14); }
   .cm .tg { font-size:9px; letter-spacing:2px; opacity:0.55; margin-bottom:3px; }
-  .agent { border:1px solid var(--border); border-radius:2px; padding:9px 10px; margin-bottom:8px; background:rgba(0,229,255,0.02); }
+  .agent { border:1px solid var(--border); border-radius:2px; padding:6px 8px; margin-bottom:6px; cursor:default; background:rgba(0,229,255,0.02); }
   .agent-top { display:flex; align-items:center; gap:7px; margin-bottom:5px; }
   .agent-name { font-family:'Orbitron',monospace; font-size:11px; letter-spacing:2px; font-weight:700; }
+  .agent-role { font-size:9px; letter-spacing:1px; color:var(--text-dim); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .agent-can { font-size:11px; line-height:1.5; color:var(--text); }
   .agent-cannot { font-size:10px; line-height:1.5; color:var(--text-dim); margin-top:2px; }
-  .agent-st { font-size:10px; letter-spacing:1px; color:var(--text-dim); margin-top:5px; text-transform:uppercase; }
+  .agent-st { font-size:9px; letter-spacing:1px; color:var(--text-dim); margin-top:2px; padding-left:37px; text-transform:uppercase; }
   .pnl { border:1px solid var(--border); border-radius:2px; padding:8px 10px; margin:8px 0; background:rgba(0,229,255,0.02); }
   .pnl-t { font-size:9px; letter-spacing:2px; color:var(--text-dim); margin-bottom:6px; text-transform:uppercase; }
   .pnl-g { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px 10px; }
@@ -146,7 +147,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
 <script>
 const TOKEN_KEY = 'aibussol_token';
 const token = () => localStorage.getItem(TOKEN_KEY) || '';
-const PROJECT_COLORS = { flipdeck:'#ff6d00', marnyx:'#b06cff', deadzone:'#ff3344', aibussol:'#00e5ff', 'new':'#00ff88' };
+const PROJECT_COLORS = { flipdeck:'#ff6d00', marnyx:'#b06cff', deadzone:'#ff3344', aibussol:'#00e5ff', 'new':'#ff4fb8' };
 const ROLE_COLORS = { lead:'#00e5ff', researcher:'#5ad1ff', builder:'#4dffc3', writer:'#ffc14d', designer:'#ff7ad9', operator:'#ff6d00', reviewer:'#c8ff4d' };
 const STATUS_COLORS = { queued:'#2a5060', running:'#00e5ff', waiting:'#ff6d00', done:'#00ff88', failed:'#ff3344', cancelled:'#2a3a44' };
 let S = null, selected = 'hub', lastDraw = 0, pollTimer = null;
@@ -264,10 +265,13 @@ function rosterSec() {
     const c = mk('div', 'agent');
     const top = mk('div', 'agent-top'); const d = mk('span', 'avatar'); d.style.borderColor = alpha(ROLE_COLORS[a.role] || '#00e5ff', 0.5);
     if (a.role === 'lead') { d.style.backgroundImage = 'url(/crew/helix.jpg)'; d.style.backgroundSize = 'cover'; d.style.backgroundPosition = 'center 20%'; }
-    else { const row = BOT_ROWS.indexOf(a.role); d.style.backgroundImage = 'url(/crew/bots.png)'; d.style.backgroundSize = '102px ' + (34 * BOT_ROWS.length) + 'px'; d.style.backgroundPosition = '-2px ' + (-34 * Math.max(0, row) + 1) + 'px'; }
+    else { const row = BOT_ROWS.indexOf(a.role); d.style.backgroundImage = 'url(/crew/bots.png)'; const A = 38; d.style.backgroundSize = (17 * A) + 'px ' + (A * BOT_ROWS.length) + 'px'; d.style.backgroundPosition = '-4px ' + (-A * Math.max(0, row) - 1) + 'px'; }
     const nm = mk('span', 'agent-name', a.name); nm.style.color = ROLE_COLORS[a.role] || '#00e5ff';
-    top.append(d, nm, mk('span', 'tag', a.role === 'lead' ? 'lead' : a.role), mk('span', 'grow'), mk('span', 'dim', a.model));
-    c.append(top, mk('div', 'agent-can', a.can), mk('div', 'agent-cannot', 'Limits: ' + a.cannot));
+    // compact card: face, name, role and status; what it can and cannot do shows on hover
+    const who = mk('div', 'grow'); who.style.minWidth = '0'; who.append(nm, mk('div', 'agent-role', (a.role === 'lead' ? 'lead' : a.role) + ' · ' + a.model));
+    top.append(d, who); top.style.marginBottom = '2px';
+    c.title = a.name + ': ' + a.can + '\nLimits: ' + a.cannot;
+    c.append(top);
     const st = a.working ? a.working + ' working' : a.waiting ? 'waiting on you' : 'standing by';
     const sl = mk('div', 'agent-st', st + (a.done ? ' · ' + a.done + ' done' : '')); if (a.working) sl.style.color = '#00ff88'; else if (a.waiting) sl.style.color = '#ff6d00';
     c.append(sl); s.append(c);
@@ -409,7 +413,10 @@ const bots = new Map();
 const helixImg = new Image(); let helixReady = false;
 helixImg.onload = () => { helixReady = true; }; helixImg.src = '/crew/helix.jpg';
 // the crew: Michael's robot model, rendered per role (front, facing right, facing left) into one sheet: crew/assets/bots.png
-const BOT_ROWS = ['lead', 'researcher', 'builder', 'writer', 'designer', 'operator', 'reviewer'], BOT_CELL = 96;
+const BOT_ROWS = ['lead', 'researcher', 'builder', 'writer', 'designer', 'operator', 'reviewer'], BOT_CELL = 64;
+// sheet columns: 0 standing (front), then 4 walk frames each for front, back, right, left
+const BOT_DIRS = { front: 0, back: 1, right: 2, left: 3 };
+function dirOf(dx, dy, prev) { if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return prev || 'front'; return Math.abs(dx) >= Math.abs(dy) * 0.8 ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'front' : 'back'); }
 const botSheet = new Image(); let botReady = false;
 botSheet.onload = () => { botReady = true; }; botSheet.src = '/crew/bots.png';
 const PRODUCTS = [
@@ -418,10 +425,10 @@ const PRODUCTS = [
   { key: 'deadzone', label: 'DEADZONE', color: '#ff3344' },
 ];
 const PLATFORMS = [
-  { key: 'stripe', label: 'STRIPE', color: '#8a7dff' },
-  { key: 'etsy', label: 'ETSY', color: '#f1641e' },
+  { key: 'stripe', label: 'STRIPE', color: '#4f6bff' },
+  { key: 'etsy', label: 'ETSY', color: '#ffd23f' },
   { key: 'google_play', label: 'GOOGLE PLAY', color: '#34d17a' },
-  { key: 'app_store', label: 'APP STORE', color: '#2f9bff' },
+  { key: 'app_store', label: 'APP STORE', color: '#3fc8ff' },
 ];
 const RING = ['flipdeck', 'stripe', 'marnyx', 'etsy', 'deadzone', 'google_play', 'new', 'app_store'];   // clockwise from the top
 const WORKING = ['active', 'planning', 'paused', 'stalled'];
@@ -493,16 +500,17 @@ function drawSky(t) {
 
 function drawBot(x, y, color, status, t, seed, facing, sc, moving) {
   sc = sc || 1;
-  const bob = moving ? Math.abs(Math.sin(t * 0.016 + seed)) * 1.2 : status === 'running' ? Math.sin(t * 0.008 + seed) * 0.8 : status === 'waiting' ? Math.abs(Math.sin(t * 0.01 + seed)) * 1.4 : 0;
+  if (typeof facing !== 'string') facing = facing < 0 ? 'left' : 'right';
+  const bob = moving ? Math.abs(Math.sin(t * 0.016 + seed)) * 0.8 : status === 'running' ? Math.sin(t * 0.008 + seed) * 0.8 : status === 'waiting' ? Math.abs(Math.sin(t * 0.01 + seed)) * 1.4 : 0;
   const dim = status === 'queued' || status === 'cancelled';
   ctx.save(); ctx.translate(x, y - bob); ctx.scale(sc, sc); ctx.globalAlpha = dim ? 0.5 : 1;
   ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.beginPath(); ctx.ellipse(0, 9 + bob, 5.5, 1.8, 0, 0, 6.29); ctx.fill();
   const row = BOT_ROWS.indexOf(Object.keys(ROLE_COLORS).find(k => ROLE_COLORS[k] === color) || '');
   if (botReady && row >= 0) {
-    const H = 30, col = moving ? (facing > 0 ? 1 : 2) : 0;
-    if (moving) ctx.rotate(Math.sin(t * 0.02 + seed) * 0.09);                         // a little waddle while walking
+    const H = 36, d = BOT_DIRS[facing] != null ? BOT_DIRS[facing] : 0;
+    const col = moving ? 1 + d * 4 + Math.floor(t * 0.008 + seed * 7) % 4 : 0;     // a real walk cycle; standing faces you
     ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(botSheet, col * BOT_CELL, row * BOT_CELL, BOT_CELL, BOT_CELL, -H / 2, 10.5 - H, H, H);
+    ctx.drawImage(botSheet, col * BOT_CELL, row * BOT_CELL, BOT_CELL, BOT_CELL, -H / 2, 10.5 - H * 0.873, H, H);
     ctx.restore();
     if (status === 'running' && !moving) {
       const s = (t * 0.004 + seed) % 1; ctx.fillStyle = alpha(color, 1 - s); ctx.fillRect(x + 7 * sc, y - (15 + s * 7) * sc, 1.6 * sc, 1.6 * sc);
@@ -550,7 +558,7 @@ function stepBot(b, tk, desk, dt) {
 
 function platformModule(p) {
   const c = S && S.connections ? S.connections[p.key] : null, on = !!(c && c.connected), built = !!(c && c.built);
-  return { key: p.key, label: p.label, brand: p.color, color: on ? p.color : built ? '#ff8a2a' : '#3a5566', platform: true, tasks: [], missions: [],
+  return { key: p.key, label: p.label, brand: p.color, color: p.color, platform: true, tasks: [], missions: [],
            powered: on, state: on ? 'ONLINE' : built ? 'OFFLINE' : 'COMING SOON', idleText: on ? 'CONNECTED' : built ? 'TAP TO CONNECT' : 'UNDER CONSTRUCTION' };
 }
 function newKeys() {
@@ -560,7 +568,7 @@ function newKeys() {
 }
 function newBay(k) {
   const m = S.missions.find(x => factoryKey(x) === k);
-  return fillBay({ key: k, label: String(m.title || 'NEW BUSINESS').toUpperCase(), color: '#00ff99', isNew: true });
+  return fillBay({ key: k, label: String(m.title || 'NEW BUSINESS').toUpperCase(), color: '#ff4fb8', isNew: true });
 }
 function coreBay() { return fillBay({ key: 'aibussol', label: 'AIBUSSOL', color: '#00e5ff', isCore: true }); }
 function factories() {                                                   // every factory, for the side panel
@@ -575,7 +583,7 @@ function layout() {
   const prod = {}; PRODUCTS.forEach(f => { prod[f.key] = fillBay(Object.assign({}, f)); });
   const plat = {}; PLATFORMS.forEach(p => { plat[p.key] = platformModule(p); });
   const nk = newKeys();
-  const fresh = nk.length ? newBay(nk[0]) : { key: 'expansion', label: 'EXPANSION BAY', color: '#00ff99', expansion: true, tasks: [], missions: [], state: 'OPEN', idleText: 'NEXT BUSINESS' };
+  const fresh = nk.length ? newBay(nk[0]) : { key: 'expansion', label: 'EXPANSION BAY', color: '#ff4fb8', expansion: true, tasks: [], missions: [], state: 'OPEN', idleText: 'NEXT BUSINESS' };
   mods = RING.map((k, i) => {
     const m = k === 'new' ? fresh : (prod[k] || plat[k]);
     const a = -Math.PI / 2 + i * Math.PI / 4;
@@ -652,10 +660,10 @@ function drawModule(m, t, dt) {
   const g = ctx.createLinearGradient(0, y0, 0, y0 + h); g.addColorStop(0, '#162536'); g.addColorStop(1, '#070c13');
   ctx.fillStyle = g; ctx.fill(); ctx.shadowBlur = 0;
   ctx.strokeStyle = 'rgba(150,190,210,0.35)'; ctx.lineWidth = 3 * SC + 0.5; chamfer(x0, y0, w, h, c); ctx.stroke();
-  ctx.strokeStyle = alpha(col, sel ? 1 : lit ? 0.8 : 0.35); ctx.lineWidth = sel ? 2 : 1.2; chamfer(x0 + 2.5 * SC, y0 + 2.5 * SC, w - 5 * SC, h - 5 * SC, c - SC); ctx.stroke();
+  ctx.strokeStyle = alpha(col, sel ? 1 : lit ? 0.85 : 0.6); ctx.lineWidth = sel ? 2 : 1.4; chamfer(x0 + 2.5 * SC, y0 + 2.5 * SC, w - 5 * SC, h - 5 * SC, c - SC); ctx.stroke();
   // outer-end band with running lights
   const band = 10 * SC;
-  ctx.fillStyle = alpha(col, lit ? 0.32 : 0.12); ctx.fillRect(x0 + c, y0 + 3 * SC, w - 2 * c, band);
+  ctx.fillStyle = alpha(col, lit ? 0.32 : 0.2); ctx.fillRect(x0 + c, y0 + 3 * SC, w - 2 * c, band);
   for (let i = 0; i < 5; i++) { ctx.fillStyle = alpha(col, lit ? 0.4 + 0.5 * ((Math.floor(t / 300) + i) % 5 === 0 ? 1 : 0) : 0.15); ctx.fillRect(x0 + c + 6 * SC + i * 8 * SC, y0 + 3 * SC + band / 2 - 1, 4 * SC, 2); }
   // floor
   const I = { x: x0 + 9 * SC, y: y0 + band + 7 * SC, w: w - 18 * SC, h: h - band - 16 * SC };
@@ -698,9 +706,9 @@ function drawModule(m, t, dt) {
     const desk = desks[i % desks.length], b = botFor(tk, I, desk, t);
     stepBot(b, tk, desk, dt);
     const [bx, by] = toWorld(m, I.x + b.fx * I.w, I.y + b.fy * I.h);
-    if (b.lastX != null && Math.abs(bx - b.lastX) > 0.02) b.wf = bx > b.lastX ? 1 : -1;      // face where it walks on screen (modules are turned)
-    b.lastX = bx;
-    drawBot(bx, by, ROLE_COLORS[tk.role] || col, tk.status, t, b.seed, b.wf || 1, sc, b.moving);
+    if (b.lastX != null) b.wf = dirOf(bx - b.lastX, by - b.lastY, b.wf);                  // face where it walks on screen (modules are turned)
+    b.lastX = bx; b.lastY = by;
+    drawBot(bx, by, ROLE_COLORS[tk.role] || col, tk.status, t, b.seed, b.moving ? (b.wf || 'front') : 'front', sc, b.moving);
     const ky = by - 16 * sc;
     if (tk.status === 'done') { ctx.strokeStyle = '#00ff99'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(bx - 4, ky); ctx.lineTo(bx - 1, ky + 3); ctx.lineTo(bx + 4, ky - 3); ctx.stroke(); }
     if (tk.status === 'failed') { ctx.strokeStyle = '#ff3344'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(bx - 3, ky - 2); ctx.lineTo(bx + 3, ky + 4); ctx.moveTo(bx + 3, ky - 2); ctx.lineTo(bx - 3, ky + 4); ctx.stroke(); }
@@ -713,7 +721,7 @@ function drawWaiting(m, t) {
   waiting.slice(0, 3).forEach((tk, i) => {
     const r = core.r + 30 * SC + i * 18 * SC + Math.sin(t * 0.0015 + i) * 2;
     const qx = core.x + m.ux * r, qyb = core.y + m.uy * r;
-    drawBot(qx, qyb, ROLE_COLORS[tk.role] || m.color, 'waiting', t, i * 3.1, m.ux < 0 ? 1 : -1, Math.max(0.8, SC), false);
+    drawBot(qx, qyb, ROLE_COLORS[tk.role] || m.color, 'waiting', t, i * 3.1, 'front', Math.max(0.8, SC), false);
     const qy = qyb - 26 * Math.max(0.8, SC);
     ctx.fillStyle = '#ff8a2a'; ctx.shadowColor = '#ff8a2a'; ctx.shadowBlur = 8; rr(qx - 6, qy, 12, 12, 3); ctx.fill(); ctx.shadowBlur = 0;
     ctx.fillStyle = '#050508'; ctx.font = '700 10px Share Tech Mono, monospace'; ctx.textAlign = 'center'; ctx.fillText('?', qx, qy + 9);
@@ -776,8 +784,11 @@ function drawCore(t) {
   if (core.bay) core.bay.tasks.filter(k => k.status !== 'waiting').forEach(tk => onDeck.push({ role: tk.role, status: tk.status }));
   (S && S.roster ? S.roster : []).filter(a => a.role !== 'lead' && !a.working && !a.waiting).forEach(a => onDeck.push({ role: a.role, status: 'idle' }));
   onDeck.forEach((a, i) => {
-    const dir = i % 2 ? 1 : -1, ang = -Math.PI / 2 + i * (Math.PI * 2 / Math.max(onDeck.length, 1)) + t * 0.00007 * dir;
-    drawBot(x + Math.cos(ang) * track, y + Math.sin(ang) * track + 3, ROLE_COLORS[a.role] || '#00e5ff', a.status, t, i * 4.1, -Math.sin(ang) * dir > 0 ? 1 : -1, sc, true);
+    // each one strolls a while, then stops and looks at you, then strolls on (walking time only moves it along the ring)
+    const P = 9000, W = 5500, tt = t + i * 2300, walking = tt % P < W, walked = Math.floor(tt / P) * W + Math.min(tt % P, W);
+    const dir = i % 2 ? 1 : -1, ang = -Math.PI / 2 + i * (Math.PI * 2 / Math.max(onDeck.length, 1)) + walked * 0.00009 * dir;
+    const face = dirOf(-Math.sin(ang) * dir, Math.cos(ang) * dir, 'front');
+    drawBot(x + Math.cos(ang) * track, y + Math.sin(ang) * track + 3, ROLE_COLORS[a.role] || '#00e5ff', a.status, t, i * 4.1, walking ? face : 'front', sc, walking);
   });
   // the open-items badge (no name plate: the portrait is Helix)
   ctx.textAlign = 'center';
