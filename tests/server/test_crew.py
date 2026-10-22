@@ -880,7 +880,7 @@ class TestSpecialists:
         assert "generate_image" in self.names("marketer") and "generate_image" in self.names("social")
         assert "business_numbers" in self.names("analyst") and "business_numbers" in self.names("finance")
         assert "check_site" in self.names("qa") and "repo_read" in self.names("qa")
-        assert "use_connection" in self.names("support") and "use_connection" not in self.names("social")
+        assert "use_connection" in self.names("support") and "use_connection" not in self.names("qa")
         w = world(two_task_plan(), {})
         prompt = w.engine._planner_prompt("")
         assert all(r in prompt for r in ("marketer", "social", "support", "analyst", "qa", "finance"))
@@ -952,3 +952,102 @@ def test_a_task_moves_to_the_writing_model_when_the_lookup_provider_is_out_of_qu
     w.engine.acompletion = Flaky(w.model.plan, w.model.agents)
     m = run(start(w))
     assert run(w.store.list_tasks(m["id"]))[0]["status"] == "done" and "gemini-x" in calls and "claude-x" in calls
+
+
+# ── Marnyx: Echo's week and Spark's email, each one approval ──
+
+class MarnyxHttp(FakeHttp):
+    BIZ = {"businesses": [{"id": 4, "name": "FlipDeck", "connections": [{"platform": "instagram", "status": "active"}, {"platform": "facebook", "status": "active"}],
+                           "subscribed_contacts": 12, "mailing_address_set": True},
+                          {"id": 5, "name": "Marnyx", "connections": [], "subscribed_contacts": 0, "mailing_address_set": False}]}
+
+    async def get(self, url, **kw):
+        self.requests.append(("GET", url, kw))
+        if url.endswith("/businesses"):
+            return httpx.Response(200, json=self.BIZ)
+        return httpx.Response(200, json={"posts": []})
+
+    async def post(self, url, **kw):
+        self.requests.append(("POST", url, kw))
+        if url.endswith("/posts"):
+            return httpx.Response(201, json={"created": len(kw["json"]["posts"]), "results": [{"index": i, "id": 100 + i} for i in range(len(kw["json"]["posts"]))]})
+        return httpx.Response(201, json={"id": 9, "status": "queued", "recipients": 12})
+
+
+def _week(n=2):
+    base = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2)
+    return [{"body": f"Post {i}: flip smarter.", "hashtags": "#cards", "platforms": ["instagram", "facebook"],
+             "scheduled_at": (base + dt.timedelta(days=i)).isoformat()} for i in range(n)]
+
+
+class TestMarnyx:
+    def test_the_week_reads_as_one_approval_and_runs_only_when_approved(self):
+        posts = _week(3)
+
+        def echo(turn, msgs):
+            if turn == 0:
+                return resp(calls=[("use_connection", {"platform": "marnyx", "action": "schedule_week", "args": {"business": "FlipDeck", "posts": posts}})])
+            return resp(calls=[("finish", {"summary": "Week sent."})])
+        http = MarnyxHttp()
+        w = world({"tasks": [{"title": "Plan the FlipDeck week", "role": "social", "brief": "b"}]}, {"Plan the FlipDeck week": echo},
+                  env={"MARNYX_API_KEY": "mx_" + "a" * 40}, http=http)
+        m = run(start(w))
+        q = run(w.store.list_questions(UID))
+        assert len(q) == 1 and q[0]["kind"] == "checkpoint" and "Schedule 3 post(s) for FlipDeck" in q[0]["text"] and "Instagram, Facebook" in q[0]["text"]
+        assert not [r for r in http.requests if r[0] == "POST"]                     # nothing sent before Approve
+        run(w.engine.answer(UID, q[0]["id"], approve=True))
+        run(w.engine.run_until_idle())
+        sent = [r for r in http.requests if r[0] == "POST"]
+        assert len(sent) == 1 and sent[0][1].endswith("/businesses/4/posts") and len(sent[0][2]["json"]["posts"]) == 3
+        assert sent[0][2]["headers"]["Authorization"] == "Bearer mx_" + "a" * 40
+        assert run(w.store.get_mission(m["id"]))["status"] == "done"
+
+    def test_other_crew_cannot_post_and_echo_cannot_charge(self):
+        def sage(turn, msgs):
+            if turn == 0:
+                return resp(calls=[("use_connection", {"platform": "marnyx", "action": "send_email", "args": {"business": "FlipDeck", "subject": "x", "body_text": "y"}})])
+            assert "can only read" in json.dumps(msgs)
+            return resp(calls=[("use_connection", {"platform": "marnyx", "action": "list_accounts", "args": {}})]) if turn == 1 else resp(calls=[("finish", {"summary": "ok"})])
+        http = MarnyxHttp()
+        w = world({"tasks": [{"title": "Numbers", "role": "analyst", "brief": "b"}]}, {"Numbers": sage}, env={"MARNYX_API_KEY": "mx_" + "a" * 40}, http=http)
+        run(start(w))
+        assert not run(w.store.list_questions(UID)) and not [r for r in http.requests if r[0] == "POST"]
+        assert "use_connection" in [t["function"]["name"] for t in eng_mod.tools_for("social")]
+
+        def echo(turn, msgs):
+            if turn == 0:
+                return resp(calls=[("use_connection", {"platform": "stripe", "action": "create_product", "args": {"name": "x", "price_usd": 5}})])
+            assert "can only read" in json.dumps(msgs)
+            return resp(calls=[("finish", {"summary": "ok"})])
+        w2 = world({"tasks": [{"title": "Posts", "role": "social", "brief": "b"}]}, {"Posts": echo}, env={"STRIPE_SECRET_KEY": "sk_test_x"}, http=FakeHttp())
+        run(start(w2))
+        assert not run(w2.store.list_questions(UID))
+
+    def test_bad_weeks_are_refused_before_they_reach_michael(self):
+        from openjarvis.server.crew import connections as conns
+
+        with pytest.raises(conns.ConnectionError_):
+            conns.describe_action("marnyx", "schedule_week", {"business": "FlipDeck", "posts": [{"body": "x", "platforms": ["myspace"], "scheduled_at": _week(1)[0]["scheduled_at"]}]})
+        with pytest.raises(conns.ConnectionError_):
+            conns.describe_action("marnyx", "schedule_week", {"business": "FlipDeck", "posts": [{"body": "x", "platforms": ["x"], "scheduled_at": "2020-01-01T09:00:00-07:00"}]})
+        text = conns.describe_action("marnyx", "send_email", {"business": "FlipDeck", "subject": "New sets", "body_text": "Hello collectors"})
+        assert 'Subject: "New sets"' in text and "Hello collectors" in text
+
+    def test_the_weekly_plan_starts_once_a_week_while_marnyx_is_connected(self):
+        from openjarvis.server.crew.weekly import WeeklySocial
+
+        sunday_6pm = dt.datetime(2026, 10, 26, 1, 0, tzinfo=dt.timezone.utc)      # Sun Oct 25, 6 PM in Los Angeles
+        w = world({"tasks": [{"title": "Plan", "role": "social", "brief": "b"}]}, {"Plan": [resp(calls=[("finish", {"summary": "ok"})])]},
+                  env={"MARNYX_API_KEY": "mx_" + "a" * 40}, now=sunday_6pm)
+
+        class H:
+            async def owner_id(self):
+                return UID
+        wk = WeeklySocial(w.engine, H(), env={}, now=lambda: sunday_6pm)
+        mid = run(wk.maybe_run())
+        assert mid and "October 26" in run(w.store.get_mission(mid))["goal"]
+        assert run(wk.maybe_run()) is None                                          # once per week
+        early = WeeklySocial(w.engine, H(), env={}, now=lambda: sunday_6pm - dt.timedelta(days=1))          # Saturday: not yet
+        assert run(early.maybe_run()) is None
+        off = world({"tasks": []}, {}, env={}, now=sunday_6pm)
+        assert run(WeeklySocial(off.engine, H(), env={}, now=lambda: sunday_6pm).maybe_run()) is None   # Marnyx not connected

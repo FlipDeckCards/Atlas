@@ -170,6 +170,14 @@ _READ_CONNECTION_TOOL = {"type": "function", "function": {
     "parameters": {"type": "object", "properties": {"platform": {"type": "string"}, "action": {"type": "string"}, "args": {"type": "object"}},
                    "required": ["platform", "action"]}}}
 
+_MARNYX_TOOL = {"type": "function", "function": {
+    "name": "use_connection",
+    "description": "Use Marnyx, the owner's social media and email manager: platform 'marnyx', actions list_accounts and post_status (run now), "
+                   "schedule_week (one brand's week of posts) and send_email (one campaign). schedule_week and send_email go to the owner as ONE "
+                   "approval each and run only if approved. Read-only actions on other platforms (e.g. stripe.recent_payments) also work.",
+    "parameters": {"type": "object", "properties": {"platform": {"type": "string"}, "action": {"type": "string"}, "args": {"type": "object"}},
+                   "required": ["platform", "action"]}}}
+
 _REVIEW_TOOL = {"type": "function", "function": {
     "name": "request_changes",
     "description": "Send one finished task back to its agent with concrete fixes (each task can be sent back once). You continue after the rework is done.",
@@ -179,6 +187,7 @@ LIMITS = {"web_search": 12, "generate_image": 4, "repo_commit": 10, "check_site"
 SEARCHERS = ("researcher", "reviewer", "marketer", "social", "support", "analyst", "qa", "finance")
 IMAGERS = ("designer", "marketer", "social")
 READERS = ("support", "analyst", "finance")                # read-only platform access
+PUBLISHERS = ("social", "marketer")                       # Marnyx posts and email (each an approval); everything else read-only
 REVIEW_MARK = "REVIEW: changes requested."
 
 AcompletionFn = Callable[..., Awaitable[Any]]
@@ -220,6 +229,9 @@ HOUSE_RULES = (
     "his PC (they are folders on his computer, not factories). Game missions belong to the Deadzone factory: set the mission project to "
     "Deadzone for every game and for the Deadzone Games site. If his PC "
     "is not connected, Rig's task simply waits. Never write a web prototype for a game, and never claim a game was built unless Rig reports it.\n"
+    "- Social and email go through Marnyx (connection 'marnyx'): Echo plans each brand's week (FlipDeck, Marnyx, and Aibussol once its "
+    "accounts exist) and sends it with marnyx.schedule_week, one approval per brand per week; Spark writes campaigns and sends them with "
+    "marnyx.send_email, one approval each. Never post or email any other way.\n"
     "- Products: FlipDeck Cards (card-flipping subscription), Marnyx (AI social media manager), Deadzone Games (games site, mobile games "
     "go to Google Play first), Aibussol (this assistant). One shared Stripe account, tagged with metadata app=<product>."
 )
@@ -249,6 +261,8 @@ def tools_for(role: str) -> List[Dict[str, Any]]:
         extra.append(_SEARCH_TOOL)
     if role in READERS:
         extra.append(_READ_CONNECTION_TOOL)
+    if role in PUBLISHERS:
+        extra.append(_MARNYX_TOOL)
     if role in ("analyst", "finance"):
         extra.append(_NUMBERS_TOOL)
     if role == "qa":
@@ -369,6 +383,8 @@ class CrewEngine:
         self.name_fn = None                                 # async user_id -> display name (for a subscriber's prompts)
         self._owner_cache: Dict[str, bool] = {}
         self._herald_task: Optional[asyncio.Task] = None
+        self.weekly = None                                  # crew/weekly.py: the weekly social plan (set by the app)
+        self._weekly_task: Optional[asyncio.Task] = None
         self.pool = None                                    # the app's database pool (subscriptions, for usage billing)
         self._biz_health: Dict[str, Any] = {}              # a subscriber's site checks: uid -> (checked monotonic, results)
         self._usage_tasks: Dict[str, asyncio.Task] = {}
@@ -417,7 +433,14 @@ class CrewEngine:
     async def env_for(self, user_id: str):
         """The owner's crew uses the server's environment; anyone else's crew only the platform settings and their OWN connections."""
         if await self.is_owner(user_id):
-            return self.env
+            from openjarvis.server.crew import tenant
+
+            key = await tenant.get(self.store, user_id, "marnyx_key")       # pasted on the Station (Connections → Marnyx)
+            if not key:
+                return self.env
+            import os
+
+            return dict(os.environ if self.env is None else self.env, MARNYX_API_KEY=key)
         from openjarvis.server.crew import tenant
 
         name = ""
@@ -500,6 +523,8 @@ class CrewEngine:
         self._ticks += 1
         if self.herald is not None and (self._herald_task is None or self._herald_task.done()):
             self._herald_task = asyncio.create_task(self.herald.maybe_run())
+        if self.weekly is not None and self._ticks % 6 == 1 and (self._weekly_task is None or self._weekly_task.done()):
+            self._weekly_task = asyncio.create_task(self.weekly.maybe_run())
         if self._ticks % 30 == 0:
             self._refresh_products_soon()
             await self.store.requeue_stale(STALE_RUNNING_S)
@@ -1050,9 +1075,9 @@ class CrewEngine:
             return await self._check_site(task, args), None
         if name == "business_numbers" and task["role"] in ("analyst", "finance"):
             return await self._numbers(task), None
-        if name == "use_connection" and task["role"] in READERS:
+        if name == "use_connection" and task["role"] in READERS + PUBLISHERS:
             platform, action = _clip(args.get("platform"), 30).lower(), _clip(args.get("action"), 40)
-            if conns.risk_of(platform, action) != "read":
+            if conns.risk_of(platform, action) != "read" and not (task["role"] in PUBLISHERS and platform == "marnyx"):
                 return f"{task['role'].title()} can only read. Ask for {platform}.{action} to be done by Relay (operator) in the summary.", None
             return await self._connection(task, mission, args)
         if name == "request_changes" and task["role"] == "reviewer":

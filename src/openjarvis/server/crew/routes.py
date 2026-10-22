@@ -106,6 +106,40 @@ async def crew_bots():
     return FileResponse(_BOTS, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
 
 
+_PLAN_CACHE: dict = {}
+
+
+@router.get("/crew/plan.json")
+async def crew_plan():
+    """Public: the plan price (read from Stripe, cached an hour) and the usage terms, for the landing page."""
+    import time
+
+    import httpx
+
+    from openjarvis.server import billing
+    from openjarvis.server.crew import usage
+
+    hit = _PLAN_CACHE.get("plan")
+    if hit and time.monotonic() - hit[0] < 3600:
+        return hit[1]
+    p = usage.plan()
+    out = {"included_usd": p["included_usd"], "multiplier": p["multiplier"], "cap_usd": p["cap_usd"], "payg": p["payg"], "price_usd": None, "interval": "month"}
+    cfg = billing.config()
+    if cfg["secret_key"] and cfg["price"]:
+        try:
+            async with httpx.AsyncClient(timeout=8) as c:
+                r = await c.get(f"https://api.stripe.com/v1/prices/{cfg['price']}", auth=(cfg["secret_key"], ""))
+            if r.status_code == 200:
+                d = r.json()
+                if d.get("unit_amount") is not None:
+                    out["price_usd"] = round(d["unit_amount"] / 100, 2)
+                out["interval"] = (d.get("recurring") or {}).get("interval") or "month"
+        except Exception:
+            logger.exception("plan price lookup failed")
+    _PLAN_CACHE["plan"] = (time.monotonic(), out)
+    return out
+
+
 @router.get("/api/crew/state")
 async def crew_state(request: Request):
     g = await _gate(request, need_engine=False)
@@ -123,7 +157,7 @@ async def crew_state(request: Request):
     st["connections"] = await conns.status(engine.store, uid, envx)
     if not owner:
         # a subscriber's own connections, each with its guided steps
-        for kind in ("stripe", "github"):
+        for kind in ("stripe", "github", "marnyx"):
             st["connections"][kind].update(guide=kind, setup="" if st["connections"][kind]["connected"] else "Connect it step by step.")
         phone = bool(await tenant.get(engine.store, uid, "notify_url"))
         st["connections"]["phone"] = {"connected": phone, "built": True, "label": "Phone alerts and briefs", "actions": [], "guide": "phone",
@@ -137,6 +171,10 @@ async def crew_state(request: Request):
         st["guides"] = guide.GUIDES
         st["house_rules"] = (await tenant.get(engine.store, uid, "house_rules")) or ""
         st["usage"] = await engine.usage(uid)
+    if owner:
+        # the owner's keys live on Render, except Marnyx, which is pasted once on the Station like a subscriber's
+        st["connections"]["marnyx"].update(guide="marnyx")
+        st["guides"] = {"marnyx": guide.GUIDES["marnyx"]}
     st["businesses"] = await tenant.businesses(engine.store, uid) if not owner else [
         {"key": "flipdeck", "name": "FlipDeck", "url": "https://flipdeckcards.com", "color": "#ff6d00"},
         {"key": "marnyx", "name": "Marnyx", "url": "https://marnyx.onrender.com", "color": "#b06cff"},
@@ -221,7 +259,7 @@ class BusinessIn(BaseModel):
 
 @router.post("/api/crew/connect/{kind}")
 async def crew_connect(kind: str, body: ConnectIn, request: Request):
-    if kind not in ("stripe", "github", "phone", "rules"):
+    if kind not in ("stripe", "github", "phone", "rules", "marnyx"):
         return JSONResponse({"detail": "Unknown connection."}, status_code=404)
     g = await _gate(request)
     if isinstance(g, JSONResponse):
@@ -229,7 +267,7 @@ async def crew_connect(kind: str, body: ConnectIn, request: Request):
     uid, engine = g
     from openjarvis.server.crew import guide
 
-    if await engine.is_owner(uid):
+    if await engine.is_owner(uid) and kind != "marnyx":
         return JSONResponse({"detail": "The owner's connections are set on Render (Atlas → Environment)."}, status_code=409)
     hit = hardening.enforce({"chat_user": uid})
     if hit:
@@ -255,7 +293,7 @@ async def crew_connect_off(kind: str, request: Request):
     uid, engine = g
     from openjarvis.server.crew import guide
 
-    if await engine.is_owner(uid):
+    if await engine.is_owner(uid) and kind != "marnyx":
         return JSONResponse({"detail": "The owner's connections are set on Render."}, status_code=409)
     try:
         await guide.disconnect(engine.store, uid, kind)

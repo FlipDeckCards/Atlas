@@ -352,6 +352,9 @@ def create_app(
             notifier.url_for = crew_push_url
             engine.herald = Herald(engine, getattr(app.state, "brief_store", None) or BriefStore(pool), pool=pool, notifier=notifier)
             engine.pool = pool
+            from openjarvis.server.crew.weekly import WeeklySocial
+
+            engine.weekly = WeeklySocial(engine, engine.herald)
             await engine.start()
             app.state.crew_engine = engine
             logger.info("crew engine started")

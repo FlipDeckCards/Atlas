@@ -112,3 +112,17 @@ A subscriber (an active Aibussol subscription) gets the same Station with every 
   `STRIPE_PRICE_USAGE` set (a metered price on a Billing Meter, $0.01 per unit, event `CREW_USAGE_METER_EVENT`), extra work is billed
   at `CREW_OVERAGE_MULTIPLIER` × cost, up to `CREW_MONTHLY_HARD_CAP_USD`, and reported to Stripe's Meter Events API as it accrues.
   Without a usage price the crew stops when the included work is used up. The owner is never metered.
+
+## Marnyx: social posts and email
+
+- Connect it once: in Marnyx, Settings → Connected apps → Create key; on the Station, Connections → Marnyx → Connect, paste, Test & save.
+- Echo (social) and Spark (marketing) may use the `marnyx` connection: `list_accounts` and `post_status` run at once;
+  `schedule_week` (one brand's week, up to 28 posts) and `send_email` (one campaign to opted-in subscribers) are each ONE approval.
+  Every other platform stays read-only for them.
+- The weekly social plan (`crew/weekly.py`) starts itself each week (`CREW_WEEKLY_SOCIAL`, default "sun 17:00" Los Angeles, "off" to stop)
+  while Marnyx is connected: one approval per brand.
+
+## The landing page
+
+Signed-out visitors to aibussol.com see what Aibussol does, the crew, tools, safety, pricing (live from Stripe via the public
+`/crew/plan.json`) and a sign-in / sign-up box. Signed-in users go straight to their Station.

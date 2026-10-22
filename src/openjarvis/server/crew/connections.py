@@ -26,7 +26,7 @@ import logging
 import os
 import secrets
 import time
-from typing import Any, Callable, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 from urllib.parse import urlencode
 
 import httpx
@@ -58,16 +58,31 @@ ACTIONS: Dict[str, Dict[str, Dict[str, Any]]] = {
                                           "when_made": "made_to_order | 2020_2026 | ...", "type": "download (default) | physical",
                                           "shipping_profile_id": "integer, physical only"}},
     },
+    "marnyx": {
+        "list_accounts": {"risk": "read", "about": "List the Marnyx businesses (brands) with their connected social accounts and how many email subscribers each has.",
+                          "args": {}},
+        "post_status": {"risk": "read", "about": "Where posts already sent to Marnyx stand (scheduled, published with link, failed with reason).",
+                        "args": {"business": "business name or id", "ids": "list of Marnyx post ids"}},
+        "schedule_week": {"risk": "checkpoint", "about": "Schedule a week of posts for ONE brand on its connected socials through Marnyx. The owner approves the whole "
+                                                        "week at once; Marnyx adds a picture to each post and publishes each at its time.",
+                          "args": {"business": "business name or id (from list_accounts)",
+                                   "posts": "list of up to 28: {body, hashtags, platforms: [instagram|facebook|x|tiktok], scheduled_at: ISO time with offset, "
+                                            "e.g. 2026-10-27T09:00:00-07:00}"}},
+        "send_email": {"risk": "checkpoint", "about": "Send an email campaign to ONE brand's subscribed contacts through Marnyx (Postmark): consent-only list, "
+                                                     "unsubscribe link and mailing address added, daily and monthly caps apply.",
+                       "args": {"business": "business name or id", "subject": "text (up to 150)", "body_text": "plain text (up to 8000)"}},
+    },
     "google_play": {},
     "app_store": {},
 }
 
-LABELS = {"stripe": "Stripe", "etsy": "Etsy", "google_play": "Google Play", "app_store": "App Store"}
+LABELS = {"stripe": "Stripe", "etsy": "Etsy", "marnyx": "Marnyx (your socials and email)", "google_play": "Google Play", "app_store": "App Store"}
 
 SETUP = {
     "stripe": "Set STRIPE_SECRET_KEY on Render (the Aibussol billing key works).",
     "etsy": "Register an app at etsy.com/developers (wait for approval), set ETSY_API_KEY (and ETSY_SHARED_SECRET if Etsy shows one) and "
             "ETSY_REDIRECT_URI=https://aibussol.com/crew/connect/etsy/callback on Render, then tap Connect Etsy in the Station.",
+    "marnyx": "In Marnyx open Settings → Connected apps → Create key, then tap Connect here and paste it.",
     "google_play": "Not built yet. Needs: a Play developer account, a Google Cloud service account invited to Play Console, and its JSON key.",
     "app_store": "Not built yet. Needs: an Apple Developer account and an App Store Connect API key (issuer id, key id, .p8 file).",
 }
@@ -99,6 +114,7 @@ async def status(store, user_id: str, env=None) -> Dict[str, Dict[str, Any]]:
     out = {
         "stripe": {"connected": stripe_on, "built": True},
         "etsy": {"connected": etsy_app_configured(env) and etsy_linked, "built": True, "can_connect": etsy_app_configured(env) and not etsy_linked},
+        "marnyx": {"connected": bool(marnyx_key(env)), "built": True},
         "google_play": {"connected": False, "built": False},
         "app_store": {"connected": False, "built": False},
     }
@@ -136,6 +152,17 @@ def risk_of(platform: str, action: str) -> Optional[str]:
 
 def describe_action(platform: str, action: str, args: Dict[str, Any]) -> str:
     """One plain sentence, written by the server, of what a checkpoint will do if approved."""
+    if platform == "marnyx" and action == "schedule_week":
+        posts = _week(args)
+        lines = [f'Schedule {len(posts)} post(s) for {_clip(args.get("business"), 60)} through Marnyx (each gets a picture and goes out at its time):']
+        for i, p in enumerate(posts, 1):
+            lines.append(f'{i}. {_when_label(p["scheduled_at"])} · {", ".join(PLAT_NAMES.get(x, x) for x in p["platforms"])}: {_clip(p["body"], 220)}'
+                         + (f' {p["hashtags"]}' if p.get("hashtags") else ""))
+        return "\n".join(lines)
+    if platform == "marnyx" and action == "send_email":
+        subj, body = _email(args)
+        return (f'Email {_clip(args.get("business"), 60)}\'s subscribed contacts through Marnyx. Subject: "{subj}"\n'
+                f'{_clip(body, 900)}' + ("…" if len(body) > 900 else ""))
     if platform == "stripe" and action == "create_product":
         interval = args.get("interval") if args.get("interval") in ("month", "year") else "once"
         price = _price(args.get("price_usd"))
@@ -154,6 +181,120 @@ def _price(v: Any) -> float:
     if not (0.5 <= p <= 10000):
         raise ConnectionError_("price_usd must be between 0.50 and 10000.")
     return round(p, 2)
+
+
+# ── Marnyx (the owner's own social media manager): posts and email through its API ──────────────
+
+MARNYX_API = "https://marnyx.onrender.com/api/v1"
+PLAT_NAMES = {"instagram": "Instagram", "facebook": "Facebook", "x": "X", "tiktok": "TikTok"}
+
+
+def marnyx_key(env=None) -> str:
+    return (_env(env).get("MARNYX_API_KEY") or "").strip()
+
+
+def marnyx_url(env=None) -> str:
+    return ((_env(env).get("MARNYX_API_URL") or "").strip() or MARNYX_API).rstrip("/")
+
+
+def _when(v: Any) -> dt.datetime:
+    try:
+        t = dt.datetime.fromisoformat(str(v).strip().replace("Z", "+00:00"))
+    except ValueError:
+        raise ConnectionError_(f"scheduled_at must be an ISO time with its offset, like 2026-10-27T09:00:00-07:00 (got {_clip(v, 40)!r}).")
+    if t.tzinfo is None:
+        raise ConnectionError_("scheduled_at needs its time zone offset, like -07:00 for Los Angeles.")
+    return t
+
+
+def _when_label(iso: str) -> str:
+    from zoneinfo import ZoneInfo
+
+    t = _when(iso).astimezone(ZoneInfo("America/Los_Angeles"))
+    return t.strftime("%a %b %d %I:%M %p").replace(" 0", " ") + " PT"
+
+
+def _week(args: Dict[str, Any]) -> List[Dict[str, Any]]:
+    posts = args.get("posts")
+    if not isinstance(posts, list) or not posts:
+        raise ConnectionError_("posts must be a list of {body, hashtags, platforms, scheduled_at}.")
+    if len(posts) > 28:
+        raise ConnectionError_("Up to 28 posts per brand per week.")
+    if not _clip(args.get("business"), 60):
+        raise ConnectionError_("Name the business (brand) the posts are for.")
+    out = []
+    for p in posts:
+        if not isinstance(p, dict) or not str(p.get("body") or "").strip():
+            raise ConnectionError_("Every post needs body text.")
+        plats = [x for x in (p.get("platforms") or []) if x in PLAT_NAMES]
+        if not plats:
+            raise ConnectionError_("Every post needs platforms from: instagram, facebook, x, tiktok.")
+        t = _when(p.get("scheduled_at"))
+        if t < dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=10):
+            raise ConnectionError_("Every scheduled_at must be at least 10 minutes from now.")
+        out.append({"body": str(p["body"]).strip()[:2200], "hashtags": _clip(p.get("hashtags"), 300), "platforms": plats,
+                    "scheduled_at": t.isoformat(), "notes": _clip(p.get("notes"), 200)})
+    return sorted(out, key=lambda x: x["scheduled_at"])
+
+
+def _email(args: Dict[str, Any]):
+    subj, body = _clip(args.get("subject"), 150), str(args.get("body_text") or "").strip()[:8000]
+    if not subj or not body:
+        raise ConnectionError_("An email needs a subject and body_text.")
+    if not _clip(args.get("business"), 60):
+        raise ConnectionError_("Name the business the email is for.")
+    return subj, body
+
+
+async def _marnyx(action: str, args: Dict[str, Any], *, env, cf: "ClientFactory") -> str:
+    base, h = marnyx_url(env), {"Authorization": f"Bearer {marnyx_key(env)}", "Accept": "application/json"}
+
+    def ok(r):
+        if r.status_code == 401:
+            raise ConnectionError_("Marnyx refused the API key (revoked or wrong). Make a new one in Marnyx Settings → Connected apps.")
+        if r.status_code >= 400:
+            try:
+                msg = r.json().get("error")
+            except Exception:
+                msg = ""
+            raise ConnectionError_(f"Marnyx answered {r.status_code}" + (f": {_clip(msg, 200)}" if msg else "."))
+        return r.json()
+
+    async with cf() as c:
+        biz = ok(await c.get(f"{base}/businesses", headers=h)).get("businesses") or []
+        if action == "list_accounts":
+            if not biz:
+                return "Marnyx: no businesses yet."
+            return "Marnyx businesses: " + "; ".join(
+                f'{b["name"]} (id {b["id"]}): ' + (", ".join(f'{PLAT_NAMES.get(x["platform"], x["platform"])}{"" if x["status"] == "active" else " (needs reconnect)"}'
+                                                          for x in b.get("connections") or []) or "no socials connected")
+                + f', {b.get("subscribed_contacts", 0)} email subscriber(s)' + ("" if b.get("mailing_address_set") else ", no mailing address set (email cannot be sent)")
+                for b in biz)
+        want = str(args.get("business") or "").strip().lower()
+        match = [b for b in biz if str(b["id"]) == want or b["name"].strip().lower() == want] or \
+                [b for b in biz if want and want in b["name"].strip().lower()]
+        if len(match) != 1:
+            raise ConnectionError_(f'No single Marnyx business matches "{_clip(args.get("business"), 60)}". Businesses: ' + ", ".join(b["name"] for b in biz))
+        b = match[0]
+        if action == "post_status":
+            ids = ",".join(str(int(x)) for x in (args.get("ids") or []) if str(x).isdigit())[:800]
+            rows = ok(await c.get(f"{base}/businesses/{b['id']}/posts", headers=h, params={"ids": ids})).get("posts") or []
+            return f'Marnyx posts for {b["name"]}: ' + ("; ".join(
+                f'#{p["id"]} ' + ", ".join(f'{PLAT_NAMES.get(v["platform"], v["platform"])} {v["status"]}' + (f' {v["url"]}' if v.get("url") else "")
+                                         + (f' ({_clip(v["error"], 80)})' if v.get("error") else "") for v in p.get("versions") or [])
+                + (f' · held: {_clip(p["auto_note"], 160)}' if p.get("auto_note") else "") for p in rows) or "none found")
+        if action == "schedule_week":
+            posts = _week(args)
+            out = ok(await c.post(f"{base}/businesses/{b['id']}/posts", headers=h, json={"approved_in": "Aibussol", "posts": posts}))
+            made = [x for x in out.get("results") or [] if x.get("id")]
+            bad = [f'post {x["index"] + 1}: {x.get("error")}' for x in out.get("results") or [] if not x.get("id")]
+            return (f'Marnyx accepted {len(made)} of {len(posts)} post(s) for {b["name"]}; each is approved and scheduled once its picture is ready. '
+                    f'Marnyx post ids: {", ".join(str(x["id"]) for x in made)}.' + (" Not accepted: " + "; ".join(bad) if bad else ""))
+        if action == "send_email":
+            subj, body = _email(args)
+            out = ok(await c.post(f"{base}/businesses/{b['id']}/emails", headers=h, json={"subject": subj, "body_text": body, "approved_in": "Aibussol"}))
+            return f'Marnyx is sending "{subj}" to {out.get("recipients")} subscribed contact(s) of {b["name"]} (campaign {out.get("id")}).'
+    raise ConnectionError_("Unsupported Marnyx action.")
 
 
 # ── running an action ────────────────────────────────────────────────────────────────────────────
@@ -180,6 +321,8 @@ async def run(platform: str, action: str, args: Dict[str, Any], *, store, user_i
         return await _stripe(action, args, env=env, mission_id=mission_id, cf=cf)
     if platform == "etsy":
         return await _etsy(action, args, store=store, user_id=user_id, env=env, cf=cf)
+    if platform == "marnyx":
+        return await _marnyx(action, args, env=env, cf=cf)
     raise ConnectionError_(f"{LABELS.get(platform, platform)} is not built yet.")
 
 

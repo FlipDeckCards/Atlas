@@ -39,6 +39,15 @@ GUIDES: Dict[str, Dict[str, Any]] = {
         "field": "Token (github_pat_…)",
         "extra": "Repos, e.g. you/your-site, you/your-app",
     },
+    "marnyx": {
+        "label": "Marnyx (your socials and email campaigns)",
+        "steps": [
+            "Sign in to Marnyx (https://marnyx.onrender.com) with your account and connect your social accounts there.",
+            "Open Settings → Connected apps, name the key \u201cAibussol\u201d and tap Create key.",
+            "Copy the key (it starts with mx_), paste it below, then Test & save.",
+        ],
+        "field": "Marnyx key (mx_…)",
+    },
     "phone": {
         "label": "Phone alerts and briefs",
         "steps": [
@@ -91,6 +100,20 @@ async def test_and_save(store, user_id: str, kind: str, value: str, extra: str =
         await tenant.put(store, user_id, "github_token", value)
         await tenant.put(store, user_id, "github_repos", ",".join(repos[:20]))
         return f"GitHub connected for {len(repos[:20])} repo(s)."
+    if kind == "marnyx":
+        if not re.fullmatch(r"mx_[A-Za-z0-9_-]{40}", value):
+            raise GuideError("That does not look like a Marnyx key (it starts with mx_).")
+        from openjarvis.server.crew.connections import MARNYX_API
+
+        async with cf() as c:
+            r = await c.get(f"{MARNYX_API}/businesses", headers={"Authorization": f"Bearer {value}"})
+        if r.status_code == 401:
+            raise GuideError("Marnyx refused that key. Make a new one under Settings → Connected apps.")
+        if r.status_code >= 400:
+            raise GuideError(f"Marnyx answered {r.status_code}. Try again in a minute.")
+        n = len((r.json() or {}).get("businesses") or [])
+        await tenant.put(store, user_id, "marnyx_key", value)
+        return f"Marnyx connected ({n} business{'es' if n != 1 else ''})."
     if kind == "phone":
         if not re.fullmatch(r"https://ntfy\.sh/[A-Za-z0-9_-]{8,64}", value):
             raise GuideError("Use https://ntfy.sh/ followed by a private topic of 8 to 64 letters, numbers, - or _.")
@@ -110,7 +133,8 @@ async def test_and_save(store, user_id: str, kind: str, value: str, extra: str =
 
 
 async def disconnect(store, user_id: str, kind: str) -> None:
-    names = {"stripe": ["stripe_key"], "github": ["github_token", "github_repos"], "phone": ["notify_url"], "rules": ["house_rules"]}.get(kind)
+    names = {"stripe": ["stripe_key"], "github": ["github_token", "github_repos"], "phone": ["notify_url"], "rules": ["house_rules"],
+             "marnyx": ["marnyx_key"]}.get(kind)
     if not names:
         raise GuideError("Unknown connection.")
     for n in names:

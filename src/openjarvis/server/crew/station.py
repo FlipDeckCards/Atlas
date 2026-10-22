@@ -116,8 +116,43 @@ STATION_PAGE = r"""<!DOCTYPE html>
   .msg { font-size:11px; min-height:14px; margin-top:6px; color:var(--green); overflow-wrap:anywhere; }
   .msg.err { color:var(--red); }
   a { color:var(--cyan); }
-  #auth { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(3,5,9,0.96); z-index:9; padding:20px; }
-  #auth .box { width:100%; max-width:380px; border:1px solid var(--cyan-dim); padding:28px; background:var(--panel); display:flex; flex-direction:column; gap:10px; }
+  /* the public landing page (signed out): what Aibussol is, the crew, tools, safety, pricing, and sign in / sign up */
+  #auth { position:fixed; inset:0; display:none; overflow-y:auto; background:radial-gradient(ellipse at 20% 0%, rgba(90,40,160,0.18), transparent 55%), radial-gradient(ellipse at 90% 30%, rgba(0,120,150,0.14), transparent 50%), #04050a; z-index:9; }
+  #auth .land { max-width:1080px; margin:0 auto; padding:28px 20px 60px; }
+  #auth .nav { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:34px; }
+  #auth .nav .logo { font-family:'Orbitron',monospace; font-weight:900; letter-spacing:4px; color:var(--cyan); text-shadow:0 0 18px var(--cyan); font-size:16px; }
+  #auth .nav .logo span { color:var(--orange); text-shadow:0 0 18px var(--orange); }
+  #auth .hero { display:grid; grid-template-columns:1.25fr 1fr; gap:34px; align-items:start; }
+  #auth h1 { font-family:'Orbitron',monospace; font-weight:900; color:#e8fbff; font-size:clamp(26px,4.4vw,44px); line-height:1.15; letter-spacing:1px; margin:0 0 16px; }
+  #auth h1 em { font-style:normal; color:var(--cyan); text-shadow:0 0 22px rgba(0,229,255,0.5); }
+  #auth h2 { font-family:'Orbitron',monospace; font-size:13px; letter-spacing:4px; color:var(--cyan); text-transform:uppercase; margin:46px 0 14px; }
+  #auth p.lead { color:var(--text); font-size:14px; line-height:1.75; margin:0 0 12px; }
+  #auth .pts { display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; }
+  #auth .pt { border:1px solid var(--border); border-radius:2px; padding:6px 10px; font-size:11px; color:var(--text); background:rgba(0,229,255,0.03); }
+  #auth .box { width:100%; border:1px solid var(--cyan-dim); padding:24px; background:var(--panel); display:flex; flex-direction:column; gap:10px; box-shadow:0 0 40px rgba(0,229,255,0.06); }
+  #auth .steps { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+  #auth .card { border:1px solid var(--border); background:rgba(8,8,15,0.85); padding:14px; border-radius:2px; }
+  #auth .card b { display:block; font-family:'Orbitron',monospace; font-size:11px; letter-spacing:2px; color:#e8fbff; margin-bottom:6px; }
+  #auth .card span, #auth .card li { font-size:12px; line-height:1.6; color:var(--text); }
+  #auth .card ul { margin:6px 0 0; padding-left:16px; }
+  #auth .num { font-family:'Orbitron',monospace; color:var(--orange); font-size:18px; font-weight:900; margin-bottom:4px; }
+  #auth .crew { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:10px; }
+  #auth .who { display:flex; gap:10px; align-items:flex-start; border:1px solid var(--border); background:rgba(8,8,15,0.85); padding:10px; border-radius:2px; }
+  #auth .who .face { width:40px; height:40px; flex:0 0 40px; border-radius:50%; border:1px solid var(--border); background-color:#060a12; background-repeat:no-repeat; }
+  #auth .who .nm { font-family:'Orbitron',monospace; font-size:11px; letter-spacing:2px; font-weight:700; }
+  #auth .who .rl { font-size:9px; letter-spacing:1px; color:var(--text-dim); text-transform:uppercase; margin:1px 0 4px; }
+  #auth .who .tx { font-size:11px; line-height:1.55; color:var(--text); }
+  #auth .grid2 { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+  #auth .price { font-family:'Orbitron',monospace; font-size:28px; color:#e8fbff; font-weight:900; }
+  #auth .price small { font-size:12px; color:var(--text-dim); font-weight:400; }
+  #auth details { border-bottom:1px solid var(--border); padding:10px 0; }
+  #auth summary { cursor:pointer; color:#e8fbff; font-size:13px; }
+  #auth details p { color:var(--text); font-size:12px; line-height:1.7; margin:8px 0 0; }
+  #auth .foot { margin-top:40px; color:var(--text-dim); font-size:11px; text-align:center; }
+  @media (max-width: 820px) {
+    #auth .hero, #auth .grid2 { grid-template-columns:1fr; }
+    #auth .steps { grid-template-columns:1fr 1fr; }
+  }
   #auth .box .h { font-family:'Orbitron',monospace; letter-spacing:4px; font-size:13px; color:var(--cyan); margin-bottom:6px; text-align:center; }
   #auth input { background:#050a12; border:1px solid var(--border); color:var(--text); padding:10px; font:inherit; font-size:13px; border-radius:2px; }
   #auth a { color:var(--cyan); }
@@ -186,15 +221,72 @@ STATION_PAGE = r"""<!DOCTYPE html>
   </div>
   <div id="right" class="col"><div id="links-box"></div><div id="side-body"></div></div>
 </div>
-<div id="auth"><div class="box">
-  <div class="h">AIBUS<span style="color:var(--orange)">SOL</span></div>
-  <div class="dim" id="a-mode" style="text-align:center;letter-spacing:2px;font-size:10px">SIGN IN</div>
-  <input id="a-email" type="email" placeholder="Email" autocomplete="email"/>
-  <input id="a-pass" type="password" placeholder="Password" autocomplete="current-password"/>
-  <div id="a-reg" style="display:none;flex-direction:column;gap:10px"><input id="a-name" placeholder="Display name" autocomplete="nickname"/><input id="a-invite" placeholder="Invite code (if you have one)" autocomplete="off"/></div>
-  <button class="b" id="a-go">SIGN IN</button>
-  <div id="a-err"></div>
-  <div class="dim" style="text-align:center;font-size:11px"><span id="a-q">No account yet?</span> <a href="#" id="a-tog">Create one</a></div>
+<div id="auth"><div class="land">
+  <div class="nav"><div class="logo">AIBUS<span>SOL</span></div><a href="#signin" class="b" id="nav-cta" onclick="setAuthMode('register')">GET STARTED</a></div>
+  <div class="hero">
+    <div>
+      <h1>Tell Helix what to build.<br><em>A crew of AI agents</em> plans it, builds it and runs it.</h1>
+      <p class="lead">Aibussol is your AI operations station for running businesses. Describe a goal in plain words: a product, a
+        campaign, a game, a website change, a week of posts. Helix breaks it into tasks and a crew of fifteen specialist agents works
+        them in parallel. You watch it live on the Station, answer their questions, and approve anything public, paid or permanent before
+        it happens.</p>
+      <p class="lead">Every business you run gets its own factory on the Station, with its money in and out, its users and its site
+        health, plus a daily brief on your phone.</p>
+      <div class="pts"><span class="pt">Talk or type, "Hey Helix"</span><span class="pt">15 specialist agents</span><span class="pt">Approve before anything goes public</span><span class="pt">P&amp;L per business</span><span class="pt">Briefs on your phone</span></div>
+    </div>
+    <div class="box" id="signin">
+      <div class="h">AIBUS<span style="color:var(--orange)">SOL</span></div>
+      <div class="dim" id="a-mode" style="text-align:center;letter-spacing:2px;font-size:10px">SIGN IN</div>
+      <input id="a-email" type="email" placeholder="Email" autocomplete="email"/>
+      <input id="a-pass" type="password" placeholder="Password" autocomplete="current-password"/>
+      <div id="a-reg" style="display:none;flex-direction:column;gap:10px"><input id="a-name" placeholder="Display name" autocomplete="nickname"/><input id="a-invite" placeholder="Invite code (if you have one)" autocomplete="off"/></div>
+      <button class="b" id="a-go">SIGN IN</button>
+      <div id="a-err"></div>
+      <div class="dim" style="text-align:center;font-size:11px"><span id="a-q">No account yet?</span> <a href="#" id="a-tog">Create one</a></div>
+    </div>
+  </div>
+
+  <h2>How it works</h2>
+  <div class="steps">
+    <div class="card"><div class="num">1</div><b>SAY THE GOAL</b><span>"Build a digital planner and list it on Etsy." "Plan next week's posts." "Make my game's web version." By voice or chat.</span></div>
+    <div class="card"><div class="num">2</div><b>HELIX PLANS</b><span>Helix splits it into tasks, picks the right agents and a budget, and reads the plan back. Nothing starts until you say yes.</span></div>
+    <div class="card"><div class="num">3</div><b>THE CREW WORKS</b><span>Agents work in parallel inside the factory for that business. Lens reviews the work and sends back anything that is not right.</span></div>
+    <div class="card"><div class="num">4</div><b>YOU APPROVE</b><span>Publishing, charging, merging code or sending email waits for your tap on Approve. Finished files land in the mission's outbox.</span></div>
+  </div>
+
+  <h2>The crew</h2>
+  <div class="crew" id="land-crew"></div>
+
+  <h2>Tools and connections</h2>
+  <div class="grid2">
+    <div class="card"><b>MONEY</b><ul><li>Stripe: revenue, subscriptions and payments per business; products and payment links on your Approve</li><li>Etsy draft listings</li><li>A live P&amp;L for every factory</li></ul></div>
+    <div class="card"><b>CODE AND SITES</b><ul><li>GitHub: Forge commits to its own branch; merging waits for your Approve</li><li>Probe tests your live sites</li><li>Site up or down on every factory</li></ul></div>
+    <div class="card"><b>GAMES ON YOUR PC</b><ul><li>The Workbench pairs your computer: Rig builds in your real Unity or Unreal projects with Claude Code, on your own Claude plan</li><li>PC, Android and web builds, tested before you see them</li></ul></div>
+    <div class="card"><b>SOCIAL AND EMAIL</b><ul><li>Through Marnyx: a planned week of posts per brand, approved once and published at the right times</li><li>Email campaigns to your opted-in subscribers</li></ul></div>
+    <div class="card"><b>RESEARCH AND MEDIA</b><ul><li>Live web search and deep sourced reports</li><li>Image and voice generation with a media library and editor</li></ul></div>
+    <div class="card"><b>BRIEFS</b><ul><li>Herald makes your morning, afternoon and evening briefs from live data</li><li>Sent to your phone, and Helix reads them out on request</li></ul></div>
+  </div>
+
+  <h2>Safety by design</h2>
+  <div class="grid2">
+    <div class="card"><b>YOU HOLD THE KEYS</b><span>Anything public, paid or permanent becomes a checkpoint that only you can approve. An agent can never approve its own.</span></div>
+    <div class="card"><b>OFFICIAL APIS ONLY</b><span>Agents act through each platform's official API with the access you choose, such as a Stripe restricted key or a GitHub token on the repos you pick.</span></div>
+    <div class="card"><b>YOUR OWN STATION</b><span>Your keys are stored encrypted and never shown again. Your crew only sees your connections, and every account is kept separate.</span></div>
+  </div>
+
+  <h2>Pricing</h2>
+  <div class="grid2">
+    <div class="card"><b>MONTHLY PLAN</b><div class="price" id="land-price">Subscribe<small></small></div><span id="land-included">Your own Station, the whole crew, guided connections and phone briefs.</span></div>
+    <div class="card"><b>PAY AS YOU GO</b><span id="land-payg">Extra crew work beyond what the plan includes is billed by usage, like Claude's own plans, with a monthly cap you never go past.</span></div>
+    <div class="card"><b>BUDGETS</b><span>Every mission has a budget and every task checks it before spending. Crews ask before spending more.</span></div>
+  </div>
+
+  <h2>Questions</h2>
+  <details><summary>Do I need to know how to code?</summary><p>No. You describe what you want; the crew writes and tests the code and asks you before anything is merged or published.</p></details>
+  <details><summary>Will it post or charge anything without me?</summary><p>No. Publishing, charging, merging and sending email always wait for your Approve. Reading data and making drafts run on their own.</p></details>
+  <details><summary>Can it build mobile games?</summary><p>Yes, with your computer paired: Rig builds in Unity or Unreal on your PC with Claude Code. Android and web builds work from Windows; iPhone builds need a Mac or a cloud build service.</p></details>
+  <details><summary>What do I connect?</summary><p>Only what you want the crew to use. The Station walks you through each one (Stripe, GitHub, Marnyx, your phone) and tests it before saving.</p></details>
+  <div class="foot">Aibussol · made by FlipDeck LLC</div>
 </div></div>
 <div id="gate"><div class="box"><div class="h" id="gate-h">STATION OFFLINE</div><div id="gate-t"></div></div></div>
 
@@ -233,8 +325,52 @@ function gate(title, text) {
 // ── sign in / create an account (the same /api/auth endpoints as before) ──
 let authMode = 'login', booted = false;
 function showAuth(msg) {
-  document.getElementById('auth').style.display = 'flex';
+  document.getElementById('auth').style.display = 'block';
   document.getElementById('a-err').textContent = msg || '';
+  landing();
+}
+// the landing page's crew cards and live pricing (public: /crew/plan.json)
+const LAND_CREW = [
+  ['lead', 'Helix', 'Lead', 'Talks with you, plans each goal and assigns the crew'],
+  ['researcher', 'Scout', 'Research', 'Live web search and deep sourced reports'],
+  ['builder', 'Forge', 'Code', 'Writes code in your repos on its own branch'],
+  ['writer', 'Quill', 'Writing', 'Copy, listings, posts, emails and docs'],
+  ['designer', 'Prism', 'Design', 'Brand direction, layouts and images'],
+  ['operator', 'Relay', 'Operator', 'Uses your connected platforms on your Approve'],
+  ['workbench', 'Rig', 'Workbench', 'Builds games on your PC in Unity or Unreal'],
+  ['reviewer', 'Lens', 'Review', 'Checks every deliverable and sends back fixes'],
+  ['briefer', 'Herald', 'Briefs', 'Your daily briefs from live data, on your phone'],
+  ['marketer', 'Spark', 'Marketing', 'Launch plans, SEO, ads copy and email campaigns'],
+  ['social', 'Echo', 'Social', 'A planned week of posts for every brand'],
+  ['support', 'Haven', 'Support', 'FAQs, help articles and reply templates'],
+  ['analyst', 'Sage', 'Analyst', 'Your numbers, KPIs, trends and forecasts'],
+  ['qa', 'Probe', 'QA', 'Tests your live sites and writes bug reports'],
+  ['finance', 'Tally', 'Finance', 'Budgets, cash flow, pricing and margin math'],
+];
+let landed = false;
+async function landing() {
+  if (landed) return; landed = true;
+  const box = document.getElementById('land-crew'), A = 40;
+  LAND_CREW.forEach(([role, name, rl, tx]) => {
+    const c = mk('div', 'who'), f = mk('div', 'face'), row = BOT_ROWS.indexOf(role);
+    f.style.backgroundImage = role === 'lead' ? 'url(/crew/helix.jpg)' : 'url(/crew/bots.png?v=' + BOT_VER + ')';
+    if (role === 'lead') { f.style.backgroundSize = 'cover'; f.style.backgroundPosition = 'center 20%'; }
+    else { f.style.backgroundSize = (17 * A) + 'px ' + (A * BOT_ROWS.length) + 'px'; f.style.backgroundPosition = '-1px ' + (-A * Math.max(0, row) + 2) + 'px'; }
+    f.style.borderColor = alpha(ROLE_COLORS[role] || '#00e5ff', 0.5);
+    const t = mk('div'); const n = mk('div', 'nm', name); n.style.color = ROLE_COLORS[role] || '#00e5ff';
+    t.append(n, mk('div', 'rl', rl), mk('div', 'tx', tx)); c.append(f, t); box.append(c);
+  });
+  try {
+    const p = await (await fetch('/crew/plan.json')).json();
+    if (p.price_usd) {
+      const el = document.getElementById('land-price'); el.textContent = '$' + Number(p.price_usd).toFixed(2);
+      const sm = mk('small', null, ' / ' + (p.interval || 'month')); el.append(sm);
+    }
+    if (p.included_usd != null) document.getElementById('land-included').textContent =
+      'Your own Station, the whole crew, guided connections and phone briefs, with $' + Number(p.included_usd).toFixed(2) + ' of crew work included every month.';
+    if (p.payg) document.getElementById('land-payg').textContent = 'Need more? Extra crew work is billed by usage at ' + p.multiplier + '× its AI cost, like Claude\'s own plans, never more than $' + Number(p.cap_usd).toFixed(0) + ' extra in a month.';
+    else document.getElementById('land-payg').textContent = 'The plan includes a set amount of crew work each month; when it is used up, the crew pauses until the next month. Pay-as-you-go extras are coming.';
+  } catch (e) {}
 }
 function setAuthMode(m) {
   authMode = m;

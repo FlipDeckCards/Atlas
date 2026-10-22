@@ -29,8 +29,8 @@ PLATFORM_KEYS = (
     "ETSY_API_KEY", "ETSY_SHARED_SECRET", "ETSY_REDIRECT_URI", "GPTR_FAST_LLM", "GPTR_SMART_LLM", "GPTR_STRATEGIC_LLM",
 )
 SECRET_ENV = {"stripe_key": "STRIPE_SECRET_KEY", "github_token": "CREW_GITHUB_TOKEN", "github_repos": "CREW_GITHUB_REPOS",
-              "house_rules": "CREW_HOUSE_RULES"}
-ENCRYPTED = ("stripe_key", "github_token", "notify_url")
+              "house_rules": "CREW_HOUSE_RULES", "marnyx_key": "MARNYX_API_KEY"}
+ENCRYPTED = ("stripe_key", "github_token", "notify_url", "marnyx_key")
 GENERIC_RULES = (
     "- Work only for this account and only inside the accounts and repos they connected. Never assume access you were not given.\n"
     "- Games: built in Unity (mobile) or Unreal (open world) on their own PC by Rig through the Workbench, never as a web prototype "
