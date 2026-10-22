@@ -19,10 +19,11 @@ from __future__ import annotations
 
 import html
 import logging
+import os
 from typing import Any, Optional
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
 from openjarvis.server import hardening
@@ -73,6 +74,17 @@ def _err(exc: Exception, code: int = 400) -> JSONResponse:
 @router.get("/station")
 async def station_page():
     return HTMLResponse(STATION_PAGE, headers={"Cache-Control": "no-cache"})
+
+
+_HELIX_PORTRAIT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "helix.jpg")
+
+
+@router.get("/crew/helix.jpg")
+async def helix_portrait():
+    """Helix's portrait for the Station's core (a public image, like the 3D head on the main page)."""
+    if not os.path.isfile(_HELIX_PORTRAIT):
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+    return FileResponse(_HELIX_PORTRAIT, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
 
 
 @router.get("/api/crew/state")

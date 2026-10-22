@@ -1,8 +1,9 @@
-"""The Station: a live picture of the crew, drawn entirely in code (no image files, no borrowed art).
+"""The Station: a live picture of the crew, drawn in code (no borrowed art; Helix's portrait is Michael's own image, crew/assets/helix.jpg).
 
-Helix's core sits in the middle; every mission is a room around it, joined by a corridor; every task is a crew member in its room.
-The picture shows only what /api/crew/state says: a running task works at its station, a waiting task walks the corridor to Helix
-with a question, a finished one shows a check. Nothing is animated that is not happening.
+Aibussol is the core in the middle with Helix inside it. Around it: a factory per product and per new business, a module per outside
+platform (online when connected), joined by docking tubes. The picture shows only what /api/crew/state says: crew members walk
+between their console and the floor while their task runs, one waiting on Michael walks the tube to Helix with a question,
+a finished one shows a check. Nothing is animated that is not happening.
 """
 
 STATION_PAGE = r"""<!DOCTYPE html>
@@ -119,7 +120,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
 <div id="main">
   <div id="left" class="col"><div id="roster-box"></div></div>
   <div id="center">
-    <div id="stage"><canvas id="cv"></canvas><div id="hint">Tap Helix for your inbox · a factory for its work · a dock for connections</div></div>
+    <div id="stage"><canvas id="cv"></canvas></div>
     <div id="chat" class="sec">
       <div class="lbl"><span>Helix</span><span class="act">same chat as the main screen</span></div>
       <div id="chat-log"></div>
@@ -368,259 +369,436 @@ function ledgerSec(events, title) {
 }
 
 // ── the station picture ──────────────────────────────────────────────────────────────────────
-// A fixed station: Helix's core in the middle, one factory per product (always there, idle until it has work),
-// a new factory for each new business the crew starts, and a dock for each outside platform (lit when connected).
+// Aibussol is the core in the middle, with Helix inside it. Around it: a factory for each product (and each new business the
+// crew starts), a module for each outside platform (online when connected), joined to the core by docking tubes.
+// Crew members walk around inside the factory they are working in; one waiting on Michael walks the tube to Helix.
 const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
-let W = 0, H = 0, DPR = 1, hub = { x: 0, y: 0, r: 60 }, stars = [], bays = [], pods = [];
-const FACTORIES = [
+let W = 0, H = 0, DPR = 1, stars = [], sky = null, core = { x: 0, y: 0, r: 60 }, bays = [], plats = [], decor = [], lastT = 0;
+const bots = new Map();
+const helixImg = new Image(); let helixReady = false;
+helixImg.onload = () => { helixReady = true; }; helixImg.src = '/crew/helix.jpg';
+const PRODUCTS = [
   { key: 'flipdeck', label: 'FLIPDECK', color: '#ff6d00' },
   { key: 'marnyx', label: 'MARNYX', color: '#b06cff' },
   { key: 'deadzone', label: 'DEADZONE', color: '#ff3344' },
-  { key: 'aibussol', label: 'AIBUSSOL', color: '#00e5ff' },
 ];
-const DOCKS = [['stripe', 'STRIPE', -1, -1], ['etsy', 'ETSY', 1, -1], ['google_play', 'PLAY', -1, 1], ['app_store', 'APPLE', 1, 1]];   // [key, label, left/right, above/below Helix]
+const PLATFORMS = [
+  { key: 'stripe', label: 'STRIPE', short: 'STRIPE', color: '#8a7dff' },
+  { key: 'etsy', label: 'ETSY', short: 'ETSY', color: '#f1641e' },
+  { key: 'google_play', label: 'GOOGLE PLAY', short: 'PLAY', color: '#34d17a' },
+  { key: 'app_store', label: 'APP STORE', short: 'APPLE', color: '#2f9bff' },
+];
 const WORKING = ['active', 'planning', 'paused', 'stalled'];
 
 function resize() {
   const r = cv.getBoundingClientRect(); DPR = Math.min(window.devicePixelRatio || 1, 2);
   W = r.width; H = r.height; cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR); ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  stars = Array.from({ length: Math.round(W * H / 2600) }, () => ({ x: Math.random() * W, y: Math.random() * H, z: Math.random(), p: Math.random() * 6.28 }));
+  stars = Array.from({ length: Math.round(W * H / 2200) }, () => ({ x: Math.random() * W, y: Math.random() * H, z: Math.random(), p: Math.random() * 6.28 }));
+  sky = document.createElement('canvas'); sky.width = Math.max(1, Math.round(W)); sky.height = Math.max(1, Math.round(H));
+  const s = sky.getContext('2d');
+  s.fillStyle = '#04050a'; s.fillRect(0, 0, W, H);
+  for (const [fx, fy, rad, col] of [[0.18, 0.25, 0.55, 'rgba(90,40,160,0.16)'], [0.85, 0.8, 0.6, 'rgba(0,120,150,0.13)'], [0.7, 0.15, 0.35, 'rgba(255,90,0,0.05)']]) {
+    const g = s.createRadialGradient(W * fx, H * fy, 0, W * fx, H * fy, Math.max(W, H) * rad);
+    g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)'); s.fillStyle = g; s.fillRect(0, 0, W, H);
+  }
   layout();
 }
 window.addEventListener('resize', resize);
 
 function factoryKey(m) {
   const p = String(m.project || '').toLowerCase().replace(/[^a-z]/g, '');
-  if (FACTORIES.some(f => f.key === p)) return p;
+  if (p === 'aibussol' || PRODUCTS.some(f => f.key === p)) return p;
   return 'new:' + String(m.title || m.goal || m.id).toLowerCase().slice(0, 40);
+}
+
+function fillBay(b) {
+  const ms = S ? S.missions.filter(m => m.status !== 'cancelled') : [];
+  b.missions = ms.filter(m => factoryKey(m) === b.key);
+  const current = b.missions.filter(m => WORKING.includes(m.status));
+  b.tasks = current.flatMap(m => m.tasks.filter(t => t.status !== 'cancelled'));
+  b.planning = current.some(m => m.status === 'planning');
+  b.title = current.length ? (current[0].title || current[0].goal) : '';
+  b.state = b.tasks.some(t => t.status === 'waiting') ? 'NEEDS YOU' : b.tasks.some(t => t.status === 'running') ? 'WORKING'
+    : b.planning ? 'PLANNING' : current.length ? 'QUEUED' : b.missions.length ? 'DONE' : 'IDLE';
+  return b;
 }
 
 function factories() {
   const ms = S ? S.missions.filter(m => m.status !== 'cancelled') : [];
-  const fill = b => {
-    b.missions = ms.filter(m => factoryKey(m) === b.key);
-    const current = b.missions.filter(m => WORKING.includes(m.status));
-    b.tasks = current.flatMap(m => m.tasks.filter(t => t.status !== 'cancelled'));
-    b.planning = current.some(m => m.status === 'planning');
-    b.title = current.length ? (current[0].title || current[0].goal) : '';
-    b.state = b.tasks.some(t => t.status === 'waiting') ? 'NEEDS YOU' : b.tasks.some(t => t.status === 'running') ? 'WORKING'
-      : b.planning ? 'PLANNING' : current.length ? 'QUEUED' : b.missions.length ? 'DONE' : 'IDLE';
-    return b;
-  };
-  const fixed = FACTORIES.map(f => fill(Object.assign({}, f)));
+  const out = PRODUCTS.map(f => fillBay(Object.assign({}, f)));
+  out.push(fillBay({ key: 'aibussol', label: 'AIBUSSOL', color: '#00e5ff', isCore: true }));
   const seen = [];
   ms.forEach(m => { const k = factoryKey(m); if (k.startsWith('new:') && !seen.includes(k)) seen.push(k); });
-  const fresh = seen.slice(0, 4).map(k => {
+  seen.slice(0, 3).forEach(k => {
     const m = ms.find(x => factoryKey(x) === k);
-    return fill({ key: k, label: String(m.title || 'NEW BUSINESS').toUpperCase(), color: '#00ff88', isNew: true });
+    out.push(fillBay({ key: k, label: String(m.title || 'NEW BUSINESS').toUpperCase(), color: '#00ff99', isNew: true }));
   });
-  return fixed.concat(fresh);
+  return out;
 }
 
 function layout() {
-  const small = Math.min(W, H), g = Math.max(10, small * 0.03);
-  hub = { x: W / 2, y: H / 2, r: Math.max(28, small * 0.095) };
-  const narrow = W < 600;
-  const fw = narrow ? Math.max(112, W * 0.31) : Math.max(130, Math.min(W * 0.34, 320)), fh = Math.max(96, Math.min(H * (narrow ? 0.29 : 0.32), 200));
-  const corners = [[g, g], [W - fw - g, g], [g, H - fh - g], [W - fw - g, H - fh - g]];
-  const list = factories();
-  const midW = Math.max(110, Math.min(W - 2 * fw - 4 * g, 220)), midH = Math.max(70, Math.min(H - 2 * fh - 4 * g, 130));
-  const mids = [[g, H / 2 - midH / 2, fw * 0.8, midH], [W - fw * 0.8 - g, H / 2 - midH / 2, fw * 0.8, midH],
-                [W / 2 - midW / 2, g, midW, fh * 0.75], [W / 2 - midW / 2, H - fh * 0.75 - g, midW, fh * 0.75]];
-  bays = list.map((b, i) => {
-    const [x, y, w, h] = i < 4 ? [corners[i][0], corners[i][1], fw, fh] : mids[i - 4];
-    return Object.assign(b, { x, y, w, h, cx: x + w / 2, cy: y + h / 2 });
+  const pad = Math.max(8, Math.min(W, H) * 0.02);
+  const cw = (W - pad * 4) / 3, ch = (H - pad * 4) / 3;
+  const cell = (i, j) => ({ x: pad + i * (cw + pad), y: pad + j * (ch + pad), w: cw, h: ch });
+  core = { x: W / 2, y: H / 2, r: Math.min(cw, ch) * 0.47 };
+  const all = factories();
+  const coreBay = all.find(b => b.isCore);
+  const slots = { flipdeck: cell(0, 0), marnyx: cell(2, 0), deadzone: cell(0, 2) };
+  const newSlots = [cell(2, 2), cell(0, 1), cell(2, 1)];
+  bays = [];
+  all.forEach(b => {
+    if (b.isCore) return;
+    const c = b.isNew ? newSlots.shift() : slots[b.key];
+    if (!c) return;
+    bays.push(Object.assign(b, c, { cx: c.x + c.w / 2, cy: c.y + c.h / 2 }));
   });
-  const pw = narrow ? 46 : Math.max(62, Math.min(84, hub.r * 1.3)), ph = 18;
-  pods = DOCKS.map(([key, label, side, row]) => {
-    const cx = hub.x + side * (pw / 2 + 5), cy = row < 0 ? hub.y - hub.r - 34 : hub.y + hub.r + 50;
-    const c = S && S.connections ? S.connections[key] : null;
-    return { key, label, cx, cy, x: cx - pw / 2, y: cy - ph / 2, w: pw, h: ph, connected: !!(c && c.connected), built: !!(c && c.built) };
+  core.bay = coreBay;
+  // free new-business slots: the next one is an expansion bay, the others carry solar arrays
+  decor = newSlots.map((c, i) => Object.assign({ kind: i === 0 ? 'expansion' : 'solar' }, c, { cx: c.x + c.w / 2, cy: c.y + c.h / 2 }));
+  // platform modules: two above the core, two below it, each half a cell wide
+  const pw = (cw - pad) / 2, ph = ch * 0.62;
+  const top = cell(1, 0), bot = cell(1, 2);
+  const spots = [[top.x, top.y + 2], [top.x + pw + pad, top.y + 2], [bot.x, bot.y + bot.h - ph - 2], [bot.x + pw + pad, bot.y + bot.h - ph - 2]];
+  plats = PLATFORMS.map((p, i) => {
+    const c = S && S.connections ? S.connections[p.key] : null;
+    const [x, y] = spots[i];
+    return Object.assign({}, p, { x, y, w: pw, h: ph, cx: x + pw / 2, cy: y + ph / 2, connected: !!(c && c.connected), built: !!(c && c.built) });
   });
 }
 
+// ── drawing helpers ──────────────────────────────────────────────────────────────────────────
 function rr(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+function chamfer(x, y, w, h, c) { ctx.beginPath(); ctx.moveTo(x + c, y); ctx.lineTo(x + w - c, y); ctx.lineTo(x + w, y + c); ctx.lineTo(x + w, y + h - c); ctx.lineTo(x + w - c, y + h); ctx.lineTo(x + c, y + h); ctx.lineTo(x, y + h - c); ctx.lineTo(x, y + c); ctx.closePath(); }
 function alpha(hex, a) { const n = parseInt(hex.slice(1), 16); return 'rgba(' + (n >> 16) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')'; }
 function inRect(p, x, y) { return x >= p.x && x <= p.x + p.w && y >= p.y && y <= p.y + p.h; }
+function fitText(text, maxW) { let s = text; while (s.length > 3 && ctx.measureText(s + '…').width > maxW) s = s.slice(0, -1); return s === text ? s : s + '…'; }
+function hash(str) { let h = 0; for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0; return Math.abs(h); }
 
-function drawStars(t) {
+function drawSky(t) {
+  if (sky) ctx.drawImage(sky, 0, 0, W, H);
   for (const s of stars) {
     const tw = 0.35 + 0.65 * Math.abs(Math.sin(t * 0.0006 * (0.4 + s.z) + s.p));
-    ctx.fillStyle = 'rgba(160,220,255,' + (0.15 + 0.5 * s.z) * tw + ')';
-    const x = (s.x + t * 0.004 * s.z) % W; ctx.fillRect(x, s.y, s.z > 0.85 ? 1.6 : 1, s.z > 0.85 ? 1.6 : 1);
+    ctx.fillStyle = 'rgba(170,225,255,' + (0.12 + 0.5 * s.z) * tw + ')';
+    const x = (s.x + t * 0.003 * s.z) % W; const sz = s.z > 0.9 ? 1.8 : 1;
+    ctx.fillRect(x, s.y, sz, sz);
   }
 }
 
-function corridorPoints(b) {
-  const dx = b.cx - hub.x, dy = b.cy - hub.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
-  const sx = hub.x + ux * (hub.r + 18), sy = hub.y + uy * (hub.r + 18);
-  const tx = Math.abs(ux) > 1e-6 ? (b.w / 2) / Math.abs(ux) : 1e9, ty = Math.abs(uy) > 1e-6 ? (b.h / 2) / Math.abs(uy) : 1e9, k = Math.min(tx, ty);
-  return { sx, sy, ex: b.cx - ux * k, ey: b.cy - uy * k };
+// where a line from the core towards a module meets that module's edge
+function edgePoints(m) {
+  const dx = m.cx - core.x, dy = m.cy - core.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
+  const tx = Math.abs(ux) > 1e-6 ? (m.w / 2) / Math.abs(ux) : 1e9, ty = Math.abs(uy) > 1e-6 ? (m.h / 2) / Math.abs(uy) : 1e9, k = Math.min(tx, ty);
+  return { sx: core.x + ux * (core.r + 2), sy: core.y + uy * (core.r + 2), ex: m.cx - ux * k, ey: m.cy - uy * k, ux, uy };
 }
 
-function drawCorridor(b, t) {
-  const { sx, sy, ex, ey } = corridorPoints(b);
-  const live = b.tasks.some(x => x.status === 'running');
-  ctx.strokeStyle = 'rgba(16,40,56,0.95)'; ctx.lineWidth = 14; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
-  ctx.strokeStyle = 'rgba(0,229,255,0.06)'; ctx.lineWidth = 14; ctx.setLineDash([2, 10]); ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
-  ctx.strokeStyle = alpha(b.color, live ? 0.6 : 0.16); ctx.lineWidth = 1; ctx.setLineDash([4, 6]); ctx.lineDashOffset = live ? -t * 0.02 : 0;
+// a docking tube: dark hull, two lit rails, ribs, collars at both ends, and energy pulses when work is flowing
+function drawTube(m, color, live, t, width) {
+  const { sx, sy, ex, ey, ux, uy } = edgePoints(m);
+  const len = Math.hypot(ex - sx, ey - sy); if (len < 4) return;
+  const nx = -uy, ny = ux, hw = width / 2;
+  ctx.lineCap = 'butt';
+  ctx.strokeStyle = 'rgba(0,0,0,0.55)'; ctx.lineWidth = width + 8; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
+  const g = ctx.createLinearGradient(sx + nx * hw, sy + ny * hw, sx - nx * hw, sy - ny * hw);
+  g.addColorStop(0, '#1d3446'); g.addColorStop(0.5, '#0b1722'); g.addColorStop(1, '#16293a');
+  ctx.strokeStyle = g; ctx.lineWidth = width; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
+  // ribs
+  ctx.strokeStyle = 'rgba(120,170,200,0.16)'; ctx.lineWidth = 1.5;
+  for (let d = 8; d < len - 4; d += 9) {
+    const px = sx + ux * d, py = sy + uy * d;
+    ctx.beginPath(); ctx.moveTo(px + nx * hw, py + ny * hw); ctx.lineTo(px - nx * hw, py - ny * hw); ctx.stroke();
+  }
+  // rails
+  for (const side of [1, -1]) {
+    ctx.strokeStyle = alpha(color, live ? 0.75 : 0.22); ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(sx + nx * hw * side, sy + ny * hw * side); ctx.lineTo(ex + nx * hw * side, ey + ny * hw * side); ctx.stroke();
+  }
+  // center power line
+  ctx.strokeStyle = alpha(color, live ? 0.55 : 0.1); ctx.lineWidth = 1; ctx.setLineDash([3, 7]); ctx.lineDashOffset = live ? t * 0.03 : 0;
   ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke(); ctx.setLineDash([]);
   if (live) {
     for (let k = 0; k < 3; k++) {
-      const p = ((t * 0.00035 + k / 3) % 1); const x = ex + (sx - ex) * p, y = ey + (sy - ey) * p;
-      ctx.fillStyle = alpha(b.color, 0.95); ctx.shadowColor = b.color; ctx.shadowBlur = 8; ctx.beginPath(); ctx.arc(x, y, 2.2, 0, 6.29); ctx.fill(); ctx.shadowBlur = 0;
+      const p = (t * 0.00032 + k / 3) % 1, px = ex + (sx - ex) * p, py = ey + (sy - ey) * p;
+      ctx.fillStyle = alpha(color, 0.95); ctx.shadowColor = color; ctx.shadowBlur = 10; ctx.beginPath(); ctx.arc(px, py, 2.6, 0, 6.29); ctx.fill(); ctx.shadowBlur = 0;
     }
+  }
+  // collars
+  for (const [cx, cy] of [[sx + ux * 4, sy + uy * 4], [ex - ux * 4, ey - uy * 4]]) {
+    ctx.save(); ctx.translate(cx, cy); ctx.rotate(Math.atan2(uy, ux));
+    ctx.fillStyle = '#2b4458'; rr(-4, -hw - 4, 8, width + 8, 2); ctx.fill();
+    ctx.fillStyle = alpha(color, live ? 0.9 : 0.35); ctx.fillRect(-1, -hw - 2, 2, width + 4);
+    ctx.restore();
   }
 }
 
-function drawHub(t) {
-  const { x, y, r } = hub; const open = S ? S.questions.length : 0;
-  const g = ctx.createRadialGradient(x, y, r * 0.2, x, y, r * 1.7); g.addColorStop(0, 'rgba(0,229,255,0.16)'); g.addColorStop(1, 'rgba(0,229,255,0)');
-  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 1.7, 0, 6.29); ctx.fill();
-  ctx.fillStyle = '#071019'; ctx.strokeStyle = 'rgba(0,229,255,0.5)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.29); ctx.fill(); ctx.stroke();
-  ctx.save(); ctx.translate(x, y);
-  ctx.rotate(t * 0.0003); ctx.strokeStyle = 'rgba(0,229,255,0.35)'; ctx.setLineDash([2, 9]); ctx.beginPath(); ctx.arc(0, 0, r + 8, 0, 6.29); ctx.stroke();
-  ctx.rotate(-t * 0.0007); ctx.strokeStyle = open ? 'rgba(255,109,0,' + (0.45 + 0.4 * Math.sin(t * 0.005)) + ')' : 'rgba(255,109,0,0.18)';
-  ctx.setLineDash([14, 10]); ctx.lineWidth = open ? 2 : 1; ctx.beginPath(); ctx.arc(0, 0, r + 15, 0, 6.29); ctx.stroke(); ctx.setLineDash([]);
+function drawHull(m, color, lit, sel) {
+  const { x, y, w, h } = m, c = Math.min(14, w * 0.08);
+  ctx.save();
+  if (lit) { ctx.shadowColor = color; ctx.shadowBlur = 18; }
+  chamfer(x, y, w, h, c);
+  const g = ctx.createLinearGradient(x, y, x, y + h); g.addColorStop(0, '#13202d'); g.addColorStop(1, '#070c13');
+  ctx.fillStyle = g; ctx.fill(); ctx.shadowBlur = 0;
+  ctx.strokeStyle = 'rgba(140,180,200,0.28)'; ctx.lineWidth = 3; chamfer(x, y, w, h, c); ctx.stroke();
+  ctx.strokeStyle = alpha(color, sel ? 1 : lit ? 0.75 : 0.32); ctx.lineWidth = sel ? 2 : 1.2; chamfer(x + 2, y + 2, w - 4, h - 4, c - 1); ctx.stroke();
   ctx.restore();
-  const hgt = r * 1.25, n = 18, tw = t * 0.0016;
-  for (let i = 0; i < n; i++) {
-    const f = i / (n - 1), yy = y - hgt / 2 + f * hgt, ph = f * Math.PI * 3 + tw;
-    const a1 = Math.sin(ph), a2 = Math.sin(ph + Math.PI), w = r * 0.42;
-    const z1 = Math.cos(ph), z2 = Math.cos(ph + Math.PI);
-    if (i % 2 === 0) { ctx.strokeStyle = 'rgba(142,207,224,0.22)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x + a1 * w, yy); ctx.lineTo(x + a2 * w, yy); ctx.stroke(); }
-    for (const [a, z, c] of [[a1, z1, '#00e5ff'], [a2, z2, '#ff6d00']]) {
-      ctx.fillStyle = alpha(c, 0.45 + 0.55 * (z + 1) / 2); ctx.shadowColor = c; ctx.shadowBlur = 6;
-      ctx.beginPath(); ctx.arc(x + a * w, yy, 1.6 + 1.4 * (z + 1) / 2, 0, 6.29); ctx.fill();
-    }
-  }
-  ctx.shadowBlur = 0;
-  ctx.font = '700 ' + Math.max(9, r * 0.22) + 'px Orbitron, monospace'; ctx.textAlign = 'center'; ctx.fillStyle = '#00e5ff';
-  ctx.fillText('HELIX', x, y + r + 30);
-  if (open) {
-    ctx.fillStyle = '#ff6d00'; ctx.beginPath(); ctx.arc(x + r * 0.78, y - r * 0.78, 11, 0, 6.29); ctx.fill();
-    ctx.fillStyle = '#050508'; ctx.font = '700 11px Share Tech Mono, monospace'; ctx.fillText(String(open), x + r * 0.78, y - r * 0.78 + 4);
-  }
+  // header plate
+  const hh = 20;
+  const hg = ctx.createLinearGradient(x, y, x + w, y); hg.addColorStop(0, alpha(color, lit ? 0.38 : 0.16)); hg.addColorStop(1, alpha(color, 0.03));
+  ctx.fillStyle = hg; ctx.beginPath(); ctx.moveTo(x + c + 2, y + 3); ctx.lineTo(x + w - c - 2, y + 3); ctx.lineTo(x + w - 3, y + c); ctx.lineTo(x + w - 3, y + hh); ctx.lineTo(x + 3, y + hh); ctx.lineTo(x + 3, y + c); ctx.closePath(); ctx.fill();
+  // rivets
+  ctx.fillStyle = 'rgba(160,200,220,0.35)';
+  for (const [rx, ry] of [[x + c + 4, y + h - 5], [x + w - c - 4, y + h - 5], [x + 5, y + h / 2], [x + w - 5, y + h / 2]]) { ctx.beginPath(); ctx.arc(rx, ry, 1.3, 0, 6.29); ctx.fill(); }
+  return hh;
 }
 
-function drawPod(p, t) {
-  const col = p.connected ? '#00ff88' : p.built ? '#ff6d00' : '#2a4452';
-  const up = p.cy < hub.y, ay = up ? p.y + p.h : p.y, hy = hub.y + (up ? -1 : 1) * Math.sqrt(Math.max(0, hub.r * hub.r - (p.cx - hub.x) * (p.cx - hub.x)));
-  ctx.strokeStyle = alpha(col, p.connected ? 0.5 : 0.18); ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.moveTo(p.cx, hy); ctx.lineTo(p.cx, ay); ctx.stroke();
-  ctx.fillStyle = p.connected ? 'rgba(0,40,24,0.95)' : 'rgba(8,14,20,0.95)'; rr(p.x, p.y, p.w, p.h, 4); ctx.fill();
-  ctx.strokeStyle = alpha(col, p.connected ? 0.9 : 0.35); ctx.lineWidth = selected === 'links' ? 1.6 : 1; rr(p.x, p.y, p.w, p.h, 4); ctx.stroke();
-  ctx.fillStyle = p.connected ? alpha('#00ff88', 0.6 + 0.4 * Math.sin(t * 0.004 + p.cx)) : alpha(col, 0.5);
-  ctx.beginPath(); ctx.arc(p.x + 7, p.cy, 2.5, 0, 6.29); ctx.fill();
-  ctx.font = '8px Share Tech Mono, monospace'; ctx.textAlign = 'left'; ctx.fillStyle = p.connected ? '#bfffe0' : alpha('#8ecfe0', p.built ? 0.6 : 0.35);
-  ctx.fillText(p.label, p.x + 13, p.cy + 3);
-}
-
-function drawBot(x, y, color, status, t, seed, facing, sc) {
+function drawBot(x, y, color, status, t, seed, facing, sc, moving) {
   sc = sc || 1;
-  const bob = status === 'running' ? Math.sin(t * 0.008 + seed) * 1.2 : status === 'waiting' ? Math.abs(Math.sin(t * 0.01 + seed)) * 1.5 : 0;
+  const bob = moving ? Math.abs(Math.sin(t * 0.016 + seed)) * 1.2 : status === 'running' ? Math.sin(t * 0.008 + seed) * 0.8 : status === 'waiting' ? Math.abs(Math.sin(t * 0.01 + seed)) * 1.4 : 0;
   const dim = status === 'queued' || status === 'cancelled';
-  ctx.save(); ctx.translate(x, y - bob); ctx.scale(sc, sc); ctx.globalAlpha = dim ? 0.45 : 1;
-  ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.ellipse(0, 8 + bob, 5, 1.6, 0, 0, 6.29); ctx.fill();
-  ctx.fillStyle = '#c8d6de'; rr(-4, -2, 8, 9, 3); ctx.fill();
-  ctx.fillStyle = color; ctx.fillRect(-4, 2, 8, 1.5);
-  ctx.fillStyle = '#e8f1f5'; ctx.beginPath(); ctx.arc(0, -5, 4.2, 0, 6.29); ctx.fill();
-  ctx.fillStyle = '#0b1a24'; rr(-3 + facing, -6.4, 6, 2.8, 1.4); ctx.fill();
-  ctx.fillStyle = alpha(color, 0.9); ctx.fillRect(-2 + facing, -5.6, 4, 1);
+  ctx.save(); ctx.translate(x, y - bob); ctx.scale(sc, sc); ctx.globalAlpha = dim ? 0.5 : 1;
+  ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.beginPath(); ctx.ellipse(0, 9 + bob, 5.5, 1.8, 0, 0, 6.29); ctx.fill();
+  const step = moving ? Math.sin(t * 0.02 + seed) * 2 : 0;                      // legs
+  ctx.fillStyle = '#8fa3ae'; ctx.fillRect(-3 + step * 0.5, 5, 2, 4); ctx.fillRect(1 - step * 0.5, 5, 2, 4);
+  ctx.fillStyle = '#d3e0e7'; rr(-4.5, -2, 9, 8.5, 3); ctx.fill();                 // body
+  ctx.fillStyle = color; ctx.fillRect(-4.5, 1.5, 9, 1.8);                          // role stripe
+  ctx.fillStyle = '#eef6f9'; ctx.beginPath(); ctx.arc(0, -5.4, 4.4, 0, 6.29); ctx.fill(); // head
+  ctx.fillStyle = '#0b1a24'; rr(-3.2 + facing, -6.8, 6.4, 3, 1.4); ctx.fill();     // visor
+  ctx.fillStyle = alpha(color, 0.95); ctx.fillRect(-2.2 + facing, -6, 4.4, 1);
   ctx.restore();
-  if (status === 'running') {
-    const s = (t * 0.004 + seed) % 1; ctx.fillStyle = alpha(color, 1 - s); ctx.fillRect(x + 6 * sc, y - (10 + s * 6) * sc, 1.5 * sc, 1.5 * sc);
+  if (status === 'running' && !moving) {
+    const s = (t * 0.004 + seed) % 1; ctx.fillStyle = alpha(color, 1 - s); ctx.fillRect(x + 6 * sc, y - (11 + s * 7) * sc, 1.6 * sc, 1.6 * sc);
   }
 }
 
-function fitText(text, maxW) {
-  let s = text; while (s.length > 3 && ctx.measureText(s + '…').width > maxW) s = s.slice(0, -1);
-  return s === text ? s : s + '…';
+// ── crew members: each one walks between its console and the factory floor while it works ─────────
+function interior(m, hh) { return { x: m.x + 12, y: m.y + hh + 10, w: m.w - 24, h: m.h - hh - 30 }; }
+function botFor(tk, I, desk, t) {
+  let b = bots.get(tk.id);
+  if (!b) { b = { fx: desk.fx, fy: Math.min(0.95, desk.fy + 0.25), tx: desk.fx, ty: desk.fy, wait: 0, atDesk: false, seed: hash(tk.id) % 100 }; bots.set(tk.id, b); }
+  b.seen = t;
+  return b;
+}
+function stepBot(b, tk, desk, dt) {
+  const spd = 0.00018 * dt;                                         // fraction of the floor per frame
+  if (tk.status !== 'running') { b.tx = desk.fx + (tk.status === 'done' ? 0.06 : 0); b.ty = desk.fy + (tk.status === 'queued' ? 0.35 : 0.05); }
+  const dx = b.tx - b.fx, dy = b.ty - b.fy, d = Math.hypot(dx, dy);
+  if (d > 0.01) { b.fx += dx / d * Math.min(spd, d); b.fy += dy / d * Math.min(spd, d); b.moving = true; b.facing = dx < 0 ? -1 : 1; return; }
+  b.moving = false;
+  if (tk.status !== 'running') return;
+  b.wait -= dt;
+  if (b.wait > 0) return;
+  if (b.atDesk) {                                                  // done typing: go check the floor or the conveyor
+    b.tx = 0.08 + Math.random() * 0.84; b.ty = 0.45 + Math.random() * 0.45; b.atDesk = false; b.wait = 700 + Math.random() * 900;
+  } else {                                                         // back to the console to work
+    b.tx = desk.fx; b.ty = desk.fy; b.atDesk = true; b.wait = 2200 + Math.random() * 2600;
+  }
 }
 
-function drawBay(b, t) {
-  const { x, y, w, h, color } = b; const sel = selected === 'f:' + b.key;
-  const idle = !b.tasks.length && !b.planning, live = b.tasks.some(k => k.status === 'running');
-  const sc = Math.max(1, Math.min(1.8, w / 150));
-  // hull
-  ctx.fillStyle = 'rgba(7,11,18,0.96)'; rr(x, y, w, h, 7); ctx.fill();
-  if (live) { ctx.shadowColor = color; ctx.shadowBlur = 14; }
-  ctx.strokeStyle = alpha(color, sel ? 0.95 : idle ? 0.28 : 0.7); ctx.lineWidth = sel ? 2 : 1.2; rr(x, y, w, h, 7); ctx.stroke(); ctx.shadowBlur = 0;
-  // header
-  ctx.fillStyle = alpha(color, idle ? 0.07 : 0.16); ctx.fillRect(x + 1, y + 1, w - 2, 18);
-  ctx.font = '9px Share Tech Mono, monospace'; const st = b.state; const stW = ctx.measureText(st).width;
-  ctx.textAlign = 'right'; ctx.fillStyle = st === 'NEEDS YOU' ? '#ff6d00' : st === 'WORKING' ? '#00ff88' : 'rgba(142,207,224,0.55)'; ctx.fillText(st, x + w - 7, y + 13);
-  ctx.font = '700 9px Orbitron, monospace'; ctx.textAlign = 'left'; ctx.fillStyle = alpha(color, idle ? 0.6 : 1);
-  ctx.fillText(fitText((b.isNew ? '◆ ' : '') + b.label, w - stW - 24), x + 8, y + 13);
-  // floor plating and the conveyor line
-  ctx.strokeStyle = alpha(color, 0.05); ctx.lineWidth = 1;
-  for (let gx = x + 14; gx < x + w - 4; gx += 14) { ctx.beginPath(); ctx.moveTo(gx, y + 20); ctx.lineTo(gx, y + h - 16); ctx.stroke(); }
-  const by0 = y + h - 13;
-  ctx.fillStyle = 'rgba(20,34,46,0.95)'; ctx.fillRect(x + 6, by0, w - 12, 7);
-  ctx.strokeStyle = alpha(color, live ? 0.55 : 0.12); ctx.lineWidth = 1;
-  const off = live ? (t * 0.03) % 10 : 0;
-  for (let sx = x + 6 + off; sx < x + w - 6; sx += 10) { ctx.beginPath(); ctx.moveTo(sx, by0 + 1); ctx.lineTo(sx + 4, by0 + 6); ctx.stroke(); }
-  if (live) {
-    for (let k = 0; k < 3; k++) { const p = (t * 0.00012 + k / 3) % 1; ctx.fillStyle = alpha(color, 0.85); ctx.fillRect(x + 8 + (w - 22) * p, by0 + 1.5, 6, 4); }
+function drawFactory(m, t, dt) {
+  const sel = selected === 'f:' + m.key, live = m.tasks.some(k => k.status === 'running');
+  const hh = drawHull(m, m.color, live || m.tasks.length > 0, sel);
+  const { x, y, w, h } = m;
+  ctx.font = '9px Share Tech Mono, monospace'; const st = m.state, stW = ctx.measureText(st).width;
+  ctx.textAlign = 'right'; ctx.fillStyle = st === 'NEEDS YOU' ? '#ff8a2a' : st === 'WORKING' ? '#00ff99' : 'rgba(142,207,224,0.6)'; ctx.fillText(st, x + w - 10, y + 14);
+  ctx.font = '700 10px Orbitron, monospace'; ctx.textAlign = 'left'; ctx.fillStyle = m.color;
+  ctx.fillText(fitText((m.isNew ? '◆ ' : '') + m.label, w - stW - 30), x + 12, y + 14);
+  const I = interior(m, hh);
+  // floor tiles
+  ctx.fillStyle = 'rgba(4,8,13,0.85)'; rr(I.x, I.y, I.w, I.h, 4); ctx.fill();
+  ctx.strokeStyle = alpha(m.color, 0.06); ctx.lineWidth = 1;
+  for (let gx = I.x + 12; gx < I.x + I.w; gx += 12) { ctx.beginPath(); ctx.moveTo(gx, I.y); ctx.lineTo(gx, I.y + I.h); ctx.stroke(); }
+  for (let gy = I.y + 12; gy < I.y + I.h; gy += 12) { ctx.beginPath(); ctx.moveTo(I.x, gy); ctx.lineTo(I.x + I.w, gy); ctx.stroke(); }
+  // consoles along the back wall
+  const n = Math.max(3, Math.min(6, m.tasks.length));
+  const desks = [];
+  for (let i = 0; i < n; i++) {
+    const cx = I.x + I.w * (i + 0.5) / n, cy = I.y + 4;
+    const cwid = Math.min(26, I.w / n - 6);
+    const tk = m.tasks[i];
+    const on = tk && tk.status === 'running';
+    ctx.fillStyle = '#18303f'; rr(cx - cwid / 2, cy, cwid, 11, 2); ctx.fill();
+    ctx.fillStyle = on ? alpha(ROLE_COLORS[tk.role] || m.color, 0.55 + 0.35 * Math.sin(t * 0.012 + i)) : tk ? 'rgba(60,110,130,0.5)' : 'rgba(40,70,90,0.35)';
+    ctx.fillRect(cx - cwid / 2 + 2, cy + 2, cwid - 4, 6);
+    ctx.fillStyle = on ? '#00ff99' : 'rgba(255,90,40,0.5)'; ctx.fillRect(cx + cwid / 2 - 4, cy + 9, 2, 1.5);
+    desks.push({ fx: (cx - I.x) / I.w, fy: Math.min(0.9, 26 / I.h) });
   }
-  // current mission name
-  if (b.title) {
-    ctx.font = '9px Share Tech Mono, monospace'; ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(142,207,224,0.75)';
-    ctx.fillText(fitText(b.title, w - 16), x + 8, y + 31);
-  }
-  if (b.planning && !b.tasks.length) {
-    ctx.setLineDash([5, 5]); ctx.strokeStyle = alpha(color, 0.5 + 0.3 * Math.sin(t * 0.004)); rr(x + 10, y + 38, w - 20, h - 58, 4); ctx.stroke(); ctx.setLineDash([]);
+  // conveyor and crates
+  const cyb = I.y + I.h - 9;
+  ctx.fillStyle = '#132634'; ctx.fillRect(I.x + 4, cyb, I.w - 8, 7);
+  ctx.strokeStyle = alpha(m.color, live ? 0.5 : 0.14); ctx.lineWidth = 1;
+  const off = live ? (t * 0.03) % 9 : 0;
+  for (let sx = I.x + 4 + off; sx < I.x + I.w - 6; sx += 9) { ctx.beginPath(); ctx.moveTo(sx, cyb + 1); ctx.lineTo(sx + 3, cyb + 6); ctx.stroke(); }
+  if (live) for (let k = 0; k < 3; k++) { const p = (t * 0.0001 + k / 3) % 1; ctx.fillStyle = alpha(m.color, 0.85); rr(I.x + 6 + (I.w - 20) * p, cyb + 1, 7, 5, 1); ctx.fill(); }
+  // blinking ceiling lights
+  for (let i = 0; i < 3; i++) { ctx.fillStyle = alpha(m.color, live ? 0.35 + 0.3 * Math.sin(t * 0.003 + i * 2) : 0.12); ctx.fillRect(x + w * (0.25 + i * 0.25) - 6, y + hh + 2, 12, 2); }
+  if (m.title) { ctx.font = '9px Share Tech Mono, monospace'; ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(142,207,224,0.7)'; ctx.fillText(fitText(m.title, w - 24), x + 12, y + h - 7); }
+  if (m.planning && !m.tasks.length) {
     ctx.textAlign = 'center'; ctx.fillStyle = alpha('#8ecfe0', 0.5 + 0.4 * Math.sin(t * 0.004)); ctx.font = '10px Share Tech Mono, monospace';
-    ctx.fillText(b.isNew ? 'BUILDING NEW FACTORY…' : 'HELIX IS PLANNING…', b.cx, y + h / 2 + 10);
+    ctx.fillText(m.isNew ? 'BUILDING NEW FACTORY…' : 'HELIX IS PLANNING…', m.cx, I.y + I.h / 2 + 4); return;
+  }
+  if (!m.tasks.length) { ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(142,207,224,0.28)'; ctx.font = '9px Share Tech Mono, monospace'; ctx.fillText('STANDING BY', m.cx, I.y + I.h / 2 + 6); }
+  const sc = Math.max(0.95, Math.min(1.6, I.w / 150));
+  m.tasks.forEach((tk, i) => {
+    if (tk.status === 'waiting') return;
+    const desk = desks[i % desks.length], b = botFor(tk, I, desk, t);
+    stepBot(b, tk, desk, dt);
+    const bx = I.x + b.fx * I.w, by = I.y + b.fy * I.h;
+    drawBot(bx, by, ROLE_COLORS[tk.role] || m.color, tk.status, t, b.seed, b.facing || 1, sc, b.moving);
+    const ky = by - 16 * sc;
+    if (tk.status === 'done') { ctx.strokeStyle = '#00ff99'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(bx - 4, ky); ctx.lineTo(bx - 1, ky + 3); ctx.lineTo(bx + 4, ky - 3); ctx.stroke(); }
+    if (tk.status === 'failed') { ctx.strokeStyle = '#ff3344'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(bx - 3, ky - 2); ctx.lineTo(bx + 3, ky + 4); ctx.moveTo(bx + 3, ky - 2); ctx.lineTo(bx - 3, ky + 4); ctx.stroke(); }
+  });
+  drawWaiting(m, t);
+}
+
+// a crew member waiting on Michael walks out along the tube and stands at Helix's door with a question
+function drawWaiting(m, t) {
+  const waiting = m.tasks.filter(k => k.status === 'waiting');
+  if (!waiting.length) return;
+  const { sx, sy, ex, ey } = edgePoints(m);
+  waiting.slice(0, 3).forEach((tk, i) => {
+    const p = 0.82 - i * 0.16 + Math.sin(t * 0.0012 + i) * 0.02; const qx = ex + (sx - ex) * p, qyb = ey + (sy - ey) * p;
+    drawBot(qx, qyb, ROLE_COLORS[tk.role] || m.color, 'waiting', t, i * 3.1, sx < ex ? -1 : 1, 1.15, false);
+    const qy = qyb - 26;
+    ctx.fillStyle = '#ff8a2a'; ctx.shadowColor = '#ff8a2a'; ctx.shadowBlur = 8; rr(qx - 6, qy, 12, 12, 3); ctx.fill(); ctx.shadowBlur = 0;
+    ctx.fillStyle = '#050508'; ctx.font = '700 10px Share Tech Mono, monospace'; ctx.textAlign = 'center'; ctx.fillText('?', qx, qy + 9);
+  });
+}
+
+function drawPlatform(p, t) {
+  const sel = selected === 'links';
+  const col = p.connected ? p.color : p.built ? '#ff8a2a' : '#2f4a5a';
+  const hh = drawHull(p, col, p.connected, sel);
+  const { x, y, w, h } = p;
+  ctx.font = '700 9px Orbitron, monospace'; ctx.textAlign = 'left'; ctx.fillStyle = p.connected ? p.color : 'rgba(142,207,224,0.55)';
+  const roomy = w >= 96;
+  ctx.fillText(fitText(roomy ? p.label : p.short, w - (roomy ? 56 : 16)), x + 8, y + 14);
+  const I = interior(p, hh);
+  ctx.fillStyle = 'rgba(4,8,13,0.85)'; rr(I.x, I.y, I.w, I.h + 12, 3); ctx.fill();
+  // server racks with status lights
+  const racks = Math.max(2, Math.min(4, Math.floor(I.w / 22)));
+  for (let r = 0; r < racks; r++) {
+    const rx = I.x + 4 + r * ((I.w - 8) / racks), rw = (I.w - 8) / racks - 4, ry = I.y + 3, rh = I.h + 4;
+    ctx.fillStyle = '#122331'; rr(rx, ry, rw, rh, 2); ctx.fill();
+    for (let l = 0; l < Math.floor(rh / 6); l++) {
+      const on = p.connected ? Math.sin(t * 0.006 * (1 + (r + l) % 3) + r * 7 + l * 3) > -0.2 : (l === 0 && r === 0 && p.built && Math.sin(t * 0.004) > 0);
+      ctx.fillStyle = on ? alpha(p.connected ? (l % 4 === 0 ? '#00ff99' : p.color) : '#ff3344', 0.9) : 'rgba(60,90,110,0.35)';
+      ctx.fillRect(rx + 3, ry + 3 + l * 6, Math.max(2, rw - 6) * (on ? 0.35 : 0.2), 2);
+    }
+  }
+  if (!roomy) return;
+  ctx.font = '8px Share Tech Mono, monospace'; ctx.textAlign = 'right';
+  ctx.fillStyle = p.connected ? '#00ff99' : p.built ? '#ff8a2a' : 'rgba(142,207,224,0.4)';
+  ctx.fillText(p.connected ? 'ONLINE' : p.built ? 'OFFLINE' : 'SOON', x + w - 10, y + 14);
+}
+
+function drawDecor(d, t) {
+  if (d.kind === 'expansion') {
+    ctx.setLineDash([6, 6]); ctx.strokeStyle = alpha('#00ff99', 0.28 + 0.12 * Math.sin(t * 0.002)); ctx.lineWidth = 1.2;
+    chamfer(d.x + 6, d.y + 6, d.w - 12, d.h - 12, 12); ctx.stroke(); ctx.setLineDash([]);
+    // scaffolding
+    ctx.strokeStyle = 'rgba(0,255,153,0.08)';
+    for (let i = 1; i < 5; i++) { ctx.beginPath(); ctx.moveTo(d.x + 6 + (d.w - 12) * i / 5, d.y + 10); ctx.lineTo(d.x + 6 + (d.w - 12) * i / 5, d.y + d.h - 10); ctx.stroke(); }
+    ctx.textAlign = 'center'; ctx.font = '700 9px Orbitron, monospace'; ctx.fillStyle = 'rgba(0,255,153,0.5)'; ctx.fillText(fitText('EXPANSION BAY', d.w - 20), d.cx, d.cy - 2);
+    ctx.font = '9px Share Tech Mono, monospace'; ctx.fillStyle = 'rgba(142,207,224,0.4)'; ctx.fillText(fitText(d.w < 180 ? 'next business' : 'your next business builds here', d.w - 20), d.cx, d.cy + 13);
     return;
   }
-  // work stations: at least 3 machines; a crew member at each one that has a task
-  const inside = b.tasks.filter(k => k.status !== 'waiting');
-  const slots = Math.max(3, Math.min(8, b.tasks.length));
-  const cols = Math.min(slots, w > 220 ? 4 : 3), rows = Math.ceil(slots / cols);
-  const top = y + (b.title ? 38 : 26), cw = (w - 16) / cols, ch = (by0 - 4 - top) / rows;
-  for (let i = 0; i < slots; i++) {
-    const c = i % cols, r = Math.floor(i / cols), mx = x + 8 + cw * c + cw / 2, my = top + ch * r + ch * 0.55;
-    const tk = inside[i];
-    ctx.fillStyle = 'rgba(16,40,56,0.95)'; ctx.fillRect(mx - 10 * sc, my - 2 * sc, 20 * sc, 5 * sc);
-    const scr = tk && tk.status === 'running' ? alpha(ROLE_COLORS[tk.role] || color, 0.55 + 0.3 * Math.sin(t * 0.01 + i)) : tk ? 'rgba(42,80,96,0.6)' : 'rgba(30,52,66,0.35)';
-    ctx.fillStyle = scr; ctx.fillRect(mx - 7 * sc, my - 10 * sc, 14 * sc, 7 * sc);
-    if (!tk) continue;
-    drawBot(mx + (tk.status === 'done' ? 11 * sc : 0), my + 7 * sc, ROLE_COLORS[tk.role] || color, tk.status, t, i * 1.7, tk.status === 'running' ? 0 : 1, sc);
-    const ky = my - 15 * sc;
-    if (tk.status === 'done') { ctx.strokeStyle = '#00ff88'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(mx - 4, ky); ctx.lineTo(mx - 1, ky + 3); ctx.lineTo(mx + 4, ky - 3); ctx.stroke(); }
-    if (tk.status === 'failed') { ctx.strokeStyle = '#ff3344'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(mx - 3, ky - 2); ctx.lineTo(mx + 3, ky + 4); ctx.moveTo(mx + 3, ky - 2); ctx.lineTo(mx - 3, ky + 4); ctx.stroke(); }
+  // solar array on a truss
+  const ax = d.cx, ay = d.cy, aw = d.w * 0.8, ah = Math.min(d.h * 0.5, 60);
+  ctx.strokeStyle = 'rgba(110,150,170,0.35)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(ax - aw / 2, ay); ctx.lineTo(ax + aw / 2, ay); ctx.stroke();
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 3; i++) {
+      const px = ax + side * (12 + i * (aw / 2 - 12) / 3), pw = (aw / 2 - 16) / 3;
+      ctx.fillStyle = '#0d2747'; ctx.fillRect(side > 0 ? px : px - pw, ay - ah / 2, pw, ah);
+      ctx.strokeStyle = 'rgba(80,150,220,0.35)'; ctx.lineWidth = 0.8;
+      for (let k = 1; k < 4; k++) { ctx.beginPath(); ctx.moveTo(side > 0 ? px : px - pw, ay - ah / 2 + ah * k / 4); ctx.lineTo((side > 0 ? px : px - pw) + pw, ay - ah / 2 + ah * k / 4); ctx.stroke(); }
+      ctx.fillStyle = 'rgba(160,210,255,' + (0.05 + 0.05 * Math.sin(t * 0.001 + i)) + ')'; ctx.fillRect(side > 0 ? px : px - pw, ay - ah / 2, pw, ah * 0.3);
+    }
   }
-  // crew members waiting on Michael walk the corridor to Helix and hold up a question
-  const waiting = b.tasks.filter(k => k.status === 'waiting');
-  if (waiting.length) {
-    const { sx, sy, ex, ey } = corridorPoints(b);
-    waiting.slice(0, 3).forEach((tk, i) => {
-      const p = 0.72 - i * 0.14 + Math.sin(t * 0.0012 + i) * 0.015; const qx = ex + (sx - ex) * p, qyb = ey + (sy - ey) * p;
-      drawBot(qx, qyb, ROLE_COLORS[tk.role] || color, 'waiting', t, i * 3.1, sx < ex ? -1 : 1, Math.min(sc, 1.4));
-      const qy = qyb - 18 * Math.min(sc, 1.4) - 6;
-      ctx.fillStyle = '#ff6d00'; rr(qx - 5, qy, 10, 10, 3); ctx.fill();
-      ctx.fillStyle = '#050508'; ctx.font = '700 9px Share Tech Mono, monospace'; ctx.textAlign = 'center'; ctx.fillText('?', qx, qy + 8);
-    });
+  ctx.fillStyle = '#2b4458'; rr(ax - 7, ay - 7, 14, 14, 3); ctx.fill();
+}
+
+function drawCore(t) {
+  const { x, y, r } = core, open = S ? S.questions.length : 0;
+  const g = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * 1.7); g.addColorStop(0, 'rgba(0,229,255,0.18)'); g.addColorStop(1, 'rgba(0,229,255,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 1.7, 0, 6.29); ctx.fill();
+  // armored ring with docking notches
+  const ring = Math.max(6, r * 0.14);
+  ctx.strokeStyle = '#1b3042'; ctx.lineWidth = ring; ctx.beginPath(); ctx.arc(x, y, r - ring / 2, 0, 6.29); ctx.stroke();
+  ctx.strokeStyle = 'rgba(150,190,210,0.35)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.29); ctx.stroke();
+  ctx.beginPath(); ctx.arc(x, y, r - ring, 0, 6.29); ctx.stroke();
+  for (let i = 0; i < 24; i++) {
+    const a = i / 24 * Math.PI * 2 + t * 0.00008, c = Math.cos(a), s = Math.sin(a);
+    ctx.strokeStyle = i % 3 === 0 ? 'rgba(0,229,255,0.65)' : 'rgba(120,160,180,0.3)'; ctx.lineWidth = i % 3 === 0 ? 2 : 1;
+    ctx.beginPath(); ctx.moveTo(x + c * (r - ring + 1), y + s * (r - ring + 1)); ctx.lineTo(x + c * (r - 1), y + s * (r - 1)); ctx.stroke();
+  }
+  // Helix
+  const ir = r - ring - 2;
+  ctx.save(); ctx.beginPath(); ctx.arc(x, y, ir, 0, 6.29); ctx.clip();
+  ctx.fillStyle = '#050a12'; ctx.fillRect(x - ir, y - ir, ir * 2, ir * 2);
+  if (helixReady) {
+    const iw = helixImg.naturalWidth, ih = helixImg.naturalHeight, sc2 = (ir * 2.15) / Math.min(iw, ih);
+    const dw = iw * sc2, dh = ih * sc2;
+    ctx.globalAlpha = 0.95; ctx.drawImage(helixImg, x - dw / 2, y - dh * 0.42, dw, dh); ctx.globalAlpha = 1;
+  } else {
+    const hgt = ir * 1.3, n2 = 16, tw = t * 0.0016;
+    for (let i = 0; i < n2; i++) {
+      const f = i / (n2 - 1), yy = y - hgt / 2 + f * hgt, ph = f * Math.PI * 3 + tw;
+      for (const [a, c] of [[Math.sin(ph), '#00e5ff'], [Math.sin(ph + Math.PI), '#ff6d00']]) { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x + a * ir * 0.45, yy, 2.4, 0, 6.29); ctx.fill(); }
+    }
+  }
+  const vg = ctx.createRadialGradient(x, y, ir * 0.55, x, y, ir); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,20,35,0.75)');
+  ctx.fillStyle = vg; ctx.fillRect(x - ir, y - ir, ir * 2, ir * 2);
+  const scan = y - ir + ((t * 0.04) % (ir * 2));                            // scan line
+  ctx.fillStyle = 'rgba(0,229,255,0.12)'; ctx.fillRect(x - ir, scan, ir * 2, 2);
+  ctx.restore();
+  ctx.save(); ctx.translate(x, y);
+  ctx.rotate(t * 0.0003); ctx.strokeStyle = 'rgba(0,229,255,0.4)'; ctx.setLineDash([2, 10]); ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(0, 0, r + 8, 0, 6.29); ctx.stroke();
+  ctx.rotate(-t * 0.0007); ctx.strokeStyle = open ? 'rgba(255,138,42,' + (0.5 + 0.4 * Math.sin(t * 0.005)) + ')' : 'rgba(255,109,0,0.2)';
+  ctx.setLineDash([16, 10]); ctx.lineWidth = open ? 2.5 : 1; ctx.beginPath(); ctx.arc(0, 0, r + 15, 0, 6.29); ctx.stroke(); ctx.setLineDash([]);
+  ctx.restore();
+  // Aibussol crew on the core's deck ring
+  const cb = core.bay;
+  if (cb) cb.tasks.filter(k => k.status !== 'waiting').forEach((tk, i) => {
+    const a = -Math.PI / 2 + (t * 0.00012) * (tk.status === 'running' ? 1 : 0) + i * 0.9;
+    drawBot(x + Math.cos(a) * (r - ring / 2), y + Math.sin(a) * (r - ring / 2) + 3, ROLE_COLORS[tk.role] || '#00e5ff', tk.status, t, i * 2.3, 1, 0.9, tk.status === 'running');
+  });
+  // labels on plates above and below the core
+  ctx.textAlign = 'center';
+  ctx.font = '700 ' + Math.max(9, r * 0.13) + 'px Orbitron, monospace';
+  const lw = ctx.measureText('AIBUSSOL').width + 20;
+  ctx.fillStyle = 'rgba(5,10,18,0.9)'; rr(x - lw / 2, y - r - 13, lw, 16, 3); ctx.fill(); ctx.strokeStyle = 'rgba(0,229,255,0.5)'; ctx.lineWidth = 1; rr(x - lw / 2, y - r - 13, lw, 16, 3); ctx.stroke();
+  ctx.fillStyle = '#00e5ff'; ctx.fillText('AIBUSSOL', x, y - r - 1);
+  ctx.font = '700 ' + Math.max(9, r * 0.12) + 'px Orbitron, monospace';
+  const hw2 = ctx.measureText('HELIX').width + 18;
+  ctx.fillStyle = 'rgba(5,10,18,0.9)'; rr(x - hw2 / 2, y + r - 4, hw2, 15, 3); ctx.fill(); ctx.strokeStyle = 'rgba(255,109,0,0.6)'; rr(x - hw2 / 2, y + r - 4, hw2, 15, 3); ctx.stroke();
+  ctx.fillStyle = '#ff8a2a'; ctx.fillText('HELIX', x, y + r + 7);
+  if (open) {
+    ctx.fillStyle = '#ff8a2a'; ctx.shadowColor = '#ff8a2a'; ctx.shadowBlur = 10; ctx.beginPath(); ctx.arc(x + r * 0.74, y - r * 0.74, 11, 0, 6.29); ctx.fill(); ctx.shadowBlur = 0;
+    ctx.fillStyle = '#050508'; ctx.font = '700 11px Share Tech Mono, monospace'; ctx.fillText(String(open), x + r * 0.74, y - r * 0.74 + 4);
   }
 }
 
 function frame(t) {
   requestAnimationFrame(frame);
-  if (document.hidden || t - lastDraw < 33) return; lastDraw = t;
-  ctx.clearRect(0, 0, W, H); ctx.fillStyle = '#050508'; ctx.fillRect(0, 0, W, H);
-  drawStars(t);
-  bays.forEach(b => drawCorridor(b, t));
-  pods.forEach(p => drawPod(p, t));
-  drawHub(t);
-  bays.forEach(b => drawBay(b, t));
+  if (document.hidden || t - lastDraw < 33) return;
+  const dt = Math.min(100, t - (lastT || t)); lastT = t; lastDraw = t;
+  ctx.clearRect(0, 0, W, H);
+  drawSky(t);
+  decor.forEach(d => drawDecor(d, t));
+  bays.forEach(b => drawTube(b, b.color, b.tasks.some(k => k.status === 'running'), t, Math.max(12, Math.min(20, core.r * 0.22))));
+  plats.forEach(p => drawTube(p, p.connected ? p.color : '#2f4a5a', p.connected, t, Math.max(9, Math.min(14, core.r * 0.15))));
+  bays.forEach(b => drawFactory(b, t, dt));
+  plats.forEach(p => drawPlatform(p, t));
+  drawCore(t);
+  for (const [id, b] of bots) if (t - b.seen > 5000) bots.delete(id);       // crew members whose tasks are gone
 }
 
 function hit(x, y) {
-  if (Math.hypot(x - hub.x, y - hub.y) <= hub.r + 16) return 'hub';
-  if (pods.some(p => inRect(p, x, y))) return 'links';
+  if (Math.hypot(x - core.x, y - core.y) <= core.r + 16) return 'hub';
+  if (plats.some(p => inRect(p, x, y))) return 'links';
   const b = bays.find(b => inRect(b, x, y));
-  return b ? 'f:' + b.key : null;
+  if (b) return 'f:' + b.key;
+  return decor.some(d => d.kind === 'expansion' && inRect(d, x, y)) ? 'hub' : null;
 }
 cv.addEventListener('click', e => {
   const r = cv.getBoundingClientRect(), h = hit(e.clientX - r.left, e.clientY - r.top);
