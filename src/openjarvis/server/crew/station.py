@@ -614,9 +614,15 @@ function drawSpoke(m, t) {
     const a = P(r1, o), b = P(r2, o); ctx.strokeStyle = alpha(col, live ? 0.8 : 0.25); ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
   }
   if (live) {
+    // two lanes: the factory's colour flows in to Helix, bright green flows out from Helix to the factory
+    const lane = hw * 0.45, dot = 2.2 * SC + 0.6;
     for (let k = 0; k < 2; k++) {
-      const p = (t * 0.0003 + k / 2) % 1, [px, py] = P(r2 + (r1 - r2) * p, 0);
-      ctx.fillStyle = alpha(col, 0.95); ctx.shadowColor = col; ctx.shadowBlur = 10; ctx.beginPath(); ctx.arc(px, py, 2.4 * SC + 0.6, 0, 6.29); ctx.fill(); ctx.shadowBlur = 0;
+      const p = (t * 0.0003 + k / 2) % 1;
+      const [ix, iy] = P(r2 + (r1 - r2) * p, lane);                 // factory -> Helix
+      ctx.fillStyle = alpha(col, 0.95); ctx.shadowColor = col; ctx.shadowBlur = 10; ctx.beginPath(); ctx.arc(ix, iy, dot, 0, 6.29); ctx.fill();
+      const q = (t * 0.0003 + k / 2 + 0.25) % 1;
+      const [ox, oy] = P(r1 + (r2 - r1) * q, -lane);                // Helix -> factory
+      ctx.fillStyle = '#00ff66'; ctx.shadowColor = '#00ff66'; ctx.beginPath(); ctx.arc(ox, oy, dot, 0, 6.29); ctx.fill(); ctx.shadowBlur = 0;
     }
   }
   // docking node next to the core
