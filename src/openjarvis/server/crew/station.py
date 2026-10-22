@@ -49,6 +49,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
   .row { display:flex; gap:8px; align-items:center; padding:6px 0; border-bottom:1px solid rgba(0,229,255,0.05); font-size:11px; }
   .row:last-child { border-bottom:none; }
   .dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+  .avatar { width:30px; height:30px; flex-shrink:0; border-radius:50%; background-color:rgba(0,229,255,0.06); border:1px solid var(--border); background-repeat:no-repeat; }
   .grow { flex:1; min-width:0; overflow-wrap:anywhere; }
   .tag { font-size:9px; letter-spacing:1px; padding:1px 5px; border:1px solid var(--border); border-radius:2px; color:var(--text-dim); white-space:nowrap; text-transform:uppercase; }
   .card { border:1px solid rgba(255,109,0,0.35); background:rgba(255,109,0,0.05); padding:10px; margin-bottom:10px; border-radius:2px; }
@@ -261,7 +262,9 @@ function rosterSec() {
   const l = mk('div', 'lbl'); l.append(mk('span', null, 'Crew roster'), mk('span', 'act', (S.roster || []).length + ' on the station')); s.append(l);
   (S.roster || []).forEach(a => {
     const c = mk('div', 'agent');
-    const top = mk('div', 'agent-top'); const d = mk('span', 'dot'); d.style.background = ROLE_COLORS[a.role] || '#00e5ff';
+    const top = mk('div', 'agent-top'); const d = mk('span', 'avatar'); d.style.borderColor = alpha(ROLE_COLORS[a.role] || '#00e5ff', 0.5);
+    if (a.role === 'lead') { d.style.backgroundImage = 'url(/crew/helix.jpg)'; d.style.backgroundSize = 'cover'; d.style.backgroundPosition = 'center 20%'; }
+    else { const row = BOT_ROWS.indexOf(a.role); d.style.backgroundImage = 'url(/crew/bots.png)'; d.style.backgroundSize = '102px ' + (34 * BOT_ROWS.length) + 'px'; d.style.backgroundPosition = '-2px ' + (-34 * Math.max(0, row) + 1) + 'px'; }
     const nm = mk('span', 'agent-name', a.name); nm.style.color = ROLE_COLORS[a.role] || '#00e5ff';
     top.append(d, nm, mk('span', 'tag', a.role === 'lead' ? 'lead' : a.role), mk('span', 'grow'), mk('span', 'dim', a.model));
     c.append(top, mk('div', 'agent-can', a.can), mk('div', 'agent-cannot', 'Limits: ' + a.cannot));
@@ -405,6 +408,10 @@ let W = 0, H = 0, DPR = 1, SC = 1, stars = [], sky = null, core = { x: 0, y: 0, 
 const bots = new Map();
 const helixImg = new Image(); let helixReady = false;
 helixImg.onload = () => { helixReady = true; }; helixImg.src = '/crew/helix.jpg';
+// the crew: Michael's robot model, rendered per role (front, facing right, facing left) into one sheet: crew/assets/bots.png
+const BOT_ROWS = ['lead', 'researcher', 'builder', 'writer', 'designer', 'operator', 'reviewer'], BOT_CELL = 96;
+const botSheet = new Image(); let botReady = false;
+botSheet.onload = () => { botReady = true; }; botSheet.src = '/crew/bots.png';
 const PRODUCTS = [
   { key: 'flipdeck', label: 'FLIPDECK', color: '#ff6d00' },
   { key: 'marnyx', label: 'MARNYX', color: '#b06cff' },
@@ -490,6 +497,18 @@ function drawBot(x, y, color, status, t, seed, facing, sc, moving) {
   const dim = status === 'queued' || status === 'cancelled';
   ctx.save(); ctx.translate(x, y - bob); ctx.scale(sc, sc); ctx.globalAlpha = dim ? 0.5 : 1;
   ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.beginPath(); ctx.ellipse(0, 9 + bob, 5.5, 1.8, 0, 0, 6.29); ctx.fill();
+  const row = BOT_ROWS.indexOf(Object.keys(ROLE_COLORS).find(k => ROLE_COLORS[k] === color) || '');
+  if (botReady && row >= 0) {
+    const H = 30, col = moving ? (facing > 0 ? 1 : 2) : 0;
+    if (moving) ctx.rotate(Math.sin(t * 0.02 + seed) * 0.09);                         // a little waddle while walking
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(botSheet, col * BOT_CELL, row * BOT_CELL, BOT_CELL, BOT_CELL, -H / 2, 10.5 - H, H, H);
+    ctx.restore();
+    if (status === 'running' && !moving) {
+      const s = (t * 0.004 + seed) % 1; ctx.fillStyle = alpha(color, 1 - s); ctx.fillRect(x + 7 * sc, y - (15 + s * 7) * sc, 1.6 * sc, 1.6 * sc);
+    }
+    return;
+  }
   const step = moving ? Math.sin(t * 0.02 + seed) * 2 : 0;                      // legs
   ctx.fillStyle = '#8fa3ae'; ctx.fillRect(-3 + step * 0.5, 5, 2, 4); ctx.fillRect(1 - step * 0.5, 5, 2, 4);
   ctx.fillStyle = '#d3e0e7'; rr(-4.5, -2, 9, 8.5, 3); ctx.fill();                 // body
@@ -668,7 +687,9 @@ function drawModule(m, t, dt) {
     const desk = desks[i % desks.length], b = botFor(tk, I, desk, t);
     stepBot(b, tk, desk, dt);
     const [bx, by] = toWorld(m, I.x + b.fx * I.w, I.y + b.fy * I.h);
-    drawBot(bx, by, ROLE_COLORS[tk.role] || col, tk.status, t, b.seed, b.facing || 1, sc, b.moving);
+    if (b.lastX != null && Math.abs(bx - b.lastX) > 0.02) b.wf = bx > b.lastX ? 1 : -1;      // face where it walks on screen (modules are turned)
+    b.lastX = bx;
+    drawBot(bx, by, ROLE_COLORS[tk.role] || col, tk.status, t, b.seed, b.wf || 1, sc, b.moving);
     const ky = by - 16 * sc;
     if (tk.status === 'done') { ctx.strokeStyle = '#00ff99'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(bx - 4, ky); ctx.lineTo(bx - 1, ky + 3); ctx.lineTo(bx + 4, ky - 3); ctx.stroke(); }
     if (tk.status === 'failed') { ctx.strokeStyle = '#ff3344'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(bx - 3, ky - 2); ctx.lineTo(bx + 3, ky + 4); ctx.moveTo(bx + 3, ky - 2); ctx.lineTo(bx - 3, ky + 4); ctx.stroke(); }
@@ -759,7 +780,7 @@ function drawCore(t) {
   (S && S.roster ? S.roster : []).filter(a => a.role !== 'lead' && !a.working && !a.waiting).forEach(a => onDeck.push({ role: a.role, status: 'idle' }));
   onDeck.forEach((a, i) => {
     const dir = i % 2 ? 1 : -1, ang = -Math.PI / 2 + i * (Math.PI * 2 / Math.max(onDeck.length, 1)) + t * 0.00007 * dir;
-    drawBot(x + Math.cos(ang) * track, y + Math.sin(ang) * track + 3, ROLE_COLORS[a.role] || '#00e5ff', a.status, t, i * 4.1, Math.cos(ang) * dir > 0 ? -1 : 1, sc, true);
+    drawBot(x + Math.cos(ang) * track, y + Math.sin(ang) * track + 3, ROLE_COLORS[a.role] || '#00e5ff', a.status, t, i * 4.1, -Math.sin(ang) * dir > 0 ? 1 : -1, sc, true);
   });
   // name plate inside the bottom of the core, and the open-items badge
   ctx.textAlign = 'center'; ctx.font = '700 ' + Math.max(9, 12 * SC) + 'px Orbitron, monospace';

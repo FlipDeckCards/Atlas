@@ -93,6 +93,17 @@ async def helix_portrait():
     return FileResponse(_HELIX_PORTRAIT, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
 
 
+_BOTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "bots.png")
+
+
+@router.get("/crew/bots.png")
+async def crew_bots():
+    """The crew's sprites: Michael's robot model rendered once per role (front, right, left)."""
+    if not os.path.isfile(_BOTS):
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+    return FileResponse(_BOTS, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+
 @router.get("/api/crew/state")
 async def crew_state(request: Request):
     g = _gate(request, need_engine=False)
