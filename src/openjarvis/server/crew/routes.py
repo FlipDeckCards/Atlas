@@ -34,7 +34,7 @@ from pydantic import BaseModel, Field
 
 from openjarvis.server import hardening
 from openjarvis.server.crew import connections as conns
-from openjarvis.server.crew import crew_allowed, crew_enabled
+from openjarvis.server.crew import crew_access, crew_enabled
 from openjarvis.server.crew.station import STATION_PAGE
 
 logger = logging.getLogger(__name__)
@@ -60,13 +60,13 @@ def _who(request: Request):
     return getattr(request.state, "user_id", "") or "", getattr(request.state, "user_email", "") or ""
 
 
-def _gate(request: Request, need_engine: bool = True) -> Any:
-    """(user_id, engine) for an owner, or the error response to send."""
+async def _gate(request: Request, need_engine: bool = True) -> Any:
+    """(user_id, engine) for an owner or an active subscriber, or the error response to send."""
     uid, email = _who(request)
     if not uid or not email:
         return JSONResponse({"detail": "Sign in first."}, status_code=401)
-    if not crew_allowed(email):
-        return JSONResponse({"detail": "The crew is for the owner account."}, status_code=403)
+    if not await crew_access(request):
+        return JSONResponse({"detail": "Subscribe to unlock your own crew: agents that research, write, design, code and run your businesses."}, status_code=403)
     engine = getattr(request.app.state, "crew_engine", None)
     if need_engine and (engine is None or not crew_enabled()):
         return JSONResponse({"detail": "The crew is off. Set CREW_ENABLED=true on Render and redeploy."}, status_code=503)
@@ -108,15 +108,41 @@ async def crew_bots():
 
 @router.get("/api/crew/state")
 async def crew_state(request: Request):
-    g = _gate(request, need_engine=False)
+    g = await _gate(request, need_engine=False)
     if isinstance(g, JSONResponse):
         return g
     uid, engine = g
     if engine is None or not crew_enabled():
         return {"enabled": False, "detail": "The crew is off. Set CREW_ENABLED=true on Render and redeploy."}
     st = await engine.state(uid)
-    st["connections"] = await conns.status(engine.store, uid)
-    from openjarvis.server.crew import workbench
+    from openjarvis.server.crew import guide, tenant, workbench
+
+    owner = await engine.is_owner(uid)
+    envx = await engine.env_for(uid)
+    st["owner"] = owner
+    st["connections"] = await conns.status(engine.store, uid, envx)
+    if not owner:
+        # a subscriber's own connections, each with its guided steps
+        for kind in ("stripe", "github"):
+            st["connections"][kind].update(guide=kind, setup="" if st["connections"][kind]["connected"] else "Connect it step by step.")
+        phone = bool(await tenant.get(engine.store, uid, "notify_url"))
+        st["connections"]["phone"] = {"connected": phone, "built": True, "label": "Phone alerts and briefs", "actions": [], "guide": "phone",
+                                      "setup": "" if phone else "Get alerts and your briefs on your phone."}
+        # platform-level items are the owner's to set up; a subscriber never sees Render instructions
+        if not st["connections"].get("web_research", {}).get("connected"):
+            st["connections"].pop("web_research", None)
+        etsy = st["connections"].get("etsy")
+        if etsy and not etsy["connected"] and not etsy.get("can_connect"):
+            etsy.update(built=False, setup="Coming soon.")
+        st["guides"] = guide.GUIDES
+        st["house_rules"] = (await tenant.get(engine.store, uid, "house_rules")) or ""
+        st["usage"] = await engine.usage(uid)
+    st["businesses"] = await tenant.businesses(engine.store, uid) if not owner else [
+        {"key": "flipdeck", "name": "FlipDeck", "url": "https://flipdeckcards.com", "color": "#ff6d00"},
+        {"key": "marnyx", "name": "Marnyx", "url": "https://marnyx.onrender.com", "color": "#b06cff"},
+        {"key": "deadzone", "name": "Deadzone", "url": "https://cybervoid-6tbo.onrender.com", "color": "#ff3344"}]
+    if not owner:
+        st["products"] = await engine.products_for(uid, st["businesses"])
 
     pc, paired = engine.presence.status(uid), bool(await engine.store.get_secret(uid, workbench.TOKEN_SECRET))
     st["connections"]["workbench"].update(connected=bool(pc.get("online")), paired=paired, info=pc,
@@ -128,7 +154,7 @@ async def crew_state(request: Request):
 @router.get("/api/crew/finance")
 async def crew_finance(request: Request):
     """P&L per factory and in total (crew/finance.py), the products' live status and Aibussol's own counts."""
-    g = _gate(request)
+    g = await _gate(request)
     if isinstance(g, JSONResponse):
         return g
     uid, engine = g
@@ -136,10 +162,29 @@ async def crew_finance(request: Request):
     from openjarvis.server.crew.finance import KNOWN, Finance, factory_key
 
     pool = getattr(getattr(request.app.state, "session_store", None), "_pool", None)
+    missions = await engine.store.list_missions(uid, 200)
+    if not await engine.is_owner(uid):
+        # a subscriber: their own Stripe (if connected) and their crew's spend, nothing of the owner's
+        from openjarvis.server.crew import tenant
+
+        biz = await tenant.businesses(engine.store, uid)
+        known = tuple(b["key"] for b in biz)
+        envx = await engine.env_for(uid)
+        cache = getattr(request.app.state, "crew_finance_users", None)
+        if cache is None:
+            cache = request.app.state.crew_finance_users = {}
+        fin_u = cache.get(uid)
+        sub_env = {"STRIPE_SECRET_KEY": envx.get("STRIPE_SECRET_KEY", ""), "CREW_STRIPE_UNTAGGED": known[0] if known else "business"}
+        if fin_u is None or fin_u.env != sub_env:
+            fin_u = cache[uid] = Finance(engine.store, pool=None, env=sub_env)
+        keys = list(known) + [factory_key(m["project"], m["title"], m["goal"], m["id"], known) for m in missions]
+        out = await fin_u.report(uid, missions, keys, owner=False)
+        out["products"] = await engine.products_for(uid, biz)
+        out["product_stats"], out["aibussol_stats"] = {}, None
+        return out
     fin = getattr(request.app.state, "crew_finance", None)
     if fin is None:
         fin = request.app.state.crew_finance = Finance(engine.store, pool=pool)
-    missions = await engine.store.list_missions(uid, 200)
     keys = list(KNOWN) + [factory_key(m["project"], m["title"], m["goal"], m["id"]) for m in missions]
     out = await fin.report(uid, missions, keys)
     out["products"] = engine.products
@@ -161,9 +206,100 @@ async def crew_finance(request: Request):
     return out
 
 
+# ── a subscriber's own connections (guided) and businesses ─────────────────────────────────────────
+
+class ConnectIn(BaseModel):
+    value: str = Field("", max_length=4000)
+    extra: str = Field("", max_length=2000)
+
+
+class BusinessIn(BaseModel):
+    name: str = Field(..., min_length=2, max_length=40)
+    url: str = Field("", max_length=200)
+    color: str = Field("", max_length=7)
+
+
+@router.post("/api/crew/connect/{kind}")
+async def crew_connect(kind: str, body: ConnectIn, request: Request):
+    if kind not in ("stripe", "github", "phone", "rules"):
+        return JSONResponse({"detail": "Unknown connection."}, status_code=404)
+    g = await _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    from openjarvis.server.crew import guide
+
+    if await engine.is_owner(uid):
+        return JSONResponse({"detail": "The owner's connections are set on Render (Atlas → Environment)."}, status_code=409)
+    hit = hardening.enforce({"chat_user": uid})
+    if hit:
+        return JSONResponse({"detail": "Too many tries. Wait a minute."}, status_code=429, headers={"Retry-After": str(hit[1])})
+    try:
+        msg = await guide.test_and_save(engine.store, uid, kind, body.value, body.extra, engine.client_factory)
+    except guide.GuideError as exc:
+        return _err(exc)
+    except Exception:
+        logger.exception("guided connect failed")
+        return JSONResponse({"detail": "That service could not be reached just now. Try again."}, status_code=502)
+    await engine.store.add_event(uid, "connection", msg)
+    return {"ok": True, "message": msg}
+
+
+@router.post("/api/crew/connect/{kind}/disconnect")
+async def crew_connect_off(kind: str, request: Request):
+    if kind == "etsy":                                     # Etsy is OAuth, with its own route below
+        return await crew_disconnect_etsy(request)
+    g = await _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    from openjarvis.server.crew import guide
+
+    if await engine.is_owner(uid):
+        return JSONResponse({"detail": "The owner's connections are set on Render."}, status_code=409)
+    try:
+        await guide.disconnect(engine.store, uid, kind)
+    except guide.GuideError as exc:
+        return _err(exc)
+    await engine.store.add_event(uid, "connection", f"{kind.title()} disconnected.")
+    return {"ok": True}
+
+
+@router.post("/api/crew/businesses")
+async def crew_business_add(body: BusinessIn, request: Request):
+    g = await _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    from openjarvis.server.crew import tenant
+
+    if await engine.is_owner(uid):
+        return JSONResponse({"detail": "The owner's businesses are FlipDeck, Marnyx and Deadzone; new ones are created by missions."}, status_code=409)
+    try:
+        items = await tenant.add_business(engine.store, uid, body.name, body.url, body.color)
+    except ValueError as exc:
+        return _err(exc)
+    await engine.store.add_event(uid, "business", f"Added {body.name.strip()} to the Station.")
+    engine.drop_products_cache(uid)
+    return {"businesses": items}
+
+
+@router.post("/api/crew/businesses/{key}/remove")
+async def crew_business_remove(key: str, request: Request):
+    g = await _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    from openjarvis.server.crew import tenant
+
+    items = await tenant.remove_business(engine.store, uid, key)
+    engine.drop_products_cache(uid)
+    return {"businesses": items}
+
+
 @router.post("/api/crew/missions")
 async def crew_start(body: MissionIn, request: Request):
-    g = _gate(request)
+    g = await _gate(request)
     if isinstance(g, JSONResponse):
         return g
     uid, engine = g
@@ -179,7 +315,7 @@ async def crew_start(body: MissionIn, request: Request):
 
 @router.post("/api/crew/missions/{mission_id}/{action}")
 async def crew_mission_action(mission_id: str, action: str, request: Request):
-    g = _gate(request)
+    g = await _gate(request)
     if isinstance(g, JSONResponse):
         return g
     uid, engine = g
@@ -194,7 +330,7 @@ async def crew_mission_action(mission_id: str, action: str, request: Request):
 
 @router.post("/api/crew/questions/{question_id}/answer")
 async def crew_answer(question_id: str, body: AnswerIn, request: Request):
-    g = _gate(request)
+    g = await _gate(request)
     if isinstance(g, JSONResponse):
         return g
     uid, engine = g
@@ -208,7 +344,7 @@ async def crew_answer(question_id: str, body: AnswerIn, request: Request):
 
 @router.get("/api/crew/outputs/{output_id}")
 async def crew_output(output_id: str, request: Request):
-    g = _gate(request)
+    g = await _gate(request)
     if isinstance(g, JSONResponse):
         return g
     uid, engine = g
@@ -221,7 +357,7 @@ async def crew_output(output_id: str, request: Request):
 
 @router.post("/api/crew/settings")
 async def crew_settings(body: SettingsIn, request: Request):
-    g = _gate(request)
+    g = await _gate(request)
     if isinstance(g, JSONResponse):
         return g
     uid, engine = g
@@ -237,12 +373,26 @@ async def crew_settings(body: SettingsIn, request: Request):
 @router.post("/api/crew/brief/run")
 async def crew_brief_now(request: Request):
     """Herald makes a brief right now (stored in the feed, posted to Helix chat, pushed to the phone)."""
-    g = _gate(request)
+    g = await _gate(request)
     if isinstance(g, JSONResponse):
         return g
-    _, engine = g
+    uid, engine = g
     if engine.herald is None:
         return JSONResponse({"detail": "Herald is not running."}, status_code=503)
+    if not await engine.is_owner(uid):
+        # a subscriber's own brief: their money, sites and crew only, into their ledger and onto their own phone
+        from openjarvis.server.crew import herald as hd
+        from openjarvis.server.crew import tenant
+
+        fin = await crew_finance(request)
+        fin = fin if isinstance(fin, dict) else None
+        names = {b_["key"]: b_["name"] for b_ in await tenant.businesses(engine.store, uid)}
+        crew = await engine.herald._crew_counts(uid)
+        glance = hd.glance_lines(fin, (fin or {}).get("products") or {}, None, crew, names=names, owner=False)
+        act = (f"{crew['waiting']} item(s) wait for you in Helix's inbox." if crew.get("waiting") else "Nothing waits on you.")
+        await engine.store.add_event(uid, "brief", "Brief: " + " ".join(x.lstrip("- ") for x in glance)[:900])
+        await engine._notify(uid, "Your Aibussol brief", hd.push_text(glance, act))
+        return {"ok": True, "glance": glance, "act": act, "pushed": bool(await tenant.get(engine.store, uid, "notify_url"))}
     out = await engine.herald.run()
     return out if out.get("ok") else JSONResponse(out, status_code=409 if "already" in out.get("detail", "") else 502)
 
@@ -255,7 +405,7 @@ _HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "workbench_he
 @router.post("/api/crew/workbench/pair")
 async def workbench_pair(request: Request):
     """A new helper token for this account, shown once (any older token stops working)."""
-    g = _gate(request)
+    g = await _gate(request)
     if isinstance(g, JSONResponse):
         return g
     uid, engine = g
@@ -268,7 +418,7 @@ async def workbench_pair(request: Request):
 
 @router.post("/api/crew/workbench/unpair")
 async def workbench_unpair(request: Request):
-    g = _gate(request)
+    g = await _gate(request)
     if isinstance(g, JSONResponse):
         return g
     uid, engine = g
@@ -358,7 +508,7 @@ async def workbench_done(task_id: str, request: Request):
 
 @router.post("/api/crew/run")
 async def crew_run_now(request: Request):
-    g = _gate(request)
+    g = await _gate(request)
     if isinstance(g, JSONResponse):
         return g
     uid, engine = g
@@ -369,7 +519,7 @@ async def crew_run_now(request: Request):
 
 @router.get("/api/crew/connect/etsy")
 async def crew_connect_etsy(request: Request):
-    g = _gate(request)
+    g = await _gate(request)
     if isinstance(g, JSONResponse):
         return g
     uid, _ = g
@@ -380,7 +530,7 @@ async def crew_connect_etsy(request: Request):
 
 @router.post("/api/crew/connect/etsy/disconnect")
 async def crew_disconnect_etsy(request: Request):
-    g = _gate(request)
+    g = await _gate(request)
     if isinstance(g, JSONResponse):
         return g
     uid, engine = g

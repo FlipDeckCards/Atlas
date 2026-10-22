@@ -333,7 +333,25 @@ def create_app(
                 return bool(row) and is_admin(row["email"])
 
             engine.owner_fn = crew_is_owner
+
+            async def crew_name(uid: str) -> str:
+                async with pool.acquire() as conn:
+                    row = await conn.fetchrow("SELECT display_name, email FROM users WHERE id = $1", uid)
+                return (row["display_name"] or row["email"].split("@")[0]) if row else ""
+
+            engine.name_fn = crew_name
+
+            async def crew_push_url(uid: str) -> str:
+                # the owner's alerts go to CREW_NOTIFY_URL; everyone else's only to the phone topic THEY connected
+                from openjarvis.server.crew import notify_url, tenant
+
+                if await engine.is_owner(uid):
+                    return notify_url()
+                return (await tenant.get(engine.store, uid, "notify_url")) or ""
+
+            notifier.url_for = crew_push_url
             engine.herald = Herald(engine, getattr(app.state, "brief_store", None) or BriefStore(pool), pool=pool, notifier=notifier)
+            engine.pool = pool
             await engine.start()
             app.state.crew_engine = engine
             logger.info("crew engine started")

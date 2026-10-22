@@ -47,6 +47,7 @@ def config(env=None) -> dict:
         "secret_key": (e.get("STRIPE_SECRET_KEY") or "").strip(),
         "webhook_secret": (e.get("STRIPE_WEBHOOK_SECRET") or "").strip(),
         "price": (e.get("STRIPE_PRICE_AIBUSSOL") or "").strip(),
+        "usage_price": (e.get("STRIPE_PRICE_USAGE") or "").strip(),
     }
 
 
@@ -76,6 +77,7 @@ async def create_checkout(cfg: dict, user_id: str, email: str, success_url: str,
         "mode": "subscription",
         "line_items[0][price]": cfg["price"],
         "line_items[0][quantity]": "1",
+        **({"line_items[1][price]": cfg["usage_price"]} if cfg.get("usage_price") else {}),   # pay as you go past the included work
         "client_reference_id": user_id,
         "customer_email": email,
         "success_url": success_url,

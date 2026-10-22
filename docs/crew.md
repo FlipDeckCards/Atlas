@@ -90,3 +90,19 @@ It says hello every minute (the Station shows the PC online), collects Rig's job
 git, Unity batch builds), posts progress every 2 minutes and reports the result into the mission (`rig-*.md` in the outbox). Rules it
 gives Claude Code: that folder only, a `crew/<name>` branch, never push to main, never publish or upload. The server never runs Rig's
 tasks; they wait until the PC collects them. Re-pair makes a new token (the old one stops working).
+
+## Subscribers: their own Station
+
+A subscriber (an active Aibussol subscription) gets the same Station with every expansion bay open and the whole crew working for them.
+
+- **Isolation.** The owner's crew runs on the server's environment. A subscriber's crew runs on `tenant.subscriber_env`: only the
+  platform settings in `tenant.PLATFORM_KEYS` plus the subscriber's own connections. It never sees the owner's keys, databases, phone,
+  repos or house rules; prompts name the subscriber, and briefs, P&L, site checks and alerts are theirs alone.
+- **Guided connections** (`crew/guide.py`): Stripe (a restricted key), GitHub (a fine-grained token on chosen repos), phone (an ntfy
+  topic) and house rules. Each one is tested against the real service before it is saved; keys are stored encrypted
+  (`CREW_SECRET_KEY`, else derived from `JWT_SECRET_KEY`). Etsy is OAuth; the PC Workbench pairs per account.
+- **Businesses**: up to six per account, each a factory on their Station (`POST /api/crew/businesses`).
+- **Usage** (`crew/usage.py`): the monthly price stays the same and includes `CREW_PLAN_INCLUDED_USD` of crew work. Past that, with
+  `STRIPE_PRICE_USAGE` set (a metered price on a Billing Meter, $0.01 per unit, event `CREW_USAGE_METER_EVENT`), extra work is billed
+  at `CREW_OVERAGE_MULTIPLIER` × cost, up to `CREW_MONTHLY_HARD_CAP_USD`, and reported to Stripe's Meter Events API as it accrues.
+  Without a usage price the crew stops when the included work is used up. The owner is never metered.

@@ -1692,7 +1692,7 @@ async def chat(req: ChatRequest, request: Request):
     store = request.app.state.session_store
 
     # "read me the brief": answered from the brief feed, with no model call and no spend
-    brief_period = None if req.image else briefs.wants_brief(req.message)
+    brief_period = None if req.image or not briefs.owner_request(request) else briefs.wants_brief(req.message)
     if brief_period:
         try:
             found = await briefs.find_brief(briefs.store_for(request), brief_period)
@@ -1716,7 +1716,7 @@ async def chat(req: ChatRequest, request: Request):
     # a follow-up about the brief ("what's pending?" right after it was read) gets the full brief as context
     brief_ctx = ""
     recent = [m for m in session["conversation_history"][-4:] if m["role"] == "assistant" and isinstance(m["content"], str)]
-    if re.search(r"\bbrief(?:ing)?s?\b", req.message, re.I) or any(_BRIEF_REPLY.match(m["content"]) for m in recent):
+    if briefs.owner_request(request) and (re.search(r"\bbrief(?:ing)?s?\b", req.message, re.I) or any(_BRIEF_REPLY.match(m["content"]) for m in recent)):
         try:
             latest_brief = await briefs.find_brief(briefs.store_for(request), "latest")
             if latest_brief:
@@ -1733,7 +1733,7 @@ async def chat(req: ChatRequest, request: Request):
         except MediaServiceError:
             media_ctx = None
     # the crew (owner accounts, CREW_ENABLED): a yes to a read-back mission start is handled here, with no model call
-    crew_ctx = crew_helix.ctx_for(request)
+    crew_ctx = await crew_helix.ctx_for(request)
     if crew_ctx is not None and not req.image:
         early = await crew_helix.pre_turn(crew_ctx, req.message)
         if early is not None:

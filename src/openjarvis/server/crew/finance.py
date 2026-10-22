@@ -35,10 +35,10 @@ def _env(env: Optional[Mapping[str, str]]) -> Mapping[str, str]:
     return os.environ if env is None else env
 
 
-def factory_key(project: str, title: str = "", goal: str = "", mission_id: str = "") -> str:
-    """The same rule as the Station: a known product by name, otherwise a factory per new business."""
-    p = "".join(ch for ch in str(project or "").lower() if ch.isalpha())
-    if p in KNOWN:
+def factory_key(project: str, title: str = "", goal: str = "", mission_id: str = "", known=KNOWN) -> str:
+    """The same rule as the Station: a known business by name, otherwise a factory per new business."""
+    p = "".join(ch for ch in str(project or "").lower() if ch.isalnum())
+    if p in known:
         return p
     return "new:" + str(title or goal or mission_id).lower()[:40]
 
@@ -156,16 +156,18 @@ class Finance:
             logger.exception("helix spend unavailable")
             return {"today": 0.0, "d30": 0.0}
 
-    async def report(self, user_id: str, missions: List[Dict[str, Any]], factory_keys: List[str]) -> Dict[str, Any]:
-        """P&L per factory and in total. factory_keys: the factories the Station shows (every key gets a row)."""
+    async def report(self, user_id: str, missions: List[Dict[str, Any]], factory_keys: List[str], owner: bool = True) -> Dict[str, Any]:
+        """P&L per factory and in total. factory_keys: the factories the Station shows (every key gets a row).
+        owner=False (a subscriber): only their own Stripe and their crew's spend; no Aibussol row, no hosting, no Helix-wide spend."""
         now = self.now()
-        mkey = {m["id"]: factory_key(m.get("project", ""), m.get("title", ""), m.get("goal", ""), m["id"]) for m in missions}
+        known = tuple(k for k in factory_keys if not str(k).startswith("new:"))
+        mkey = {m["id"]: factory_key(m.get("project", ""), m.get("title", ""), m.get("goal", ""), m["id"], known) for m in missions}
         crew_today = await self.store.cost_by_mission(user_id, la_midnight(now))
         crew_30 = await self.store.cost_by_mission(user_id, now - dt.timedelta(days=30))
         stripe = await self.stripe_numbers()
-        helix = await self.helix_spend()
-        fixed = fixed_costs(self.env)
-        keys = list(dict.fromkeys(list(factory_keys) + ["aibussol"]))
+        helix = await self.helix_spend() if owner else {"today": 0.0, "d30": 0.0}
+        fixed = fixed_costs(self.env) if owner else {}
+        keys = list(dict.fromkeys(list(factory_keys) + (["aibussol"] if owner else [])))
         rows: Dict[str, Dict[str, Any]] = {}
 
         def row(k: str) -> Dict[str, Any]:
@@ -191,8 +193,9 @@ class Finance:
             row(app)["mrr"] += usd
         for app, n in stripe["subs"].items():
             row(app)["subscribers"] += n
-        rows["aibussol"]["ai_cost_today"] = helix["today"]
-        rows["aibussol"]["ai_cost_30d"] = helix["d30"]
+        if owner:
+            rows["aibussol"]["ai_cost_today"] = helix["today"]
+            rows["aibussol"]["ai_cost_30d"] = helix["d30"]
         total = {"revenue_today": 0.0, "revenue_30d": 0.0, "cost_today": 0.0, "cost_30d": 0.0, "mrr": 0.0, "subscribers": 0}
         for r in rows.values():
             r["cost_today"] = round(r["crew_cost_today"] + r["ai_cost_today"] + r["fixed_cost_today"], 2)
@@ -208,7 +211,8 @@ class Finance:
         total["net_today"] = round(total["revenue_today"] - total["cost_today"], 2)
         total["net_30d"] = round(total["revenue_30d"] - total["cost_30d"], 2)
         notes = [n for n in (stripe.get("note"),) if n]
-        if not fixed:
+        if owner and not fixed:
             notes.append("Hosting and tool costs are not included yet: set CREW_FIXED_COSTS on Render (monthly dollars per factory).")
-        notes.append("Revenue is gross (Stripe fees not subtracted). Untagged Stripe payments count as FlipDeck's.")
+        notes.append("Revenue is gross (Stripe fees not subtracted)." + (" Untagged Stripe payments count as FlipDeck's." if owner else
+                     " Payments without an app tag count toward your first business."))
         return {"total": total, "factories": rows, "stripe_ok": stripe["ok"], "notes": notes, "as_of": now.isoformat()}

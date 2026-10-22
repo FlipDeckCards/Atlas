@@ -49,7 +49,8 @@ def configured(env=None) -> bool:
 
 def repos(env=None) -> List[str]:
     raw = _env(env).get("CREW_GITHUB_REPOS")
-    items = [r.strip() for r in str(raw).split(",")] if raw else list(DEFAULT_REPOS)
+    # unset: the owner's product repos; set but empty (a subscriber who chose none): no repos at all, never the owner's
+    items = list(DEFAULT_REPOS) if raw is None else [r.strip() for r in str(raw).split(",") if r.strip()]
     return [r for r in items if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", r)]
 
 

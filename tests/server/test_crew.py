@@ -81,11 +81,16 @@ class Notes:
         self.sent.append((user_id, title, text))
 
 
-def world(plan, agents, env=None, now=NOON_LA, http=None, store=None):
+def world(plan, agents, env=None, now=NOON_LA, http=None, store=None, owner=UID):
     store = store or MemoryCrewStore(clock=lambda: now)
     notes, model = Notes(), Model(plan, agents)
     e = CrewEngine(store, model, notifier=notes, env=dict(ENV, **(env or {})), cost_fn=lambda r: 0.01, now=lambda: now,
                    models={"writing": "claude-x", "lookup": "gemini-x", "default": "gpt-x"}, client_factory=http)
+
+    async def is_owner(uid):                       # UID is the owner (Michael) unless a test says otherwise; anyone else subscribes
+        return uid == owner
+
+    e.owner_fn = is_owner
     return SimpleNamespace(store=store, engine=e, notes=notes, model=model, http=http)
 
 
@@ -268,7 +273,7 @@ class TestBudgets:
     def test_a_task_out_of_budget_asks_and_continues_only_if_approved(self):
         def writer(turn, msgs):
             return resp(calls=[("save_output", {"name": f"part{turn}.md", "content": "x"})]) if turn < 4 else resp("done")
-        w = world({"tasks": [{"title": "Write listing", "role": "writer", "brief": "b"}]}, {"Write listing": writer})
+        w = world({"tasks": [{"title": "Write listing", "role": "writer", "brief": "b"}]}, {"Write listing": writer}, owner=None)
         m = run(start(w, budget=0.06))                       # planner 0.01, then the task gets 0.05: two calls of 0.02 estimate
         q = run(w.store.list_questions(UID))
         assert len(q) == 1 and q[0]["kind"] == "budget" and run(w.store.list_tasks(m["id"]))[0]["status"] == "waiting"
@@ -278,7 +283,7 @@ class TestBudgets:
 
     def test_declining_more_budget_stops_the_task_and_the_mission_says_so(self):
         w = world({"tasks": [{"title": "Write listing", "role": "writer", "brief": "b"}]},
-                  {"Write listing": lambda turn, msgs: resp(calls=[("save_output", {"name": "a.md", "content": "x"})])})
+                  {"Write listing": lambda turn, msgs: resp(calls=[("save_output", {"name": "a.md", "content": "x"})])}, owner=None)
         m = run(start(w, budget=0.06))
         q = run(w.store.list_questions(UID))[0]
         run(w.engine.answer(UID, q["id"], approve=False))
@@ -286,7 +291,7 @@ class TestBudgets:
         assert run(w.store.get_mission(m["id"]))["status"] == "stalled"
 
     def test_the_daily_cap_stops_new_work_and_is_reported_once(self):
-        w = world(two_task_plan(), {"Research buyers": [resp("r")], "Write listing": [resp("w")]}, env={"CREW_DAILY_CAP_USD": "0.02"})
+        w = world(two_task_plan(), {"Research buyers": [resp("r")], "Write listing": [resp("w")]}, env={"CREW_DAILY_CAP_USD": "0.02"}, owner=None)
         m = run(start(w))                                    # planning (0.01) leaves 0.01: below one call's estimate
         assert [t["status"] for t in run(w.store.list_tasks(m["id"]))] == ["queued", "queued", "queued"]
         run(w.engine.tick())
@@ -632,6 +637,11 @@ class TestHerald:
                             models={"writing": "claude-x", "lookup": "gemini-x", "default": "gpt-x"})
         engine.products = {"flipdeck": {"live": True}, "deadzone": {"live": False}}
 
+        async def owner(uid):
+            return uid == UID
+
+        engine.owner_fn = owner
+
         async def make_brief(period, n, env):
             return {"product": "FlipDeck and Marnyx", "period": period, "body_markdown": "Good morning, Michael.\n\n## FlipDeck\n- No deploys.\n\n## Act on first\nNothing urgent.",
                     "spoken_summary": "Good morning, Michael. Nothing urgent."}
@@ -729,3 +739,129 @@ class TestWorkbench:
         assert p.status(UID)["online"] and p.status(UID)["host"] == "MIKE-PC"
         t[0] += 1000
         assert not p.status(UID)["online"]
+
+
+# ── subscribers: their own Station, their own keys, never the owner's ──
+
+class FakePool:
+    def __init__(self, customer="cus_sub"):
+        self.customer = customer
+
+    def acquire(self):
+        pool = self
+
+        class Conn:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def fetchrow(self, sql, *args):
+                return {"stripe_customer_id": pool.customer}
+        return Conn()
+
+
+class TestSubscribers:
+    OWNER_ENV = {"STRIPE_SECRET_KEY": "sk_live_OWNER", "CREW_GITHUB_TOKEN": "ghp_OWNER", "RENDER_API_KEY": "rnd_OWNER",
+                 "CREW_HOUSE_RULES": "Michael's rules", "FLIPDECK_READ_DATABASE_URL": "postgres://owner"}
+
+    def test_a_subscribers_crew_never_sees_the_owners_keys(self):
+        w = world(two_task_plan(), {}, env=self.OWNER_ENV)
+        mine = run(w.engine.env_for(UID))
+        theirs = run(w.engine.env_for("sub-1"))
+        assert mine["STRIPE_SECRET_KEY"] == "sk_live_OWNER"
+        assert "OWNER" not in json.dumps(theirs) and "postgres://owner" not in json.dumps(theirs) and "Michael" not in json.dumps(theirs)
+        assert theirs["STRIPE_SECRET_KEY"] == "" and theirs["CREW_GITHUB_REPOS"] == "" and theirs["CREW_ENABLED"] == "true"
+        from openjarvis.server.crew import github
+
+        assert github.repos(theirs) == [] and not github.configured(theirs)
+
+    def test_guided_stripe_is_tested_then_stored_encrypted_and_used(self):
+        from openjarvis.server.crew import guide, tenant
+
+        w = world(two_task_plan(), {}, env=self.OWNER_ENV, http=FakeHttp())
+        with pytest.raises(guide.GuideError):
+            run(guide.test_and_save(w.store, "sub-1", "stripe", "not-a-key", client_factory=w.http))
+        msg = run(guide.test_and_save(w.store, "sub-1", "stripe", "rk_test_abcdefghijklmnop", client_factory=w.http))
+        assert "test mode" in msg and w.http.requests[-1][1] == "https://api.stripe.com/v1/products"
+        raw = run(w.store.get_secret("sub-1", "stripe_key"))
+        assert raw.startswith("enc1:") and "abcdefghijklmnop" not in raw
+        assert run(tenant.get(w.store, "sub-1", "stripe_key")) == "rk_test_abcdefghijklmnop"
+        assert run(w.engine.env_for("sub-1"))["STRIPE_SECRET_KEY"] == "rk_test_abcdefghijklmnop"
+        run(guide.disconnect(w.store, "sub-1", "stripe"))
+        assert run(w.engine.env_for("sub-1"))["STRIPE_SECRET_KEY"] == ""
+
+    def test_phone_and_github_are_checked(self):
+        from openjarvis.server.crew import guide
+
+        http = FakeHttp()
+        store = MemoryCrewStore()
+        with pytest.raises(guide.GuideError):
+            run(guide.test_and_save(store, "sub-1", "phone", "https://evil.example/x", client_factory=http))
+        run(guide.test_and_save(store, "sub-1", "phone", "https://ntfy.sh/aibussol-1234abcd", client_factory=http))
+        assert http.requests[-1][:2] == ("POST", "https://ntfy.sh/aibussol-1234abcd")
+        with pytest.raises(guide.GuideError):
+            run(guide.test_and_save(store, "sub-1", "github", "github_pat_" + "x" * 20, "not a repo", client_factory=http))
+        run(guide.test_and_save(store, "sub-1", "github", "github_pat_" + "x" * 20, "me/site, me/app", client_factory=http))
+        assert run(store.get_secret("sub-1", "github_repos")) == "me/site,me/app"
+
+    def test_businesses_make_the_factories(self):
+        from openjarvis.server.crew import tenant
+
+        store = MemoryCrewStore()
+        items = run(tenant.add_business(store, "sub-1", "Bloom Candles", "bloomcandles.com"))
+        assert items == [{"key": "bloomcandles", "name": "Bloom Candles", "url": "https://bloomcandles.com", "color": tenant.PALETTE[0]}]
+        with pytest.raises(ValueError):
+            run(tenant.add_business(store, "sub-1", "bloom candles"))
+        run(tenant.add_business(store, "sub-1", "Shop Two"))
+        assert [b["key"] for b in run(tenant.remove_business(store, "sub-1", "bloomcandles"))] == ["shoptwo"]
+        assert run(tenant.businesses(store, "someone-else")) == []
+
+    def test_a_subscribers_pnl_has_only_their_own_numbers(self):
+        from openjarvis.server.crew.finance import Finance
+
+        store = MemoryCrewStore()
+        fin = Finance(store, env={"STRIPE_SECRET_KEY": "", "CREW_STRIPE_UNTAGGED": "bloom"}, now=lambda: NOON_LA)
+        out = run(fin.report("sub-1", [], ["bloom"], owner=False))
+        assert "aibussol" not in out["factories"] and "bloom" in out["factories"]
+        assert not any("CREW_FIXED_COSTS" in n or "FlipDeck" in n for n in out["notes"])
+
+
+class TestUsage:
+    ENV = {"STRIPE_SECRET_KEY": "sk_test_platform", "STRIPE_PRICE_USAGE": "price_meter", "CREW_PLAN_INCLUDED_USD": "5",
+           "CREW_OVERAGE_MULTIPLIER": "2", "CREW_MONTHLY_HARD_CAP_USD": "20"}
+
+    def test_the_plan_includes_work_then_bills_extra_with_a_cap(self):
+        from openjarvis.server.crew import usage
+
+        assert usage.billable_cents(4.99, self.ENV) == 0
+        assert usage.billable_cents(6.0, self.ENV) == 200                   # $1 of crew cost past the plan bills $2
+        assert usage.billable_cents(100.0, self.ENV) == 2000                # never past the monthly cap
+        assert usage.room_usd(0, self.ENV) == 15.0                          # $5 included + $20 cap at 2x = $10 more
+        no_payg = dict(self.ENV, STRIPE_PRICE_USAGE="")
+        assert usage.billable_cents(6.0, no_payg) == 0 and usage.room_usd(4.0, no_payg) == 1.0
+        s = usage.summary(6.0, self.ENV)
+        assert s["included_pct"] == 100.0 and s["extra_billed_usd"] == 2.0 and s["payg"]
+
+    def test_extra_usage_is_reported_once_per_cent(self):
+        from openjarvis.server.crew import usage
+
+        store, http = MemoryCrewStore(), FakeHttp()
+        sent = run(usage.report(store, FakePool(), "sub-1", 6.0, NOON_LA, self.ENV, http))
+        assert sent == 200
+        method, url, kw = http.requests[-1]
+        assert url == "https://api.stripe.com/v1/billing/meter_events" and kw["data"]["payload[stripe_customer_id]"] == "cus_sub"
+        assert kw["data"]["payload[value]"] == "200" and kw["data"]["identifier"] == "sub-1-2026-10-200"
+        assert run(usage.report(store, FakePool(), "sub-1", 6.0, NOON_LA, self.ENV, http)) == 0       # nothing new
+        assert run(usage.report(store, FakePool(), "sub-1", 6.5, NOON_LA, self.ENV, http)) == 100     # only the new cents
+
+    def test_a_subscriber_stops_at_the_month_and_the_owner_never_does(self):
+        w = world(two_task_plan(), {"Research buyers": [resp("r")], "Write listing": [resp("w")]},
+                  env={"CREW_PLAN_INCLUDED_USD": "0.02", "CREW_DAILY_CAP_USD": "50"})
+        run(w.store.add_day_spend("sub-1", "2026-10-02", 0.02))
+        assert run(w.engine.may_run("sub-1")) == "monthly usage reached"
+        assert any("included crew work is used up" in e["text"] for e in w.store.events)
+        run(w.store.add_day_spend(UID, "2026-10-02", 500))
+        assert run(w.engine.may_run(UID)) is None and run(w.engine.usage(UID)) is None
+        assert run(w.engine.usage("sub-1"))["included_pct"] == 100.0

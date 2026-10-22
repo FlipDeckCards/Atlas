@@ -16,7 +16,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from openjarvis.server.crew import crew_allowed, crew_enabled
+from openjarvis.server.crew import crew_access, crew_enabled
 from openjarvis.server.media.helix_tools import PendingActions, is_explicit_yes
 
 logger = logging.getLogger(__name__)
@@ -26,16 +26,16 @@ CREW_PENDING = PendingActions()
 CREW_TOOLS: List[Dict[str, Any]] = [
     {"type": "function", "function": {
         "name": "start_mission",
-        "description": "Start a crew mission: Helix plans the goal into tasks and agents (Claude, Gemini) work them in parallel. Costs money, so the system asks Michael to confirm first.",
-        "parameters": {"type": "object", "properties": {"goal": {"type": "string", "description": "The whole goal in Michael's words, with any details he gave."},
-                                                        "budget_usd": {"type": "number", "description": "Only if Michael named a budget."}}, "required": ["goal"]}}},
+        "description": "Start a crew mission: Helix plans the goal into tasks and agents (Claude, Gemini) work them in parallel. Costs money, so the system asks the user to confirm first.",
+        "parameters": {"type": "object", "properties": {"goal": {"type": "string", "description": "The whole goal in the user's words, with any details he gave."},
+                                                        "budget_usd": {"type": "number", "description": "Only if the user named a budget."}}, "required": ["goal"]}}},
     {"type": "function", "function": {
         "name": "crew_status",
         "description": "What the crew is doing: missions, tasks, open questions and checkpoints (with ids), spend.",
         "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
         "name": "answer_crew_question",
-        "description": "Pass Michael's answer to an agent's open QUESTION (not a checkpoint or budget request; those need his tap on Approve/Decline).",
+        "description": "Pass the user's answer to an agent's open QUESTION (not a checkpoint or budget request; those need his tap on Approve/Decline).",
         "parameters": {"type": "object", "properties": {"question_id": {"type": "string"}, "answer": {"type": "string"}}, "required": ["question_id", "answer"]}}},
     {"type": "function", "function": {
         "name": "pause_mission",
@@ -54,12 +54,11 @@ class CrewCtx:
     engine: Any
 
 
-def ctx_for(request) -> Optional[CrewCtx]:
+async def ctx_for(request) -> Optional[CrewCtx]:
     """A crew context only when the crew is on, the engine is running and the caller is an owner account."""
     engine = getattr(request.app.state, "crew_engine", None)
-    email = getattr(request.state, "user_email", "") or ""
     uid = getattr(request.state, "user_id", "") or ""
-    if engine is None or not uid or not crew_enabled() or not crew_allowed(email):
+    if engine is None or not uid or not crew_enabled() or not await crew_access(request):
         return None
     return CrewCtx(uid, engine)
 
@@ -79,7 +78,7 @@ async def status_text(ctx: CrewCtx) -> str:
             if t["status"] in ("running", "waiting", "failed"):
                 lines.append(f'  - {t["title"]} ({t["role"]}): {t["status"]}')
     for q in st["questions"]:
-        how = "Michael can answer in chat" if q["kind"] == "question" else "needs Approve/Decline tap"
+        how = "the user can answer in chat" if q["kind"] == "question" else "needs Approve/Decline tap"
         lines.append(f'Open {q["kind"]} {q["id"]}: {q["text"]}' + (f' Options: {" / ".join(q["options"])}' if q["options"] and q["kind"] == "question" else "") + f" ({how})")
     sp = st["spend"]
     lines.append(f'Crew spend today ${sp["today_usd"]:.2f}' + (" (no daily cap)" if sp["daily_cap_usd"] is None else f' of ${sp["daily_cap_usd"]:.2f}') + f'. Night Shift {"on" if st["settings"]["night_shift"] else "off"}'
@@ -93,7 +92,7 @@ async def system_addendum(ctx: CrewCtx) -> str:
     except Exception:
         logger.exception("crew questions unavailable")
         qs = []
-    s = (" You lead Michael's crew of agents. When he asks you to build, make or launch something bigger than one answer (a product, a business, "
+    s = (" You lead the user's crew of agents. When he asks you to build, make or launch something bigger than one answer (a product, a business, "
          "a campaign, an app), call start_mission with his goal; the system asks him to confirm. Use crew_status when he asks what the crew is doing. "
          "Never say a mission started unless a tool result says so. Checkpoints and budget requests are approved only by his tap on the buttons.")
     if qs:
@@ -108,10 +107,10 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
         if name == "start_mission":
             goal = str(args.get("goal") or "").strip()[:4000]
             if len(goal) < 8:
-                return "Error: ask Michael what the mission should achieve."
+                return "Error: ask the user what the mission should achieve."
             budget = eng.clamp_budget(args.get("budget_usd")) if args.get("budget_usd") is not None else eng.clamp_budget(None)
             CREW_PENDING.create(ctx.user_id, "start_mission", {"goal": goal, "budget_usd": budget}, budget, f'start a crew mission: "{_clip(goal, 140)}"')
-            return f"NOT STARTED YET. Waiting for Michael's confirmation. Tell him the crew will plan and work this with a ${budget:.2f} budget, and ask him to reply 'yes'."
+            return f"NOT STARTED YET. Waiting for the user's confirmation. Tell them the crew will plan and work this with a ${budget:.2f} budget, and ask them to reply 'yes'."
         if name == "crew_status":
             return await status_text(ctx)
         if name == "answer_crew_question":
@@ -119,7 +118,7 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
             if not q or q["user_id"] != ctx.user_id:
                 return "Error: no such open question."
             if q["kind"] != "question":
-                return "Not done: checkpoints and budget requests need Michael's tap on Approve or Decline in the chat card or the Station."
+                return "Not done: checkpoints and budget requests need the user's tap on Approve or Decline in the chat card or the Station."
             out = await eng.answer(ctx.user_id, q["id"], answer=str(args.get("answer") or ""))
             return out["message"]
         if name in ("pause_mission", "resume_mission"):

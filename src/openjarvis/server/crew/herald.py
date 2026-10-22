@@ -98,8 +98,10 @@ def next_slot(now: dt.datetime) -> dt.datetime:
     return brief_job.slot_start("morning", n.date() + dt.timedelta(days=1))
 
 
-def glance_lines(fin: Optional[Dict[str, Any]], products: Dict[str, Any], stats: Optional[Dict[str, Any]], crew: Dict[str, int]) -> List[str]:
+def glance_lines(fin: Optional[Dict[str, Any]], products: Dict[str, Any], stats: Optional[Dict[str, Any]], crew: Dict[str, int],
+                 names: Optional[Dict[str, str]] = None, owner: bool = True) -> List[str]:
     out: List[str] = []
+    NAMES = dict(globals()["NAMES"], **(names or {}))
     if fin:
         t = fin["total"]
         out.append(f"- Money today: in {_money(t['revenue_today'])}, out {_money(t['cost_today'])}, net {_money(t['net_today'])}.")
@@ -120,7 +122,9 @@ def glance_lines(fin: Optional[Dict[str, Any]], products: Dict[str, Any], stats:
         out.append("- Sites: " + (", ".join(up) + " live" if up else "none live") + ("; DOWN: " + ", ".join(down) if down else "") + ".")
     else:
         out.append(brief_content.unchecked_line("Product sites", "not checked yet"))
-    if stats:
+    if not owner:
+        pass
+    elif stats:
         out.append(f"- Aibussol: {stats.get('users_total', 0)} users, {stats.get('active_24h', 0)} active in 24 hours, "
                    f"{stats.get('new_users_7d', 0)} new this week, {stats.get('subscribers_active', 0)} subscriber(s).")
     else:

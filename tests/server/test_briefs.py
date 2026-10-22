@@ -27,6 +27,7 @@ def _env(monkeypatch):
     monkeypatch.setenv("BRIEF_INGEST_TOKEN", INGEST)
     monkeypatch.setattr(hardening, "LIMITER", hardening.RateLimiter())
     monkeypatch.setattr(atlas_ui, "ELEVENLABS_API_KEY", "test-eleven")
+    monkeypatch.setenv("ANALYTICS_ADMIN_EMAILS", "alice@x.io")          # the feed is the owner's: alice plays the owner here
 
 
 @pytest.fixture
@@ -444,3 +445,13 @@ class TestOwnerExemption:
         store.spend[("m", hardening.utc_day())] = 99.0
         assert await hardening.spend_blocked(store, "m", 1.0, cap=1.0) is not None
         assert await hardening.spend_blocked(store, "m", 1.0, cap=1.0, exempt=True) is None
+
+
+def test_the_feed_is_the_owners_only(world):
+    world.client.post("/api/briefs", headers=ingest_h(), json={"product": "FlipDeck", "period": "morning", "body_markdown": "Secret numbers.",
+                                                              "spoken_summary": "Secret."})
+    own = world.client.get("/api/briefs/latest", headers=user()).json()
+    other = world.client.get("/api/briefs/latest", headers=user("bob")).json()
+    assert own["items"] and other["items"] == []
+    bid = own["items"][0]["id"]
+    assert world.client.post(f"/api/briefs/{bid}/listen", headers=user("bob")).status_code == 404

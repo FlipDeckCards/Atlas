@@ -121,6 +121,13 @@ class MemoryBriefStore:
         return next((_public(r) for r in self.rows if r["id"] == brief_id), None)
 
 
+def owner_request(request: Request) -> bool:
+    """The signed-in account is an owner/admin (ANALYTICS_ADMIN_EMAILS, default the owner's email): the only accounts that see the feed."""
+    from openjarvis.server.admin_analytics import is_admin
+
+    return is_admin(getattr(request.state, "user_email", "") or "")
+
+
 def store_for(request: Request):
     return _store(request)
 
@@ -194,7 +201,10 @@ def clean_for_storage(body: str, spoken: str, previous_body: Optional[str]):
 
 @router.get("/api/briefs/latest")
 async def latest(request: Request):
-    """The latest brief of each period. The auth middleware has already required a logged-in session."""
+    """The latest brief of each period. The feed holds the OWNER's business briefs, so only owner/admin accounts read it;
+    everyone else gets an empty feed (their own briefs arrive in their own chat)."""
+    if not owner_request(request):
+        return JSONResponse({"success": True, "briefs": {p: None for p in PERIODS}, "items": []})
     rows = await _store(request).latest_per_period()
     by_period = {p: next((r for r in rows if r["period"] == p), None) for p in PERIODS}
     items = sorted((r for r in rows), key=lambda r: r["created_at"], reverse=True)
@@ -294,7 +304,7 @@ async def listen(brief_id: str, request: Request):
     )
 
     user_id = getattr(request.state, "user_id", "system")
-    brief = await _store(request).get(brief_id)
+    brief = await _store(request).get(brief_id) if owner_request(request) else None
     if brief is None:
         return JSONResponse({"detail": "That brief was not found."}, status_code=404)
     if not atlas_ui.ELEVENLABS_API_KEY:

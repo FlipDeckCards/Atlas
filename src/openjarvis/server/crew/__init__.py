@@ -101,3 +101,32 @@ def quiet_hours(env=None) -> Optional[tuple]:
 
 def notify_url(env=None) -> str:
     return (_env(env).get("CREW_NOTIFY_URL") or "").strip()
+
+
+_SUB_CACHE: dict = {}
+
+
+async def crew_access(request) -> bool:
+    """The crew is for owner/admin accounts and for accounts with an active Aibussol subscription (checked at most once a minute)."""
+    import time
+
+    email = getattr(request.state, "user_email", "") or ""
+    uid = getattr(request.state, "user_id", "") or ""
+    if not uid:
+        return False
+    if crew_allowed(email):
+        return True
+    hit = _SUB_CACHE.get(uid)
+    if hit and time.monotonic() - hit[0] < 60:
+        return hit[1]
+    ok = False
+    pool = getattr(getattr(request.app.state, "session_store", None), "_pool", None)
+    if pool is not None:
+        try:
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow("SELECT status FROM subscriptions WHERE user_id = $1", uid)
+            ok = bool(row) and row["status"] in ("active", "trialing")
+        except Exception:
+            ok = False
+    _SUB_CACHE[uid] = (time.monotonic(), ok)
+    return ok

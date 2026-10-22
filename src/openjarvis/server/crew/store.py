@@ -371,6 +371,11 @@ class CrewStore:
             r = await conn.fetchrow("SELECT usd FROM crew_spend WHERE user_id = $1 AND day = $2", user_id, _as_date(day))
         return float(r["usd"]) if r else 0.0
 
+    async def month_spend(self, user_id: str, since) -> float:
+        async with self._pool.acquire() as conn:
+            v = await conn.fetchval("SELECT COALESCE(SUM(usd), 0) FROM crew_spend WHERE user_id = $1 AND day >= $2", user_id, _as_date(since))
+        return float(v or 0)
+
     async def add_day_spend(self, user_id: str, day, usd: float) -> None:
         async with self._pool.acquire() as conn:
             await conn.execute("INSERT INTO crew_spend (user_id, day, usd) VALUES ($1,$2,$3) "
@@ -567,6 +572,10 @@ class MemoryCrewStore:
 
     async def get_day_spend(self, user_id, day):
         return self.spend.get((user_id, str(day)[:10]), 0.0)
+
+    async def month_spend(self, user_id, since):
+        s = str(since)[:10]
+        return sum(v for (u, d), v in self.spend.items() if u == user_id and d >= s)
 
     async def add_day_spend(self, user_id, day, usd):
         k = (user_id, str(day)[:10])

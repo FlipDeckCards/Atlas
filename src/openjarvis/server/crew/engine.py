@@ -296,8 +296,12 @@ class CrewEngine:
 
         self.presence = Presence()                          # which PCs (Workbench helpers) said hello recently
         self.owner_fn = None                                # async user_id -> bool, set by the app: the owner has no daily cap and auto top-ups
+        self.name_fn = None                                 # async user_id -> display name (for a subscriber's prompts)
         self._owner_cache: Dict[str, bool] = {}
         self._herald_task: Optional[asyncio.Task] = None
+        self.pool = None                                    # the app's database pool (subscriptions, for usage billing)
+        self._biz_health: Dict[str, Any] = {}              # a subscriber's site checks: uid -> (checked monotonic, results)
+        self._usage_tasks: Dict[str, asyncio.Task] = {}
 
     # ── lifecycle ────────────────────────────────────────────────────────────────────────────────
 
@@ -340,10 +344,62 @@ class CrewEngine:
         self._owner_cache[user_id] = ok
         return ok
 
+    async def env_for(self, user_id: str):
+        """The owner's crew uses the server's environment; anyone else's crew only the platform settings and their OWN connections."""
+        if await self.is_owner(user_id):
+            return self.env
+        from openjarvis.server.crew import tenant
+
+        name = ""
+        if self.name_fn is not None:
+            try:
+                name = await self.name_fn(user_id) or ""
+            except Exception:
+                name = ""
+        return await tenant.subscriber_env(self.store, user_id, self.env, name)
+
+    @staticmethod
+    def _for_person(text: str, envx) -> str:
+        """Prompts are written for Michael; a subscriber's crew gets them with the subscriber's name instead."""
+        person = (envx or {}).get("CREW_PERSON") if isinstance(envx, dict) else None
+        return text.replace("Michael", person) if person else text
+
     async def _day_room(self, user_id: str) -> float:
         if await self.is_owner(user_id):
             return 1e9                                      # the owner's own crew has no daily cap
-        return daily_cap_usd(self.env) - float(await self.store.get_day_spend(user_id, self._day()))
+        return min(daily_cap_usd(self.env) - float(await self.store.get_day_spend(user_id, self._day())), await self._month_room(user_id))
+
+    async def _month_room(self, user_id: str) -> float:
+        from openjarvis.server.crew import usage as us
+
+        return us.room_usd(await self.store.month_spend(user_id, us.month_start(self.now())), self.env)
+
+    async def usage(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """A subscriber's month: included work used and extra usage billed. None for the owner (never metered)."""
+        if await self.is_owner(user_id):
+            return None
+        from openjarvis.server.crew import usage as us
+
+        return us.summary(await self.store.month_spend(user_id, us.month_start(self.now())), self.env)
+
+    async def _after_spend(self, user_id: str) -> None:
+        """Report a subscriber's extra usage to Stripe in the background (at most one report running per account)."""
+        if await self.is_owner(user_id) or self.pool is None:
+            return
+        t = self._usage_tasks.get(user_id)
+        if t is not None and not t.done():
+            return
+
+        async def go():
+            from openjarvis.server.crew import usage as us
+
+            try:
+                spent = await self.store.month_spend(user_id, us.month_start(self.now()))
+                await us.report(self.store, self.pool, user_id, spent, self.now(), self.env, self.client_factory)
+            except Exception:
+                logger.exception("crew usage report failed")
+
+        self._usage_tasks[user_id] = asyncio.create_task(go())
 
     async def may_run(self, user_id: str) -> Optional[str]:
         """None when this owner's crew may start work now, otherwise the reason it may not."""
@@ -353,12 +409,20 @@ class CrewEngine:
         if not s["night_shift"] and in_quiet_hours(self.now(), self.env):
             return "quiet hours (Night Shift is off)"
         if await self._day_room(user_id) < EST_CALL_USD:
-            key = (user_id, self._day())
+            monthly = await self._month_room(user_id) < EST_CALL_USD and not await self.is_owner(user_id)
+            key = (user_id, self._day(), monthly)
             if key not in self._cap_noted:
                 self._cap_noted.add(key)
-                await self.store.add_event(user_id, "budget", f"Daily crew limit (${daily_cap_usd(self.env):.2f}) reached. Work resumes after midnight UTC.")
-                await self._notify(user_id, "Daily crew limit reached", f"The crew has used today's ${daily_cap_usd(self.env):.2f}. Queued work resumes after midnight UTC.")
-            return "daily limit reached"
+                if monthly:
+                    from openjarvis.server.crew import usage as us
+
+                    why = ("This month's extra-usage cap is reached." if us.plan(self.env)["payg"] else "This month's included crew work is used up.")
+                    await self.store.add_event(user_id, "budget", why + " Work resumes on the 1st.")
+                    await self._notify(user_id, "Monthly crew usage reached", why + " Queued work resumes on the 1st of next month.")
+                else:
+                    await self.store.add_event(user_id, "budget", f"Daily crew limit (${daily_cap_usd(self.env):.2f}) reached. Work resumes after midnight UTC.")
+                    await self._notify(user_id, "Daily crew limit reached", f"The crew has used today's ${daily_cap_usd(self.env):.2f}. Queued work resumes after midnight UTC.")
+            return "monthly usage reached" if monthly else "daily limit reached"
         return None
 
     async def tick(self) -> int:
@@ -408,6 +472,8 @@ class CrewEngine:
         await self.store.add_mission_spend(mission_id, cost)
         if task_id:
             await self.store.add_task_spend(task_id, cost)
+        if cost > 0:
+            await self._after_spend(user_id)
         return cost
 
     async def _notify(self, user_id: str, title: str, text: str) -> None:
@@ -444,6 +510,38 @@ class CrewEngine:
             if k.strip() and v.strip().startswith("https://"):
                 out[k.strip().lower()] = v.strip()
         return out
+
+    async def products_for(self, user_id: str, businesses) -> Dict[str, Dict[str, Any]]:
+        """A subscriber's own sites, checked like the owner's (cached 10 minutes)."""
+        import time
+
+        import httpx
+
+        hit = self._biz_health.get(user_id)
+        if hit and time.monotonic() - hit[0] < 600:
+            return hit[1]
+        cf = self.client_factory or (lambda: httpx.AsyncClient(timeout=8, follow_redirects=True))
+        out: Dict[str, Dict[str, Any]] = {}
+
+        async def one(b) -> None:
+            url = str(b.get("url") or "")
+            if not url.startswith("https://"):
+                return
+            live, code = False, None
+            try:
+                async with cf() as c:
+                    r = await c.get(url)
+                code, live = r.status_code, r.status_code < 500
+            except Exception:
+                live = False
+            out[b["key"]] = {"url": url, "live": live, "status": code, "checked_at": self.now().isoformat()}
+
+        await asyncio.gather(*(one(b) for b in businesses or []), return_exceptions=True)
+        self._biz_health[user_id] = (time.monotonic(), out)
+        return out
+
+    def drop_products_cache(self, user_id: str) -> None:
+        self._biz_health.pop(user_id, None)
 
     def _refresh_products_soon(self) -> None:
         if self._product_task is None or self._product_task.done():
@@ -483,18 +581,23 @@ class CrewEngine:
             await self.plan(m["id"])
         return await self.store.get_mission(m["id"])
 
-    def _planner_prompt(self, conn_text: str) -> str:
+    def _planner_prompt(self, conn_text: str, envx=None) -> str:
         roles = "\n".join(f"- {k} ({v['name']}): {v['about']}" for k, v in ROLES.items())
+        sub = isinstance(envx, dict) and envx.get("CREW_PERSON")
+        intro = (f"You are the planner of Michael's Aibussol crew. Michael's businesses: {envx.get('CREW_BUSINESSES') or 'none added yet'}. "
+                 if sub else "You are the planner of Aibussol's crew, working for Michael (owner of FlipDeck LLC; products: FlipDeck Cards, Marnyx, Deadzone Games). ")
+        projects = ("|".join(x.strip() for x in str(envx.get("CREW_BUSINESSES") or "").split(",") if x.strip()) + "|New").lstrip("|") if sub \
+            else "FlipDeck|Marnyx|Deadzone|Aibussol|New"
         return (
-            "You are the planner of Aibussol's crew, working for Michael (owner of FlipDeck LLC; products: FlipDeck Cards, Marnyx, Deadzone Games). "
+            intro +
             f"Break his goal into 2 to {max_tasks(self.env)} concrete tasks that agents can do in parallel where possible.\n"
             f"Roles:\n{roles}\n"
             f"Connected platforms right now:\n{conn_text or '- none'}\n"
             "Rules: each task produces something concrete (a file in the outbox, a draft, a decision for Michael). Do not plan work on a platform that is "
             "not connected; plan a task that prepares it instead and says what Michael must set up. Account creation, identity checks, payouts and app "
             "store submissions are Michael's; plan around them. Keep briefs specific.\n"
-            f"Michael's house rules (follow them):\n{house_rules(self.env)}\n"
-            'Answer with JSON only: {"title": "short mission name", "project": "FlipDeck|Marnyx|Deadzone|Aibussol|New", '
+            f"Michael's house rules (follow them):\n{house_rules(envx if envx is not None else self.env)}\n"
+            'Answer with JSON only: {"title": "short mission name", "project": "' + projects + '", '
             '"tasks": [{"title": "...", "role": "researcher|builder|writer|designer|operator|reviewer|workbench", "brief": "what to do and what to deliver", '
             '"depends_on": [indexes of earlier tasks]}]}'
         )
@@ -510,13 +613,14 @@ class CrewEngine:
                 await self.store.add_event(uid, "budget", "Not planned yet: the daily crew limit is used up. Resume it tomorrow.", mission_id=mission_id)
                 await self._notify(uid, "Mission waiting", f'"{_clip(m["goal"], 80)}" will be planned when the daily crew limit resets. Resume it from the Station.')
                 return
-            conn_text = conns.describe_for_agent(await conns.status(self.store, uid, self.env))
+            envx = await self.env_for(uid)
+            conn_text = conns.describe_for_agent(await conns.status(self.store, uid, envx))
             pc = self.presence.status(uid)
             conn_text += ("\n- Michael's PC (Workbench, for Rig): " + ("connected" + (", Unity" if pc.get("unity") else "") + (", Unreal" if pc.get("unreal") else "")
                                                                          + (", projects: " + ", ".join(pc.get("projects") or []) if pc.get("projects") else "")
                                                                          if pc.get("online") else "not connected right now (Rig tasks wait until it is)"))
             resp = await self.acompletion(model=self.models["writing"], max_tokens=PLANNER_MAX_TOKENS, messages=[
-                {"role": "system", "content": self._planner_prompt(conn_text)},
+                {"role": "system", "content": self._for_person(self._planner_prompt(conn_text, envx), envx)},
                 {"role": "user", "content": m["goal"]}])
             cost = await self._charge(uid, mission_id, "", resp)
             plan = parse_plan(resp.choices[0].message.content or "", max_tasks(self.env))
@@ -639,25 +743,26 @@ class CrewEngine:
         return (f"Mission: {mission['goal']}\n\nYour task ({task['title']}):\n{task['brief']}\n\n"
                 f"Results from tasks you depend on:\n{dep_text}\n\nOutbox so far: {out_text}\n\nThe whole crew:\n{team}")
 
-    def _system(self, task: Dict[str, Any], conn_text: str) -> str:
+    def _system(self, task: Dict[str, Any], conn_text: str, envx=None) -> str:
+        envx = self.env if envx is None else envx
         role = ROLES.get(task["role"], ROLES["builder"])
         s = (f"You are {role['name']}, the {task['role']} agent in Aibussol's crew, working for Michael. {role['about']}\n"
              "Work only on your task. Save every deliverable with save_output (complete files, not outlines). If you truly need Michael's decision, "
              "use ask_michael with one concrete question and short options; do not ask for things you can decide sensibly yourself. "
              "Never claim something was published, paid, uploaded or sent unless a tool result says so. When done, call finish with a short summary.\n"
-             f"Michael's house rules:\n{house_rules(self.env)}")
+             f"Michael's house rules:\n{house_rules(envx)}")
         if task["role"] == "operator":
             s += f"\nConnected platforms and actions:\n{conn_text}\nRisky actions become checkpoints: say so in your summary and wait for the result."
         if task["role"] == "builder":
-            if gh.configured(self.env):
-                s += ("\nRepos you may use: " + ", ".join(gh.repos(self.env)) + ". Read the existing code before changing it, keep changes small and complete, "
+            if gh.configured(envx) and gh.repos(envx):
+                s += ("\nRepos you may use: " + ", ".join(gh.repos(envx)) + ". Read the existing code before changing it, keep changes small and complete, "
                       "commit to one crew/ branch per task with repo_commit, then call request_merge once and stop: Michael approves the merge. Atlas deploys "
                       "on merge, so be careful there. If a change is not ready to merge, finish without request_merge and say why.")
             else:
                 s += "\nGitHub is not connected yet, so save code as files with save_output and say in your summary that GitHub needs connecting."
         if task["role"] == "reviewer":
             s += "\nBe strict but fair: send work back only for real problems (wrong, missing, risky, or not what was asked), with exact fixes."
-        return s
+        return self._for_person(s, envx)
 
     async def run_task(self, task: Dict[str, Any]) -> None:
         tid, uid, mid = task["id"], task["user_id"], task["mission_id"]
@@ -666,7 +771,8 @@ class CrewEngine:
             await self.store.update_task(tid, status="cancelled" if mission and mission["status"] == "cancelled" else "queued")
             return
         task = await self.store.get_task(tid) or task
-        conn_text = conns.describe_for_agent(await conns.status(self.store, uid, self.env)) if task["role"] == "operator" else ""
+        envx = await self.env_for(uid)
+        conn_text = conns.describe_for_agent(await conns.status(self.store, uid, envx)) if task["role"] == "operator" else ""
         transcript: List[Dict[str, Any]] = list(task["transcript"])
         if not transcript:
             transcript.append({"role": "user", "content": await self._context(task, mission)})
@@ -685,7 +791,7 @@ class CrewEngine:
             if await self._day_room(uid) < EST_CALL_USD:
                 await self.store.update_task(tid, status="queued", transcript=transcript)
                 return
-            resp = await self.acompletion(model=model, messages=[{"role": "system", "content": self._system(task, conn_text)}] + transcript,
+            resp = await self.acompletion(model=model, messages=[{"role": "system", "content": self._system(task, conn_text, envx)}] + transcript,
                                           tools=tools, max_tokens=AGENT_MAX_TOKENS)
             cost = await self._charge(uid, mid, tid, resp)
             msg = resp.choices[0].message
@@ -705,7 +811,7 @@ class CrewEngine:
                     args = json.loads(tc.function.arguments or "{}")
                 except ValueError:
                     args = None
-                text, outcome = await self._tool(dict(task, _transcript=transcript), mission, tc.function.name, args if isinstance(args, dict) else None)
+                text, outcome = await self._tool(dict(task, _transcript=transcript, _env=envx), mission, tc.function.name, args if isinstance(args, dict) else None)
                 transcript.append({"role": "tool", "tool_call_id": tc.id, "content": text})
             await self.store.add_event(uid, "step", f'"{task["title"]}": {", ".join(tc.function.name for tc in calls)}', mission_id=mid, task_id=tid, cost_usd=cost)
             if outcome == "waiting":
@@ -779,7 +885,8 @@ class CrewEngine:
             if outs:
                 deps += f"\nFiles in the mission outbox (on aibussol.com): {outs}"
             await self.store.add_event(user_id, "task", f'Rig started "{t["title"]}" on your PC.', mission_id=t["mission_id"], task_id=t["id"])
-            return job_for(claimed, mission, deps, house_rules(self.env))
+            envx = await self.env_for(user_id)
+            return job_for(claimed, mission, deps, self._for_person(house_rules(envx), envx))
         return None
 
     async def _own_running_pc_task(self, user_id: str, task_id: str) -> Dict[str, Any]:
@@ -870,7 +977,8 @@ class CrewEngine:
         question = _clip(args.get("question"), 500)
         if len(question) < 8:
             return "Error: ask a full research question.", None
-        if not web.configured(self.env):
+        envx = task.get("_env", self.env)
+        if not web.configured(envx):
             return "Web research is not connected (" + web.SETUP + "). Work from your own knowledge and say what needs checking.", None
         fresh = await self.store.get_task(tid) or task
         m = await self.store.get_mission(mid) or mission
@@ -879,7 +987,7 @@ class CrewEngine:
             return f"Not enough budget left for web research (about ${web.RESEARCH_EST_USD:.2f}). Finish with what you have, or ask Michael.", None
         await self.store.add_event(uid, "research", f"Scout is researching the web: {question}", mission_id=mid, task_id=tid)
         try:
-            out = await self.research_fn(question, self.env)
+            out = await self.research_fn(question, envx)
         except web.ResearchUnavailable as exc:
             return f"Web research unavailable: {exc} Work from your own knowledge.", None
         except asyncio.TimeoutError:
@@ -955,9 +1063,10 @@ class CrewEngine:
 
     async def _repo(self, task: Dict[str, Any], mission: Dict[str, Any], name: str, args: Dict[str, Any]):
         uid, mid, tid = task["user_id"], task["mission_id"], task["id"]
-        if not gh.configured(self.env):
+        envx = task.get("_env", self.env)
+        if not gh.configured(envx) or not gh.repos(envx):
             return "GitHub is not connected (" + gh.SETUP + "). Save code with save_output instead and say so in your summary.", None
-        hub = gh.GitHub(self.env, self.client_factory)
+        hub = gh.GitHub(envx, self.client_factory)
         try:
             if name == "repo_files":
                 return await hub.list_files(_clip(args.get("repo"), 100), _clip(args.get("path"), 200), _clip(args.get("branch"), 80)), None
@@ -969,7 +1078,7 @@ class CrewEngine:
                 await self.store.add_event(uid, "code", f"Forge committed {len(out['files'])} file(s) to {out['branch']} in {out['repo']}: {_clip(args.get('message'), 120)}",
                                            mission_id=mid, task_id=tid)
                 return f"Committed to {out['branch']} ({out['sha'][:7]}): {', '.join(out['files'])}. Compare: {out['url']}", None
-            repo, branch = gh.check_repo(_clip(args.get("repo"), 100), self.env), gh.crew_branch(_clip(args.get("branch"), 80))
+            repo, branch = gh.check_repo(_clip(args.get("repo"), 100), envx), gh.crew_branch(_clip(args.get("branch"), 80))
         except gh.GitHubError as exc:
             return f"GitHub: {exc}", None
         except Exception:
@@ -1009,6 +1118,7 @@ class CrewEngine:
         await self.store.add_day_spend(user_id, self._day(), usd)
         await self.store.add_mission_spend(mission_id, usd)
         await self.store.add_task_spend(task_id, usd)
+        await self._after_spend(user_id)
 
     async def _connection(self, task: Dict[str, Any], mission: Dict[str, Any], args: Dict[str, Any]):
         uid, mid, tid = task["user_id"], task["mission_id"], task["id"]
@@ -1017,12 +1127,13 @@ class CrewEngine:
         risk = conns.risk_of(platform, action)
         if risk is None:
             return f"Error: {platform}.{action} is not an available action.", None
-        st = (await conns.status(self.store, uid, self.env)).get(platform, {})
+        envx = task.get("_env", self.env)
+        st = (await conns.status(self.store, uid, envx)).get(platform, {})
         if not st.get("connected"):
             return f"Not connected: {st.get('setup') or 'the owner has not connected it'}. Do not retry; note it in your summary.", None
         if risk in ("read", "draft"):
             try:
-                result = await conns.run(platform, action, params, store=self.store, user_id=uid, mission_id=mid, env=self.env, client_factory=self.client_factory)
+                result = await conns.run(platform, action, params, store=self.store, user_id=uid, mission_id=mid, env=envx, client_factory=self.client_factory)
             except conns.ConnectionError_ as exc:
                 await self.store.add_event(uid, "connection", f"{platform}.{action} refused: {exc}", mission_id=mid, task_id=tid)
                 return f"Refused: {exc}", None
@@ -1051,6 +1162,7 @@ class CrewEngine:
             raise LookupError("The task is gone.")
         answer = str(answer or "").strip()[:2000]
         transcript = list(task["transcript"])
+        envx = await self.env_for(user_id)
         mid, tid = q["mission_id"], q["task_id"]
 
         if q["kind"] == "question":
@@ -1071,7 +1183,7 @@ class CrewEngine:
                 if act.get("platform") == "github":
                     a = act.get("args") or {}
                     try:
-                        out = await gh.GitHub(self.env, self.client_factory).merge_branch(a.get("repo", ""), a.get("branch", ""), a.get("title", ""), a.get("body", ""))
+                        out = await gh.GitHub(envx, self.client_factory).merge_branch(a.get("repo", ""), a.get("branch", ""), a.get("title", ""), a.get("body", ""))
                         transcript.append({"role": "user", "content": f"Michael approved the merge and the server ran it. Result: {out}"})
                         result = out
                     except gh.GitHubError as exc:
@@ -1087,7 +1199,7 @@ class CrewEngine:
                     if act is None:
                         raise _Done
                     out = await conns.run(act.get("platform", ""), act.get("action", ""), act.get("args") or {}, store=self.store, user_id=user_id,
-                                          mission_id=mid, env=self.env, client_factory=self.client_factory)
+                                          mission_id=mid, env=envx, client_factory=self.client_factory)
                     transcript.append({"role": "user", "content": f"Michael approved the checkpoint and the server ran it. Result: {out}"})
                     result = out
                 except _Done:
@@ -1157,7 +1269,12 @@ class CrewEngine:
                            "can": r["can"], "cannot": r["cannot"],
                            "working": sum(1 for t in mine if t["status"] == "running"), "waiting": sum(1 for t in mine if t["status"] == "waiting"),
                            "done": sum(1 for t in mine if t["status"] == "done")})
-        if self.herald is not None:
+        if self.herald is not None and not uncapped:
+            roster.append({"role": "briefer", "name": "Herald", "model": "LIVE DATA, NO MODEL",
+                           "can": "Makes a brief from your live numbers (money per business, sites, the crew) and sends it to your phone",
+                           "cannot": "Guess: anything it cannot read is marked unchecked", "working": 0, "waiting": 0, "done": 0,
+                           "status_text": "send a brief any time", "herald": True})
+        elif self.herald is not None:
             hs = self.herald.status()
             last = hs["last"]
             roster.append({"role": "briefer", "name": "Herald", "model": "LIVE DATA, NO MODEL",

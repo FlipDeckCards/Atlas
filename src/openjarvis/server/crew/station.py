@@ -206,7 +206,10 @@ let S = null, selected = 'hub', lastDraw = 0, pollTimer = null;
 function mk(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 function money(x) { return '$' + Number(x || 0).toFixed(2); }
 function ago(iso) { if (!iso) return ''; const s = (Date.now() - new Date(iso).getTime()) / 1000; if (s < 60) return 'just now'; if (s < 3600) return Math.floor(s/60) + 'm ago'; if (s < 86400) return Math.floor(s/3600) + 'h ago'; return Math.floor(s/86400) + 'd ago'; }
-function projColor(p) { return PROJECT_COLORS[String(p || '').toLowerCase()] || '#00e5ff'; }
+function projColor(p) {
+  const k = String(p || '').toLowerCase().replace(/[^a-z0-9]/g, ''), b = S && S.businesses ? S.businesses.find(x => x.key === k) : null;
+  return b ? b.color : PROJECT_COLORS[k] || '#00e5ff';
+}
 
 async function api(path, method, body) {
   const r = await fetch(path, { method: method || 'GET', headers: { 'Authorization': 'Bearer ' + token(), 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
@@ -266,7 +269,12 @@ function crewOff(msg) {
   document.getElementById('roster-box').replaceChildren();
   document.getElementById('links-box').replaceChildren();
   const side = document.getElementById('side-body'); side.textContent = '';
-  const sec = mk('div', 'sec'); sec.append(mk('div', 'lbl', 'Station'), mk('div', 'dim', msg)); side.append(sec);
+  const sec = mk('div', 'sec'); sec.append(mk('div', 'lbl', 'Station'), mk('div', 'dim', msg));
+  if (/subscri|plan/i.test(msg)) {
+    const b = mk('button', 'b', 'SUBSCRIBE'); b.style.marginTop = '10px'; b.onclick = subscribe;
+    sec.append(mk('div', 'dim', 'A subscription gives you your own Station: Helix and the whole crew, your own businesses and connections, briefs on your phone. Extra crew work past the plan is billed by usage, with a monthly cap.'), b);
+  }
+  side.append(sec);
   document.getElementById('vitals-box').replaceChildren(vitalsSec());
   document.getElementById('library-box').replaceChildren(librarySec());
 }
@@ -281,7 +289,7 @@ async function refresh() {
   const r = await api('/api/crew/state').catch(() => null);
   if (!r) { setState('NO CONNECTION'); return; }
   if (r.status === 401) { try { localStorage.removeItem(TOKEN_KEY); } catch (e) {} showAuth('Your session ended. Sign in again.'); return; }
-  if (r.status === 403) { crewOff('The crew is not part of your plan yet. Chat, voice and your library work here.'); return; }
+  if (r.status === 403) { crewOff('Subscribe to unlock your own crew. Chat, voice and your library work here.'); return; }
   if (!r.data.enabled) { crewOff(r.data.detail || 'The crew is not switched on.'); return; }
   gate(null);
   S = r.data;
@@ -291,7 +299,7 @@ async function refresh() {
   document.getElementById('t-night').classList.toggle('on', !!S.settings.night_shift);
   document.getElementById('t-pause').classList.toggle('on', !!S.settings.paused);
   document.getElementById('t-pause').textContent = S.settings.paused ? 'RESUME ALL' : 'PAUSE ALL';
-  if (selected !== 'hub' && selected !== 'links' && !String(selected).startsWith('f:') && !String(selected).startsWith('m:') && !S.missions.find(m => m.id === selected)) selected = 'hub';
+  if (selected !== 'hub' && selected !== 'links' && selected !== 'setup' && !String(selected).startsWith('f:') && !String(selected).startsWith('m:') && !S.missions.find(m => m.id === selected)) selected = 'hub';
   layout();
   renderSide();
 }
@@ -319,7 +327,11 @@ function renderSide(force) {
   document.getElementById('vitals-box').replaceChildren(vitalsSec());
   document.getElementById('library-box').replaceChildren(librarySec());
   if (String(selected).startsWith('m:')) side.append(backSec(), mediaSec());
-  else if (selected === 'hub' || selected === 'links') side.append(overviewSec(), inboxSec(), missionsSec(), ledgerSec(S.events, 'Station Ledger'));
+  else if (selected === 'setup') side.append(backSec(), setupSec());
+  else if (selected === 'hub' || selected === 'links') {
+    if (!isOwner() && (!S.businesses.length || !S.connections.stripe.connected)) side.append(setupSec());
+    side.append(overviewSec(), inboxSec(), missionsSec(), ledgerSec(S.events, 'Station Ledger'));
+  }
   else if (String(selected).startsWith('f:')) side.append(backSec(), factorySec(selected.slice(2)));
   else {
     const m = S.missions.find(x => x.id === selected);
@@ -586,6 +598,12 @@ function factorySec(key) {
     const row = mk('div', 'row'); const d = mk('span', 'dot'); d.style.background = ROLE_COLORS[t.role] || '#00e5ff';
     row.append(d, mk('span', 'grow', (who ? who.name : t.role) + ' · ' + t.title), mk('span', 'tag', t.status)); s.append(row);
   });
+  if (!isOwner() && S.businesses.some(x => x.key === key)) {
+    const rm = mk('button', 'b no', 'Remove from Station'); rm.style.marginTop = '8px';
+    rm.onclick = async () => { if (!confirm('Remove ' + b.label + ' from your Station? Its missions and files stay.')) return;
+      await api('/api/crew/businesses/' + encodeURIComponent(key) + '/remove', 'POST', {}); selected = 'hub'; refresh(); loadFinance(); };
+    s.append(rm);
+  }
   const ml = mk('div', 'lbl'); ml.style.marginTop = '12px'; ml.textContent = 'Missions'; s.append(ml);
   if (!b.missions.length) { s.append(mk('div', 'dim', 'None yet. Tell Helix what to build for ' + (b.isNew ? 'this business' : b.label.charAt(0) + b.label.slice(1).toLowerCase()) + ' and the crew will work here.')); return s; }
   s.append(mk('div', 'dim', b.missions.length + ' mission(s). Tap one for its crew, files and ledger.'));
@@ -659,6 +677,78 @@ function outboxSec(m) {
   return s;
 }
 
+// ── a subscriber's setup: add businesses, then connect each service step by step ──
+let GUIDE = null;
+function usageLine(u) {
+  return 'This month: ' + u.included_pct + '% of included crew work used' +
+    (u.payg ? ' · extra usage ' + money(u.extra_billed_usd) + ' of ' + money(u.extra_cap_usd) + ' cap' : (u.included_pct >= 100 ? ' · the crew resumes on the 1st' : ''));
+}
+function linkText(el, text) {                                   // plain text with its https links clickable
+  String(text).split(/(https:\/\/[^\s)]+)/).forEach(part => {
+    if (/^https:\/\//.test(part)) { const a = mk('a', null, part); a.href = part; a.target = '_blank'; a.rel = 'noopener'; a.style.color = 'var(--cyan)'; el.append(a); }
+    else el.append(document.createTextNode(part));
+  });
+  return el;
+}
+function guideBox(kind) {
+  const g = S.guides[kind], box = mk('div', 'pnl');
+  box.append(mk('div', 'pnl-t', g.label));
+  g.steps.forEach((t, i) => box.append(linkText(mk('div', 'dim'), (g.steps.length > 1 ? (i + 1) + '. ' : '') + t)));
+  const inp = mk(kind === 'rules' ? 'textarea' : 'input'); inp.placeholder = g.field; inp.style.marginTop = '8px';
+  if (kind !== 'rules') inp.type = 'text';
+  if (kind === 'rules') { inp.value = S.house_rules || ''; inp.maxLength = 2000; }
+  if (kind === 'phone') { const a = new Uint8Array(6); crypto.getRandomValues(a); inp.value = 'https://ntfy.sh/aibussol-' + Array.from(a, x => x.toString(16).padStart(2, '0')).join(''); }
+  if (kind === 'stripe' || kind === 'github') inp.autocomplete = 'off';
+  box.append(inp);
+  let ex = null;
+  if (g.extra) { ex = mk('input'); ex.type = 'text'; ex.placeholder = g.extra; ex.style.marginTop = '6px'; box.append(ex); }
+  const msg = mk('div', 'dim'); const row = mk('div', 'row');
+  const go = mk('button', 'b', kind === 'rules' ? 'SAVE' : 'TEST & SAVE'), no = mk('button', 'b no', 'Close');
+  go.onclick = async () => {
+    go.disabled = true; msg.textContent = kind === 'rules' ? 'Saving…' : 'Testing with ' + g.label.split(' (')[0] + '…';
+    const x = await api('/api/crew/connect/' + kind, 'POST', { value: inp.value, extra: ex ? ex.value : '' }).catch(() => null);
+    go.disabled = false;
+    if (x && x.ok) { GUIDE = null; refresh(); loadFinance(); }
+    else msg.textContent = x && typeof x.data.detail === 'string' ? x.data.detail : 'That did not work. Try again.';
+  };
+  no.onclick = () => { GUIDE = null; renderSide(true); };
+  row.append(go, no); box.append(row, msg);
+  if (kind === 'stripe') box.append(mk('div', 'pnl-note', 'Your key is tested, stored encrypted and never shown again. Anything that charges or publishes still waits for your Approve.'));
+  return box;
+}
+function setupSec() {
+  const s = mk('div', 'sec');
+  const l = mk('div', 'lbl'); l.append(mk('span', null, 'Set up your Station'), mk('span', 'act', (S.businesses.length) + ' of 6 businesses')); s.append(l);
+  s.append(mk('div', 'dim', 'Every agent on the crew works for you. Add your businesses, then connect what they should use. Each step is checked before it is saved.'));
+  const steps = [
+    ['Add a business', S.businesses.length > 0],
+    ['Connect Stripe (your payments and P&L)', S.connections.stripe && S.connections.stripe.connected],
+    ['Connect your phone (alerts and briefs)', S.connections.phone && S.connections.phone.connected],
+    ['Connect GitHub (for code and websites)', S.connections.github && S.connections.github.connected],
+    ['Pair your PC (games in Unity or Unreal with Claude Code)', S.connections.workbench && S.connections.workbench.paired],
+  ];
+  steps.forEach(([t, ok], i) => {
+    const r = mk('div', 'row'); const d = mk('span', 'dot'); d.style.background = ok ? '#00ff88' : '#ff6d00';
+    r.append(d, mk('span', 'grow', (i + 1) + '. ' + t + (ok ? ' · done' : '')));
+    if (!ok && i > 0) { const b = mk('button', 'b', 'Start'); b.onclick = () => { GUIDE = ['', 'stripe', 'phone', 'github', ''][i] || null; selected = 'links'; renderSide(true);
+      if (i === 4) document.getElementById('links-box').scrollIntoView({ behavior: 'smooth' }); }; r.append(b); }
+    s.append(r);
+  });
+  if (S.businesses.length < 6) {
+    const box = mk('div', 'pnl'); box.append(mk('div', 'pnl-t', 'Add a business'));
+    const nm = mk('input'); nm.type = 'text'; nm.placeholder = 'Name, e.g. Bloom Candles'; nm.maxLength = 40; nm.id = 'biz-name';
+    const url = mk('input'); url.type = 'text'; url.placeholder = 'Website (optional), e.g. bloomcandles.com'; url.maxLength = 200; url.style.marginTop = '6px'; url.id = 'biz-url';
+    const msg = mk('div', 'dim'); const go = mk('button', 'b', 'ADD TO STATION'); go.style.marginTop = '6px';
+    go.onclick = async () => {
+      go.disabled = true; const x = await api('/api/crew/businesses', 'POST', { name: nm.value, url: url.value }).catch(() => null); go.disabled = false;
+      if (x && x.ok) { selected = 'hub'; refresh(); loadFinance(); } else msg.textContent = x && typeof x.data.detail === 'string' ? x.data.detail : 'Could not add it.';
+    };
+    box.append(nm, url, go, msg); s.append(box);
+  }
+  if (S.usage) s.append(mk('div', 'dim', usageLine(S.usage)));
+  return s;
+}
+
 function linksSec() {
   const s = mk('div', 'sec');
   s.append(Object.assign(mk('div', 'lbl'), { textContent: 'Connections' }));
@@ -667,6 +757,14 @@ function linksSec() {
     const g = mk('div', 'grow'); g.append(mk('div', null, c.label + (c.connected ? ' · connected' : c.built ? ' · not connected' : ' · not built yet')));
     if (!c.connected && c.setup) g.append(mk('div', 'dim', c.setup));
     r.append(d, g);
+    if (c.guide) {
+      const b = mk('button', c.connected ? 'b no' : 'b', c.connected ? 'Disconnect' : 'Connect');
+      b.onclick = async () => {
+        if (!c.connected) { GUIDE = c.guide; renderSide(true); return; }
+        if (confirm('Disconnect ' + c.label + '? Its key is deleted.')) { await api('/api/crew/connect/' + c.guide + '/disconnect', 'POST', {}); refresh(); }
+      };
+      r.append(b);
+    }
     if (key === 'etsy' && c.can_connect) {
       const b = mk('button', 'b', 'Connect'); b.onclick = async () => { const x = await api('/api/crew/connect/etsy'); if (x.ok && x.data.url) location.href = x.data.url; else alert(x.data.detail || 'Etsy cannot be connected yet.'); };
       r.append(b);
@@ -685,6 +783,12 @@ function linksSec() {
     }
     s.append(r);
   });
+  if (GUIDE && S.guides && S.guides[GUIDE]) s.append(guideBox(GUIDE));
+  if (!isOwner() && S.guides) {
+    const rr_ = mk('div', 'row'); const d = mk('span', 'dot'); d.style.background = S.house_rules ? '#00ff88' : '#ff6d00';
+    const g = mk('div', 'grow'); g.append(mk('div', null, 'Your house rules' + (S.house_rules ? ' · set' : ' · optional'))); rr_.append(d, g);
+    const b = mk('button', 'b', 'Edit'); b.onclick = () => { GUIDE = 'rules'; renderSide(true); }; rr_.append(b); s.append(rr_);
+  }
   if (PAIR) {
     // shown once: the token and the exact commands for the PC
     const box = mk('div', 'pnl'); box.append(mk('div', 'pnl-t', 'Pair your PC (shown once)'));
@@ -741,18 +845,22 @@ const BOT_DIRS = { front: 0, back: 1, right: 2, left: 3 };
 function dirOf(dx, dy, prev) { if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return prev || 'front'; return Math.abs(dx) >= Math.abs(dy) * 0.8 ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'front' : 'back'); }
 const botSheet = new Image(); let botReady = false;
 botSheet.onload = () => { botReady = true; }; botSheet.src = '/crew/bots.png?v=' + BOT_VER;
-const PRODUCTS = [
-  { key: 'flipdeck', label: 'FLIPDECK', color: '#ff6d00' },
-  { key: 'marnyx', label: 'MARNYX', color: '#b06cff' },
-  { key: 'deadzone', label: 'DEADZONE', color: '#ff3344' },
-];
+// the businesses on this Station: the owner's products, or a subscriber's own (from the server)
+function prods() {
+  return (S && S.businesses ? S.businesses : []).map(b => ({ key: b.key, label: String(b.name).toUpperCase(), color: b.color || '#ff4fb8', url: b.url || '' }));
+}
+function bizName(k) {
+  const b = S && S.businesses ? S.businesses.find(x => x.key === k) : null;
+  return b ? b.name : k === 'aibussol' ? 'Aibussol' : k === 'crew' ? 'Crew-made products' : k.startsWith('new:') ? k.slice(4) : k;
+}
+function isOwner() { return !!(S && S.owner); }
 const PLATFORMS = [
   { key: 'stripe', label: 'STRIPE', color: '#4f6bff' },
   { key: 'etsy', label: 'ETSY', color: '#ffd23f' },
   { key: 'google_play', label: 'GOOGLE PLAY', color: '#34d17a' },
   { key: 'app_store', label: 'APP STORE', color: '#3fc8ff' },
 ];
-const RING = ['flipdeck', 'stripe', 'marnyx', 'etsy', 'deadzone', 'google_play', 'new', 'app_store'];   // clockwise from the top
+const RING = ['p0', 'stripe', 'p1', 'etsy', 'p2', 'google_play', 'new', 'app_store'];   // clockwise from the top
 const WORKING = ['active', 'planning', 'paused', 'stalled'];
 
 function resize() {
@@ -771,8 +879,8 @@ function resize() {
 window.addEventListener('resize', resize);
 
 function factoryKey(m) {
-  const p = String(m.project || '').toLowerCase().replace(/[^a-z]/g, '');
-  if (p === 'aibussol' || PRODUCTS.some(f => f.key === p)) return p;
+  const p = String(m.project || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  if ((p === 'aibussol' && isOwner()) || prods().some(f => f.key === p)) return p;
   return 'new:' + String(m.title || m.goal || m.id).toLowerCase().slice(0, 40);
 }
 
@@ -894,7 +1002,7 @@ function newBay(k) {
 }
 function coreBay() { return fillBay({ key: 'aibussol', label: 'AIBUSSOL', color: '#00e5ff', isCore: true }); }
 function factories() {                                                   // every factory, for the side panel
-  return PRODUCTS.map(f => fillBay(Object.assign({}, f))).concat([coreBay()], newKeys().map(newBay));
+  return prods().map(f => fillBay(Object.assign({}, f))).concat([coreBay()], newKeys().map(newBay));
 }
 
 function layout() {
@@ -902,10 +1010,13 @@ function layout() {
   core = { x: W / 2, y: H / 2, r: 94 * SC };
   const mw = 184 * SC, mh = 116 * SC, gap = 46 * SC;
   const D = Math.max(core.r + 52 * SC + mh / 2, (mw + gap) / (2 * Math.sin(Math.PI / 8)));
-  const prod = {}; PRODUCTS.forEach(f => { prod[f.key] = fillBay(Object.assign({}, f)); });
+  const pl = prods(), prod = {};
+  const open = (i) => ({ key: 'open' + i, label: 'EXPANSION BAY', color: '#ff4fb8', expansion: true, tasks: [], missions: [], state: 'OPEN',
+                         idleText: isOwner() ? 'NEXT BUSINESS' : 'TAP TO ADD A BUSINESS' });
+  for (let i = 0; i < 3; i++) prod['p' + i] = pl[i] ? fillBay(Object.assign({}, pl[i])) : open(i);
   const plat = {}; PLATFORMS.forEach(p => { plat[p.key] = platformModule(p); });
   const nk = newKeys();
-  const fresh = nk.length ? newBay(nk[0]) : { key: 'expansion', label: 'EXPANSION BAY', color: '#ff4fb8', expansion: true, tasks: [], missions: [], state: 'OPEN', idleText: 'NEXT BUSINESS' };
+  const fresh = pl[3] ? fillBay(Object.assign({}, pl[3])) : nk.length ? newBay(nk[0]) : open(3);
   mods = RING.map((k, i) => {
     const m = k === 'new' ? fresh : (prod[k] || plat[k]);
     const a = -Math.PI / 2 + i * Math.PI / 4;
@@ -1153,7 +1264,7 @@ function hit(x, y) {
   if (Math.hypot(x - core.x, y - core.y) <= core.r + 8) return 'hub';
   const m = mods.find(m => inModule(m, x, y));
   if (!m) return null;
-  return m.platform ? 'links' : m.expansion ? 'hub' : 'f:' + m.key;
+  return m.platform ? 'links' : m.expansion ? (isOwner() ? 'hub' : 'setup') : 'f:' + m.key;
 }
 cv.addEventListener('click', e => {
   const r = cv.getBoundingClientRect(), h = hit(e.clientX - r.left, e.clientY - r.top);
@@ -1451,7 +1562,7 @@ function overviewSec() {
   const l = mk('div', 'lbl'); l.append(mk('span', null, 'All businesses'), mk('span', 'act', FIN ? 'as of ' + new Date(FIN.as_of).toLocaleTimeString() : 'loading…')); s.append(l);
   if (!FIN) { s.append(mk('div', 'dim', 'Loading the numbers…')); return s; }
   s.append(pnlBlock(FIN.total));
-  const names = { flipdeck: 'FlipDeck', marnyx: 'Marnyx', deadzone: 'Deadzone', aibussol: 'Aibussol', crew: 'Crew-made products' };
+  const names = {}; Object.keys(FIN.factories).forEach(k => { if (!k.startsWith('new:')) names[k] = bizName(k); });
   const rows = Object.entries(FIN.factories).sort((a, b) => (b[1].revenue_30d - a[1].revenue_30d) || (b[1].cost_30d - a[1].cost_30d));
   const tb = mk('div', 'pnl-table');
   const hd = mk('div', 'pnl-row hd'); ['Today →', 'In', 'Out', 'Net 30d', 'MRR'].forEach(h => hd.append(mk('span', null, h))); tb.append(hd);
@@ -1464,7 +1575,8 @@ function overviewSec() {
     tb.append(row);
   });
   s.append(tb);
-  ['flipdeck', 'marnyx', 'deadzone', 'aibussol'].forEach(k => s.append(mk('div', 'dim', names[k] + ': ' + usersLine(k))));
+  if (isOwner()) ['flipdeck', 'marnyx', 'deadzone', 'aibussol'].forEach(k => s.append(mk('div', 'dim', names[k] + ': ' + usersLine(k))));
+  if (S && S.usage) s.append(mk('div', 'dim', usageLine(S.usage)));
   const live = Object.entries(FIN.products || {}).map(([k, p]) => (names[k] || k) + (p.live ? ' live' : ' DOWN')).join(' · ');
   if (live) s.append(mk('div', 'dim', 'Sites: ' + live));
   (FIN.notes || []).forEach(n => s.append(mk('div', 'pnl-note', n)));
