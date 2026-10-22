@@ -47,7 +47,7 @@ STALE_RUNNING_S = 15 * 60
 MAX_OUTPUT_CHARS = 200_000
 MAX_OUTPUTS_PER_MISSION = 60
 PLANNER_MAX_TOKENS = 1600
-AGENT_MAX_TOKENS = 2400
+AGENT_MAX_TOKENS = 8000          # room to write a whole file in one save_output call (only tokens used are paid)
 
 ROLES: Dict[str, Dict[str, str]] = {
     "researcher": {"name": "Scout", "model": "lookup", "about": "Research and analysis with Gemini. Searches the live web with web_search (quick, free) and, for a deep sourced report, web_research (GPT Researcher) when it is connected. Cites the pages it used.",
@@ -914,6 +914,10 @@ class CrewEngine:
                     args = json.loads(tc.function.arguments or "{}")
                 except ValueError:
                     args = None
+                if args is None and getattr(resp.choices[0], "finish_reason", "") == "length":
+                    transcript.append({"role": "tool", "tool_call_id": tc.id, "content": "Error: your reply was cut off at the length limit, so this call "
+                                       "was incomplete. Save the file in smaller parts (part1, part2, ...) or shorten it."})
+                    continue
                 text, outcome = await self._tool(dict(task, _transcript=transcript, _env=envx), mission, tc.function.name, args if isinstance(args, dict) else None)
                 transcript.append({"role": "tool", "tool_call_id": tc.id, "content": text})
             await self.store.add_event(uid, "step", f'"{task["title"]}": {", ".join(tc.function.name for tc in calls)}', mission_id=mid, task_id=tid, cost_usd=cost)
@@ -930,6 +934,8 @@ class CrewEngine:
             await self.store.update_task(tid, transcript=transcript)
 
         runs = task["runs"] + 1
+        if runs >= MAX_RUNS and await self._wrap_up(task, transcript, model, envx, conn_text):
+            return
         if runs >= MAX_RUNS:
             await self.store.update_task(tid, status="failed", runs=runs, transcript=transcript, result="Stopped: it used all its steps without finishing.")
             await self.store.add_event(uid, "error", f'"{task["title"]}" used all its steps without finishing.', mission_id=mid, task_id=tid)
@@ -938,6 +944,46 @@ class CrewEngine:
         else:
             transcript.append({"role": "user", "content": "Continue. Wrap up soon: save your deliverables and call finish."})
             await self.store.update_task(tid, status="queued", runs=runs, transcript=transcript)
+
+    async def _wrap_up(self, task: Dict[str, Any], transcript: List[Dict[str, Any]], model: str, envx, conn_text: str) -> bool:
+        """Out of steps: one last call that may only save a file and finish, so finished work is not thrown away as a failure."""
+        uid, mid, tid = task["user_id"], task["mission_id"], task["id"]
+        if await self._day_room(uid) < EST_CALL_USD:
+            return False
+        transcript = transcript + [{"role": "user", "content": "You are out of steps. Do not read or search anything more. If a deliverable is "
+                                    "not saved yet, save it now with save_output, then call finish with an honest summary: what is done, what "
+                                    "is not, and what Michael should check."}]
+        tools = [t for t in _BASE_TOOLS if t["function"]["name"] in ("save_output", "finish")]
+        try:
+            resp = await self.acompletion(model=model, messages=[{"role": "system", "content": self._system(task, conn_text, envx)}] + transcript,
+                                          tools=tools, max_tokens=AGENT_MAX_TOKENS)
+        except Exception:
+            logger.exception("crew wrap-up call failed")
+            return False
+        cost = await self._charge(uid, mid, tid, resp)
+        msg = resp.choices[0].message
+        transcript.append(_msg_dict(msg))
+        summary = None
+        for tc in getattr(msg, "tool_calls", None) or []:
+            try:
+                args = json.loads(tc.function.arguments or "{}")
+            except ValueError:
+                args = {}
+            if tc.function.name == "save_output" and isinstance(args, dict):
+                text, _ = await self._tool(dict(task, _transcript=transcript, _env=envx), {}, "save_output", args)
+            elif tc.function.name == "finish":
+                summary = str((args or {}).get("summary") or "").strip() or "Finished."
+                text = "Finished."
+            else:
+                text = "Not run."
+            transcript.append({"role": "tool", "tool_call_id": tc.id, "content": text})
+        if summary is None and not (getattr(msg, "tool_calls", None)) and (getattr(msg, "content", None) or "").strip():
+            summary = msg.content.strip()
+        if summary is None:
+            return False
+        await self.store.add_event(uid, "task", f'"{task["title"]}" ran out of steps and wrapped up.', mission_id=mid, task_id=tid, cost_usd=cost)
+        await self._finish(task, "(Wrapped up at the step limit.) " + summary, transcript, 0.0)
+        return True
 
     async def _budget_stop(self, task: Dict[str, Any], mission: Dict[str, Any], transcript: List[Dict[str, Any]]) -> bool:
         task_left = task["budget_usd"] - task["spent_usd"]

@@ -1051,3 +1051,24 @@ class TestMarnyx:
         assert run(early.maybe_run()) is None
         off = world({"tasks": []}, {}, env={}, now=sunday_6pm)
         assert run(WeeklySocial(off.engine, H(), env={}, now=lambda: sunday_6pm).maybe_run()) is None   # Marnyx not connected
+
+
+def test_a_task_out_of_steps_wraps_up_instead_of_failing():
+    def lens(turn, msgs):
+        if any("You are out of steps" in str(m.get("content")) for m in msgs if m["role"] == "user"):
+            return resp(calls=[("save_output", {"name": "review.md", "content": "All good except pricing."}), ("finish", {"summary": "Reviewed 6 files."})])
+        return resp(calls=[("read_output", {"name": "nothing.md"})])
+    w = world({"tasks": [{"title": "Review", "role": "reviewer", "brief": "b"}]}, {"Review": lens}, env={"CREW_DAILY_CAP_USD": "50"})
+    m = run(start(w, budget=5))
+    for _ in range(eng_mod.MAX_RUNS + 1):
+        run(w.engine.run_until_idle())
+    t = run(w.store.list_tasks(m["id"]))[0]
+    assert t["status"] == "done" and "Wrapped up" in t["result"] and "Reviewed 6 files." in t["result"]
+    assert [o["name"] for o in run(w.store.list_outputs(m["id"]))] == ["review.md"]
+
+    w2 = world({"tasks": [{"title": "Review", "role": "reviewer", "brief": "b"}]},
+               {"Review": lambda turn, msgs: resp(calls=[("read_output", {"name": "x"})])}, env={"CREW_DAILY_CAP_USD": "50"})
+    m2 = run(start(w2, budget=5))
+    for _ in range(eng_mod.MAX_RUNS + 1):
+        run(w2.engine.run_until_idle())
+    assert run(w2.store.list_tasks(m2["id"]))[0]["status"] == "failed"                 # still fails if it will not finish
