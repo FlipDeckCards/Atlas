@@ -60,6 +60,9 @@ without an official API.
 2. Set `ETSY_API_KEY` (the keystring), `ETSY_SHARED_SECRET` if Etsy shows one, and
    `ETSY_REDIRECT_URI=https://aibussol.com/crew/connect/etsy/callback` (also add that exact URL as the app's callback on Etsy).
 3. Deploy, open the Station → Connections → **Connect** next to Etsy, and allow access. Tokens are stored in `crew_secrets` and refreshed automatically.
+4. The crew then runs a listing end to end: `create_draft_listing` (draft, with tags), `add_listing_image` (a photo from the
+   media library), `add_listing_file` (an outbox file; markdown/text becomes a PDF through `crew/pdf.py`), and one
+   `publish_listings` checkpoint ($0.20 per listing on Etsy) that the owner approves.
 
 Stripe uses the existing `STRIPE_SECRET_KEY`. Crew-made products carry `metadata app=crew`, so the Aibussol subscription webhook
 (which only reads `app=aibussol`) ignores them.

@@ -63,7 +63,7 @@ ROLES: Dict[str, Dict[str, str]] = {
                  "can": "Brand direction, layouts, color and type, generate product images (up to 4 per task)",
                  "cannot": "Publish images anywhere itself"},
     "operator": {"name": "Relay", "model": "writing", "about": "The only role that can use connected platforms (Stripe, Etsy...). Risky actions become checkpoints for the owner.",
-                 "can": "Use connected platforms: Stripe products and payment links, Etsy draft listings",
+                 "can": "Use connected platforms: Stripe products and payment links, Etsy listings with photos and download files, publishing",
                  "cannot": "Anything public, paid or permanent without your Approve"},
     "workbench": {"name": "Rig", "model": "writing", "about": "Works on Michael's own computer through the Workbench helper: Claude Code in his real project folders with his Unity / Unreal editors, on his own Claude plan (no API cost). Builds, tests and fixes games (and anything that needs his machine) the way Deadzone Run was built. Rig's tasks wait until the PC is connected.",
                   "can": "Build and test in your real projects on your PC: Unity, Unreal, Git, Claude Code (your plan, no API cost)",
@@ -237,6 +237,10 @@ HOUSE_RULES = (
     "- Social and email go through Marnyx (connection 'marnyx'): Echo plans each brand's week (FlipDeck, Marnyx, and Aibussol once its "
     "accounts exist) and sends it with marnyx.schedule_week, one approval per brand per week; Spark writes campaigns and sends them with "
     "marnyx.send_email, one approval each. Never post or email any other way.\n"
+    "- Etsy (connection 'etsy') is done end to end by the crew: Quill writes the product as an outbox file (markdown is fine; it becomes a "
+    "clean PDF), Prism makes 2-3 mockup photos with generate_image, then Relay runs create_draft_listing (with 13 tags), add_listing_image "
+    "for each photo (first = main), add_listing_file for the download, and finally ONE publish_listings checkpoint for the whole batch. "
+    "Never ask Michael to upload anything by hand.\n"
     "- Products: FlipDeck Cards (card-flipping subscription), Marnyx (AI social media manager), Deadzone Games (games site, mobile games "
     "go to Google Play first), Aibussol (this assistant). One shared Stripe account, tagged with metadata app=<product>."
 )
@@ -434,6 +438,20 @@ class CrewEngine:
                 return False
         self._owner_cache[user_id] = ok
         return ok
+
+    def _media_fetcher(self, uid: str):
+        """(item_id) -> (bytes, mime) from this user's own media library, for Etsy listing photos."""
+        async def fetch(item_id: str):
+            ctx = self.media_ctx_fn(uid) if self.media_ctx_fn else None
+            if ctx is None:
+                raise conns.ConnectionError_("The media library is not set up on the server.")
+            from openjarvis.server.media import service as media
+            try:
+                item = await media.get_owned(ctx, item_id)
+                return await ctx.storage.get(item.storage_key), item.mime_type
+            except Exception as exc:
+                raise conns.ConnectionError_(f"Could not read media item {item_id}: {getattr(exc, 'message', None) or exc}") from None
+        return fetch
 
     async def env_for(self, user_id: str):
         """The owner's crew uses the server's environment; anyone else's crew only the platform settings and their OWN connections."""
@@ -1429,7 +1447,8 @@ class CrewEngine:
             return f"Not connected: {st.get('setup') or 'the owner has not connected it'}. Do not retry; note it in your summary.", None
         if risk in ("read", "draft"):
             try:
-                result = await conns.run(platform, action, params, store=self.store, user_id=uid, mission_id=mid, env=envx, client_factory=self.client_factory)
+                result = await conns.run(platform, action, params, store=self.store, user_id=uid, mission_id=mid, env=envx, client_factory=self.client_factory,
+                                         media_fetch=self._media_fetcher(uid))
             except conns.ConnectionError_ as exc:
                 await self.store.add_event(uid, "connection", f"{platform}.{action} refused: {exc}", mission_id=mid, task_id=tid)
                 return f"Refused: {exc}", None
@@ -1495,7 +1514,7 @@ class CrewEngine:
                     if act is None:
                         raise _Done
                     out = await conns.run(act.get("platform", ""), act.get("action", ""), act.get("args") or {}, store=self.store, user_id=user_id,
-                                          mission_id=mid, env=envx, client_factory=self.client_factory)
+                                          mission_id=mid, env=envx, client_factory=self.client_factory, media_fetch=self._media_fetcher(user_id))
                     transcript.append({"role": "user", "content": f"Michael approved the checkpoint and the server ran it. Result: {out}"})
                     result = out
                 except _Done:

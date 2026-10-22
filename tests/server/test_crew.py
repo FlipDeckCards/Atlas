@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
+from openjarvis.server.crew import connections as conns
 from openjarvis.server.crew import engine as eng_mod
 from openjarvis.server.crew import helix as crew_helix
 from openjarvis.server.crew.engine import CrewEngine, in_quiet_hours, parse_plan
@@ -1131,3 +1132,56 @@ def test_a_finished_mission_gets_helix_report():
     assert m["status"] == "done" and "Nothing is live." in m["summary"]
     assert "mission_report.md" in [o["name"] for o in run(w.store.list_outputs(m["id"]))]
     assert any("Mission complete" in n[1] and "What was done" in n[2] for n in w.notes.sent)
+
+
+class TestEtsyEndToEnd:
+    def _setup(self):
+        import time as _t
+
+        store = MemoryCrewStore()
+
+        class Http(FakeHttp):
+            async def patch(self, url, **kw):
+                self.requests.append(("PATCH", url, kw))
+                return httpx.Response(200, json={"listing_id": int(url.rsplit("/", 1)[1]), "state": "active"})
+
+        http = Http({("POST", f"{conns.ETSY_API}/shops/77/listings/5/images"): {"listing_image_id": 9},
+                     ("POST", f"{conns.ETSY_API}/shops/77/listings/5/files"): {"listing_file_id": 11}})
+
+        async def prep():
+            for k, v in (("etsy_shop_id", "77"), ("etsy_access", "tok"), ("etsy_refresh", "r"), ("etsy_expires", str(int(_t.time()) + 3600))):
+                await store.set_secret(UID, k, v)
+            m = await store.create_mission(UID, "Etsy planners", 2.0)
+            await store.add_output(m["id"], "t1", UID, "planner.md", "# Weekly Planner\n\n- Monday\n- Tuesday\n")
+            return m["id"]
+        return store, http, run(prep())
+
+    def test_photo_file_and_publish(self):
+        store, http, mid = self._setup()
+        env = {"ETSY_API_KEY": "k", "ETSY_SHARED_SECRET": "s", "ETSY_REDIRECT_URI": "https://x/cb"}
+
+        async def fetch(item_id):
+            assert item_id == "img1"
+            return b"\x89PNG...", "image/png"
+        kw = dict(store=store, user_id=UID, mission_id=mid, env=env, client_factory=http, media_fetch=fetch)
+        out = run(conns.run("etsy", "add_listing_image", {"listing_id": "5", "media_item_id": "img1"}, **kw))
+        assert "Photo added" in out and http.requests[-1][2]["files"]["image"][2] == "image/png"
+        out = run(conns.run("etsy", "add_listing_file", {"listing_id": 5, "file": "planner.md"}, **kw))
+        sent = http.requests[-1][2]["files"]["file"]
+        assert sent[0] == "planner.pdf" and sent[1].startswith(b"%PDF") and "attached" in out
+        try:
+            run(conns.run("etsy", "add_listing_file", {"listing_id": 5, "file": "nope.md"}, **kw))
+            raise AssertionError("should refuse files outside the outbox")
+        except conns.ConnectionError_:
+            pass
+        assert conns.risk_of("etsy", "publish_listings") == "checkpoint"
+        assert "$0.40" in conns.describe_action("etsy", "publish_listings", {"listing_ids": [5, 6]})
+        out = run(conns.run("etsy", "publish_listings", {"listing_ids": [5, 6]}, **kw))
+        assert "Published on Etsy: 5, 6" in out and http.requests[-1][2]["data"] == {"state": "active"}
+
+
+def test_pdf_maker_makes_a_pdf():
+    from openjarvis.server.crew.pdf import make_pdf
+
+    data = make_pdf("Planner", "# Week\n\n- “Monday” — plan\n1. Two\n\n" + "word " * 2000)
+    assert data.startswith(b"%PDF") and data.rstrip().endswith(b"%%EOF") and b"/Count" in data

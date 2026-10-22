@@ -24,6 +24,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets
 import time
 from typing import Any, Callable, Dict, List, Mapping, Optional
@@ -61,7 +62,16 @@ ACTIONS: Dict[str, Dict[str, Dict[str, Any]]] = {
                                  "args": {"title": "text", "description": "text", "price_usd": "number", "quantity": "integer",
                                           "taxonomy_id": "integer (Etsy category id)", "who_made": "i_did | someone_else | collective",
                                           "when_made": "made_to_order | 2020_2026 | ...", "type": "download (default) | physical",
-                                          "shipping_profile_id": "integer, physical only"}},
+                                          "shipping_profile_id": "integer, physical only", "tags": "list of up to 13 tags (20 characters each)"}},
+        "add_listing_image": {"risk": "draft", "about": "Add a photo or mockup to a DRAFT Etsy listing from the media library (Prism's generate_image "
+                                                       "gives the item id). The first image is the main photo; up to 10.",
+                              "args": {"listing_id": "integer", "media_item_id": "media library item id", "rank": "1-10, optional"}},
+        "add_listing_file": {"risk": "draft", "about": "Attach the download file to a DRAFT digital Etsy listing from THIS mission's outbox. "
+                                                      "Markdown or text files are turned into a clean PDF first.",
+                             "args": {"listing_id": "integer", "file": "outbox file name", "name": "file name buyers see, e.g. Planner.pdf"}},
+        "publish_listings": {"risk": "checkpoint", "about": "Make DRAFT Etsy listings live (public; Etsy charges $0.20 per listing). One approval "
+                                                           "for the whole batch. Each listing needs a photo, and digital ones a file.",
+                             "args": {"listing_ids": "list of integers"}},
     },
     "marnyx": {
         "list_accounts": {"risk": "read", "about": "List the Marnyx businesses (brands) with their connected social accounts and how many email subscribers each has.",
@@ -178,6 +188,10 @@ def describe_action(platform: str, action: str, args: Dict[str, Any]) -> str:
         files = _deliver_files(args, required=False)
         return (f"Create a public Stripe payment link for price {_clip(args.get('price_id'), 60)} (anyone with the link can pay)."
                 + (f" Buyers get a download page for: {', '.join(files)}." if files else " No automatic delivery."))
+    if platform == "etsy" and action == "publish_listings":
+        ids = _listing_ids(args)
+        return (f"Publish {len(ids)} Etsy listing(s) so buyers can see and buy them (Etsy charges $0.20 each, about ${0.2 * len(ids):.2f}): "
+                + ", ".join(str(i) for i in ids) + ".")
     if platform == "stripe" and action == "set_delivery":
         return (f"Turn on automatic delivery for payment link {_clip(args.get('payment_link_id'), 60)}: after paying, buyers get a download page "
                 f"for: {', '.join(_deliver_files(args))}.")
@@ -336,7 +350,7 @@ def _default_client() -> httpx.AsyncClient:
 
 
 async def run(platform: str, action: str, args: Dict[str, Any], *, store, user_id: str, mission_id: str = "",
-              env=None, client_factory: Optional[ClientFactory] = None) -> str:
+              env=None, client_factory: Optional[ClientFactory] = None, media_fetch=None) -> str:
     """Run one action and return a short factual result. Raises ConnectionError_ with a safe message on any refusal or failure."""
     if risk_of(platform, action) is None:
         raise ConnectionError_(f"{platform}.{action} is not an available action.")
@@ -349,7 +363,7 @@ async def run(platform: str, action: str, args: Dict[str, Any], *, store, user_i
     if platform == "stripe":
         return await _stripe(action, args, env=env, mission_id=mission_id, cf=cf, store=store)
     if platform == "etsy":
-        return await _etsy(action, args, store=store, user_id=user_id, env=env, cf=cf)
+        return await _etsy(action, args, store=store, user_id=user_id, env=env, cf=cf, mission_id=mission_id, media_fetch=media_fetch)
     if platform == "marnyx":
         return await _marnyx(action, args, env=env, cf=cf)
     raise ConnectionError_(f"{LABELS.get(platform, platform)} is not built yet.")
@@ -542,7 +556,24 @@ async def _etsy_access(store, user_id: str, env, c: httpx.AsyncClient) -> str:
     return body["access_token"]
 
 
-async def _etsy(action: str, args: Dict[str, Any], *, store, user_id: str, env, cf: ClientFactory) -> str:
+def _listing_ids(args: Dict[str, Any]) -> List[int]:
+    raw = args.get("listing_ids") if isinstance(args.get("listing_ids"), list) else str(args.get("listing_ids") or "").split(",")
+    ids = [int(str(x).strip()) for x in raw if str(x).strip().isdigit()]
+    if not ids:
+        raise ConnectionError_("listing_ids must list the Etsy listing ids to publish.")
+    if len(ids) > 30:
+        raise ConnectionError_("Up to 30 listings at a time.")
+    return ids
+
+
+def _listing_id(args: Dict[str, Any]) -> int:
+    v = str(args.get("listing_id") or "").strip()
+    if not v.isdigit():
+        raise ConnectionError_("listing_id must be the Etsy listing id (a number) from create_draft_listing.")
+    return int(v)
+
+
+async def _etsy(action: str, args: Dict[str, Any], *, store, user_id: str, env, cf: ClientFactory, mission_id: str = "", media_fetch=None) -> str:
     shop_id = await store.get_secret(user_id, "etsy_shop_id")
     if not shop_id:
         note = await store.get_secret(user_id, "etsy_shop_note")
@@ -566,11 +597,53 @@ async def _etsy(action: str, args: Dict[str, Any], *, store, user_id: str, env, 
                     "who_made": args.get("who_made") if args.get("who_made") in ("i_did", "someone_else", "collective") else "i_did",
                     "when_made": _clip(args.get("when_made"), 30) or "made_to_order", "is_supply": "false",
                     "type": "physical" if args.get("type") == "physical" else "download"}
+            tags = [_clip(t, 20) for t in (args.get("tags") or [])][:13] if isinstance(args.get("tags"), list) else []
+            if tags:
+                form["tags"] = tags
             if form["type"] == "physical":
                 spid = _clip(args.get("shipping_profile_id"), 30)
                 if not spid.isdigit():
                     raise ConnectionError_("Physical listings need shipping_profile_id (a shipping profile from the Etsy shop). Digital (download) listings do not.")
                 form["shipping_profile_id"] = spid
             b = _ok(await c.post(f"{ETSY_API}/shops/{shop_id}/listings", headers=h, data=form), "Etsy")
-            return f'Etsy draft listing created: {b.get("listing_id")} "{title}" (draft: not visible to buyers until you activate it on Etsy).'
+            return f'Etsy draft listing created: {b.get("listing_id")} "{title}" (draft: not visible to buyers until it is published).'
+        if action == "add_listing_image":
+            lid, item = _listing_id(args), _clip(args.get("media_item_id"), 80)
+            if media_fetch is None or not item:
+                raise ConnectionError_("Give media_item_id: the media library item id from generate_image.")
+            data, mime = await media_fetch(item)
+            ext = "png" if "png" in mime else "jpg"
+            files = {"image": (f"photo.{ext}", data, mime)}
+            form = {"rank": str(max(1, min(int(args.get("rank") or 1), 10)))} if str(args.get("rank") or "").isdigit() else {}
+            b = _ok(await c.post(f"{ETSY_API}/shops/{shop_id}/listings/{lid}/images", headers=h, files=files, data=form), "Etsy")
+            return f"Photo added to Etsy draft {lid} (image {b.get('listing_image_id')})."
+        if action == "add_listing_file":
+            lid, fname = _listing_id(args), _clip(args.get("file"), 120)
+            out = next((o for o in await store.list_outputs(mission_id) if o["name"] == fname), None) if store is not None and mission_id else None
+            full = await store.get_output(out["id"]) if out else None
+            if not full:
+                raise ConnectionError_(f"{fname or 'That file'} is not in this mission's outbox.")
+            shown = re.sub(r"[^A-Za-z0-9 ._-]", "", _clip(args.get("name"), 60)) or re.sub(r"\.(md|txt)$", "", fname) + ".pdf"
+            content = full.get("content") or ""
+            if content.startswith("%PDF"):
+                data = content.encode("latin-1", "replace")
+            else:
+                from openjarvis.server.crew.pdf import make_pdf
+
+                data = make_pdf(re.sub(r"\.(md|txt|pdf)$", "", shown).replace("_", " "), content)
+                shown = re.sub(r"\.\w+$", "", shown) + ".pdf"
+            b = _ok(await c.post(f"{ETSY_API}/shops/{shop_id}/listings/{lid}/files", headers=h,
+                                 files={"file": (shown, data, "application/pdf")}, data={"name": shown}), "Etsy")
+            return f'Download file "{shown}" ({len(data) // 1024} KB) attached to Etsy draft {lid} (file {b.get("listing_file_id")}).'
+        if action == "publish_listings":
+            done, bad = [], []
+            for lid in _listing_ids(args):
+                r = await c.patch(f"{ETSY_API}/shops/{shop_id}/listings/{lid}", headers=h, data={"state": "active"})
+                try:
+                    _ok(r, "Etsy")
+                    done.append(str(lid))
+                except ConnectionError_ as exc:
+                    bad.append(f"{lid}: {exc}")
+            return (f"Published on Etsy: {', '.join(done) or 'none'}." + (" Not published: " + "; ".join(bad) if bad else "")
+                    + (" Live at " + ", ".join(f"https://www.etsy.com/listing/{i}" for i in done) if done else ""))
     raise ConnectionError_("Unsupported Etsy action.")
