@@ -42,6 +42,7 @@ ETSY_SCOPES = "listings_r listings_w shops_r"
 ACTIONS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "stripe": {
         "list_products": {"risk": "read", "about": "List recent Stripe products and their prices.", "args": {}},
+        "list_payment_links": {"risk": "read", "about": "List recent Stripe payment links: id (plink_...), URL, active, and whether automatic delivery is on.", "args": {}},
         "get_balance": {"risk": "read", "about": "Read the Stripe balance (available and pending, per currency).", "args": {}},
         "recent_payments": {"risk": "read", "about": "List the 20 most recent payments: amount, status, refunds, date and description (no card or contact details).",
                             "args": {}},
@@ -373,6 +374,12 @@ async def _stripe(action: str, args: Dict[str, Any], *, env, mission_id: str, cf
                 amt = dp.get("unit_amount") if isinstance(dp, dict) else None
                 rows.append(f'{p.get("name")} ({p.get("id")}{", $%.2f" % (amt / 100) if amt else ""})')
             return "Stripe products: " + ("; ".join(rows) if rows else "none")
+        if action == "list_payment_links":
+            body = _ok(await c.get(f"{STRIPE_API}/payment_links", headers=auth, params={"limit": 20}), "Stripe")
+            rows = [f'{p.get("id")} {p.get("url")} {"active" if p.get("active") else "inactive"}'
+                    + (f' · delivers {(p.get("metadata") or {}).get("deliver_files")}' if (p.get("metadata") or {}).get("deliver_files") else " · no delivery")
+                    for p in body.get("data", [])]
+            return "Stripe payment links: " + ("; ".join(rows) if rows else "none")
         if action == "get_balance":
             body = _ok(await c.get(f"{STRIPE_API}/balance", headers=auth), "Stripe")
             fmt = lambda xs: ", ".join(f'{x.get("amount", 0) / 100:.2f} {str(x.get("currency", "")).upper()}' for x in xs or []) or "0"  # noqa: E731
