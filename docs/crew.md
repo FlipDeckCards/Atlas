@@ -23,14 +23,20 @@ Then deploy manually. On start the server creates its tables (`crew_*`, add-only
 
 Only owner accounts can use the crew (`ANALYTICS_ADMIN_EMAILS`, default michael.dano1523@gmail.com).
 
-## What the crew can and cannot do (phase 1)
+## The crew
 
-* **Can:** plan a goal into up to 8 tasks; research (Gemini, from its own knowledge: no live web browsing yet); write code, specs, copy,
-  listings, posts and design direction (Claude); save every deliverable to the mission's **outbox** (download it from the Station);
-  ask you questions; use **Stripe** (list products; create a product and price, create a payment link: both need your Approve) and
-  **Etsy** (read the shop; create **draft** listings, which buyers cannot see and cost nothing until you activate them).
-* **Cannot (yet):** deploy or run code, browse the web, generate images inside a mission, publish to Google Play or the App Store
-  (listed as "not built yet" in Connections), or do anything on a platform without an official API (Fiverr: none).
+| Agent | Role | Hands |
+|---|---|---|
+| Helix | lead | plans each goal into tasks, assigns the crew, brings you questions and approvals |
+| Scout | researcher | `web_search` (OpenJarvis built-in: Tavily if `TAVILY_API_KEY` is set, otherwise DuckDuckGo, no key, free); `web_research` (GPT Researcher deep report, needs Tavily) |
+| Forge | builder | GitHub: list and read the product repos, commit whole files to its own `crew/<name>` branch, `request_merge` → a checkpoint; the server opens a pull request and merges it only on your Approve. Never writes to main, never touches `.github/workflows`. Needs `CREW_GITHUB_TOKEN` (or `GITHUB_TOKEN`) with Contents + Pull requests write; repos from `CREW_GITHUB_REPOS` (default: Atlas, FlipDeckCards, Marnyx, CyberVoid, deadzone-backend). Atlas deploys on merge. |
+| Quill | writer | copy, listings, posts, emails, docs |
+| Prism | designer | `generate_image` through the media service (its switch, caps, rate limits and storage quota apply), up to 4 per task; images land in your Aibussol media library |
+| Relay | operator | Stripe and Etsy through official APIs; anything paid, public or permanent is a checkpoint |
+| Lens | reviewer | added to the end of every plan with 2+ tasks: reads every deliverable, fact-checks with `web_search`, sends a task back once with `request_changes`, writes `review.md` |
+
+Every agent can `read_output` files other agents saved. Still not built: Google Play and App Store connections, anything on a platform
+without an official API.
 
 ## The limits, enforced by the server
 
@@ -59,6 +65,8 @@ Stripe uses the existing `STRIPE_SECRET_KEY`. Crew-made products carry `metadata
 | `src/openjarvis/server/crew/engine.py` | planning, the task loop, budgets, questions, checkpoints, the scheduler |
 | `src/openjarvis/server/crew/store.py` | Postgres tables and an in-memory twin for tests |
 | `src/openjarvis/server/crew/connections.py` | Stripe and Etsy through their official APIs; risk levels |
+| `src/openjarvis/server/crew/github.py` | Forge's GitHub access: branch-only commits, merge on Approve |
+| `src/openjarvis/server/crew/finance.py` | P&L per factory and in total (Stripe revenue, crew + AI + fixed costs) |
 | `src/openjarvis/server/crew/helix.py` | Helix's crew tools and the confirm-before-start rule |
 | `src/openjarvis/server/crew/routes.py` | `/api/crew/*`, the Etsy connect flow, `/station` |
 | `src/openjarvis/server/crew/station.py` | the Station page (all art drawn in code) |
@@ -67,5 +75,4 @@ Stripe uses the existing `STRIPE_SECRET_KEY`. Crew-made products carry `metadata
 
 ## Next (phase 2 ideas)
 
-Google Play and App Store connections (official APIs), image generation inside missions through the media library, live web
-research for the researcher, and web push notifications from the Aibussol app itself.
+Google Play and App Store connections (official APIs) and web push notifications from the Aibussol app itself.

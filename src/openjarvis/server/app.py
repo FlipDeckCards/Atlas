@@ -17,12 +17,12 @@ from openjarvis.server.analytics_routes import router as analytics_router
 from openjarvis.server.api_routes import include_all_routes
 from openjarvis.server.atlas_ui import router as atlas_ui_router
 from openjarvis.server.auth_routes import router as auth_router
+from openjarvis.server.briefs import router as briefs_router
 from openjarvis.server.comparison import comparison_router
 from openjarvis.server.connectors_router import create_connectors_router
 from openjarvis.server.crew.routes import router as crew_router
 from openjarvis.server.dashboard import dashboard_router
 from openjarvis.server.digest_routes import create_digest_router
-from openjarvis.server.briefs import router as briefs_router
 from openjarvis.server.media.routes import router as media_router
 from openjarvis.server.research_router import router as research_router
 from openjarvis.server.routes import router
@@ -307,7 +307,19 @@ def create_app(
             from openjarvis.server.crew.notify import Notifier
             from openjarvis.server.crew.store import CrewStore
 
-            engine = CrewEngine(CrewStore(pool), litellm.acompletion,
+            def crew_media_ctx(uid: str):
+                # Prism's images go through the normal media service: its switches, caps, rate limits and storage quota all apply
+                from openjarvis.server.media import service as ms
+
+                if not ms.media_enabled() or ms.media_cap_usd() <= 0:
+                    return None
+                storage = getattr(app.state, "media_storage", None) or ms.storage_from_env()
+                if storage is None:
+                    return None
+                catalog = getattr(app.state, "media_catalog", None) or ms.MediaCatalog(pool)
+                return ms.Ctx(uid, "crew", store, catalog, storage)
+
+            engine = CrewEngine(CrewStore(pool), litellm.acompletion, media_ctx_fn=crew_media_ctx,
                                 notifier=Notifier(store, base_url=os.environ.get("PUBLIC_BASE_URL", "https://aibussol.com")))
             await engine.start()
             app.state.crew_engine = engine

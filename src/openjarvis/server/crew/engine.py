@@ -34,6 +34,7 @@ from openjarvis.server.crew import (
     quiet_hours,
     tick_seconds,
 )
+from openjarvis.server.crew import github as gh
 from openjarvis.server.crew import research as web
 
 logger = logging.getLogger(__name__)
@@ -49,21 +50,24 @@ PLANNER_MAX_TOKENS = 1600
 AGENT_MAX_TOKENS = 2400
 
 ROLES: Dict[str, Dict[str, str]] = {
-    "researcher": {"name": "Scout", "model": "lookup", "about": "Research and analysis with Gemini. Uses web_research (GPT Researcher: live web search with sources) when it is connected; otherwise works from its own knowledge and flags what needs checking.",
-                   "can": "Live web research with sources (GPT Researcher), market and buyer research, competitors, pricing",
+    "researcher": {"name": "Scout", "model": "lookup", "about": "Research and analysis with Gemini. Searches the live web with web_search (quick, free) and, for a deep sourced report, web_research (GPT Researcher) when it is connected. Cites the pages it used.",
+                   "can": "Live web search (free), deep sourced reports (GPT Researcher), market and buyer research, competitors, pricing",
                    "cannot": "Log in to sites or post anything"},
-    "builder": {"name": "Forge", "model": "writing", "about": "Builds with Claude: code, specs, configs and technical files, saved to the outbox. It cannot deploy or run code.",
-                "can": "Code, specs, landing pages, configs, technical plans, saved as files",
-                "cannot": "Run or deploy code, push to GitHub (not built yet)"},
+    "builder": {"name": "Forge", "model": "writing", "about": "Codes with Claude, straight in Michael's GitHub repos: reads the code, commits changes to its own crew/ branch, and asks Michael to approve merging into main (request_merge). It never writes to main itself.",
+                "can": "Read the product repos, write code, commit to a crew/ branch, request a merge you approve",
+                "cannot": "Write to main or deploy without your Approve, change GitHub workflows"},
     "writer": {"name": "Quill", "model": "writing", "about": "Writes with Claude: product copy, listings, posts, emails, scripts, documents.",
                "can": "Product copy, Etsy listings, social posts, emails, scripts, docs",
                "cannot": "Post or send anything itself"},
-    "designer": {"name": "Prism", "model": "writing", "about": "Designs with Claude: brand direction, layouts, color and type choices, and image-generation prompts.",
-                 "can": "Brand direction, layouts, color and type, image prompts",
-                 "cannot": "Generate the images themselves inside a mission (not built yet)"},
+    "designer": {"name": "Prism", "model": "writing", "about": "Designs with Claude: brand direction, layouts, color and type, and real images with generate_image (saved to Michael's Aibussol media library).",
+                 "can": "Brand direction, layouts, color and type, generate product images (up to 4 per task)",
+                 "cannot": "Publish images anywhere itself"},
     "operator": {"name": "Relay", "model": "writing", "about": "The only role that can use connected platforms (Stripe, Etsy...). Risky actions become checkpoints for the owner.",
                  "can": "Use connected platforms: Stripe products and payment links, Etsy draft listings",
                  "cannot": "Anything public, paid or permanent without your Approve"},
+    "reviewer": {"name": "Lens", "model": "writing", "about": "Checks the crew's work before it reaches Michael: reads every deliverable, fact-checks with web_search, and sends a task back once with request_changes when it is wrong or incomplete. Saves a short review.",
+                 "can": "Read every deliverable, fact-check on the web, send work back once for fixes, write the review",
+                 "cannot": "Change the work itself or approve anything for you"},
 }
 
 _BASE_TOOLS: List[Dict[str, Any]] = [
@@ -92,6 +96,51 @@ _RESEARCH_TOOL = {"type": "function", "function": {
     "description": "Research a question on the live web (GPT Researcher: searches, reads pages, writes a report with sources). Slow (1-4 minutes) and costs about $0.25, so ask one well-formed question at a time.",
     "parameters": {"type": "object", "properties": {"question": {"type": "string"}}, "required": ["question"]}}}
 
+_SEARCH_TOOL = {"type": "function", "function": {
+    "name": "web_search",
+    "description": "Search the live web (fast and free). Returns titles, links and snippets. Put a URL in the query to read that page instead.",
+    "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}}
+
+_READ_OUTPUT_TOOL = {"type": "function", "function": {
+    "name": "read_output",
+    "description": "Read a file another crew member saved to this mission's outbox (by its file name).",
+    "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}}}
+
+_IMAGE_TOOL = {"type": "function", "function": {
+    "name": "generate_image",
+    "description": "Generate one image from a detailed description (500 characters at most) and save it to Michael's Aibussol media library. Costs a few cents; at most 4 per task.",
+    "parameters": {"type": "object", "properties": {"prompt": {"type": "string"}}, "required": ["prompt"]}}}
+
+_REPO_TOOLS = [
+    {"type": "function", "function": {
+        "name": "repo_files",
+        "description": "List the files in one of Michael's repos (optionally under a folder, optionally on a branch).",
+        "parameters": {"type": "object", "properties": {"repo": {"type": "string"}, "path": {"type": "string"}, "branch": {"type": "string"}}, "required": ["repo"]}}},
+    {"type": "function", "function": {
+        "name": "repo_read",
+        "description": "Read one file from a repo (default branch unless you name your crew/ branch).",
+        "parameters": {"type": "object", "properties": {"repo": {"type": "string"}, "path": {"type": "string"}, "branch": {"type": "string"}}, "required": ["repo", "path"]}}},
+    {"type": "function", "function": {
+        "name": "repo_commit",
+        "description": "Commit complete file contents to your own branch (it is always named crew/<name>; created from main if new). Never touches main. Give whole files, not diffs.",
+        "parameters": {"type": "object", "properties": {"repo": {"type": "string"}, "branch": {"type": "string"}, "message": {"type": "string"},
+                                                        "files": {"type": "array", "items": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}}},
+                       "required": ["repo", "branch", "message", "files"]}}},
+    {"type": "function", "function": {
+        "name": "request_merge",
+        "description": "Ask Michael to approve merging your crew/ branch into main. It becomes a checkpoint; nothing merges until he taps Approve. Explain what changed and how it was checked.",
+        "parameters": {"type": "object", "properties": {"repo": {"type": "string"}, "branch": {"type": "string"}, "title": {"type": "string"}, "summary": {"type": "string"}},
+                       "required": ["repo", "branch", "title", "summary"]}}},
+]
+
+_REVIEW_TOOL = {"type": "function", "function": {
+    "name": "request_changes",
+    "description": "Send one finished task back to its agent with concrete fixes (each task can be sent back once). You continue after the rework is done.",
+    "parameters": {"type": "object", "properties": {"task_number": {"type": "integer"}, "notes": {"type": "string"}}, "required": ["task_number", "notes"]}}}
+
+LIMITS = {"web_search": 12, "generate_image": 4, "repo_commit": 10}
+REVIEW_MARK = "REVIEW: changes requested."
+
 AcompletionFn = Callable[..., Awaitable[Any]]
 
 
@@ -100,7 +149,32 @@ def _clip(v: Any, n: int) -> str:
 
 
 def tools_for(role: str) -> List[Dict[str, Any]]:
-    return _BASE_TOOLS + ([_CONNECTION_TOOL] if role == "operator" else []) + ([_RESEARCH_TOOL] if role == "researcher" else [])
+    extra: List[Dict[str, Any]] = [_READ_OUTPUT_TOOL]
+    if role == "operator":
+        extra.append(_CONNECTION_TOOL)
+    if role == "researcher":
+        extra += [_SEARCH_TOOL, _RESEARCH_TOOL]
+    if role == "designer":
+        extra.append(_IMAGE_TOOL)
+    if role == "builder":
+        extra += _REPO_TOOLS
+    if role == "reviewer":
+        extra += [_SEARCH_TOOL, _REVIEW_TOOL]
+    return _BASE_TOOLS + extra
+
+
+def _calls_made(transcript: List[Dict[str, Any]], name: str) -> int:
+    return sum(1 for m in transcript for c in (m.get("tool_calls") or []) if (c.get("function") or {}).get("name") == name)
+
+
+def add_review_task(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Every plan with real work ends with Lens checking it, unless the planner already put a reviewer in."""
+    if len(tasks) < 2 or any(t["role"] == "reviewer" for t in tasks):
+        return tasks
+    return tasks + [{"idx": len(tasks), "title": "Review the crew's work", "role": "reviewer", "depends_on": [t["idx"] for t in tasks],
+                     "brief": "Read every deliverable in the outbox and each task's result. Check it does what the mission asked, is complete, and that facts, "
+                              "prices and claims hold up (use web_search). Send back at most the tasks that truly need fixing with request_changes. Save "
+                              "review.md (what is ready, what Michael must do next, any risks) and finish."}]
 
 
 def parse_plan(text: str, limit: int) -> Optional[Dict[str, Any]]:
@@ -148,6 +222,20 @@ def in_quiet_hours(now: Optional[dt.datetime] = None, env=None) -> bool:
     return (a <= h or h < b) if a > b else (a <= h < b)
 
 
+class _Done(Exception):
+    """Internal: the approved checkpoint was already handled."""
+
+
+def _web_search(query: str) -> str:
+    """OpenJarvis's built-in web search: Tavily when TAVILY_API_KEY is set, otherwise DuckDuckGo (no key)."""
+    from openjarvis.tools.web_search import (
+        WebSearchTool,  # noqa: PLC0415 (imported only when used)
+    )
+
+    r = WebSearchTool(max_results=6).execute(query=query)
+    return r.content if r.success else f"Search failed: {r.content}"
+
+
 def _msg_dict(msg: Any) -> Dict[str, Any]:
     calls = []
     for tc in getattr(msg, "tool_calls", None) or []:
@@ -161,7 +249,7 @@ def _msg_dict(msg: Any) -> Dict[str, Any]:
 class CrewEngine:
     def __init__(self, store, acompletion: AcompletionFn, *, notifier=None, env=None, models: Optional[Dict[str, str]] = None,
                  cost_fn: Callable[[Any], float] = hardening.chat_cost_usd, now: Optional[Callable[[], dt.datetime]] = None,
-                 client_factory=None, research_fn=None) -> None:
+                 client_factory=None, research_fn=None, search_fn=None, media_ctx_fn=None) -> None:
         self.store = store
         self.acompletion = acompletion
         self.notifier = notifier
@@ -171,6 +259,8 @@ class CrewEngine:
         self.now = now or (lambda: dt.datetime.now(dt.timezone.utc))
         self.client_factory = client_factory
         self.research_fn = research_fn or web.gpt_researcher_run
+        self.search_fn = search_fn or _web_search
+        self.media_ctx_fn = media_ctx_fn          # user_id -> media Ctx (or None when media is off); set by the app
         self.running: Dict[str, asyncio.Task] = {}
         self._plans: Dict[str, asyncio.Task] = {}
         self._loop: Optional[asyncio.Task] = None
@@ -355,7 +445,7 @@ class CrewEngine:
             "not connected; plan a task that prepares it instead and says what Michael must set up. Account creation, identity checks, payouts and app "
             "store submissions are Michael's; plan around them. Keep briefs specific.\n"
             'Answer with JSON only: {"title": "short mission name", "project": "FlipDeck|Marnyx|Deadzone|Aibussol|New", '
-            '"tasks": [{"title": "...", "role": "researcher|builder|writer|designer|operator", "brief": "what to do and what to deliver", '
+            '"tasks": [{"title": "...", "role": "researcher|builder|writer|designer|operator|reviewer", "brief": "what to do and what to deliver", '
             '"depends_on": [indexes of earlier tasks]}]}'
         )
 
@@ -381,6 +471,7 @@ class CrewEngine:
                 await self.store.add_event(uid, "error", "Planning failed: no usable plan came back.", mission_id=mission_id, cost_usd=cost)
                 await self._notify(uid, "Mission could not be planned", f'"{_clip(m["goal"], 80)}": the planner\'s answer was not usable. Try rewording the goal.')
                 return
+            plan["tasks"] = add_review_task(plan["tasks"])
             left = max(0.05, m["budget_usd"] - cost)
             per = round(left / len(plan["tasks"]), 4)
             for t in plan["tasks"]:
@@ -502,6 +593,15 @@ class CrewEngine:
              "Never claim something was published, paid, uploaded or sent unless a tool result says so. When done, call finish with a short summary.")
         if task["role"] == "operator":
             s += f"\nConnected platforms and actions:\n{conn_text}\nRisky actions become checkpoints: say so in your summary and wait for the result."
+        if task["role"] == "builder":
+            if gh.configured(self.env):
+                s += ("\nRepos you may use: " + ", ".join(gh.repos(self.env)) + ". Read the existing code before changing it, keep changes small and complete, "
+                      "commit to one crew/ branch per task with repo_commit, then call request_merge once and stop: Michael approves the merge. Atlas deploys "
+                      "on merge, so be careful there. If a change is not ready to merge, finish without request_merge and say why.")
+            else:
+                s += "\nGitHub is not connected yet, so save code as files with save_output and say in your summary that GitHub needs connecting."
+        if task["role"] == "reviewer":
+            s += "\nBe strict but fair: send work back only for real problems (wrong, missing, risky, or not what was asked), with exact fixes."
         return s
 
     async def run_task(self, task: Dict[str, Any]) -> None:
@@ -550,11 +650,15 @@ class CrewEngine:
                     args = json.loads(tc.function.arguments or "{}")
                 except ValueError:
                     args = None
-                text, outcome = await self._tool(task, mission, tc.function.name, args if isinstance(args, dict) else None)
+                text, outcome = await self._tool(dict(task, _transcript=transcript), mission, tc.function.name, args if isinstance(args, dict) else None)
                 transcript.append({"role": "tool", "tool_call_id": tc.id, "content": text})
             await self.store.add_event(uid, "step", f'"{task["title"]}": {", ".join(tc.function.name for tc in calls)}', mission_id=mid, task_id=tid, cost_usd=cost)
             if outcome == "waiting":
                 await self.store.update_task(tid, status="waiting", transcript=transcript)
+                return
+            if outcome == "rework":
+                transcript.append({"role": "user", "content": "The tasks you sent back are being reworked. When they are done you continue here: re-check them, then save review.md and finish."})
+                await self.store.update_task(tid, status="queued", transcript=transcript)
                 return
             if outcome and outcome.startswith("finish:"):
                 await self._finish(task, outcome[7:], transcript, 0.0)
@@ -624,6 +728,24 @@ class CrewEngine:
             return "Sent to Michael through Helix. Stop here; you will continue with his answer.", "waiting"
         if name == "finish":
             return "Finished.", "finish:" + (str(args.get("summary") or "").strip() or "Finished.")
+        if name in LIMITS and _calls_made(task.get("_transcript") or [], name) > LIMITS[name]:
+            return f"Limit reached: at most {LIMITS[name]} {name} calls per task. Finish with what you have.", None
+        if name == "read_output":
+            want = _clip(args.get("name"), 120).lower()
+            for o in await self.store.list_outputs(mid):
+                if o["name"].lower() == want:
+                    full = await self.store.get_output(o["id"])
+                    body = (full or {}).get("content") or ""
+                    return body[:20000] + ("\n[cut]" if len(body) > 20000 else ""), None
+            return "No file by that name in the outbox.", None
+        if name == "web_search" and task["role"] in ("researcher", "reviewer"):
+            return await self._search(task, args)
+        if name == "generate_image" and task["role"] == "designer":
+            return await self._image(task, mission, args)
+        if name in ("repo_files", "repo_read", "repo_commit", "request_merge") and task["role"] == "builder":
+            return await self._repo(task, mission, name, args)
+        if name == "request_changes" and task["role"] == "reviewer":
+            return await self._request_changes(task, args)
         if name == "web_research" and task["role"] == "researcher":
             return await self._research(task, mission, args)
         if name == "use_connection" and task["role"] == "operator":
@@ -664,6 +786,111 @@ class CrewEngine:
         await self.store.add_output(mid, tid, uid, f"research-{slug}.md", doc[:MAX_OUTPUT_CHARS])
         await self.store.add_event(uid, "research", f"Research done ({len(sources)} sources), saved research-{slug}.md.", mission_id=mid, task_id=tid, cost_usd=cost)
         return (f"Report (saved to the outbox as research-{slug}.md):\n{body[:web.MAX_REPORT_TO_AGENT]}\n\nSources:\n" + "\n".join(sources[:15])), None
+
+    async def _search(self, task: Dict[str, Any], args: Dict[str, Any]):
+        query = _clip(args.get("query"), 300)
+        if len(query) < 3:
+            return "Error: give a search query.", None
+        try:
+            text = await asyncio.wait_for(asyncio.to_thread(self.search_fn, query), timeout=45)
+        except Exception:
+            logger.exception("web search failed")
+            return "Web search failed just now. Try another query or work from what you have.", None
+        await self.store.add_event(task["user_id"], "research", f"{ROLES[task['role']]['name']} searched the web: {query}", mission_id=task["mission_id"], task_id=task["id"])
+        text = str(text or "").strip() or "No results."
+        return text[:8000], None
+
+    async def _room_for(self, task: Dict[str, Any], mission: Dict[str, Any], usd: float) -> bool:
+        fresh = await self.store.get_task(task["id"]) or task
+        m = await self.store.get_mission(task["mission_id"]) or mission
+        return (fresh["budget_usd"] - fresh["spent_usd"] >= usd and m["budget_usd"] - m["spent_usd"] >= usd
+                and await self._day_room(task["user_id"]) >= usd)
+
+    async def _image(self, task: Dict[str, Any], mission: Dict[str, Any], args: Dict[str, Any]):
+        uid, mid, tid = task["user_id"], task["mission_id"], task["id"]
+        prompt = _clip(args.get("prompt"), 500)
+        if len(prompt) < 8:
+            return "Error: describe the image in detail.", None
+        ctx = None
+        try:
+            ctx = self.media_ctx_fn(uid) if self.media_ctx_fn else None
+        except Exception:
+            logger.exception("crew media context failed")
+        if ctx is None:
+            return "Image generation is not set up on the server (media is off or has no budget). Save the prompt with save_output instead.", None
+        from openjarvis.server.media import service as media
+
+        try:
+            est = float(media.estimate_cost("image", steps=4))
+        except Exception:
+            est = 0.05
+        if not await self._room_for(task, mission, est):
+            return f"Not enough budget left for an image (about ${est:.2f}). Save the prompt instead.", None
+        try:
+            item = await media.generate_and_save(ctx, "image", prompt=prompt)
+        except media.MediaServiceError as exc:
+            return f"The image was not made: {exc.detail}", None
+        except Exception:
+            logger.exception("crew image failed")
+            return "The image could not be made just now. Save the prompt instead.", None
+        await self._charge_usd(uid, mid, tid, est)
+        slug = re.sub(r"[^a-z0-9]+", "-", prompt.lower()).strip("-")[:36] or "image"
+        await self.store.add_output(mid, tid, uid, f"image-{slug}.md",
+                                    f"# {item.title}\n\nSaved to your Aibussol media library (item {item.id}).\n\nPrompt: {prompt}\n")
+        await self.store.add_event(uid, "output", f'Prism made an image: "{item.title}" (in your media library).', mission_id=mid, task_id=tid, cost_usd=est)
+        return f'Saved the image "{item.title}" to Michael\'s media library (item {item.id}); a note is in the outbox.', None
+
+    async def _repo(self, task: Dict[str, Any], mission: Dict[str, Any], name: str, args: Dict[str, Any]):
+        uid, mid, tid = task["user_id"], task["mission_id"], task["id"]
+        if not gh.configured(self.env):
+            return "GitHub is not connected (" + gh.SETUP + "). Save code with save_output instead and say so in your summary.", None
+        hub = gh.GitHub(self.env, self.client_factory)
+        try:
+            if name == "repo_files":
+                return await hub.list_files(_clip(args.get("repo"), 100), _clip(args.get("path"), 200), _clip(args.get("branch"), 80)), None
+            if name == "repo_read":
+                return await hub.read_file(_clip(args.get("repo"), 100), _clip(args.get("path"), 300), _clip(args.get("branch"), 80)), None
+            if name == "repo_commit":
+                out = await hub.commit_files(_clip(args.get("repo"), 100), _clip(args.get("branch"), 80) or mission.get("title") or "work",
+                                             args.get("files"), _clip(args.get("message"), 200))
+                await self.store.add_event(uid, "code", f"Forge committed {len(out['files'])} file(s) to {out['branch']} in {out['repo']}: {_clip(args.get('message'), 120)}",
+                                           mission_id=mid, task_id=tid)
+                return f"Committed to {out['branch']} ({out['sha'][:7]}): {', '.join(out['files'])}. Compare: {out['url']}", None
+            repo, branch = gh.check_repo(_clip(args.get("repo"), 100), self.env), gh.crew_branch(_clip(args.get("branch"), 80))
+        except gh.GitHubError as exc:
+            return f"GitHub: {exc}", None
+        except Exception:
+            logger.exception("crew github call failed")
+            return "GitHub could not be reached just now. Try again once, or finish and say so.", None
+        title, summary = _clip(args.get("title"), 120) or branch, str(args.get("summary") or "").strip()[:3000]
+        live = " Atlas deploys on merge, so this goes live." if repo.lower().endswith("/atlas") else ""
+        what = f"Merge Forge's branch {branch} into main of {repo}: {title}.{live} Review it first: https://github.com/{repo}/compare/{branch}"
+        await self.store.add_question(mid, tid, uid, "checkpoint", what, ["Approve", "Decline"],
+                                      {"platform": "github", "action": "merge", "args": {"repo": repo, "branch": branch, "title": title, "body": summary}})
+        await self.store.add_event(uid, "checkpoint", f"Checkpoint for Michael: {what}", mission_id=mid, task_id=tid)
+        await self._notify(uid, "Merge approval needed", what + "\nApprove or decline it in Aibussol.")
+        return "Sent to Michael as a merge checkpoint. Nothing is merged yet. Stop here; you will continue with the result.", "waiting"
+
+    async def _request_changes(self, task: Dict[str, Any], args: Dict[str, Any]):
+        try:
+            n = int(args.get("task_number"))
+        except (TypeError, ValueError):
+            return "Error: give the task number from the crew list.", None
+        notes = str(args.get("notes") or "").strip()[:2000]
+        if len(notes) < 10:
+            return "Error: say exactly what to fix.", None
+        target = next((t for t in await self.store.list_tasks(task["mission_id"]) if t["idx"] == n - 1), None)
+        if not target or target["id"] == task["id"] or target["role"] == "reviewer":
+            return "Error: no such task to send back.", None
+        if target["status"] != "done":
+            return f'Task {n} is {target["status"]}, not done; only finished work can be sent back.', None
+        tr = list(target["transcript"])
+        if any(REVIEW_MARK in str(m.get("content") or "") for m in tr if m.get("role") == "user"):
+            return f"Task {n} was already sent back once. Note the remaining problem in your review instead.", None
+        tr.append({"role": "user", "content": f"{REVIEW_MARK} Lens (the reviewer) says: {notes}\nFix this: save corrected deliverables, then finish again."})
+        await self.store.update_task(target["id"], status="queued", transcript=tr)
+        await self.store.add_event(task["user_id"], "review", f'Lens sent "{target["title"]}" back: {_clip(notes, 200)}', mission_id=task["mission_id"], task_id=target["id"])
+        return f'Sent task {n} back for fixes.', ("rework" if n - 1 in task["depends_on"] else None)
 
     async def _charge_usd(self, user_id: str, mission_id: str, task_id: str, usd: float) -> None:
         await self.store.add_day_spend(user_id, self._day(), usd)
@@ -728,15 +955,35 @@ class CrewEngine:
                 raise ValueError("That was already answered.")
             if approve:
                 act = q["action"] or {}
+                if act.get("platform") == "github":
+                    a = act.get("args") or {}
+                    try:
+                        out = await gh.GitHub(self.env, self.client_factory).merge_branch(a.get("repo", ""), a.get("branch", ""), a.get("title", ""), a.get("body", ""))
+                        transcript.append({"role": "user", "content": f"Michael approved the merge and the server ran it. Result: {out}"})
+                        result = out
+                    except gh.GitHubError as exc:
+                        transcript.append({"role": "user", "content": f"Michael approved the merge but it failed: {exc}. Do not retry blindly."})
+                        result = f"It failed: {exc}"
+                    except Exception:
+                        logger.exception("crew merge failed")
+                        transcript.append({"role": "user", "content": "Michael approved the merge but GitHub could not be reached. Say so in your summary."})
+                        result = "It failed: GitHub could not be reached."
+                    await self.store.add_event(user_id, "code", f"Approved: {q['text']} -> {result}", mission_id=mid, task_id=tid)
+                    act = None
                 try:
+                    if act is None:
+                        raise _Done
                     out = await conns.run(act.get("platform", ""), act.get("action", ""), act.get("args") or {}, store=self.store, user_id=user_id,
                                           mission_id=mid, env=self.env, client_factory=self.client_factory)
                     transcript.append({"role": "user", "content": f"Michael approved the checkpoint and the server ran it. Result: {out}"})
                     result = out
+                except _Done:
+                    pass
                 except conns.ConnectionError_ as exc:
                     transcript.append({"role": "user", "content": f"Michael approved the checkpoint but it failed: {exc}. Do not retry blindly."})
                     result = f"It failed: {exc}"
-                await self.store.add_event(user_id, "connection", f"Approved: {q['text']} -> {result}", mission_id=mid, task_id=tid)
+                if act is not None:
+                    await self.store.add_event(user_id, "connection", f"Approved: {q['text']} -> {result}", mission_id=mid, task_id=tid)
             else:
                 note = f" His note: {answer}" if answer else ""
                 transcript.append({"role": "user", "content": f"Michael declined this action; it did not run.{note} Do not retry it. Finish another way or explain in your summary."})

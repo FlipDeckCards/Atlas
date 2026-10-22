@@ -46,6 +46,8 @@ class Model:
             if f"({title})" in messages[1]["content"]:
                 turn = sum(1 for m in messages if m["role"] == "assistant")
                 return script(turn, messages) if callable(script) else script[min(turn, len(script) - 1)]
+        if messages[0]["content"].startswith("You are Lens"):          # the reviewer every multi-task plan now ends with
+            return resp(None, [("finish", {"summary": "Reviewed: all good."})])
         raise AssertionError("no script for " + convo[:200])
 
 
@@ -125,15 +127,15 @@ class TestMission:
             "Write listing": [resp("Listing written: Collector Planner 2026.")]})
         m = run(start(w))
         tasks = run(w.store.list_tasks(m["id"]))
-        assert m["status"] == "done" and [t["status"] for t in tasks] == ["done", "done"]
+        assert m["status"] == "done" and [t["status"] for t in tasks] == ["done", "done", "done"] and tasks[2]["role"] == "reviewer"
         assert tasks[1]["result"].startswith("Listing written")
         assert [o["name"] for o in run(w.store.list_outputs(m["id"]))] == ["buyers.md"]
         # the writer saw the researcher's result, and Gemini did research while Claude wrote
         writer_call = next(c for c in w.model.calls if c["tools"] and "(Write listing)" in c["messages"][1]["content"])
         assert "Collectors who track sets." in writer_call["messages"][1]["content"]
         assert {c["model"] for c in w.model.calls if c["tools"]} == {"gemini-x", "claude-x"}
-        assert m["spent_usd"] == pytest.approx(0.04)                 # planner + 2 research rounds + 1 writer round
-        assert run(w.store.get_day_spend(UID, "2026-10-21")) == pytest.approx(0.04)
+        assert m["spent_usd"] == pytest.approx(0.05)                 # planner + 2 research rounds + 1 writer round + 1 review round
+        assert run(w.store.get_day_spend(UID, "2026-10-21")) == pytest.approx(0.05)
         assert any("Mission complete" in t for _, t, _ in w.notes.sent)
 
     def test_a_task_waits_for_the_tasks_it_depends_on(self):
@@ -286,7 +288,7 @@ class TestBudgets:
     def test_the_daily_cap_stops_new_work_and_is_reported_once(self):
         w = world(two_task_plan(), {"Research buyers": [resp("r")], "Write listing": [resp("w")]}, env={"CREW_DAILY_CAP_USD": "0.02"})
         m = run(start(w))                                    # planning (0.01) leaves 0.01: below one call's estimate
-        assert [t["status"] for t in run(w.store.list_tasks(m["id"]))] == ["queued", "queued"]
+        assert [t["status"] for t in run(w.store.list_tasks(m["id"]))] == ["queued", "queued", "queued"]
         run(w.engine.tick())
         caps = [e for e in w.store.events if "Daily crew limit" in e["text"]]
         assert len(caps) == 1
@@ -495,3 +497,124 @@ def test_finance_attributes_stripe_and_costs():
     assert out["total"]["revenue_today"] == 21.0 and out["stripe_ok"]
     assert any("non-USD" in n for n in out["notes"])
     assert factory_key("Dead Zone") == "deadzone" and factory_key("", "Candle shop").startswith("new:")
+
+
+# ── the crew's new hands: web search, GitHub with a merge checkpoint, images, the reviewer ──
+
+class FakeGitHub:
+    """Just enough of GitHub's REST API for one branch commit and one merge."""
+
+    def __init__(self):
+        self.calls, self.branches = [], {"main": "base0"}
+
+    def __call__(self):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def request(self, method, url, headers=None, params=None, json=None):
+        path = url.replace("https://api.github.com", "")
+        self.calls.append((method, path, json))
+
+        def r(code, body):
+            return SimpleNamespace(status_code=code, content=b"x", json=lambda: body)
+
+        if path == "/repos/FlipDeckCards/Atlas":
+            return r(200, {"default_branch": "main"})
+        if path.startswith("/repos/FlipDeckCards/Atlas/git/ref/heads/"):
+            b = path.rsplit("heads/", 1)[1]
+            return r(200, {"object": {"sha": self.branches[b]}}) if b in self.branches else r(404, {"message": "Not Found"})
+        if path.endswith("/git/refs") and method == "POST":
+            self.branches[json["ref"].removeprefix("refs/heads/")] = json["sha"]
+            return r(201, {})
+        if "/git/commits/" in path:
+            return r(200, {"tree": {"sha": "tree0"}})
+        if path.endswith("/git/trees"):
+            return r(201, {"sha": "tree1"})
+        if path.endswith("/git/commits"):
+            return r(201, {"sha": "commit1234567"})
+        if "/git/refs/heads/" in path and method == "PATCH":
+            self.branches[path.rsplit("heads/", 1)[1]] = json["sha"]
+            return r(200, {})
+        if path.endswith("/pulls") and method == "GET":
+            return r(200, [])
+        if path.endswith("/pulls") and method == "POST":
+            return r(201, {"number": 7})
+        if path.endswith("/pulls/7/merge"):
+            return r(200, {"merged": True, "sha": "merged99"})
+        return r(404, {"message": "unexpected " + path})
+
+
+class TestNewHands:
+    def test_scout_searches_the_web(self):
+        plan = {"title": "Look", "project": "New", "tasks": [{"title": "Find planners", "role": "researcher", "brief": "Find", "depends_on": []}]}
+        script = [resp(None, [("web_search", {"query": "best digital planners 2026"})]), resp(None, [("finish", {"summary": "Found three."})])]
+        w = world(plan, {"Find planners": script})
+        seen = []
+        w.engine.search_fn = lambda q: seen.append(q) or "### Planner A\nSource: https://a.example\nSummary: popular"
+        m = run(start(w))
+        assert m["status"] == "done" and seen == ["best digital planners 2026"]
+        call = [c for c in w.model.calls if c["tools"]][-1]
+        assert any("Planner A" in str(x.get("content")) for x in call["messages"] if x["role"] == "tool")
+        assert {t["function"]["name"] for t in call["tools"]} >= {"web_search", "web_research"}
+
+    def test_forge_commits_to_a_crew_branch_and_merge_waits_for_approve(self):
+        plan = {"title": "Fix", "project": "Aibussol", "tasks": [{"title": "Fix footer", "role": "builder", "brief": "Fix it", "depends_on": []}]}
+        script = [resp(None, [("repo_commit", {"repo": "FlipDeckCards/Atlas", "branch": "main", "message": "Fix footer",
+                                               "files": [{"path": "src/footer.txt", "content": "hi"}]})]),
+                  resp(None, [("request_merge", {"repo": "FlipDeckCards/Atlas", "branch": "main", "title": "Fix footer", "summary": "Small fix"})]),
+                  resp(None, [("finish", {"summary": "Merged."})])]
+        hub = FakeGitHub()
+        w = world(plan, {"Fix footer": script}, env={"CREW_GITHUB_TOKEN": "ghp_test"}, http=hub)
+        run(start(w))
+        assert "crew/main" in hub.branches and hub.branches["main"] == "base0"            # 'main' became crew/main; main untouched
+        assert not any(p.endswith("/merge") for _, p, _ in hub.calls)                       # nothing merged before the Approve
+        q = run(w.store.list_questions(UID, "open"))[0]
+        assert q["kind"] == "checkpoint" and "deploys on merge" in q["text"]
+        out = run(w.engine.answer(UID, q["id"], approve=True))
+        assert "Merged crew/main into main" in out["message"]
+        run(w.engine.run_until_idle())
+        assert run(w.store.list_missions(UID, 5))[0]["status"] == "done"
+
+    def test_forge_refuses_unknown_repos_and_workflows(self):
+        from openjarvis.server.crew import github as gh
+
+        with pytest.raises(gh.GitHubError):
+            gh.check_repo("someone/else", {})
+        with pytest.raises(gh.GitHubError):
+            gh.check_path(".github/workflows/deploy.yml")
+        with pytest.raises(gh.GitHubError):
+            gh.check_path("../etc/passwd")
+        assert gh.crew_branch("Main Fix!") == "crew/main-fix"
+
+    def test_prism_without_media_says_so(self):
+        plan = {"title": "Art", "project": "New", "tasks": [{"title": "Make art", "role": "designer", "brief": "Art", "depends_on": []}]}
+        script = [resp(None, [("generate_image", {"prompt": "a neon card binder on a desk"})]), resp(None, [("finish", {"summary": "Prompts saved."})])]
+        w = world(plan, {"Make art": script})
+        run(start(w))
+        call = [c for c in w.model.calls if c["tools"]][-1]
+        assert any("not set up" in str(x.get("content")) for x in call["messages"] if x["role"] == "tool")
+
+    def test_lens_sends_work_back_once_and_reviews_again(self):
+        plan = two_task_plan()
+        writes = {"n": 0}
+
+        def writer(turn, messages):
+            writes["n"] += 1
+            return resp(None, [("finish", {"summary": f"Listing written v{writes['n']}"})])
+
+        def lens(turn, messages):
+            if turn == 0:
+                return resp(None, [("request_changes", {"task_number": 2, "notes": "Add the price and the size."})])
+            return resp(None, [("finish", {"summary": "Reviewed after fixes."})])
+
+        w = world(plan, {"Research buyers": [resp(None, [("finish", {"summary": "Collectors."})])], "Write listing": writer,
+                         "Review the crew's work": lens})
+        m = run(start(w))
+        tasks = run(w.store.list_tasks(m["id"]))
+        assert m["status"] == "done" and writes["n"] == 2
+        assert tasks[1]["result"] == "Listing written v2" and tasks[2]["result"] == "Reviewed after fixes."

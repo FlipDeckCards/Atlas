@@ -146,7 +146,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
 const TOKEN_KEY = 'aibussol_token';
 const token = () => localStorage.getItem(TOKEN_KEY) || '';
 const PROJECT_COLORS = { flipdeck:'#ff6d00', marnyx:'#b06cff', deadzone:'#ff3344', aibussol:'#00e5ff', 'new':'#00ff88' };
-const ROLE_COLORS = { lead:'#00e5ff', researcher:'#5ad1ff', builder:'#4dffc3', writer:'#ffc14d', designer:'#ff7ad9', operator:'#ff6d00' };
+const ROLE_COLORS = { lead:'#00e5ff', researcher:'#5ad1ff', builder:'#4dffc3', writer:'#ffc14d', designer:'#ff7ad9', operator:'#ff6d00', reviewer:'#c8ff4d' };
 const STATUS_COLORS = { queued:'#2a5060', running:'#00e5ff', waiting:'#ff6d00', done:'#00ff88', failed:'#ff3344', cancelled:'#2a3a44' };
 let S = null, selected = 'hub', lastDraw = 0, pollTimer = null;
 

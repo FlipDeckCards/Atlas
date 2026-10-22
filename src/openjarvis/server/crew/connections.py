@@ -101,8 +101,10 @@ async def status(store, user_id: str, env=None) -> Dict[str, Dict[str, Any]]:
     for k, v in out.items():
         v.update(label=LABELS[k], setup="" if v["connected"] else SETUP[k],
                  actions=[{"name": n, "risk": a["risk"], "about": a["about"]} for n, a in ACTIONS[k].items()])
-    from openjarvis.server.crew import research
+    from openjarvis.server.crew import github, research
 
+    out["github"] = {"connected": github.configured(env), "built": True, "label": "GitHub (Forge's code)",
+                     "setup": "" if github.configured(env) else github.SETUP, "actions": []}
     out["web_research"] = {"connected": research.configured(env), "built": True, "label": "Web research (GPT Researcher)",
                            "setup": "" if research.configured(env) else research.SETUP, "actions": []}
     return out
