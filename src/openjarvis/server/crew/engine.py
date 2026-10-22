@@ -207,8 +207,12 @@ def pc_project(names: List[str], task: Dict[str, Any], mission: Dict[str, Any]) 
     texts = (f'{task.get("title", "")}\n{task.get("brief", "")}', str(mission.get("goal") or ""))
     for text in texts:                                   # an explicit "in project X" anywhere wins
         for n in names:
-            if re.search(r"\bin (?:the )?project\s+" + re.escape(n) + r"(?![A-Za-z0-9])", text, re.I):
+            if re.search(r"\bin (?:the )?(?:new )?project\s+" + re.escape(n) + r"(?![A-Za-z0-9])", text, re.I):
                 return n
+    for text in texts:                                   # "in (the) new project X": a project the PC does not have yet (the helper creates its folder)
+        m = re.search(r"\bin (?:the )?new project\s+([A-Za-z][A-Za-z0-9_-]{1,39})", text, re.I)
+        if m:
+            return m.group(1)
     for text in texts:
         hits = [(m.start(), n) for n in names for m in [re.search(r"(?<![A-Za-z0-9])" + re.escape(n) + r"(?![A-Za-z0-9])", text, re.I)] if m]
         if hits:
@@ -226,7 +230,8 @@ HOUSE_RULES = (
     "- The Unity / Unreal editors run only on Michael's computer. Game building and testing is Rig's job (role workbench): Rig runs Claude "
     "Code in his real project folder on his PC, the way Deadzone Run was built. Plan the design, art and copy with the other agents, then "
     "give Rig the build: 'in project <PC project name>, implement ..., build and test', using one of the PC project names listed under "
-    "his PC (they are folders on his computer, not factories). Game missions belong to the Deadzone factory: set the mission project to "
+    "his PC (they are folders on his computer, not factories). A NEW game gets its own new project: write 'in new project <GameName>' "
+    "(one word, e.g. NeonDrift) and Rig creates the Unity project in its own folder; never build a new game inside an existing game's project. Game missions belong to the Deadzone factory: set the mission project to "
     "Deadzone for every game and for the Deadzone Games site. If his PC "
     "is not connected, Rig's task simply waits. Never write a web prototype for a game, and never claim a game was built unless Rig reports it.\n"
     "- Social and email go through Marnyx (connection 'marnyx'): Echo plans each brand's week (FlipDeck, Marnyx, and Aibussol once its "

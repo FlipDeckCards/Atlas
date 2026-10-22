@@ -1106,3 +1106,11 @@ def test_resume_retries_failed_tasks_with_fresh_steps():
     run(w.engine.run_until_idle())
     t = run(w.store.list_tasks(m["id"]))[0]
     assert t["status"] == "done" and "Done on retry." in t["result"] and run(w.store.get_mission(m["id"]))["status"] == "done"
+
+
+def test_a_new_game_gets_its_own_pc_project():
+    from openjarvis.server.crew.engine import pc_project
+
+    m = {"project": "Deadzone", "goal": "Build a trending mobile game"}
+    assert pc_project(["Deadzone", "MergeDungeon"], {"title": "Build it", "brief": "In new project NeonDrift, build the game in Unity"}, m) == "NeonDrift"
+    assert pc_project(["Deadzone", "MergeDungeon"], {"title": "Build it", "brief": "In project MergeDungeon, fix the menu"}, m) == "MergeDungeon"

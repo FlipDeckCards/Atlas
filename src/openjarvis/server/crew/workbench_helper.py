@@ -30,7 +30,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-VERSION = "1.3"
+VERSION = "1.4"
 CONFIG = Path.home() / ".aibussol_workbench.json"
 POLL_S, HELLO_S, PROGRESS_S = 20, 60, 120
 
@@ -67,11 +67,25 @@ def find_claude(cfg: dict) -> str | None:
 
 
 def project_folder(cfg: dict, project: str) -> tuple[str | None, str]:
+    """The folder for a job's project: a mapped one, else a folder of that name in the projects root (made if new and named clearly)."""
     projects = cfg.get("projects") or {}
     key = re.sub(r"[^a-z0-9]", "", (project or "").lower())
     for name, folder in projects.items():
         if re.sub(r"[^a-z0-9]", "", name.lower()) == key:
             return folder, name
+    root = cfg.get("projects_root")
+    if root and Path(root).is_dir() and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{1,39}", project or ""):
+        for d in Path(root).iterdir():
+            if d.is_dir() and re.sub(r"[^a-z0-9]", "", d.name.lower()) == key:
+                cfg.setdefault("projects", {})[d.name] = str(d)
+                save_config(cfg)
+                return str(d), d.name
+        new = Path(root) / project
+        new.mkdir(parents=True, exist_ok=True)            # a new game: its own empty folder; Claude Code creates the Unity project in it
+        cfg.setdefault("projects", {})[project] = str(new)
+        save_config(cfg)
+        print(f"[workbench] new project folder {new}")
+        return str(new), project
     if "default" in projects:
         return projects["default"], "default"
     return None, project
@@ -84,9 +98,15 @@ def build_prompt(job: dict, cfg: dict, folder_name: str) -> str:
         tools.append(f'Unity editor: "{cfg["unity"]}" (batch mode: -batchmode -nographics -quit -projectPath . -logFile -)')
     if cfg.get("unreal"):
         tools.append(f'Unreal editor / UAT: "{cfg["unreal"]}"')
+    folder = (cfg.get("projects") or {}).get(folder_name)
+    empty = bool(folder) and Path(folder).is_dir() and not any(Path(folder).iterdir())
     return (
         f"You are Rig, the Workbench member of Michael's Aibussol crew, working on his own computer in the project folder "
         f"'{folder_name}' (the current directory).\n\n"
+        + ("THIS FOLDER IS EMPTY: it is a new project. First create a new Unity project in it with the Unity editor in batch mode "
+           "(-batchmode -quit -createProject .), set it up for the game (URP 2D or 3D as fits, the Input System, Android), then build the game.\n\n"
+           if empty else "")
+        +
         f"Mission: {job.get('goal', '')}\nYour task: {job.get('title', '')}\n{job.get('brief', '')}\n\n"
         f"Results from the crew so far:\n{job.get('results_so_far') or '- none'}\n\n"
         f"Michael's house rules:\n{job.get('house_rules', '')}\n\n"
@@ -166,12 +186,17 @@ def main() -> int:
     ap.add_argument("--unity", help="path to Unity.exe")
     ap.add_argument("--unreal", help="path to the Unreal editor or RunUAT")
     ap.add_argument("--claude", help="path to the claude command, if it is not on PATH")
+    ap.add_argument("--projects-root", help=r"folder for new game projects (default C:\UnityProjects when it exists)")
     a = ap.parse_args()
     cfg = load_config()
     cfg.setdefault("server", "https://aibussol.com")
     for k in ("server", "token", "unity", "unreal", "claude"):
         if getattr(a, k):
             cfg[k] = getattr(a, k)
+    if a.projects_root:
+        cfg["projects_root"] = a.projects_root
+    elif not cfg.get("projects_root") and Path(r"C:\UnityProjects").is_dir():
+        cfg["projects_root"] = r"C:\UnityProjects"
     for pr in a.project:
         name, _, folder = pr.partition("=")
         if name.strip() and folder.strip():
