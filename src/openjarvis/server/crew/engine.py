@@ -68,6 +68,24 @@ ROLES: Dict[str, Dict[str, str]] = {
     "workbench": {"name": "Rig", "model": "writing", "about": "Works on Michael's own computer through the Workbench helper: Claude Code in his real project folders with his Unity / Unreal editors, on his own Claude plan (no API cost). Builds, tests and fixes games (and anything that needs his machine) the way Deadzone Run was built. Rig's tasks wait until the PC is connected.",
                   "can": "Build and test in your real projects on your PC: Unity, Unreal, Git, Claude Code (your plan, no API cost)",
                   "cannot": "Publish, upload to a store or push to main; it runs only while the Workbench helper is on"},
+    "marketer": {"name": "Spark", "model": "writing", "about": "Marketing with Claude: positioning, launch plans, campaigns, SEO, landing-page and ad copy, email sequences, pricing pages. Researches the market and competitors with web_search and makes campaign images with generate_image.",
+                 "can": "Positioning, launch and campaign plans, SEO, landing-page, ad and email copy, campaign images",
+                 "cannot": "Spend on ads or publish anything itself"},
+    "social": {"name": "Echo", "model": "writing", "about": "Social media with Claude: content calendars, platform-ready posts (TikTok, Instagram, Facebook, X, YouTube Shorts), captions, hooks, hashtags and short-video scripts, plus post images with generate_image. Checks what is trending with web_search. Saves posts as files ready for Marnyx or the user to schedule.",
+               "can": "Content calendars, posts and captions per platform, video scripts, trend checks, post images",
+               "cannot": "Post to any account itself"},
+    "support": {"name": "Haven", "model": "writing", "about": "Customer support with Claude: FAQs, help-center articles, reply templates, refund and policy wording, onboarding emails, triage of customer issues. Reads recent Stripe payments (read only) to understand billing questions.",
+                "can": "FAQs, help articles, reply templates, policies, onboarding emails, billing lookups (read only)",
+                "cannot": "Email customers, refund or change anything"},
+    "analyst": {"name": "Sage", "model": "writing", "about": "Data analyst with Claude: reads the account's live business numbers with business_numbers (money in and out per business, MRR, subscribers, crew cost) and Stripe (read only), finds trends, sets KPIs, builds forecasts and reports with the math shown.",
+                "can": "Live P&L per business, KPIs, trends, forecasts, dashboards as files, Stripe reads",
+                "cannot": "Change data, prices or anything else"},
+    "qa": {"name": "Probe", "model": "writing", "about": "QA tester with Claude: tests the live sites with check_site (status, speed, title, page text, broken pages), reads the code in the connected repos (read only), writes test plans, bug reports with steps to reproduce, and checks fixes. Games are play-tested by Rig on the PC; Probe writes their test plans.",
+           "can": "Test live sites, read code, test plans, bug reports with repro steps, release checklists",
+           "cannot": "Change code (it reports; Forge fixes) or log in to accounts"},
+    "finance": {"name": "Tally", "model": "writing", "about": "Finance with Claude: bookkeeping summaries, budgets, cash flow, unit economics, pricing and margin math, subscription metrics and tax-prep checklists, from business_numbers and Stripe (read only). Not a licensed accountant: flags what needs one.",
+                "can": "P&L and cash-flow summaries, budgets, pricing and margin math, tax-prep checklists, Stripe balance reads",
+                "cannot": "Move money, file taxes or give licensed advice"},
     "reviewer": {"name": "Lens", "model": "writing", "about": "Checks the crew's work before it reaches Michael: reads every deliverable, fact-checks with web_search, and sends a task back once with request_changes when it is wrong or incomplete. Saves a short review.",
                  "can": "Read every deliverable, fact-check on the web, send work back once for fixes, write the review",
                  "cannot": "Change the work itself or approve anything for you"},
@@ -136,12 +154,31 @@ _REPO_TOOLS = [
                        "required": ["repo", "branch", "title", "summary"]}}},
 ]
 
+_NUMBERS_TOOL = {"type": "function", "function": {
+    "name": "business_numbers",
+    "description": "Read this account's live business numbers: money in and out today and over 30 days per business, MRR, subscribers, crew and hosting costs, and which sites are up.",
+    "parameters": {"type": "object", "properties": {}}}}
+
+_SITE_TOOL = {"type": "function", "function": {
+    "name": "check_site",
+    "description": "Test one page of this account's own live sites: HTTP status, load time, page title, size and the start of its text. Only the account's own sites (https).",
+    "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}}}
+
+_READ_CONNECTION_TOOL = {"type": "function", "function": {
+    "name": "use_connection",
+    "description": "READ from a connected platform through its official API (read actions only, for example stripe.recent_payments, stripe.get_balance, stripe.list_products, etsy.get_shop).",
+    "parameters": {"type": "object", "properties": {"platform": {"type": "string"}, "action": {"type": "string"}, "args": {"type": "object"}},
+                   "required": ["platform", "action"]}}}
+
 _REVIEW_TOOL = {"type": "function", "function": {
     "name": "request_changes",
     "description": "Send one finished task back to its agent with concrete fixes (each task can be sent back once). You continue after the rework is done.",
     "parameters": {"type": "object", "properties": {"task_number": {"type": "integer"}, "notes": {"type": "string"}}, "required": ["task_number", "notes"]}}}
 
-LIMITS = {"web_search": 12, "generate_image": 4, "repo_commit": 10}
+LIMITS = {"web_search": 12, "generate_image": 4, "repo_commit": 10, "check_site": 20, "business_numbers": 3}
+SEARCHERS = ("researcher", "reviewer", "marketer", "social", "support", "analyst", "qa", "finance")
+IMAGERS = ("designer", "marketer", "social")
+READERS = ("support", "analyst", "finance")                # read-only platform access
 REVIEW_MARK = "REVIEW: changes requested."
 
 AcompletionFn = Callable[..., Awaitable[Any]]
@@ -177,12 +214,20 @@ def tools_for(role: str) -> List[Dict[str, Any]]:
         extra.append(_CONNECTION_TOOL)
     if role == "researcher":
         extra += [_SEARCH_TOOL, _RESEARCH_TOOL]
-    if role == "designer":
+    if role in IMAGERS:
         extra.append(_IMAGE_TOOL)
     if role == "builder":
         extra += _REPO_TOOLS
     if role == "reviewer":
         extra += [_SEARCH_TOOL, _REVIEW_TOOL]
+    if role in ("marketer", "social", "support", "analyst", "qa", "finance"):
+        extra.append(_SEARCH_TOOL)
+    if role in READERS:
+        extra.append(_READ_CONNECTION_TOOL)
+    if role in ("analyst", "finance"):
+        extra.append(_NUMBERS_TOOL)
+    if role == "qa":
+        extra += [_SITE_TOOL] + [t for t in _REPO_TOOLS if t["function"]["name"] in ("repo_files", "repo_read")]
     return _BASE_TOOLS + extra
 
 
@@ -598,7 +643,7 @@ class CrewEngine:
             "store submissions are Michael's; plan around them. Keep briefs specific.\n"
             f"Michael's house rules (follow them):\n{house_rules(envx if envx is not None else self.env)}\n"
             'Answer with JSON only: {"title": "short mission name", "project": "' + projects + '", '
-            '"tasks": [{"title": "...", "role": "researcher|builder|writer|designer|operator|reviewer|workbench", "brief": "what to do and what to deliver", '
+            '"tasks": [{"title": "...", "role": "' + "|".join(ROLES) + '", "brief": "what to do and what to deliver", '
             '"depends_on": [indexes of earlier tasks]}]}'
         )
 
@@ -958,12 +1003,23 @@ class CrewEngine:
                     body = (full or {}).get("content") or ""
                     return body[:20000] + ("\n[cut]" if len(body) > 20000 else ""), None
             return "No file by that name in the outbox.", None
-        if name == "web_search" and task["role"] in ("researcher", "reviewer"):
+        if name == "web_search" and task["role"] in SEARCHERS:
             return await self._search(task, args)
-        if name == "generate_image" and task["role"] == "designer":
+        if name == "generate_image" and task["role"] in IMAGERS:
             return await self._image(task, mission, args)
         if name in ("repo_files", "repo_read", "repo_commit", "request_merge") and task["role"] == "builder":
             return await self._repo(task, mission, name, args)
+        if name in ("repo_files", "repo_read") and task["role"] == "qa":
+            return await self._repo(task, mission, name, args)
+        if name == "check_site" and task["role"] == "qa":
+            return await self._check_site(task, args), None
+        if name == "business_numbers" and task["role"] in ("analyst", "finance"):
+            return await self._numbers(task), None
+        if name == "use_connection" and task["role"] in READERS:
+            platform, action = _clip(args.get("platform"), 30).lower(), _clip(args.get("action"), 40)
+            if conns.risk_of(platform, action) != "read":
+                return f"{task['role'].title()} can only read. Ask for {platform}.{action} to be done by Relay (operator) in the summary.", None
+            return await self._connection(task, mission, args)
         if name == "request_changes" and task["role"] == "reviewer":
             return await self._request_changes(task, args)
         if name == "web_research" and task["role"] == "researcher":
@@ -971,6 +1027,81 @@ class CrewEngine:
         if name == "use_connection" and task["role"] == "operator":
             return await self._connection(task, mission, args)
         return f"Error: there is no tool named '{_clip(name, 40)}' for this role.", None
+
+    async def _site_hosts(self, user_id: str) -> Dict[str, str]:
+        """The hosts check_site may open: the owner's product sites, or a subscriber's own business sites."""
+        from urllib.parse import urlparse
+
+        if await self.is_owner(user_id):
+            urls = list(self.product_urls().values()) or ["https://flipdeckcards.com", "https://marnyx.onrender.com", "https://cybervoid-6tbo.onrender.com", "https://aibussol.com"]
+            urls.append("https://aibussol.com")
+        else:
+            from openjarvis.server.crew import tenant
+
+            urls = [b.get("url") or "" for b in await tenant.businesses(self.store, user_id)]
+        return {urlparse(u).hostname.lower(): u for u in urls if u.startswith("https://") and urlparse(u).hostname}
+
+    async def _check_site(self, task: Dict[str, Any], args: Dict[str, Any]) -> str:
+        import html as html_mod
+        import time
+        from urllib.parse import urlparse
+
+        import httpx
+
+        url = str(args.get("url") or "").strip()
+        u = urlparse(url)
+        hosts = await self._site_hosts(task["user_id"])
+        host = (u.hostname or "").lower()
+        allowed = any(host == h or host.endswith("." + h.removeprefix("www.")) or host == h.removeprefix("www.") for h in hosts)
+        if u.scheme != "https" or not allowed:
+            return f"Not allowed: check_site opens only this account's own sites ({', '.join(hosts) or 'none added yet'})."
+        cf = self.client_factory or (lambda: httpx.AsyncClient(timeout=15, follow_redirects=True))
+        t0 = time.monotonic()
+        try:
+            async with cf() as c:
+                r = await c.get(url)
+        except Exception as exc:
+            return f"{url}: no answer ({type(exc).__name__}). The site may be down."
+        ms = int((time.monotonic() - t0) * 1000)
+        body = r.text if hasattr(r, "text") else ""
+        m = re.search(r"<title[^>]*>(.*?)</title>", body or "", re.S | re.I)
+        title = html_mod.unescape(_clip(m.group(1), 120)) if m else "(none)"
+        text = re.sub(r"<script.*?</script>|<style.*?</style>", " ", body or "", flags=re.S | re.I)
+        text = html_mod.unescape(_clip(re.sub(r"<[^>]+>", " ", text), 1500))
+        await self.store.add_event(task["user_id"], "qa", f"Checked {url}: {r.status_code} in {ms} ms.", mission_id=task["mission_id"], task_id=task["id"])
+        return (f"{url}\nstatus {r.status_code} · {ms} ms · {len(body or ''):,} characters · type {r.headers.get('content-type', '?')}\n"
+                f"title: {title}\ntext: {text or '(empty)'}")
+
+    async def _numbers(self, task: Dict[str, Any]) -> str:
+        """The account's own P&L, the same numbers the Station shows."""
+        from openjarvis.server.crew import finance as fz
+        from openjarvis.server.crew import tenant
+
+        uid = task["user_id"]
+        missions = await self.store.list_missions(uid, 200)
+        try:
+            if await self.is_owner(uid):
+                fin = fz.Finance(self.store, pool=self.pool, env=self.env, client_factory=self.client_factory, now=self.now)
+                keys = list(fz.KNOWN) + [fz.factory_key(m["project"], m["title"], m["goal"], m["id"]) for m in missions]
+                rep = await fin.report(uid, missions, keys)
+            else:
+                known = tuple(b["key"] for b in await tenant.businesses(self.store, uid))
+                envx = task.get("_env") or await self.env_for(uid)
+                fin = fz.Finance(self.store, pool=None, client_factory=self.client_factory, now=self.now,
+                                 env={"STRIPE_SECRET_KEY": envx.get("STRIPE_SECRET_KEY", ""), "CREW_STRIPE_UNTAGGED": known[0] if known else "business"})
+                keys = list(known) + [fz.factory_key(m["project"], m["title"], m["goal"], m["id"], known) for m in missions]
+                rep = await fin.report(uid, missions, keys, owner=False)
+        except Exception:
+            logger.exception("business_numbers failed")
+            return "The numbers could not be read right now. Say so in your work instead of guessing."
+        t = rep["total"]
+        lines = [f"As of {rep.get('as_of', '')} (USD). TOTAL: today in {t['revenue_today']:.2f} out {t['cost_today']:.2f}; 30 days in {t['revenue_30d']:.2f} "
+                 f"out {t['cost_30d']:.2f} net {t['net_30d']:.2f}; MRR {t['mrr']:.2f}; subscribers {t['subscribers']}."]
+        for k, row in rep["factories"].items():
+            lines.append(f"- {k.removeprefix('new:')}: 30 days in {row['revenue_30d']:.2f}, out {row['cost_30d']:.2f} (crew {row.get('crew_cost_30d', 0):.2f}), "
+                         f"net {row['net_30d']:.2f}; MRR {row['mrr']:.2f}; subscribers {row['subscribers']}.")
+        lines += [f"Note: {n}" for n in rep.get("notes", [])]
+        return "\n".join(lines)
 
     async def _research(self, task: Dict[str, Any], mission: Dict[str, Any], args: Dict[str, Any]):
         uid, mid, tid = task["user_id"], task["mission_id"], task["id"]

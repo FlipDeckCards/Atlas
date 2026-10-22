@@ -865,3 +865,60 @@ class TestUsage:
         run(w.store.add_day_spend(UID, "2026-10-02", 500))
         assert run(w.engine.may_run(UID)) is None and run(w.engine.usage(UID)) is None
         assert run(w.engine.usage("sub-1"))["included_pct"] == 100.0
+
+
+# ── the specialists: an agent for every kind of request ──
+
+class TestSpecialists:
+    def names(self, role):
+        return [t["function"]["name"] for t in eng_mod.tools_for(role)]
+
+    def test_every_specialist_has_the_right_hands_and_no_more(self):
+        for role in ("marketer", "social", "support", "analyst", "qa", "finance"):
+            assert role in eng_mod.ROLES and "web_search" in self.names(role)
+            assert "repo_commit" not in self.names(role) and "request_merge" not in self.names(role)
+        assert "generate_image" in self.names("marketer") and "generate_image" in self.names("social")
+        assert "business_numbers" in self.names("analyst") and "business_numbers" in self.names("finance")
+        assert "check_site" in self.names("qa") and "repo_read" in self.names("qa")
+        assert "use_connection" in self.names("support") and "use_connection" not in self.names("social")
+        w = world(two_task_plan(), {})
+        prompt = w.engine._planner_prompt("")
+        assert all(r in prompt for r in ("marketer", "social", "support", "analyst", "qa", "finance"))
+
+    def test_readers_cannot_run_risky_actions(self):
+        def sage(turn, msgs):
+            if turn == 0:
+                return resp(calls=[("use_connection", {"platform": "stripe", "action": "create_product", "args": {"name": "x", "price_usd": 5}})])
+            assert "can only read" in json.dumps(msgs)
+            return resp(calls=[("finish", {"summary": "ok"})])
+        w = world({"tasks": [{"title": "Check pricing", "role": "analyst", "brief": "b"}]}, {"Check pricing": sage},
+                  env={"STRIPE_SECRET_KEY": "sk_test_x"}, http=FakeHttp())
+        run(start(w))
+        assert not run(w.store.list_questions(UID)) and not [r for r in w.http.requests if r[0] == "POST"]
+
+    def test_probe_tests_only_the_accounts_own_sites(self):
+        class Http(FakeHttp):
+            async def get(self, url, **kw):
+                self.requests.append(("GET", url, kw))
+                return httpx.Response(200, text="<html><title>Bloom Candles</title><body>Hand-poured</body></html>",
+                                      headers={"content-type": "text/html"})
+        http = Http()
+        w = world(two_task_plan(), {}, http=http)
+        from openjarvis.server.crew import tenant
+
+        run(tenant.add_business(w.store, "sub-1", "Bloom Candles", "https://bloomcandles.com"))
+        task = {"user_id": "sub-1", "mission_id": "m", "id": "t"}
+        out = run(w.engine._check_site(task, {"url": "https://bloomcandles.com/shop"}))
+        assert "status 200" in out and "Bloom Candles" in out and "Hand-poured" in out
+        assert "Not allowed" in run(w.engine._check_site(task, {"url": "https://flipdeckcards.com"}))       # the owner's site
+        assert "Not allowed" in run(w.engine._check_site(task, {"url": "http://169.254.169.254/latest"}))
+        assert len(http.requests) == 1
+
+    def test_sage_reads_only_the_subscribers_own_numbers(self):
+        w = world(two_task_plan(), {}, env={"STRIPE_SECRET_KEY": "sk_live_OWNER", "CREW_FIXED_COSTS": "flipdeck=10"}, http=FakeHttp())
+        from openjarvis.server.crew import tenant
+
+        run(tenant.add_business(w.store, "sub-1", "Bloom Candles"))
+        out = run(w.engine._numbers({"user_id": "sub-1", "mission_id": "m", "id": "t"}))
+        assert "bloomcandles" in out and "flipdeck" not in out and "aibussol" not in out
+        assert not any("sk_live_OWNER" in json.dumps(r[2]) for r in w.http.requests)

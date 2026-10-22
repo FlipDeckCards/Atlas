@@ -34,6 +34,12 @@ Only owner accounts can use the crew (`ANALYTICS_ADMIN_EMAILS`, default michael.
 | Prism | designer | `generate_image` through the media service (its switch, caps, rate limits and storage quota apply), up to 4 per task; images land in your Aibussol media library |
 | Relay | operator | Stripe and Etsy through official APIs; anything paid, public or permanent is a checkpoint |
 | Lens | reviewer | added to the end of every plan with 2+ tasks: reads every deliverable, fact-checks with `web_search`, sends a task back once with `request_changes`, writes `review.md` |
+| Spark | marketer | positioning, launch and campaign plans, SEO, landing-page, ad and email copy; `web_search`, `generate_image` |
+| Echo | social | content calendars, platform-ready posts and captions, short-video scripts, trend checks; `web_search`, `generate_image`; never posts |
+| Haven | support | FAQs, help articles, reply templates, policies; Stripe reads only (`use_connection` read actions) |
+| Sage | analyst | live P&L with `business_numbers`, KPIs, trends, forecasts; Stripe reads only |
+| Probe | qa | tests the account's own live sites with `check_site`, reads code (`repo_files`, `repo_read`), bug reports and test plans; never commits |
+| Tally | finance | budgets, cash flow, pricing and margin math, tax-prep checklists from `business_numbers` and Stripe reads; never moves money |
 
 Every agent can `read_output` files other agents saved. Still not built: Google Play and App Store connections, anything on a platform
 without an official API.

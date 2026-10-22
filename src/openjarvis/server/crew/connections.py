@@ -19,6 +19,7 @@ The owner does the one-time parts (accounts, identity, payouts, the "allow" scre
 from __future__ import annotations
 
 import base64
+import datetime as dt
 import hashlib
 import json
 import logging
@@ -41,6 +42,9 @@ ETSY_SCOPES = "listings_r listings_w shops_r"
 ACTIONS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "stripe": {
         "list_products": {"risk": "read", "about": "List recent Stripe products and their prices.", "args": {}},
+        "get_balance": {"risk": "read", "about": "Read the Stripe balance (available and pending, per currency).", "args": {}},
+        "recent_payments": {"risk": "read", "about": "List the 20 most recent payments: amount, status, refunds, date and description (no card or contact details).",
+                            "args": {}},
         "create_product": {"risk": "checkpoint", "about": "Create a live Stripe product with one price.",
                            "args": {"name": "text", "description": "text", "price_usd": "number", "interval": "one of: once, month, year"}},
         "create_payment_link": {"risk": "checkpoint", "about": "Create a public Stripe payment link for an existing price.",
@@ -192,6 +196,20 @@ async def _stripe(action: str, args: Dict[str, Any], *, env, mission_id: str, cf
                 amt = dp.get("unit_amount") if isinstance(dp, dict) else None
                 rows.append(f'{p.get("name")} ({p.get("id")}{", $%.2f" % (amt / 100) if amt else ""})')
             return "Stripe products: " + ("; ".join(rows) if rows else "none")
+        if action == "get_balance":
+            body = _ok(await c.get(f"{STRIPE_API}/balance", headers=auth), "Stripe")
+            fmt = lambda xs: ", ".join(f'{x.get("amount", 0) / 100:.2f} {str(x.get("currency", "")).upper()}' for x in xs or []) or "0"  # noqa: E731
+            return f"Stripe balance: available {fmt(body.get('available'))}; pending {fmt(body.get('pending'))}."
+        if action == "recent_payments":
+            body = _ok(await c.get(f"{STRIPE_API}/charges", headers=auth, params={"limit": 20}), "Stripe")
+            rows = []
+            for ch in body.get("data", []):
+                when = dt.datetime.fromtimestamp(int(ch.get("created") or 0), dt.timezone.utc).strftime("%Y-%m-%d")
+                ref = ch.get("amount_refunded") or 0
+                rows.append(f'{when} {ch.get("amount", 0) / 100:.2f} {str(ch.get("currency", "")).upper()} {ch.get("status")}'
+                            + (f' (refunded {ref / 100:.2f})' if ref else "") + (f' · {_clip(ch.get("description"), 60)}' if ch.get("description") else "")
+                            + (f' · app={ch["metadata"]["app"]}' if (ch.get("metadata") or {}).get("app") else ""))
+            return "Recent Stripe payments: " + ("; ".join(rows) if rows else "none")
         if action == "create_product":
             name = _clip(args.get("name"), 120)
             if not name:
