@@ -693,6 +693,8 @@ class CrewEngine:
             f"Break his goal into 2 to {max_tasks(self.env)} concrete tasks that agents can do in parallel where possible.\n"
             f"Roles:\n{roles}\n"
             f"Connected platforms right now:\n{conn_text or '- none'}\n"
+            "Project: a mission that creates a NEW product or business to sell (a digital product, a shop, an app, a game that is not "
+            "Deadzone Run) uses project New and a title that is the product's name, so it gets its own factory on the Station.\n"
             "Rules: each task produces something concrete (a file in the outbox, a draft, a decision for Michael). Do not plan work on a platform that is "
             "not connected; plan a task that prepares it instead and says what Michael must set up. Account creation, identity checks, payouts and app "
             "store submissions are Michael's; plan around them. Keep briefs specific.\n"
@@ -800,8 +802,12 @@ class CrewEngine:
             await self.store.update_mission(mission_id, status="done", summary=summary)
             outs = await self.store.list_outputs(mission_id)
             await self.store.add_event(m["user_id"], "done", f"Mission complete. {len(outs)} file(s) in the outbox. Spent ${m['spent_usd']:.2f}.", mission_id=mission_id)
+            import os
+
+            on = ((os.environ if self.env is None else self.env).get("CREW_MISSION_REPORTS") or "on").strip().lower() not in ("off", "0", "false", "no")
+            report = await self._mission_report(m, tasks, outs) if on else ""
             await self._notify(m["user_id"], f"Mission complete: {m['title'] or _clip(m['goal'], 40)}",
-                               f"{len(tasks)} tasks done, {len(outs)} file(s) in the outbox, ${m['spent_usd']:.2f} spent.\n{_clip(summary, 700)}")
+                               _clip(report, 900) if report else f"{len(tasks)} tasks done, {len(outs)} file(s) in the outbox, ${m['spent_usd']:.2f} spent.\n{_clip(summary, 700)}")
             return
         live = [t for t in tasks if t["status"] in ("queued", "running", "waiting")]
         failed = [t for t in tasks if t["status"] == "failed"]
@@ -816,6 +822,45 @@ class CrewEngine:
                 if t["status"] == "queued" and failed_idx.intersection(t["depends_on"]):
                     await self.store.update_task(t["id"], status="failed", result="Not started: a task it depends on failed.")
             await self._recheck_once(mission_id, tasks)
+
+    async def write_report(self, user_id: str, mission_id: str) -> Dict[str, Any]:
+        """The report on demand (for missions that finished before reports existed, or to refresh one)."""
+        m = await self._owned_mission(user_id, mission_id)
+        await self._mission_report(m, await self.store.list_tasks(mission_id), await self.store.list_outputs(mission_id))
+        return await self.store.get_mission(mission_id)
+
+    async def _mission_report(self, m: Dict[str, Any], tasks: List[Dict[str, Any]], outs: List[Dict[str, Any]]) -> str:
+        """Helix's plain report when a mission finishes: what was made, what is live (with links), what was spent, and what Michael
+        must do next. Saved as mission_report.md and used as the mission summary and the phone notice."""
+        uid, mid = m["user_id"], m["id"]
+        try:
+            events = await self.store.list_events(uid, mission_id=mid, limit=60)
+            facts = "\n".join(f'- {t["title"]} ({ROLES.get(t["role"], {}).get("name", t["role"])}): {_clip(t["result"], 1200)}' for t in tasks)
+            approvals = "\n".join(f'- {e["text"]}' for e in events if e["kind"] in ("checkpoint", "connection", "code"))[:3000]
+            files = ", ".join(o["name"] for o in outs) or "none"
+            envx = await self.env_for(uid)
+            prompt = (
+                "Write the mission report for Michael, the owner, in plain words. Use ONLY the facts below; never invent links, numbers or results. "
+                "Sections, each short:\n## What was done\n(who on the crew did what)\n## What is live now\n(anything public or paid: products, prices, "
+                "payment links with their URLs, posts, merges; say clearly if nothing is live)\n## Files\n(what is in the outbox and what each is for)\n"
+                "## Money\n(spent on the crew; any price set)\n## What you need to do next\n(numbered, concrete; include anything unfinished or risky)\n\n"
+                f"Mission: {m['title'] or ''}\nGoal: {m['goal']}\nSpent: ${m['spent_usd']:.2f} of ${m['budget_usd']:.2f}\n\nTasks and results:\n{facts}\n\n"
+                f"Approvals and platform actions:\n{approvals or '- none'}\n\nOutbox files: {files}"
+            )
+            resp = await self.acompletion(model=self.models["writing"], max_tokens=1500,
+                                          messages=[{"role": "system", "content": self._for_person("You write short, factual reports for Michael.", envx)},
+                                                    {"role": "user", "content": prompt}])
+            await self._charge(uid, mid, "", resp)
+            report = (resp.choices[0].message.content or "").strip()
+        except Exception:
+            logger.exception("mission report failed")
+            return ""
+        if not report:
+            return ""
+        await self.store.add_output(mid, "", uid, "mission_report.md", f"# {m['title'] or 'Mission'} report\n\n{report}\n")
+        await self.store.update_mission(mid, summary=report[:8000])
+        await self.store.add_event(uid, "done", "Helix wrote the mission report (mission_report.md).", mission_id=mid)
+        return report
 
     async def _recheck_once(self, mission_id: str, before: List[Dict[str, Any]]) -> None:
         after = await self.store.list_tasks(mission_id)

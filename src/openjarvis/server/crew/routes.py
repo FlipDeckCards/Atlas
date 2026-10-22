@@ -433,7 +433,7 @@ async def crew_mission_action(mission_id: str, action: str, request: Request):
     if isinstance(g, JSONResponse):
         return g
     uid, engine = g
-    fn = {"pause": engine.pause_mission, "resume": engine.resume_mission, "cancel": engine.cancel_mission}.get(action)
+    fn = {"pause": engine.pause_mission, "resume": engine.resume_mission, "cancel": engine.cancel_mission, "report": engine.write_report}.get(action)
     if fn is None:
         return JSONResponse({"detail": "Unknown action."}, status_code=404)
     try:

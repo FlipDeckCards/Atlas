@@ -789,6 +789,7 @@ function missionSec(m) {
   if (m.status === 'active' || m.status === 'planning') act('pause', 'Pause');
   if (m.status === 'paused' || m.status === 'stalled') act('resume', 'Resume');
   if (!['done', 'cancelled'].includes(m.status)) act('cancel', 'Cancel', 'no');
+  if (m.status === 'done' || m.status === 'stalled') act('report', (m.outputs || []).some(o => o.name === 'mission_report.md') ? 'Refresh report' : 'Write report');
   s.append(btns);
   const tl = mk('div', 'lbl'); tl.style.marginTop = '14px'; tl.textContent = 'Crew'; s.append(tl);
   if (!m.tasks.length) s.append(mk('div', 'dim', m.status === 'planning' ? 'Helix is planning the tasks…' : 'No tasks.'));
@@ -799,7 +800,7 @@ function missionSec(m) {
     r.append(d, g, mk('span', 'tag', t.role), mk('span', 'tag', t.status));
     s.append(r);
   });
-  if (m.summary && m.status !== 'done') s.append(mk('div', 'dim', m.summary));
+  if (m.summary) { const sm = mk('div', 'dim', m.summary); sm.style.whiteSpace = 'pre-wrap'; if (m.status === 'done') { const h = mk('div', 'lbl', 'Mission report'); h.style.marginTop = '12px'; s.append(h); } s.append(sm); }
   return s;
 }
 

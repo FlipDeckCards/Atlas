@@ -19,7 +19,7 @@ from openjarvis.server.crew.store import MemoryCrewStore
 UID = "owner-1"
 NOON_LA = dt.datetime(2026, 10, 21, 19, 0, tzinfo=dt.timezone.utc)      # 12:00 in Los Angeles
 NIGHT_LA = dt.datetime(2026, 10, 22, 6, 0, tzinfo=dt.timezone.utc)      # 23:00 in Los Angeles
-ENV = {"CREW_ENABLED": "true", "CREW_DAILY_CAP_USD": "5", "CREW_MISSION_BUDGET_USD": "1"}
+ENV = {"CREW_ENABLED": "true", "CREW_DAILY_CAP_USD": "5", "CREW_MISSION_BUDGET_USD": "1", "CREW_MISSION_REPORTS": "off"}
 
 
 def run(coro):
@@ -1114,3 +1114,20 @@ def test_a_new_game_gets_its_own_pc_project():
     m = {"project": "Deadzone", "goal": "Build a trending mobile game"}
     assert pc_project(["Deadzone", "MergeDungeon"], {"title": "Build it", "brief": "In new project NeonDrift, build the game in Unity"}, m) == "NeonDrift"
     assert pc_project(["Deadzone", "MergeDungeon"], {"title": "Build it", "brief": "In project MergeDungeon, fix the menu"}, m) == "MergeDungeon"
+
+
+def test_a_finished_mission_gets_helix_report():
+    class Reporter(Model):
+        async def __call__(self, model, messages, max_tokens=None, tools=None):
+            if not tools and "mission report" in json.dumps(messages):
+                self.calls.append({"model": model, "messages": messages, "tools": tools})
+                return resp("## What was done\nScout found buyers.\n## What is live now\nNothing is live.")
+            return await super().__call__(model, messages, max_tokens, tools)
+    w = world(two_task_plan(), {"Research buyers": [resp(calls=[("finish", {"summary": "Found buyers."})])],
+                                "Write listing": [resp(calls=[("finish", {"summary": "Listing written."})])]}, env={"CREW_MISSION_REPORTS": "on"})
+    w.engine.acompletion = Reporter(w.model.plan, w.model.agents)
+    m = run(start(w))
+    m = run(w.store.get_mission(m["id"]))
+    assert m["status"] == "done" and "Nothing is live." in m["summary"]
+    assert "mission_report.md" in [o["name"] for o in run(w.store.list_outputs(m["id"]))]
+    assert any("Mission complete" in n[1] and "What was done" in n[2] for n in w.notes.sent)
