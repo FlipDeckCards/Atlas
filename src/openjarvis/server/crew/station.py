@@ -716,11 +716,19 @@ function rosterSec() {
 }
 
 function factorySec(key) {
-  const b = bays.find(x => x.key === key) || factories().find(x => x.key === key);
+  const b = bays.find(x => x.key === key) || mods.find(x => x.key === key && x.platform) || factories().find(x => x.key === key);
   const s = mk('div', 'sec');
   if (!b) { s.append(mk('div', 'dim', 'That factory is gone.')); return s; }
   const l = mk('div', 'lbl'); l.append(mk('span', null, 'Factory'), mk('span', 'tag', b.state)); s.append(l);
   const h = mk('div', 'h', b.label); h.style.color = b.color; s.append(h);
+  if (b.platform) {
+    const c = S.connections && S.connections[key];
+    const cr = mk('div', 'row'); cr.style.cursor = 'pointer'; cr.onclick = () => { selected = 'links'; renderSide(true); };
+    const d = mk('span', 'dot'); d.style.background = c && c.connected ? '#00ff88' : '#ff6d00';
+    cr.append(d, mk('span', 'grow', c && c.connected ? 'Connected' : (c && c.built ? 'Not connected. Tap to connect.' : 'Not built yet.')), mk('span', 'tag', 'Connections'));
+    s.append(cr);
+  }
+  if (CATALOG_KEYS.includes(key)) s.append(catalogSec(key));
   const site = (S && S.products && S.products[key]) || (FIN && FIN.products && FIN.products[key]) || null;
   if (site) s.append(mk('div', 'dim', (site.live ? 'Site live' : 'Site NOT answering') + (site.url ? ' · ' + site.url : '') + (site.checked_at ? ' · checked ' + ago(site.checked_at) : '')));
   const r = FIN && FIN.factories ? FIN.factories[key] : null;
@@ -755,6 +763,55 @@ function factorySec(key) {
     r.append(mk('span', 'grow', m.title || m.goal), mk('span', 'tag', m.status), mk('span', 'dim', done + '/' + m.tasks.length));
     s.append(r);
   });
+  return s;
+}
+
+const CATALOG_KEYS = ['etsy', 'stripe', 'google_play', 'app_store', 'deadzone'];
+const CATALOG_TITLE = { etsy: 'Listings in the shop', stripe: 'Products on Stripe', google_play: 'Apps on Google Play', app_store: 'Apps on the App Store', deadzone: 'Games on the Deadzone site' };
+const CAT = {};
+function loadCatalog(key, force) {
+  const c = CAT[key];
+  if (!force && c && (c.loading || Date.now() - c.at < 60000)) return;
+  CAT[key] = Object.assign(c || {}, { loading: true, at: Date.now() });
+  api('/api/crew/catalog/' + key).then(r => {
+    CAT[key] = { data: r.ok ? r.data : { items: [], note: (r.data && r.data.detail) || 'The list could not be loaded.' }, at: Date.now() };
+    if (selected === 'f:' + key) renderSide();
+  }).catch(() => { CAT[key] = { data: { items: [], note: 'The list could not be loaded.' }, at: Date.now() }; });
+}
+function catalogSec(key) {
+  const s = mk('div'); s.style.marginTop = '12px';
+  const l = mk('div', 'lbl'); l.append(mk('span', null, CATALOG_TITLE[key] || 'Catalog'));
+  const rf = mk('span', 'tag', '↻'); rf.style.cursor = 'pointer'; rf.title = 'Refresh'; rf.onclick = () => { loadCatalog(key, true); renderSide(); };
+  l.append(rf); s.append(l);
+  loadCatalog(key);
+  const c = CAT[key], d = c && c.data;
+  if (!d) { s.append(mk('div', 'dim', 'Loading…')); return s; }
+  if (d.note) s.append(mk('div', 'dim', d.note));
+  (d.items || []).forEach(it => {
+    const row = mk('div', 'row');
+    const dot = mk('span', 'dot'); dot.style.background = /sale|playable|live|crew/.test(it.status) ? '#00ff88' : '#ffd23f';
+    const g = mk('span', 'grow');
+    if (it.url) { const a = mk('a', null, it.name); a.href = it.url; a.target = '_blank'; a.rel = 'noopener'; a.style.color = 'inherit'; g.append(a); } else g.textContent = it.name;
+    row.append(dot, g);
+    if (it.price) row.append(mk('span', 'dim', it.price));
+    if (it.status) row.append(mk('span', 'tag', it.status));
+    if (d.editable) {
+      const x = mk('button', 'xbtn', '✕'); x.title = 'Remove from this list';
+      x.onclick = async () => { const r = await api('/api/crew/catalog/' + key, 'POST', { remove: it.name }); if (r.ok) CAT[key] = { data: r.data, at: Date.now() }; renderSide(); };
+      row.append(x);
+    }
+    s.append(row);
+  });
+  if (d.editable) {
+    const add = mk('button', 'b', '+ Add a live app'); add.style.marginTop = '6px';
+    add.onclick = async () => {
+      const name = prompt('App name, as it shows in the store'); if (!name) return;
+      const url = prompt('Store link (optional, https://...)') || '';
+      const r = await api('/api/crew/catalog/' + key, 'POST', { add_name: name, add_url: url });
+      if (r.ok) CAT[key] = { data: r.data, at: Date.now() }; renderSide();
+    };
+    s.append(add);
+  }
   return s;
 }
 
@@ -1023,9 +1080,12 @@ function resize() {
 }
 window.addEventListener('resize', resize);
 
+const PLATFORM_KEY = { etsy: 'etsy', stripe: 'stripe', googleplay: 'google_play', playstore: 'google_play', appstore: 'app_store', ios: 'app_store' };
 function factoryKey(m) {
   const p = String(m.project || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   if ((p === 'aibussol' && isOwner()) || prods().some(f => f.key === p)) return p;
+  if (PLATFORM_KEY[p]) return PLATFORM_KEY[p];
+  if (/\betsy\b/i.test((m.title || '') + ' ' + (m.goal || ''))) return 'etsy';   // Etsy work lives in the Etsy factory
   return 'new:' + String(m.title || m.goal || m.id).toLowerCase().slice(0, 40);
 }
 
@@ -1133,8 +1193,10 @@ function stepBot(b, tk, desk, dt) {
 
 function platformModule(p) {
   const c = S && S.connections ? S.connections[p.key] : null, on = !!(c && c.connected), built = !!(c && c.built);
-  return { key: p.key, label: p.label, brand: p.color, color: p.color, platform: true, tasks: [], missions: [],
-           powered: on, state: on ? 'ONLINE' : built ? 'OFFLINE' : 'COMING SOON', idleText: on ? 'CONNECTED' : built ? 'TAP TO CONNECT' : 'UNDER CONSTRUCTION' };
+  const m = fillBay({ key: p.key, label: p.label, brand: p.color, color: p.color, platform: true });
+  const st = m.state;
+  return Object.assign(m, { powered: on, connState: on ? 'ONLINE' : built ? 'OFFLINE' : 'COMING SOON',
+           state: m.tasks.length ? st : on ? 'ONLINE' : built ? 'OFFLINE' : 'COMING SOON', idleText: on ? 'CONNECTED' : built ? 'TAP TO CONNECT' : 'UNDER CONSTRUCTION' });
 }
 function newKeys() {
   const ms = S ? S.missions.filter(m => m.status !== 'cancelled') : [], seen = [];
@@ -1222,7 +1284,7 @@ function drawSpoke(m, t) {
 }
 
 function drawModule(m, t, dt) {
-  const sel = m.platform ? selected === 'links' : selected === 'f:' + m.key;
+  const sel = selected === 'f:' + m.key;
   const live = modLive(m), lit = live || m.tasks.length > 0, col = m.color;
   const w = m.w, h = m.h, x0 = -w / 2, y0 = -h / 2, c = 12 * SC;
   ctx.save(); ctx.translate(m.cx, m.cy); ctx.rotate(m.rot);
@@ -1409,7 +1471,7 @@ function hit(x, y) {
   if (Math.hypot(x - core.x, y - core.y) <= core.r + 8) return 'hub';
   const m = mods.find(m => inModule(m, x, y));
   if (!m) return null;
-  return m.platform ? 'links' : m.expansion ? (isOwner() ? 'hub' : 'setup') : 'f:' + m.key;
+  return m.expansion ? (isOwner() ? 'hub' : 'setup') : 'f:' + m.key;
 }
 cv.addEventListener('click', e => {
   const r = cv.getBoundingClientRect(), h = hit(e.clientX - r.left, e.clientY - r.top);

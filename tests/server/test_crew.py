@@ -1185,3 +1185,33 @@ def test_pdf_maker_makes_a_pdf():
 
     data = make_pdf("Planner", "# Week\n\n- “Monday” — plan\n1. Two\n\n" + "word " * 2000)
     assert data.startswith(b"%PDF") and data.rstrip().endswith(b"%%EOF") and b"/Count" in data
+
+
+def test_factory_catalogs():
+    from openjarvis.server.crew import catalog
+
+    page = ('<div class="card live" onclick="window.location.href=\'/feral/\'"><img src="x"><div class="card-info">'
+            '<div class="card-title">Feral</div><div class="card-status">▶ Play Now</div></div></div>'
+            '<div class="card locked"><div class="lock-icon">L</div><div class="card-title">Galactic</div><div class="card-status">Coming Soon</div></div>')
+    games = catalog.parse_games(page, "https://dz.example/")
+    assert [(g["name"], g["status"], g["url"]) for g in games] == [("Feral", "playable", "https://dz.example/feral/"), ("Galactic", "coming soon", "")]
+    store = MemoryCrewStore()
+    out = run(catalog.manual_edit(store, UID, "google_play", add={"name": "Deadzone Run", "url": "https://play.google.com/x"}))
+    assert out["items"][0]["name"] == "Deadzone Run" and out["editable"]
+    assert run(catalog.manual_edit(store, UID, "google_play", remove="Deadzone Run"))["items"] == []
+    run(store.set_secret(UID, "etsy_shop_id", "77"))
+    run(store.set_secret(UID, "etsy_access", "tok"))
+    run(store.set_secret(UID, "etsy_refresh", "r"))
+    import time as _t
+    run(store.set_secret(UID, "etsy_expires", str(int(_t.time()) + 3600)))
+
+    class Http(FakeHttp):
+        async def get(self, url, **kw):
+            self.requests.append(("GET", url, kw))
+            st = kw["params"]["state"]
+            return httpx.Response(200, json={"results": [{"listing_id": 5 if st == "active" else 6, "title": "Planner " + st,
+                                                          "price": {"amount": 499, "divisor": 100, "currency_code": "USD"}}]})
+    env = {"ETSY_API_KEY": "k", "ETSY_REDIRECT_URI": "https://x/cb"}
+    out = run(catalog.for_factory("etsy", store=store, uid=UID, env=env, cf=Http(), businesses=[]))
+    assert [(i["name"], i["status"], i["price"]) for i in out["items"]] == [("Planner active", "for sale", "4.99 USD"), ("Planner draft", "draft", "4.99 USD")]
+    assert "1 for sale" in out["note"]

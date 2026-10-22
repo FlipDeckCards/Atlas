@@ -216,6 +216,49 @@ async def crew_plan():
     return out
 
 
+OWNER_BUSINESSES = (
+    {"key": "flipdeck", "name": "FlipDeck", "url": "https://flipdeckcards.com", "color": "#ff6d00"},
+    {"key": "marnyx", "name": "Marnyx", "url": "https://marnyx.onrender.com", "color": "#b06cff"},
+    {"key": "deadzone", "name": "Deadzone", "url": "https://cybervoid-6tbo.onrender.com", "color": "#ff3344"})
+
+
+class CatalogEdit(BaseModel):
+    add_name: str = Field("", max_length=120)
+    add_url: str = Field("", max_length=300)
+    remove: str = Field("", max_length=140)
+
+
+@router.get("/api/crew/catalog/{key}")
+async def crew_catalog(key: str, request: Request):
+    """What a factory has for sale or live: Etsy listings, Stripe products, the games on the Deadzone site, store apps."""
+    g = await _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    from openjarvis.server.crew import catalog, tenant
+
+    owner = await engine.is_owner(uid)
+    if key == "stripe" and not owner:
+        return {"items": [], "note": ""}
+    biz = list(OWNER_BUSINESSES) if owner else await tenant.businesses(engine.store, uid)
+    return await catalog.for_factory(key, store=engine.store, uid=uid, env=await engine.env_for(uid),
+                                     cf=engine.client_factory or conns._default_client, businesses=biz)
+
+
+@router.post("/api/crew/catalog/{key}")
+async def crew_catalog_edit(key: str, body: CatalogEdit, request: Request):
+    g = await _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    from openjarvis.server.crew import catalog
+
+    if key not in catalog.MANUAL:
+        return JSONResponse({"detail": "That list comes from the platform itself."}, status_code=400)
+    return await catalog.manual_edit(engine.store, uid, key, add={"name": body.add_name, "url": body.add_url} if body.add_name.strip() else None,
+                                     remove=body.remove)
+
+
 @router.get("/api/crew/state")
 async def crew_state(request: Request):
     g = await _gate(request, need_engine=False)
@@ -251,10 +294,7 @@ async def crew_state(request: Request):
         # the owner's keys live on Render, except Marnyx, which is pasted once on the Station like a subscriber's
         st["connections"]["marnyx"].update(guide="marnyx")
         st["guides"] = {"marnyx": guide.GUIDES["marnyx"]}
-    st["businesses"] = await tenant.businesses(engine.store, uid) if not owner else [
-        {"key": "flipdeck", "name": "FlipDeck", "url": "https://flipdeckcards.com", "color": "#ff6d00"},
-        {"key": "marnyx", "name": "Marnyx", "url": "https://marnyx.onrender.com", "color": "#b06cff"},
-        {"key": "deadzone", "name": "Deadzone", "url": "https://cybervoid-6tbo.onrender.com", "color": "#ff3344"}]
+    st["businesses"] = await tenant.businesses(engine.store, uid) if not owner else list(OWNER_BUSINESSES)
     if not owner:
         st["products"] = await engine.products_for(uid, st["businesses"])
 

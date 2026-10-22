@@ -704,15 +704,17 @@ class CrewEngine:
         sub = isinstance(envx, dict) and envx.get("CREW_PERSON")
         intro = (f"You are the planner of Michael's Aibussol crew. Michael's businesses: {envx.get('CREW_BUSINESSES') or 'none added yet'}. "
                  if sub else "You are the planner of Aibussol's crew, working for Michael (owner of FlipDeck LLC; products: FlipDeck Cards, Marnyx, Deadzone Games). ")
-        projects = ("|".join(x.strip() for x in str(envx.get("CREW_BUSINESSES") or "").split(",") if x.strip()) + "|New").lstrip("|") if sub \
-            else "FlipDeck|Marnyx|Deadzone|Aibussol|New"
+        projects = ("|".join(x.strip() for x in str(envx.get("CREW_BUSINESSES") or "").split(",") if x.strip()) + "|Etsy|New").lstrip("|") if sub \
+            else "FlipDeck|Marnyx|Deadzone|Aibussol|Etsy|Google Play|App Store|New"
         return (
             intro +
             f"Break his goal into 2 to {max_tasks(self.env)} concrete tasks that agents can do in parallel where possible.\n"
             f"Roles:\n{roles}\n"
             f"Connected platforms right now:\n{conn_text or '- none'}\n"
-            "Project: a mission that creates a NEW product or business to sell (a digital product, a shop, an app, a game that is not "
-            "Deadzone Run) uses project New and a title that is the product's name, so it gets its own factory on the Station.\n"
+            "Project (which factory on the Station the work lives in): anything sold on Etsy (digital products, printables, listings) is "
+            "project Etsy; games, game builds and putting games on the games site are Deadzone; publishing an app to Google Play or the "
+            "App Store is Google Play / App Store; work on an existing business uses that business. Only a genuinely NEW business that is "
+            "none of these uses project New, with a title that is the business's name, so it gets its own factory.\n"
             "Rules: each task produces something concrete (a file in the outbox, a draft, a decision for Michael). Do not plan work on a platform that is "
             "not connected; plan a task that prepares it instead and says what Michael must set up. Account creation, identity checks, payouts and app "
             "store submissions are Michael's; plan around them. Keep briefs specific.\n"
@@ -765,6 +767,8 @@ class CrewEngine:
             for t in plan["tasks"]:
                 t["budget_usd"] = per
             await self.store.create_tasks(mission_id, uid, plan["tasks"])
+            if re.search(r"\betsy\b", m["goal"], re.I) and str(plan["project"]).strip().lower() in ("", "new", "aibussol"):
+                plan["project"] = "Etsy"                              # Etsy work lives in the Etsy factory, not a new one
             await self.store.update_mission(mission_id, status="active", title=plan["title"] or _clip(m["goal"], 60), project=plan["project"])
             lines = "; ".join(f'{t["idx"] + 1}. {t["title"]} ({t["role"]})' for t in plan["tasks"])
             await self.store.add_event(uid, "plan", f"Planned {len(plan['tasks'])} tasks: {lines}", mission_id=mission_id, cost_usd=cost)
