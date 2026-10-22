@@ -763,7 +763,16 @@ class CrewEngine:
                 await self.store.update_mission(mission_id, status="planning")
                 self._plans[mission_id] = asyncio.create_task(self.plan(mission_id))
             else:
+                retried = 0
+                for t in tasks:
+                    if t["status"] == "failed":                     # Resume = try the failed tasks again, each with a fresh set of steps
+                        note = [{"role": "user", "content": await self._context(t, m)}] if not t["transcript"] else \
+                            list(t["transcript"]) + [{"role": "user", "content": "Michael resumed the mission. Continue from here and finish."}]
+                        await self.store.update_task(t["id"], status="queued", runs=0, transcript=note)
+                        retried += 1
                 await self.store.update_mission(mission_id, status="active")
+                if retried:
+                    await self.store.add_event(user_id, "mission", f"Retrying {retried} failed task(s).", mission_id=mission_id)
             await self.store.add_event(user_id, "mission", "Mission resumed.", mission_id=mission_id)
         return await self.store.get_mission(mission_id)
 

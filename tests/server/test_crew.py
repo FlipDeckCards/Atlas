@@ -1072,3 +1072,37 @@ def test_a_task_out_of_steps_wraps_up_instead_of_failing():
     for _ in range(eng_mod.MAX_RUNS + 1):
         run(w2.engine.run_until_idle())
     assert run(w2.store.list_tasks(m2["id"]))[0]["status"] == "failed"                 # still fails if it will not finish
+
+
+def test_delivery_is_set_only_for_files_in_the_missions_outbox():
+    from openjarvis.server.crew import connections as conns
+    from openjarvis.server.crew.routes import _delivered_name
+
+    store, http = MemoryCrewStore(), FakeHttp({("POST", "https://api.stripe.com/v1/payment_links/plink_abc"): {"url": "https://buy.stripe.com/x"}})
+    m = run(store.create_mission(UID, "Sell a template pack", 1.0))
+    run(store.add_output(m["id"], "t1", UID, "Quick_Start_Guide.md", "# Start here"))
+    env = {"STRIPE_SECRET_KEY": "sk_test_x"}
+    with pytest.raises(conns.ConnectionError_):
+        run(conns.run("stripe", "set_delivery", {"payment_link_id": "plink_abc", "deliver_files": ["secret_brief.txt"]},
+                      store=store, user_id=UID, mission_id=m["id"], env=env, client_factory=http))
+    out = run(conns.run("stripe", "set_delivery", {"payment_link_id": "plink_abc", "deliver_files": ["Quick_Start_Guide.md"]},
+                        store=store, user_id=UID, mission_id=m["id"], env=env, client_factory=http))
+    assert "Automatic delivery is on" in out
+    form = http.requests[-1][2]["data"]
+    assert form["after_completion[type]"] == "redirect" and "{CHECKOUT_SESSION_ID}" in form["after_completion[redirect][url]"]
+    assert form["metadata[deliver_files]"] == "Quick_Start_Guide.md" and form["metadata[mission]"] == m["id"]
+    assert conns.risk_of("stripe", "set_delivery") == "checkpoint"
+    assert _delivered_name("Guide.pdf", "# not a pdf") == "Guide.txt" and _delivered_name("Guide.pdf", "%PDF-1.7") == "Guide.pdf"
+
+
+def test_resume_retries_failed_tasks_with_fresh_steps():
+    w = world({"tasks": [{"title": "Review", "role": "reviewer", "brief": "b"}]},
+              {"Review": lambda turn, msgs: resp(calls=[("finish", {"summary": "Done on retry."})])})
+    m = run(start(w))
+    t = run(w.store.list_tasks(m["id"]))[0]
+    run(w.store.update_task(t["id"], status="failed", runs=4, result="Stopped: it used all its steps without finishing."))
+    run(w.store.update_mission(m["id"], status="stalled"))
+    run(w.engine.resume_mission(UID, m["id"]))
+    run(w.engine.run_until_idle())
+    t = run(w.store.list_tasks(m["id"]))[0]
+    assert t["status"] == "done" and "Done on retry." in t["result"] and run(w.store.get_mission(m["id"]))["status"] == "done"

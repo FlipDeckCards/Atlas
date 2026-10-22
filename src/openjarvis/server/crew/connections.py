@@ -47,8 +47,12 @@ ACTIONS: Dict[str, Dict[str, Dict[str, Any]]] = {
                             "args": {}},
         "create_product": {"risk": "checkpoint", "about": "Create a live Stripe product with one price.",
                            "args": {"name": "text", "description": "text", "price_usd": "number", "interval": "one of: once, month, year"}},
-        "create_payment_link": {"risk": "checkpoint", "about": "Create a public Stripe payment link for an existing price.",
-                                "args": {"price_id": "text (price_...)"}},
+        "create_payment_link": {"risk": "checkpoint", "about": "Create a public Stripe payment link for an existing price. Give deliver_files (names of "
+                                                              "files in THIS mission's outbox) and buyers are sent to a download page for exactly those files right after paying.",
+                                "args": {"price_id": "text (price_...)", "deliver_files": "optional list of outbox file names the buyer gets"}},
+        "set_delivery": {"risk": "checkpoint", "about": "Turn on automatic delivery for an existing payment link: after paying, the buyer goes to a "
+                                                       "download page for exactly these files from THIS mission's outbox.",
+                         "args": {"payment_link_id": "text (plink_...)", "deliver_files": "list of outbox file names the buyer gets"}},
     },
     "etsy": {
         "get_shop": {"risk": "read", "about": "Read the connected Etsy shop's name and listing counts.", "args": {}},
@@ -169,8 +173,31 @@ def describe_action(platform: str, action: str, args: Dict[str, Any]) -> str:
         when = "" if interval == "once" else f" per {interval}"
         return f'Create a live Stripe product "{_clip(args.get("name"), 80)}" priced ${price:.2f}{when}.'
     if platform == "stripe" and action == "create_payment_link":
-        return f"Create a public Stripe payment link for price {_clip(args.get('price_id'), 60)} (anyone with the link can pay)."
+        files = _deliver_files(args, required=False)
+        return (f"Create a public Stripe payment link for price {_clip(args.get('price_id'), 60)} (anyone with the link can pay)."
+                + (f" Buyers get a download page for: {', '.join(files)}." if files else " No automatic delivery."))
+    if platform == "stripe" and action == "set_delivery":
+        return (f"Turn on automatic delivery for payment link {_clip(args.get('payment_link_id'), 60)}: after paying, buyers get a download page "
+                f"for: {', '.join(_deliver_files(args))}.")
     return f"{LABELS.get(platform, platform)}: {action} with {json.dumps(args)[:200]}"
+
+
+DELIVER_URL = "https://aibussol.com/deliver?session_id={CHECKOUT_SESSION_ID}"
+
+
+def _deliver_files(args: Dict[str, Any], required: bool = True) -> List[str]:
+    raw = args.get("deliver_files") or []
+    files = [_clip(x, 80) for x in (raw if isinstance(raw, list) else str(raw).split(",")) if _clip(x, 80)]
+    if required and not files:
+        raise ConnectionError_("deliver_files must list the outbox file names the buyer gets.")
+    if len(",".join(files)) > 480:
+        raise ConnectionError_("Too many or too long file names for delivery (Stripe keeps up to 500 characters).")
+    return files
+
+
+def _delivery_form(files: List[str], mission_id: str) -> Dict[str, str]:
+    return {"after_completion[type]": "redirect", "after_completion[redirect][url]": DELIVER_URL,
+            "metadata[deliver_files]": ",".join(files), "metadata[mission]": mission_id, "metadata[app]": "crew"}
 
 
 def _price(v: Any) -> float:
@@ -318,7 +345,7 @@ async def run(platform: str, action: str, args: Dict[str, Any], *, store, user_i
         raise ConnectionError_(f"{LABELS[platform]} is not connected. {SETUP[platform]}")
     cf = client_factory or _default_client
     if platform == "stripe":
-        return await _stripe(action, args, env=env, mission_id=mission_id, cf=cf)
+        return await _stripe(action, args, env=env, mission_id=mission_id, cf=cf, store=store)
     if platform == "etsy":
         return await _etsy(action, args, store=store, user_id=user_id, env=env, cf=cf)
     if platform == "marnyx":
@@ -326,7 +353,14 @@ async def run(platform: str, action: str, args: Dict[str, Any], *, store, user_i
     raise ConnectionError_(f"{LABELS.get(platform, platform)} is not built yet.")
 
 
-async def _stripe(action: str, args: Dict[str, Any], *, env, mission_id: str, cf: ClientFactory) -> str:
+async def _check_outbox(store, mission_id: str, files: List[str]) -> None:
+    have = {o["name"] for o in await store.list_outputs(mission_id)} if store is not None and mission_id else set()
+    missing = [f for f in files if f not in have]
+    if missing:
+        raise ConnectionError_(f"These files are not in this mission's outbox: {', '.join(missing)}. Outbox: {', '.join(sorted(have)) or 'empty'}.")
+
+
+async def _stripe(action: str, args: Dict[str, Any], *, env, mission_id: str, cf: ClientFactory, store=None) -> str:
     key = (_env(env).get("STRIPE_SECRET_KEY") or "").strip()
     auth = {"Authorization": f"Bearer {key}"}
     async with cf() as c:
@@ -370,9 +404,22 @@ async def _stripe(action: str, args: Dict[str, Any], *, env, mission_id: str, cf
             pid = _clip(args.get("price_id"), 80)
             if not pid.startswith("price_"):
                 raise ConnectionError_("price_id must be a Stripe price id (price_...).")
+            files = _deliver_files(args, required=False)
+            if files:
+                await _check_outbox(store, mission_id, files)
             form = {"line_items[0][price]": pid, "line_items[0][quantity]": "1", "metadata[app]": "crew", "metadata[mission]": mission_id}
+            if files:
+                form.update(_delivery_form(files, mission_id))
             body = _ok(await c.post(f"{STRIPE_API}/payment_links", headers=auth, data=form), "Stripe")
-            return f'Stripe payment link created: {body.get("url")}'
+            return f'Stripe payment link created: {body.get("url")} ({body.get("id")})' + (f"; buyers get {len(files)} file(s) automatically." if files else ".")
+        if action == "set_delivery":
+            lid = _clip(args.get("payment_link_id"), 80)
+            if not lid.startswith("plink_"):
+                raise ConnectionError_("payment_link_id must be a Stripe payment link id (plink_...).")
+            files = _deliver_files(args)
+            await _check_outbox(store, mission_id, files)
+            body = _ok(await c.post(f"{STRIPE_API}/payment_links/{lid}", headers=auth, data=_delivery_form(files, mission_id)), "Stripe")
+            return f'Automatic delivery is on for {body.get("url")}: buyers get {", ".join(files)} right after paying.'
     raise ConnectionError_("Unsupported Stripe action.")
 
 

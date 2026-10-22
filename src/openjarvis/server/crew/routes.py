@@ -106,6 +106,82 @@ async def crew_bots():
     return FileResponse(_BOTS, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
 
 
+# ── automatic delivery of digital products sold with a crew payment link (public: the buyer has no account) ──
+
+async def _paid_delivery(request: Request, session_id: str):
+    """-> (mission_id, [file names], buyer email) for a paid Checkout Session of a crew payment link with delivery on, else None."""
+    import re as _re
+
+    import httpx
+
+    if not _re.fullmatch(r"cs_(live|test)_[A-Za-z0-9]{10,200}", session_id or ""):
+        return None
+    key = (os.environ.get("STRIPE_SECRET_KEY") or "").strip()
+    engine = getattr(request.app.state, "crew_engine", None)
+    if not key or engine is None:
+        return None
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.get(f"https://api.stripe.com/v1/checkout/sessions/{session_id}", auth=(key, ""))
+        if r.status_code != 200:
+            return None
+        sess = r.json()
+        if sess.get("payment_status") not in ("paid", "no_payment_required") or not sess.get("payment_link"):
+            return None
+        r = await c.get(f"https://api.stripe.com/v1/payment_links/{sess['payment_link']}", auth=(key, ""))
+        if r.status_code != 200:
+            return None
+        meta = r.json().get("metadata") or {}
+    files = [f for f in str(meta.get("deliver_files") or "").split(",") if f]
+    if meta.get("app") != "crew" or not meta.get("mission") or not files:
+        return None
+    return meta["mission"], files, ((sess.get("customer_details") or {}).get("email") or "")
+
+
+def _delivered_name(name: str, content: str) -> str:
+    # a crew "pdf" that is really text is delivered as .txt, so it opens instead of looking broken
+    return name[:-4] + ".txt" if name.lower().endswith(".pdf") and not content.startswith("%PDF") else name
+
+
+@router.get("/deliver")
+async def deliver_page(request: Request, session_id: str = ""):
+    got = await _paid_delivery(request, session_id)
+    if not got:
+        return HTMLResponse("<h2 style='font-family:sans-serif'>We could not find a paid order for this link.</h2>"
+                            "<p style='font-family:sans-serif'>If you just paid, refresh in a few seconds. Still stuck? Reply to your Stripe receipt email.</p>",
+                            status_code=404)
+    mission, files, _ = got
+    engine = request.app.state.crew_engine
+    outs = {o["name"]: o for o in await engine.store.list_outputs(mission)}
+    rows = []
+    for f in files:
+        if f in outs:
+            full = await engine.store.get_output(outs[f]["id"])
+            rows.append(f'<li><a href="/deliver/file?session_id={html.escape(session_id)}&amp;name={html.escape(f)}">'
+                        f'{html.escape(_delivered_name(f, (full or {}).get("content") or ""))}</a></li>')
+    page = ("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>Your download</title><style>body{font-family:system-ui,sans-serif;max-width:640px;margin:40px auto;padding:0 16px;line-height:1.6}"
+            "a{color:#0a66c2}</style></head><body><h1>Thank you for your purchase</h1><p>Your files are ready. Save them now; this page "
+            "stays available from your receipt link.</p><ul>" + "".join(rows) + "</ul></body></html>")
+    return HTMLResponse(page)
+
+
+@router.get("/deliver/file")
+async def deliver_file(request: Request, session_id: str = "", name: str = ""):
+    got = await _paid_delivery(request, session_id)
+    if not got or name not in got[1]:
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+    engine = request.app.state.crew_engine
+    out = next((o for o in await engine.store.list_outputs(got[0]) if o["name"] == name), None)
+    full = await engine.store.get_output(out["id"]) if out else None
+    if not full:
+        return JSONResponse({"detail": "That file is no longer available."}, status_code=404)
+    content = full.get("content") or ""
+    fname = _delivered_name(name, content)
+    kind = "text/markdown" if fname.endswith(".md") else "text/csv" if fname.endswith(".csv") else "text/plain"
+    return Response(content=content.encode("utf-8"), media_type=kind + "; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{fname.replace(chr(34), "")}"', "Cache-Control": "private, no-store"})
+
+
 _PLAN_CACHE: dict = {}
 
 
