@@ -176,6 +176,8 @@ class CrewEngine:
         self._loop: Optional[asyncio.Task] = None
         self._cap_noted: set = set()
         self._ticks = 0
+        self.products: Dict[str, Dict[str, Any]] = {}
+        self._product_task: Optional[asyncio.Task] = None
 
     # ── lifecycle ────────────────────────────────────────────────────────────────────────────────
 
@@ -185,6 +187,7 @@ class CrewEngine:
         if n:
             logger.info("crew: %d interrupted task(s) queued again", n)
         self._loop = asyncio.create_task(self._forever())
+        self._refresh_products_soon()
 
     async def stop(self) -> None:
         for t in [self._loop, *self.running.values(), *self._plans.values()]:
@@ -227,6 +230,7 @@ class CrewEngine:
         """Start as many runnable tasks as there are free slots. Returns how many were started."""
         self._ticks += 1
         if self._ticks % 30 == 0:
+            self._refresh_products_soon()
             await self.store.requeue_stale(STALE_RUNNING_S)
         self.running = {k: v for k, v in self.running.items() if not v.done()}
         free = max_concurrent(self.env) - len(self.running)
@@ -282,6 +286,51 @@ class CrewEngine:
         except (TypeError, ValueError):
             return default_mission_budget(self.env)
         return round(min(max(b, 0.05), max_mission_budget(self.env)), 2)
+
+    # ── are the products themselves up? (a plain GET of each live site; the Station shows LIVE or DOWN) ─────────
+
+    def product_urls(self) -> Dict[str, str]:
+        """CREW_PRODUCT_URLS as 'key=url,key=url'. Unset in production: the known live sites. Unset in tests: none."""
+        import os
+
+        env = os.environ if self.env is None else self.env
+        raw = env.get("CREW_PRODUCT_URLS")
+        if raw is None:
+            if self.env is not None:
+                return {}
+            raw = "flipdeck=https://flipdeckcards.com,marnyx=https://marnyx.onrender.com,deadzone=https://cybervoid-6tbo.onrender.com"
+        out = {}
+        for part in str(raw).split(","):
+            k, _, v = part.partition("=")
+            if k.strip() and v.strip().startswith("https://"):
+                out[k.strip().lower()] = v.strip()
+        return out
+
+    def _refresh_products_soon(self) -> None:
+        if self._product_task is None or self._product_task.done():
+            self._product_task = asyncio.create_task(self.refresh_products())
+
+    async def refresh_products(self) -> Dict[str, Dict[str, Any]]:
+        import httpx
+
+        urls = self.product_urls()
+        if not urls:
+            return self.products
+        cf = self.client_factory or (lambda: httpx.AsyncClient(timeout=10, follow_redirects=True))
+
+        async def one(key: str, url: str) -> None:
+            live, code = False, None
+            try:
+                async with cf() as c:
+                    r = await c.get(url)
+                code = r.status_code
+                live = code < 500
+            except Exception:
+                live = False
+            self.products[key] = {"url": url, "live": live, "status": code, "checked_at": self.now().isoformat()}
+
+        await asyncio.gather(*(one(k, u) for k, u in urls.items()), return_exceptions=True)
+        return self.products
 
     async def start_mission(self, user_id: str, goal: str, budget: Any = None, *, background: bool = True) -> Dict[str, Any]:
         goal = str(goal or "").strip()[:4000]
@@ -744,6 +793,7 @@ class CrewEngine:
                           "cannot": "Approve checkpoints for you or spend past your limits", "working": len(self._plans), "waiting": 0, "done": 0})
         return {
             "roster": roster,
+            "products": self.products,
             "missions": out,
             "questions": await self.store.list_questions(user_id, "open"),
             "events": await self.store.list_events(user_id, limit=60),

@@ -383,10 +383,10 @@ const PRODUCTS = [
   { key: 'deadzone', label: 'DEADZONE', color: '#ff3344' },
 ];
 const PLATFORMS = [
-  { key: 'stripe', label: 'STRIPE', short: 'STRIPE', color: '#8a7dff' },
-  { key: 'etsy', label: 'ETSY', short: 'ETSY', color: '#f1641e' },
-  { key: 'google_play', label: 'GOOGLE PLAY', short: 'PLAY', color: '#34d17a' },
-  { key: 'app_store', label: 'APP STORE', short: 'APPLE', color: '#2f9bff' },
+  { key: 'stripe', full: 'STRIPE', short: 'STRIPE', brand: '#8a7dff' },
+  { key: 'etsy', full: 'ETSY', short: 'ETSY', brand: '#f1641e' },
+  { key: 'google_play', full: 'GOOGLE PLAY', short: 'PLAY', brand: '#34d17a' },
+  { key: 'app_store', full: 'APP STORE', short: 'APPLE', brand: '#2f9bff' },
 ];
 const WORKING = ['active', 'planning', 'paused', 'stalled'];
 
@@ -420,6 +420,13 @@ function fillBay(b) {
   b.title = current.length ? (current[0].title || current[0].goal) : '';
   b.state = b.tasks.some(t => t.status === 'waiting') ? 'NEEDS YOU' : b.tasks.some(t => t.status === 'running') ? 'WORKING'
     : b.planning ? 'PLANNING' : current.length ? 'QUEUED' : b.missions.length ? 'DONE' : 'IDLE';
+  // the product itself: LIVE or DOWN from the server's check of its site, shown whenever no crew is working there
+  const site = S && S.products ? S.products[b.key] : null;
+  if (site && (b.state === 'IDLE' || b.state === 'DONE')) {
+    b.state = site.live ? 'LIVE' : 'DOWN';
+    b.powered = !!site.live;
+    b.idleText = site.live ? 'SITE LIVE · CREW STANDING BY' : 'SITE NOT ANSWERING';
+  }
   return b;
 }
 
@@ -491,41 +498,51 @@ function edgePoints(m) {
   return { sx: core.x + ux * (core.r + 2), sy: core.y + uy * (core.r + 2), ex: m.cx - ux * k, ey: m.cy - uy * k, ux, uy };
 }
 
-// a docking tube: dark hull, two lit rails, ribs, collars at both ends, and energy pulses when work is flowing
-function drawTube(m, color, live, t, width) {
-  const { sx, sy, ex, ey, ux, uy } = edgePoints(m);
-  const len = Math.hypot(ex - sx, ey - sy); if (len < 4) return;
-  const nx = -uy, ny = ux, hw = width / 2;
-  ctx.lineCap = 'butt';
-  ctx.strokeStyle = 'rgba(0,0,0,0.55)'; ctx.lineWidth = width + 8; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
-  const g = ctx.createLinearGradient(sx + nx * hw, sy + ny * hw, sx - nx * hw, sy - ny * hw);
-  g.addColorStop(0, '#1d3446'); g.addColorStop(0.5, '#0b1722'); g.addColorStop(1, '#16293a');
-  ctx.strokeStyle = g; ctx.lineWidth = width; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
-  // ribs
-  ctx.strokeStyle = 'rgba(120,170,200,0.16)'; ctx.lineWidth = 1.5;
-  for (let d = 8; d < len - 4; d += 9) {
-    const px = sx + ux * d, py = sy + uy * d;
+// a hallway: a floor with walls on both sides, opening through a doorway into the room at one end and into Helix's core at the other
+function drawHall(m, color, live, t, width) {
+  const { ex, ey, ux, uy } = edgePoints(m);
+  const ring = Math.max(6, core.r * 0.14);
+  const sx = core.x + ux * (core.r - ring * 0.5), sy = core.y + uy * (core.r - ring * 0.5);      // starts inside the core's ring
+  const ix = ex + ux * 12, iy = ey + uy * 12;                                                     // ends just inside the room
+  const len = Math.hypot(ix - sx, iy - sy); if (len < 6) return;
+  const nx = -uy, ny = ux, hw = width / 2, wall = Math.max(3, width * 0.18);
+  const quad = (o1, o2) => { ctx.beginPath(); ctx.moveTo(sx + nx * o1, sy + ny * o1); ctx.lineTo(ix + nx * o1, iy + ny * o1); ctx.lineTo(ix + nx * o2, iy + ny * o2); ctx.lineTo(sx + nx * o2, sy + ny * o2); ctx.closePath(); };
+  // shadow, walls, floor
+  ctx.fillStyle = 'rgba(0,0,0,0.5)'; quad(hw + wall + 3, -hw - wall - 3); ctx.fill();
+  ctx.fillStyle = '#1c3243'; quad(hw + wall, -hw - wall); ctx.fill();
+  const fg = ctx.createLinearGradient(sx + nx * hw, sy + ny * hw, sx - nx * hw, sy - ny * hw);
+  fg.addColorStop(0, '#0d1a25'); fg.addColorStop(0.5, '#08111a'); fg.addColorStop(1, '#0d1a25');
+  ctx.fillStyle = fg; quad(hw, -hw); ctx.fill();
+  // floor plates and the wall edges
+  ctx.strokeStyle = alpha(color, 0.09); ctx.lineWidth = 1;
+  for (let d = 6; d < len; d += 10) {
+    const px = sx + (ix - sx) * d / len, py = sy + (iy - sy) * d / len;
     ctx.beginPath(); ctx.moveTo(px + nx * hw, py + ny * hw); ctx.lineTo(px - nx * hw, py - ny * hw); ctx.stroke();
   }
-  // rails
-  for (const side of [1, -1]) {
-    ctx.strokeStyle = alpha(color, live ? 0.75 : 0.22); ctx.lineWidth = 1.2;
-    ctx.beginPath(); ctx.moveTo(sx + nx * hw * side, sy + ny * hw * side); ctx.lineTo(ex + nx * hw * side, ey + ny * hw * side); ctx.stroke();
-  }
-  // center power line
-  ctx.strokeStyle = alpha(color, live ? 0.55 : 0.1); ctx.lineWidth = 1; ctx.setLineDash([3, 7]); ctx.lineDashOffset = live ? t * 0.03 : 0;
-  ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke(); ctx.setLineDash([]);
-  if (live) {
-    for (let k = 0; k < 3; k++) {
-      const p = (t * 0.00032 + k / 3) % 1, px = ex + (sx - ex) * p, py = ey + (sy - ey) * p;
-      ctx.fillStyle = alpha(color, 0.95); ctx.shadowColor = color; ctx.shadowBlur = 10; ctx.beginPath(); ctx.arc(px, py, 2.6, 0, 6.29); ctx.fill(); ctx.shadowBlur = 0;
+  ctx.strokeStyle = 'rgba(150,190,210,0.35)'; ctx.lineWidth = 1;
+  for (const o of [hw, -hw, hw + wall, -hw - wall]) { ctx.beginPath(); ctx.moveTo(sx + nx * o, sy + ny * o); ctx.lineTo(ix + nx * o, iy + ny * o); ctx.stroke(); }
+  // wall lights and the guide strip down the middle
+  for (let d = 10; d < len - 6; d += 16) {
+    const px = sx + (ix - sx) * d / len, py = sy + (iy - sy) * d / len;
+    for (const side of [1, -1]) {
+      ctx.fillStyle = alpha(color, live ? 0.5 + 0.4 * Math.sin(t * 0.004 + d) : 0.18);
+      ctx.beginPath(); ctx.arc(px + nx * (hw + wall / 2) * side, py + ny * (hw + wall / 2) * side, 1.3, 0, 6.29); ctx.fill();
     }
   }
-  // collars
-  for (const [cx, cy] of [[sx + ux * 4, sy + uy * 4], [ex - ux * 4, ey - uy * 4]]) {
-    ctx.save(); ctx.translate(cx, cy); ctx.rotate(Math.atan2(uy, ux));
-    ctx.fillStyle = '#2b4458'; rr(-4, -hw - 4, 8, width + 8, 2); ctx.fill();
-    ctx.fillStyle = alpha(color, live ? 0.9 : 0.35); ctx.fillRect(-1, -hw - 2, 2, width + 4);
+  ctx.strokeStyle = alpha(color, live ? 0.45 : 0.12); ctx.lineWidth = 1.2; ctx.setLineDash([5, 7]); ctx.lineDashOffset = live ? t * 0.03 : 0;
+  ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ix, iy); ctx.stroke(); ctx.setLineDash([]);
+  if (live) {
+    for (let k = 0; k < 2; k++) {
+      const p = (t * 0.00028 + k / 2) % 1, px = ix + (sx - ix) * p, py = iy + (sy - iy) * p;
+      ctx.fillStyle = alpha(color, 0.9); ctx.shadowColor = color; ctx.shadowBlur = 10; ctx.beginPath(); ctx.arc(px, py, 2.4, 0, 6.29); ctx.fill(); ctx.shadowBlur = 0;
+    }
+  }
+  // doorways: a frame where the hall meets the room's wall and where it meets the core
+  for (const [dx, dy, lit] of [[ex, ey, live], [core.x + ux * core.r, core.y + uy * core.r, live]]) {
+    ctx.save(); ctx.translate(dx, dy); ctx.rotate(Math.atan2(uy, ux));
+    ctx.fillStyle = '#2d4a60'; ctx.fillRect(-4, -hw - wall - 2, 8, wall + 2); ctx.fillRect(-4, hw, 8, wall + 2);        // door posts
+    ctx.fillStyle = 'rgba(150,190,210,0.5)'; ctx.fillRect(-4, -hw - wall - 2, 1, wall + 2); ctx.fillRect(-4, hw, 1, wall + 2);
+    ctx.fillStyle = alpha(color, lit ? 0.9 : 0.4); ctx.fillRect(-1, -hw, 2, hw * 2);                                    // lit threshold
     ctx.restore();
   }
 }
@@ -593,14 +610,21 @@ function stepBot(b, tk, desk, dt) {
   }
 }
 
+// a room's name and status, drawn after the hallways so a doorway never hides them
+function drawHeader(m) {
+  const { x, y, w } = m;
+  ctx.font = '9px Share Tech Mono, monospace'; const st = m.state, stW = ctx.measureText(st).width;
+  ctx.font = '700 10px Orbitron, monospace'; const name = fitText((m.isNew ? '◆ ' : '') + m.label, w - stW - 30), nW = ctx.measureText(name).width;
+  ctx.fillStyle = 'rgba(8,14,22,0.92)'; rr(x + 8, y + 4, nW + 8, 14, 2); ctx.fill(); rr(x + w - stW - 14, y + 4, stW + 8, 14, 2); ctx.fill();
+  ctx.textAlign = 'right'; ctx.font = '9px Share Tech Mono, monospace';
+  ctx.fillStyle = st === 'DOWN' ? '#ff3344' : st === 'NEEDS YOU' || st === 'OFFLINE' ? '#ff8a2a' : st === 'WORKING' || st === 'ONLINE' || st === 'LIVE' ? '#00ff99' : 'rgba(142,207,224,0.6)'; ctx.fillText(st, x + w - 10, y + 14);
+  ctx.font = '700 10px Orbitron, monospace'; ctx.textAlign = 'left'; ctx.fillStyle = m.color; ctx.fillText(name, x + 12, y + 14);
+}
+
 function drawFactory(m, t, dt) {
-  const sel = selected === 'f:' + m.key, live = m.tasks.some(k => k.status === 'running');
+  const sel = m.platform ? selected === 'links' : selected === 'f:' + m.key, live = !!m.powered || m.tasks.some(k => k.status === 'running');
   const hh = drawHull(m, m.color, live || m.tasks.length > 0, sel);
   const { x, y, w, h } = m;
-  ctx.font = '9px Share Tech Mono, monospace'; const st = m.state, stW = ctx.measureText(st).width;
-  ctx.textAlign = 'right'; ctx.fillStyle = st === 'NEEDS YOU' ? '#ff8a2a' : st === 'WORKING' ? '#00ff99' : 'rgba(142,207,224,0.6)'; ctx.fillText(st, x + w - 10, y + 14);
-  ctx.font = '700 10px Orbitron, monospace'; ctx.textAlign = 'left'; ctx.fillStyle = m.color;
-  ctx.fillText(fitText((m.isNew ? '◆ ' : '') + m.label, w - stW - 30), x + 12, y + 14);
   const I = interior(m, hh);
   // floor tiles
   ctx.fillStyle = 'rgba(4,8,13,0.85)'; rr(I.x, I.y, I.w, I.h, 4); ctx.fill();
@@ -616,9 +640,9 @@ function drawFactory(m, t, dt) {
     const tk = m.tasks[i];
     const on = tk && tk.status === 'running';
     ctx.fillStyle = '#18303f'; rr(cx - cwid / 2, cy, cwid, 11, 2); ctx.fill();
-    ctx.fillStyle = on ? alpha(ROLE_COLORS[tk.role] || m.color, 0.55 + 0.35 * Math.sin(t * 0.012 + i)) : tk ? 'rgba(60,110,130,0.5)' : 'rgba(40,70,90,0.35)';
+    ctx.fillStyle = on ? alpha(ROLE_COLORS[tk.role] || m.color, 0.55 + 0.35 * Math.sin(t * 0.012 + i)) : (!tk && m.powered) ? alpha(m.color, 0.35 + 0.25 * Math.sin(t * 0.005 + i * 1.7)) : tk ? 'rgba(60,110,130,0.5)' : 'rgba(40,70,90,0.35)';
     ctx.fillRect(cx - cwid / 2 + 2, cy + 2, cwid - 4, 6);
-    ctx.fillStyle = on ? '#00ff99' : 'rgba(255,90,40,0.5)'; ctx.fillRect(cx + cwid / 2 - 4, cy + 9, 2, 1.5);
+    ctx.fillStyle = on || m.powered ? '#00ff99' : 'rgba(255,90,40,0.5)'; ctx.fillRect(cx + cwid / 2 - 4, cy + 9, 2, 1.5);
     desks.push({ fx: (cx - I.x) / I.w, fy: Math.min(0.9, 26 / I.h) });
   }
   // conveyor and crates
@@ -635,7 +659,11 @@ function drawFactory(m, t, dt) {
     ctx.textAlign = 'center'; ctx.fillStyle = alpha('#8ecfe0', 0.5 + 0.4 * Math.sin(t * 0.004)); ctx.font = '10px Share Tech Mono, monospace';
     ctx.fillText(m.isNew ? 'BUILDING NEW FACTORY…' : 'HELIX IS PLANNING…', m.cx, I.y + I.h / 2 + 4); return;
   }
-  if (!m.tasks.length) { ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(142,207,224,0.28)'; ctx.font = '9px Share Tech Mono, monospace'; ctx.fillText('STANDING BY', m.cx, I.y + I.h / 2 + 6); }
+  if (!m.tasks.length) {
+    if (m.state === 'COMING SOON') { ctx.setLineDash([4, 5]); ctx.strokeStyle = 'rgba(142,207,224,0.18)'; rr(I.x + 4, I.y + 18, I.w - 8, I.h - 30, 3); ctx.stroke(); ctx.setLineDash([]); }
+    ctx.textAlign = 'center'; ctx.fillStyle = m.powered ? alpha(m.color, 0.7) : 'rgba(142,207,224,0.3)'; ctx.font = '9px Share Tech Mono, monospace';
+    ctx.fillText(fitText(m.idleText || 'STANDING BY', I.w - 8), m.cx, I.y + I.h / 2 + 6);
+  }
   const sc = Math.max(0.95, Math.min(1.6, I.w / 150));
   m.tasks.forEach((tk, i) => {
     if (tk.status === 'waiting') return;
@@ -647,7 +675,6 @@ function drawFactory(m, t, dt) {
     if (tk.status === 'done') { ctx.strokeStyle = '#00ff99'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(bx - 4, ky); ctx.lineTo(bx - 1, ky + 3); ctx.lineTo(bx + 4, ky - 3); ctx.stroke(); }
     if (tk.status === 'failed') { ctx.strokeStyle = '#ff3344'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(bx - 3, ky - 2); ctx.lineTo(bx + 3, ky + 4); ctx.moveTo(bx + 3, ky - 2); ctx.lineTo(bx - 3, ky + 4); ctx.stroke(); }
   });
-  drawWaiting(m, t);
 }
 
 // a crew member waiting on Michael walks out along the tube and stands at Helix's door with a question
@@ -664,31 +691,13 @@ function drawWaiting(m, t) {
   });
 }
 
-function drawPlatform(p, t) {
-  const sel = selected === 'links';
-  const col = p.connected ? p.color : p.built ? '#ff8a2a' : '#2f4a5a';
-  const hh = drawHull(p, col, p.connected, sel);
-  const { x, y, w, h } = p;
-  ctx.font = '700 9px Orbitron, monospace'; ctx.textAlign = 'left'; ctx.fillStyle = p.connected ? p.color : 'rgba(142,207,224,0.55)';
-  const roomy = w >= 96;
-  ctx.fillText(fitText(roomy ? p.label : p.short, w - (roomy ? 56 : 16)), x + 8, y + 14);
-  const I = interior(p, hh);
-  ctx.fillStyle = 'rgba(4,8,13,0.85)'; rr(I.x, I.y, I.w, I.h + 12, 3); ctx.fill();
-  // server racks with status lights
-  const racks = Math.max(2, Math.min(4, Math.floor(I.w / 22)));
-  for (let r = 0; r < racks; r++) {
-    const rx = I.x + 4 + r * ((I.w - 8) / racks), rw = (I.w - 8) / racks - 4, ry = I.y + 3, rh = I.h + 4;
-    ctx.fillStyle = '#122331'; rr(rx, ry, rw, rh, 2); ctx.fill();
-    for (let l = 0; l < Math.floor(rh / 6); l++) {
-      const on = p.connected ? Math.sin(t * 0.006 * (1 + (r + l) % 3) + r * 7 + l * 3) > -0.2 : (l === 0 && r === 0 && p.built && Math.sin(t * 0.004) > 0);
-      ctx.fillStyle = on ? alpha(p.connected ? (l % 4 === 0 ? '#00ff99' : p.color) : '#ff3344', 0.9) : 'rgba(60,90,110,0.35)';
-      ctx.fillRect(rx + 3, ry + 3 + l * 6, Math.max(2, rw - 6) * (on ? 0.35 : 0.2), 2);
-    }
-  }
-  if (!roomy) return;
-  ctx.font = '8px Share Tech Mono, monospace'; ctx.textAlign = 'right';
-  ctx.fillStyle = p.connected ? '#00ff99' : p.built ? '#ff8a2a' : 'rgba(142,207,224,0.4)';
-  ctx.fillText(p.connected ? 'ONLINE' : p.built ? 'OFFLINE' : 'SOON', x + w - 10, y + 14);
+function drawPlatform(p, t, dt) {
+  // a platform is a factory of its own: powered and working when connected, dark when not
+  p.tasks = []; p.powered = p.connected; p.key = p.key || p.label;
+  p.state = p.connected ? 'ONLINE' : p.built ? 'OFFLINE' : 'COMING SOON';
+  p.idleText = p.connected ? 'CONNECTED' : p.built ? 'TAP TO CONNECT' : 'UNDER CONSTRUCTION';
+  p.label = p.w >= 96 ? p.full : p.short;
+  drawFactory(Object.assign(p, { color: p.connected ? p.brand : p.built ? '#ff8a2a' : '#3a5566', platform: true }), t, dt);
 }
 
 function drawDecor(d, t) {
@@ -762,12 +771,20 @@ function drawCore(t) {
     const a = -Math.PI / 2 + (t * 0.00012) * (tk.status === 'running' ? 1 : 0) + i * 0.9;
     drawBot(x + Math.cos(a) * (r - ring / 2), y + Math.sin(a) * (r - ring / 2) + 3, ROLE_COLORS[tk.role] || '#00e5ff', tk.status, t, i * 2.3, 1, 0.9, tk.status === 'running');
   });
-  // labels on plates above and below the core
+  // crew members with no work stand by on Helix's deck, walking the ring until a mission sends them to a factory
+  const free = (S && S.roster ? S.roster : []).filter(a => a.role !== 'lead' && !a.working && !a.waiting);
+  free.forEach((a, i) => {
+    const ang = Math.PI * 0.15 + i * (Math.PI * 1.7 / Math.max(free.length, 1)) + t * 0.00006 * (i % 2 ? 1 : -1);
+    const bx = x + Math.cos(ang) * (r - ring / 2), by = y + Math.sin(ang) * (r - ring / 2) + 3;
+    drawBot(bx, by, ROLE_COLORS[a.role] || '#00e5ff', 'idle', t, i * 4.1, Math.sin(ang) > 0 ? -1 : 1, Math.max(0.8, Math.min(1.1, r / 90)), true);
+  });
+}
+
+// Helix's name plate and the open-items badge go on top of everything
+function drawCoreLabels(t) {
+  const { x, y, r } = core, open = S ? S.questions.length : 0;
+  // Helix's name plate below the core
   ctx.textAlign = 'center';
-  ctx.font = '700 ' + Math.max(9, r * 0.13) + 'px Orbitron, monospace';
-  const lw = ctx.measureText('AIBUSSOL').width + 20;
-  ctx.fillStyle = 'rgba(5,10,18,0.9)'; rr(x - lw / 2, y - r - 13, lw, 16, 3); ctx.fill(); ctx.strokeStyle = 'rgba(0,229,255,0.5)'; ctx.lineWidth = 1; rr(x - lw / 2, y - r - 13, lw, 16, 3); ctx.stroke();
-  ctx.fillStyle = '#00e5ff'; ctx.fillText('AIBUSSOL', x, y - r - 1);
   ctx.font = '700 ' + Math.max(9, r * 0.12) + 'px Orbitron, monospace';
   const hw2 = ctx.measureText('HELIX').width + 18;
   ctx.fillStyle = 'rgba(5,10,18,0.9)'; rr(x - hw2 / 2, y + r - 4, hw2, 15, 3); ctx.fill(); ctx.strokeStyle = 'rgba(255,109,0,0.6)'; rr(x - hw2 / 2, y + r - 4, hw2, 15, 3); ctx.stroke();
@@ -785,11 +802,15 @@ function frame(t) {
   ctx.clearRect(0, 0, W, H);
   drawSky(t);
   decor.forEach(d => drawDecor(d, t));
-  bays.forEach(b => drawTube(b, b.color, b.tasks.some(k => k.status === 'running'), t, Math.max(12, Math.min(20, core.r * 0.22))));
-  plats.forEach(p => drawTube(p, p.connected ? p.color : '#2f4a5a', p.connected, t, Math.max(9, Math.min(14, core.r * 0.15))));
   bays.forEach(b => drawFactory(b, t, dt));
-  plats.forEach(p => drawPlatform(p, t));
+  plats.forEach(p => drawPlatform(p, t, dt));
   drawCore(t);
+  // hallways go on top of the room walls, so each one opens through a doorway into its room
+  bays.forEach(b => drawHall(b, b.color, b.tasks.some(k => k.status === 'running'), t, Math.max(14, Math.min(24, core.r * 0.24))));
+  plats.forEach(p => drawHall(p, p.color, !!p.connected, t, Math.max(11, Math.min(18, core.r * 0.18))));
+  bays.forEach(b => drawWaiting(b, t));
+  bays.forEach(drawHeader); plats.forEach(drawHeader);
+  drawCoreLabels(t);
   for (const [id, b] of bots) if (t - b.seen > 5000) bots.delete(id);       // crew members whose tasks are gone
 }
 
