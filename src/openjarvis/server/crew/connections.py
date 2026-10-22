@@ -556,6 +556,18 @@ async def _etsy_access(store, user_id: str, env, c: httpx.AsyncClient) -> str:
     return body["access_token"]
 
 
+async def _find_output(store, user_id: str, mission_id: str, fname: str) -> Optional[Dict[str, Any]]:
+    """The file by name: this mission's outbox first, then the owner's other missions (each product is often made in its own mission)."""
+    if store is None or not fname:
+        return None
+    ids = ([mission_id] if mission_id else []) + [m["id"] for m in await store.list_missions(user_id, limit=50) if m["id"] != mission_id]
+    for mid in ids:
+        hit = next((o for o in await store.list_outputs(mid) if o["name"] == fname), None)
+        if hit:
+            return await store.get_output(hit["id"])
+    return None
+
+
 def _listing_ids(args: Dict[str, Any]) -> List[int]:
     raw = args.get("listing_ids") if isinstance(args.get("listing_ids"), list) else str(args.get("listing_ids") or "").split(",")
     ids = [int(str(x).strip()) for x in raw if str(x).strip().isdigit()]
@@ -636,10 +648,9 @@ async def _etsy(action: str, args: Dict[str, Any], *, store, user_id: str, env, 
             return f"Photo added to Etsy draft {lid} (image {b.get('listing_image_id')})."
         if action == "add_listing_file":
             lid, fname = _listing_id(args), _clip(args.get("file"), 120)
-            out = next((o for o in await store.list_outputs(mission_id) if o["name"] == fname), None) if store is not None and mission_id else None
-            full = await store.get_output(out["id"]) if out else None
+            full = await _find_output(store, user_id, mission_id, fname)
             if not full:
-                raise ConnectionError_(f"{fname or 'That file'} is not in this mission's outbox.")
+                raise ConnectionError_(f"{fname or 'That file'} is not in any of your missions' outboxes. Check the file name.")
             shown = re.sub(r"[^A-Za-z0-9 ._-]", "", _clip(args.get("name"), 60)) or re.sub(r"\.(md|txt)$", "", fname) + ".pdf"
             content = full.get("content") or ""
             if content.startswith("%PDF"):

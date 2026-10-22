@@ -1246,3 +1246,14 @@ def test_idle_loop_sleeps_long_and_wakes_on_new_work():
     assert eng._sleep_for() == 600
     eng.poke()
     assert eng._idle_ticks == 0 and eng._wake.is_set() and eng._sleep_for() < 600
+
+
+def test_etsy_file_found_in_another_mission():
+    store = MemoryCrewStore()
+    a = run(store.create_mission(UID, "Launch 3 Etsy", 1.0))
+    b = run(store.create_mission(UID, "Complete FlipDeckStudio", 1.0))
+    run(store.add_output(a["id"], "t1", UID, "reels_pack.md", "# 90 Days of Instagram Reels Ideas\n\n- Day 1\n"))
+    from openjarvis.server.crew.connections import _find_output
+    hit = run(_find_output(store, UID, b["id"], "reels_pack.md"))
+    assert hit and "Reels" in hit["content"]
+    assert run(_find_output(store, UID, b["id"], "missing.md")) is None
