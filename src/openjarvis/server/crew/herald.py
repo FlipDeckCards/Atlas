@@ -145,6 +145,7 @@ class Herald:
                  numbers_fn=None) -> None:
         self.engine = engine
         self.store = brief_store
+        self._made: set = set()
         self.pool = pool
         self.notifier = notifier
         self.env = env
@@ -184,8 +185,12 @@ class Herald:
         p = brief_job.due_period(n)
         if p is None:
             return None
+        key = repr(p)
+        if key in self._made:                       # known made: no database query every tick for the rest of the period
+            return None
         try:
             if await brief_job.already_made(self.store, p, n):
+                self._made.add(key)
                 return None
         except Exception:
             logger.exception("herald: could not check the feed")

@@ -34,11 +34,13 @@ def _hash(token: str) -> str:
 async def pair(store, user_id: str) -> str:
     """A fresh token for this account (any older one stops working). Shown to the owner once."""
     token = f"wb.{user_id}.{secrets.token_urlsafe(32)}"
+    forget_tokens()
     await store.set_secret(user_id, TOKEN_SECRET, _hash(token))
     return token
 
 
 async def unpair(store, user_id: str) -> None:
+    forget_tokens()
     await store.delete_secret(user_id, TOKEN_SECRET)
 
 
@@ -48,10 +50,24 @@ async def verify(store, token: str) -> Optional[str]:
     parts = token.split(".", 2)
     if len(parts) != 3 or parts[0] != "wb" or not parts[1] or len(parts[2]) < 20:
         return None
+    import time as _time
+
+    h = _hash(token)
+    hit = _VERIFIED.get(h)
+    if hit and hit[1] > _time.monotonic():            # the helper polls every ~20 s: don't ask the database each time
+        return hit[0]
     stored = await store.get_secret(parts[1], TOKEN_SECRET)
-    if not stored or not hmac.compare_digest(stored, _hash(token)):
+    if not stored or not hmac.compare_digest(stored, h):
         return None
+    _VERIFIED[h] = (parts[1], _time.monotonic() + 600)
     return parts[1]
+
+
+_VERIFIED: dict = {}                                     # token hash -> (user id, valid until); cleared on unpair
+
+
+def forget_tokens() -> None:
+    _VERIFIED.clear()
 
 
 class Presence:

@@ -43,6 +43,7 @@ def schedule(env=None):
 class WeeklySocial:
     def __init__(self, engine, herald=None, env=None, now=None) -> None:
         self.engine, self.herald, self.env = engine, herald, env
+        self._done = ""
         self.now = now or (lambda: dt.datetime.now(dt.timezone.utc))
 
     async def maybe_run(self) -> Optional[str]:
@@ -60,7 +61,10 @@ class WeeklySocial:
         week = (la + dt.timedelta(days=7 - la.weekday())).date() if la.weekday() >= 4 else (la - dt.timedelta(days=la.weekday())).date()
         mark = f"weekly_social:{week.isoformat()}"
         store = self.engine.store
+        if mark == self._done:                      # known started: no database query every tick for the rest of the week
+            return None
         if await store.get_secret(uid, mark):
+            self._done = mark
             return None
         from openjarvis.server.crew import connections as conns
 

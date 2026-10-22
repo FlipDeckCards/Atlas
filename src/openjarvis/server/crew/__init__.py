@@ -18,6 +18,7 @@ Settings (environment):
   CREW_MAX_CONCURRENT          tasks running at the same time (default 3)
   CREW_MAX_TASKS               most tasks the planner may create for one mission (default 8)
   CREW_TICK_SECONDS            how often the engine looks for work (default 10)
+  CREW_IDLE_TICK_SECONDS       how long it sleeps when there is no work at all (default 600; new work wakes it at once)
   CREW_QUIET_HOURS             Los Angeles hours when no new work starts unless Night Shift is on (default "22-6")
   CREW_NOTIFY_URL              optional push URL (an ntfy.sh topic URL works): each notice is POSTed as plain text
 """
@@ -83,6 +84,11 @@ def max_tasks(env=None) -> int:
 
 def tick_seconds(env=None) -> float:
     return _float(env, "CREW_TICK_SECONDS", 10.0, lo=2.0)
+
+
+def idle_tick_seconds(env=None) -> float:
+    """How long the loop sleeps when there is no work at all (longer than Neon's 5-minute suspend delay, so the database can sleep)."""
+    return _float(env, "CREW_IDLE_TICK_SECONDS", 600.0, lo=5.0)
 
 
 def quiet_hours(env=None) -> Optional[tuple]:

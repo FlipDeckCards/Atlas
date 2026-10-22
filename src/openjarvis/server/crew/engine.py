@@ -28,6 +28,7 @@ from openjarvis.server.crew import connections as conns
 from openjarvis.server.crew import (
     daily_cap_usd,
     default_mission_budget,
+    idle_tick_seconds,
     max_concurrent,
     max_mission_budget,
     max_tasks,
@@ -397,6 +398,10 @@ class CrewEngine:
         self.pool = None                                    # the app's database pool (subscriptions, for usage billing)
         self._biz_health: Dict[str, Any] = {}              # a subscriber's site checks: uid -> (checked monotonic, results)
         self._usage_tasks: Dict[str, asyncio.Task] = {}
+        # idle mode: with no work anywhere the loop sleeps long so the database (Neon) can suspend; any new work pokes it awake
+        self._wake = asyncio.Event()
+        self._idle_ticks = 0
+        self._wb_empty_until: Dict[str, float] = {}       # uid -> monotonic time until which the PC queue is known empty
 
     # ── lifecycle ────────────────────────────────────────────────────────────────────────────────
 
@@ -413,15 +418,32 @@ class CrewEngine:
             if t:
                 t.cancel()
 
+    def poke(self) -> None:
+        """New work may exist: wake the loop now and forget the 'PC queue is empty' notes."""
+        self._idle_ticks = 0
+        self._wb_empty_until.clear()
+        self._wake.set()
+
+    def _sleep_for(self) -> float:
+        busy = bool(self.running) or any(not t.done() for t in self._plans.values())
+        if busy or self._idle_ticks < 3:
+            return tick_seconds(self.env)
+        return idle_tick_seconds(self.env)
+
     async def _forever(self) -> None:
         while True:
             try:
-                await self.tick()
+                started = await self.tick()
+                self._idle_ticks = 0 if (started or self.running) else self._idle_ticks + 1
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("crew tick failed")
-            await asyncio.sleep(tick_seconds(self.env))
+            self._wake.clear()
+            try:
+                await asyncio.wait_for(self._wake.wait(), timeout=self._sleep_for())
+            except asyncio.TimeoutError:
+                pass
 
     def _day(self) -> str:
         return self.now().strftime("%Y-%m-%d")
@@ -767,6 +789,7 @@ class CrewEngine:
             for t in plan["tasks"]:
                 t["budget_usd"] = per
             await self.store.create_tasks(mission_id, uid, plan["tasks"])
+            self.poke()
             if re.search(r"\betsy\b", m["goal"], re.I) and str(plan["project"]).strip().lower() in ("", "new", "aibussol"):
                 plan["project"] = "Etsy"                              # Etsy work lives in the Etsy factory, not a new one
             await self.store.update_mission(mission_id, status="active", title=plan["title"] or _clip(m["goal"], 60), project=plan["project"])
@@ -795,6 +818,7 @@ class CrewEngine:
         return await self.store.get_mission(mission_id)
 
     async def resume_mission(self, user_id: str, mission_id: str) -> Dict[str, Any]:
+        self.poke()                                         # the loop goes back to quick ticks
         m = await self._owned_mission(user_id, mission_id)
         if m["status"] in ("paused", "stalled"):
             tasks = await self.store.list_tasks(mission_id)
@@ -902,6 +926,12 @@ class CrewEngine:
     # ── running a task ───────────────────────────────────────────────────────────────────────────
 
     async def _run_guarded(self, task: Dict[str, Any]) -> None:
+        try:
+            await self._run_guarded_inner(task)
+        finally:
+            self.poke()                                     # follow-up tasks may be runnable now
+
+    async def _run_guarded_inner(self, task: Dict[str, Any]) -> None:
         try:
             await self.run_task(task)
         except asyncio.CancelledError:
@@ -1108,11 +1138,19 @@ class CrewEngine:
     # ── Rig: jobs that run on Michael's PC through the Workbench helper (crew/workbench.py) ──────────────────
 
     async def workbench_next(self, user_id: str) -> Optional[Dict[str, Any]]:
+        import time as _time
+
         from openjarvis.server.crew.workbench import job_for
 
+        if self._wb_empty_until.get(user_id, 0) > _time.monotonic():
+            return None                                     # nothing queued for the PC; skip the database until something is
         if await self.may_run(user_id) == "paused":
             return None
-        for t in await self.store.queued_candidates():
+        cands = await self.store.queued_candidates()
+        if not any(t["role"] == "workbench" and t["user_id"] == user_id for t in cands):
+            self._wb_empty_until[user_id] = _time.monotonic() + idle_tick_seconds(self.env)
+            return None
+        for t in cands:
             if t["role"] != "workbench" or t["user_id"] != user_id:
                 continue
             claimed = await self.store.claim(t["id"])
@@ -1145,6 +1183,7 @@ class CrewEngine:
         await self.store.add_event(user_id, "step", f'"{t["title"]}" on your PC: {_clip(note, 160)}', mission_id=t["mission_id"], task_id=t["id"])
 
     async def workbench_done(self, user_id: str, task_id: str, ok: bool, summary: str, minutes: int = 0) -> None:
+        self.poke()                                         # the loop goes back to quick ticks
         t = await self._own_running_pc_task(user_id, task_id)
         summary = str(summary or "").strip()[:20000] or ("Finished." if ok else "It did not finish.")
         slug = re.sub(r"[^a-z0-9]+", "-", t["title"].lower()).strip("-")[:40] or "job"
@@ -1481,6 +1520,7 @@ class CrewEngine:
 
     async def answer(self, user_id: str, question_id: str, *, answer: str = "", approve: Optional[bool] = None) -> Dict[str, Any]:
         """The owner's reply to a question, checkpoint or budget request. Each can be answered once."""
+        self.poke()                                         # the loop goes back to quick ticks
         q = await self.store.get_question(question_id)
         if not q or q["user_id"] != user_id:
             raise LookupError("No such question.")

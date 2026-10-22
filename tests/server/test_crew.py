@@ -1237,3 +1237,12 @@ def test_etsy_finds_a_shop_opened_after_connecting():
         raise AssertionError("no shop should refuse")
     except conns.ConnectionError_ as exc:
         assert "etsy.com/sell" in str(exc)
+
+
+def test_idle_loop_sleeps_long_and_wakes_on_new_work():
+    w = world(two_task_plan(), {}, env={"CREW_IDLE_TICK_SECONDS": "600"})
+    eng = w["engine"] if isinstance(w, dict) else w.engine
+    eng._idle_ticks = 5
+    assert eng._sleep_for() == 600
+    eng.poke()
+    assert eng._idle_ticks == 0 and eng._wake.is_set() and eng._sleep_for() < 600
