@@ -674,10 +674,14 @@ function drawModule(m, t, dt) {
   }
   if (m.state === 'COMING SOON') { ctx.setLineDash([4, 5]); ctx.strokeStyle = 'rgba(142,207,224,0.2)'; rr(I.x + 16 * SC, I.y + 18 * SC, I.w - 32 * SC, I.h - 26 * SC, 3); ctx.stroke(); ctx.setLineDash([]); }
   // the doorway in the wall facing Helix, where the tube docks
-  const hw = hallW() / 2;
-  ctx.fillStyle = '#08111a'; ctx.fillRect(-hw, y0 + h - 6 * SC, hw * 2, 6 * SC);
-  ctx.fillStyle = '#2d4a60'; ctx.fillRect(-hw - 6 * SC, y0 + h - 7 * SC, 6 * SC, 9 * SC); ctx.fillRect(hw, y0 + h - 7 * SC, 6 * SC, 9 * SC);
-  ctx.fillStyle = alpha(col, live ? 0.95 : 0.4); ctx.fillRect(-hw, y0 + h - 2, hw * 2, 2);
+  // an open gap in the wall: the tube's floor runs straight into the room, with a door post on each side
+  const hw = hallW() / 2, wallW = 4 * SC, dTop = y0 + h - 9 * SC, dBot = y0 + h + 3 * SC + 1;
+  const dg = ctx.createLinearGradient(-hw - wallW, 0, hw + wallW, 0);
+  dg.addColorStop(0, '#162a3a'); dg.addColorStop(0.2, '#0a141e'); dg.addColorStop(0.8, '#0a141e'); dg.addColorStop(1, '#162a3a');
+  ctx.fillStyle = dg; ctx.fillRect(-hw - wallW, dTop, (hw + wallW) * 2, dBot - dTop);
+  ctx.strokeStyle = alpha(col, live ? 0.8 : 0.25); ctx.lineWidth = 1.2;
+  for (const o of [hw, -hw]) { ctx.beginPath(); ctx.moveTo(o, dTop); ctx.lineTo(o, dBot); ctx.stroke(); }       // the tube's lit rails carry on inside
+  ctx.fillStyle = '#2d4a60'; ctx.fillRect(-hw - wallW - 4 * SC, dTop, 4 * SC, dBot - dTop); ctx.fillRect(hw + wallW, dTop, 4 * SC, dBot - dTop);
   ctx.restore();
   m.I = I; m.desks = desks;
   // crew members, drawn upright wherever they are on the floor
@@ -727,20 +731,6 @@ function drawPlate(m, t) {
   ctx.font = fs2 + 'px Share Tech Mono, monospace';
   ctx.fillStyle = st === 'DOWN' ? '#ff3344' : st === 'NEEDS YOU' || st === 'OFFLINE' ? '#ff8a2a' : st === 'WORKING' || st === 'ONLINE' || st === 'LIVE' ? '#00ff99' : 'rgba(142,207,224,0.65)';
   ctx.fillText(st, ox, y + 7 * SC + fs + fs2);
-  // the line in the middle of the room, upright
-  let mid = '';
-  if (m.planning && !m.tasks.length) mid = m.isNew ? 'BUILDING NEW FACTORY…' : 'HELIX IS PLANNING…';
-  else if (!m.tasks.length) mid = m.idleText || 'STANDING BY';
-  if (mid) {
-    const [cx, cy] = toWorld(m, 0, 6 * SC);
-    ctx.font = Math.max(7, 9 * SC) + 'px Share Tech Mono, monospace';
-    const span = Math.abs(m.uy) > 0.9 ? m.w * 0.85 : Math.abs(m.ux) > 0.9 ? m.h * 0.85 : Math.min(m.w, m.h) * 0.95;
-    const txt = fitText(mid, span), tw = ctx.measureText(txt).width;
-    ctx.fillStyle = 'rgba(4,8,13,0.75)'; rr(cx - tw / 2 - 5, cy - fs2, tw + 10, fs2 + 6, 2); ctx.fill();
-    ctx.fillStyle = m.expansion ? alpha(m.color, 0.6) : m.powered ? alpha(m.color, 0.85) : m.tasks.length ? 'rgba(142,207,224,0.8)' : 'rgba(142,207,224,0.4)';
-    if (m.planning && !m.tasks.length) ctx.globalAlpha = 0.55 + 0.4 * Math.sin(t * 0.004);
-    ctx.fillText(txt, cx, cy + 2); ctx.globalAlpha = 1;
-  }
 }
 
 function drawCore(t) {
@@ -782,11 +772,8 @@ function drawCore(t) {
     const dir = i % 2 ? 1 : -1, ang = -Math.PI / 2 + i * (Math.PI * 2 / Math.max(onDeck.length, 1)) + t * 0.00007 * dir;
     drawBot(x + Math.cos(ang) * track, y + Math.sin(ang) * track + 3, ROLE_COLORS[a.role] || '#00e5ff', a.status, t, i * 4.1, -Math.sin(ang) * dir > 0 ? 1 : -1, sc, true);
   });
-  // name plate inside the bottom of the core, and the open-items badge
-  ctx.textAlign = 'center'; ctx.font = '700 ' + Math.max(9, 12 * SC) + 'px Orbitron, monospace';
-  const hw2 = ctx.measureText('HELIX').width + 16, py = y + ir * 0.62;
-  ctx.fillStyle = 'rgba(5,10,18,0.85)'; rr(x - hw2 / 2, py - 11 * SC, hw2, 15 * SC + 2, 3); ctx.fill(); ctx.strokeStyle = 'rgba(255,109,0,0.6)'; ctx.lineWidth = 1; rr(x - hw2 / 2, py - 11 * SC, hw2, 15 * SC + 2, 3); ctx.stroke();
-  ctx.fillStyle = '#ff8a2a'; ctx.fillText('HELIX', x, py + 1);
+  // the open-items badge (no name plate: the portrait is Helix)
+  ctx.textAlign = 'center';
   if (open) {
     ctx.fillStyle = '#ff8a2a'; ctx.shadowColor = '#ff8a2a'; ctx.shadowBlur = 10; ctx.beginPath(); ctx.arc(x + r * 0.62, y - r * 0.62, 11, 0, 6.29); ctx.fill(); ctx.shadowBlur = 0;
     ctx.fillStyle = '#050508'; ctx.font = '700 11px Share Tech Mono, monospace'; ctx.fillText(String(open), x + r * 0.62, y - r * 0.62 + 4);
