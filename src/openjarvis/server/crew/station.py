@@ -42,6 +42,17 @@ STATION_PAGE = r"""<!DOCTYPE html>
   #cv { position:absolute; inset:0; width:100%; height:100%; display:block; cursor:default; }
   #hint { position:absolute; left:14px; bottom:12px; font-size:10px; color:var(--text-dim); letter-spacing:1px; pointer-events:none; }
   .sec { padding:14px 16px; border-bottom:1px solid var(--border); }
+  .vit { display:flex; justify-content:space-between; font-size:10px; letter-spacing:1px; padding:3px 0; }
+  .vit .k { color:var(--text-dim); } .vit .v { color:var(--cyan); text-transform:uppercase; } .vit .v.g { color:#00ff99; } .vit .v.o { color:#ff8a2a; }
+  .lib-f { background:transparent; border:1px solid var(--border); color:var(--text-dim); font-size:9px; letter-spacing:1px; padding:3px 6px; cursor:pointer; border-radius:2px; text-transform:uppercase; }
+  .lib-f.on { border-color:var(--cyan); color:var(--cyan); }
+  .lib-row { display:flex; gap:7px; align-items:center; padding:5px 4px; border-bottom:1px solid rgba(0,229,255,0.05); cursor:pointer; font-size:10px; }
+  .lib-row:hover, .lib-row.sel { background:rgba(0,229,255,0.06); }
+  .lib-thumb { width:30px; height:30px; object-fit:cover; border-radius:2px; flex-shrink:0; background:#0a1520; }
+  .lib-ico { width:30px; height:30px; display:flex; align-items:center; justify-content:center; color:var(--cyan); border:1px solid var(--border); border-radius:2px; flex-shrink:0; }
+  .lib-t { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--text); }
+  .lib-k { font-size:8px; letter-spacing:1px; color:var(--text-dim); text-transform:uppercase; }
+  .viewer img, .viewer audio { width:100%; border-radius:2px; margin:8px 0; background:#050a12; }
   .lbl { font-family:'Orbitron',monospace; font-size:9px; letter-spacing:3px; color:var(--text-dim); text-transform:uppercase; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; gap:8px; }
   .lbl .act { font-family:'Share Tech Mono',monospace; letter-spacing:1px; text-transform:none; }
   .h { color:var(--cyan); font-size:13px; margin-bottom:4px; overflow-wrap:anywhere; }
@@ -132,10 +143,12 @@ STATION_PAGE = r"""<!DOCTYPE html>
   <span class="spacer"></span>
   <button class="tbtn" id="t-night" title="Let the crew keep working through quiet hours">NIGHT SHIFT</button>
   <button class="tbtn warn" id="t-pause" title="Stop the crew from starting any new work">PAUSE ALL</button>
+  <button class="tbtn" id="t-sub" onclick="subscribe()" hidden>SUBSCRIBE</button>
   <button class="tbtn" onclick="location.href='/'">← HELIX</button>
+  <button class="tbtn" onclick="logout()">LOGOUT</button>
 </div>
 <div id="main">
-  <div id="left" class="col"><div id="roster-box"></div></div>
+  <div id="left" class="col"><div id="vitals-box"></div><div id="roster-box"></div><div id="library-box"></div></div>
   <div id="center">
     <div id="stage"><canvas id="cv"></canvas></div>
     <div id="chat" class="sec">
@@ -191,7 +204,7 @@ async function refresh() {
   document.getElementById('t-night').classList.toggle('on', !!S.settings.night_shift);
   document.getElementById('t-pause').classList.toggle('on', !!S.settings.paused);
   document.getElementById('t-pause').textContent = S.settings.paused ? 'RESUME ALL' : 'PAUSE ALL';
-  if (selected !== 'hub' && selected !== 'links' && !String(selected).startsWith('f:') && !S.missions.find(m => m.id === selected)) selected = 'hub';
+  if (selected !== 'hub' && selected !== 'links' && !String(selected).startsWith('f:') && !String(selected).startsWith('m:') && !S.missions.find(m => m.id === selected)) selected = 'hub';
   layout();
   renderSide();
 }
@@ -210,13 +223,113 @@ function renderSide(force) {
   side.textContent = '';
   document.getElementById('roster-box').replaceChildren(rosterSec());
   document.getElementById('links-box').replaceChildren(linksSec());
-  if (selected === 'hub' || selected === 'links') side.append(overviewSec(), inboxSec(), missionsSec(), ledgerSec(S.events, 'Station Ledger'));
+  document.getElementById('vitals-box').replaceChildren(vitalsSec());
+  document.getElementById('library-box').replaceChildren(librarySec());
+  if (String(selected).startsWith('m:')) side.append(backSec(), mediaSec());
+  else if (selected === 'hub' || selected === 'links') side.append(overviewSec(), inboxSec(), missionsSec(), ledgerSec(S.events, 'Station Ledger'));
   else if (String(selected).startsWith('f:')) side.append(backSec(), factorySec(selected.slice(2)));
   else {
     const m = S.missions.find(x => x.id === selected);
     side.append(backSec(), missionSec(m), inboxSec(m.id), outboxSec(m), ledgerSec(S.events.filter(e => e.mission_id === m.id), 'Mission Ledger'));
   }
   if (focused) { const el = document.getElementById(focused); if (el) el.focus(); }
+}
+
+// ── system vitals (top left) ──
+const PAGE_START = Date.now();
+function vitalsSec() {
+  const s = mk('div', 'sec'); s.append(mk('div', 'lbl', 'System vitals'));
+  const row = (k, v, cls) => { const r = mk('div', 'vit'); r.append(mk('span', 'k', k), mk('span', 'v' + (cls ? ' ' + cls : ''), v)); s.append(r); };
+  const up = Math.floor((Date.now() - PAGE_START) / 1000), hh = String(Math.floor(up / 3600)).padStart(2, '0'), mm = String(Math.floor(up / 60) % 60).padStart(2, '0');
+  const lead = (S && S.roster || []).find(a => a.role === 'lead');
+  const queued = S ? S.missions.reduce((n, m) => n + m.tasks.filter(t => t.status === 'queued').length, 0) : 0;
+  row('Status', S ? (S.blocked ? String(S.blocked).split(' ')[0] : 'nominal') : 'connecting', S && !S.blocked ? 'g' : 'o');
+  row('Engine', lead ? lead.model : '—');
+  row('Crew', S ? S.running + ' running · ' + queued + ' queued' : '—');
+  row('Media', LIB.on ? 'on' : 'off', LIB.on ? 'g' : '');
+  row('Session', hh + ':' + mm);
+  return s;
+}
+
+// ── media library (below the crew) and its viewer (right panel) ──
+const LIB = { on: false, kind: 'all', items: [], open: null, note: '' };
+async function loadLibrary() {
+  const st = await api('/api/media/status').catch(() => null);
+  LIB.on = !!(st && st.ok && st.data && st.data.enabled);
+  if (LIB.on) {
+    const r = await api('/api/media/library' + (LIB.kind === 'all' ? '' : '?kind=' + LIB.kind)).catch(() => null);
+    LIB.items = r && r.ok ? (r.data.items || []) : [];
+    LIB.note = r && r.ok ? '' : 'The library is unavailable right now.';
+  }
+  if (S) renderSide();
+}
+function librarySec() {
+  const s = mk('div', 'sec');
+  const l = mk('div', 'lbl'); l.append(mk('span', null, 'Library'), mk('span', 'act', LIB.on ? LIB.items.length + ' items' : 'off')); s.append(l);
+  if (!LIB.on) { s.append(mk('div', 'dim', 'Media is switched off on the server.')); return s; }
+  const f = mk('div'); f.style.cssText = 'display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap';
+  [['all', 'All'], ['image', 'Images'], ['sound', 'Sound']].forEach(([k, t]) => {
+    const b = mk('button', 'lib-f' + (LIB.kind === k ? ' on' : ''), t); b.onclick = () => { LIB.kind = k; loadLibrary(); }; f.append(b);
+  });
+  s.append(f);
+  if (LIB.note) s.append(mk('div', 'dim', LIB.note));
+  else if (!LIB.items.length) s.append(mk('div', 'dim', 'Nothing saved yet. Ask Helix (or Prism) to make something.'));
+  LIB.items.slice(0, 60).forEach(it => {
+    const r = mk('div', 'lib-row' + (selected === 'm:' + it.id ? ' sel' : ''));
+    if (it.kind === 'image' && it.url) { const im = mk('img', 'lib-thumb'); im.src = it.url; im.alt = ''; im.loading = 'lazy'; r.append(im); }
+    else r.append(mk('span', 'lib-ico', it.kind === 'sound' ? '♪' : '▶'));
+    const box = mk('div'); box.style.minWidth = '0'; box.append(mk('div', 'lib-t', it.title), mk('div', 'lib-k', it.kind)); r.append(box);
+    r.onclick = () => openMedia(it.id);
+    s.append(r);
+  });
+  return s;
+}
+async function openMedia(id) {
+  selected = 'm:' + id; LIB.open = null; renderSide(true);
+  const r = await api('/api/media/items/' + encodeURIComponent(id)).catch(() => null);
+  LIB.open = r && r.ok ? r.data.item : { error: (r && r.data && r.data.detail) || 'That item could not be opened.' };
+  renderSide(true);
+}
+function mediaSec() {
+  const s = mk('div', 'sec viewer'), it = LIB.open;
+  s.append(mk('div', 'lbl', 'Library item'));
+  if (!it) { s.append(mk('div', 'dim', 'Opening…')); return s; }
+  if (it.error) { s.append(mk('div', 'dim', it.error)); return s; }
+  s.append(mk('div', 'h', it.title));
+  const kb = it.size_bytes > 1048576 ? (it.size_bytes / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(it.size_bytes / 1024)) + ' KB';
+  s.append(mk('div', 'dim', it.kind + ' · ' + kb + (it.duration_seconds ? ' · ' + it.duration_seconds + 's' : '')));
+  const media = document.createElement(it.kind === 'image' ? 'img' : 'audio');
+  if (it.kind === 'sound') media.controls = true;
+  media.src = it.url; s.append(media);
+  if (it.prompt) s.append(mk('div', 'dim', 'Prompt: ' + it.prompt));
+  const btns = mk('div'); btns.style.cssText = 'display:flex;gap:8px;margin-top:10px';
+  const dl = mk('button', 'b', 'Download');
+  dl.onclick = async () => { const r = await api('/api/media/items/' + it.id + '?download=true').catch(() => null); if (r && r.ok) location.href = r.data.item.url; };
+  const del = mk('button', 'b', 'Delete'); del.style.borderColor = '#ff3344'; del.style.color = '#ff3344';
+  del.onclick = async () => {
+    if (!confirm('Delete "' + it.title + '" from your library? This cannot be undone.')) return;
+    const r = await api('/api/media/items/' + it.id, 'DELETE').catch(() => null);
+    if (r && r.ok) { selected = 'hub'; LIB.open = null; loadLibrary(); } else alert((r && r.data && r.data.detail) || 'It could not be deleted.');
+  };
+  btns.append(dl, del); s.append(btns);
+  return s;
+}
+
+// ── subscribe and log out (the same billing and sign-in as the main page) ──
+function logout() { try { localStorage.removeItem(TOKEN_KEY); } catch (e) {} location.href = '/'; }
+async function refreshSubscription() {
+  const btn = document.getElementById('t-sub');
+  const r = await api('/api/billing/status').catch(() => null);
+  if (!r || !r.ok) return;
+  btn.hidden = !r.data.enabled; btn.disabled = !!r.data.active; btn.textContent = r.data.active ? 'SUBSCRIBED' : 'SUBSCRIBE';
+}
+async function subscribe() {
+  const btn = document.getElementById('t-sub');
+  btn.disabled = true; btn.textContent = 'OPENING…';
+  const r = await api('/api/billing/checkout', 'POST', {}).catch(() => null);
+  if (r && r.ok && r.data.url) { location.href = r.data.url; return; }
+  btn.textContent = r && r.data && r.data.detail ? String(r.data.detail).slice(0, 40).toUpperCase() : 'UNAVAILABLE';
+  setTimeout(() => { btn.disabled = false; btn.textContent = 'SUBSCRIBE'; }, 4000);
 }
 
 function backSec() {
@@ -943,7 +1056,7 @@ function overviewSec() {
 
 function poll() {
   clearTimeout(pollTimer);
-  if (!document.hidden) { refresh(); if (chatTick++ % 3 === 0) loadChat(); if (finTick++ % 15 === 0) loadFinance(); }
+  if (!document.hidden) { refresh(); if (chatTick++ % 3 === 0) loadChat(); if (finTick++ % 15 === 0) { loadFinance(); loadLibrary(); refreshSubscription(); } }
   pollTimer = setTimeout(poll, 4000);
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
