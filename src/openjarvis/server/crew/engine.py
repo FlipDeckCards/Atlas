@@ -184,6 +184,23 @@ REVIEW_MARK = "REVIEW: changes requested."
 AcompletionFn = Callable[..., Awaitable[Any]]
 
 
+def pc_project(names: List[str], task: Dict[str, Any], mission: Dict[str, Any]) -> str:
+    """Which folder on the PC Rig works in: the PC project the task (or else the mission goal) names, preferring 'in project X',
+    then the first one mentioned; otherwise the mission's project. Factories and PC folders are separate: a game is in the Deadzone
+    factory while Rig builds it in its own Unity project."""
+    names = sorted({str(n) for n in names if str(n).strip()}, key=len, reverse=True)
+    texts = (f'{task.get("title", "")}\n{task.get("brief", "")}', str(mission.get("goal") or ""))
+    for text in texts:                                   # an explicit "in project X" anywhere wins
+        for n in names:
+            if re.search(r"\bin (?:the )?project\s+" + re.escape(n) + r"(?![A-Za-z0-9])", text, re.I):
+                return n
+    for text in texts:
+        hits = [(m.start(), n) for n in names for m in [re.search(r"(?<![A-Za-z0-9])" + re.escape(n) + r"(?![A-Za-z0-9])", text, re.I)] if m]
+        if hits:
+            return min(hits)[1]
+    return str(mission.get("project") or "")
+
+
 def _clip(v: Any, n: int) -> str:
     return " ".join(str(v if v is not None else "").split())[:n]
 
@@ -193,7 +210,9 @@ HOUSE_RULES = (
     "Every game must play with keyboard AND a connected PlayStation controller. Deadzone Run is the reference game.\n"
     "- The Unity / Unreal editors run only on Michael's computer. Game building and testing is Rig's job (role workbench): Rig runs Claude "
     "Code in his real project folder on his PC, the way Deadzone Run was built. Plan the design, art and copy with the other agents, then "
-    "give Rig the build: 'in project <Name>, implement ..., build and test'. Set the mission project to the game's project name. If his PC "
+    "give Rig the build: 'in project <PC project name>, implement ..., build and test', using one of the PC project names listed under "
+    "his PC (they are folders on his computer, not factories). Game missions belong to the Deadzone factory: set the mission project to "
+    "Deadzone for every game and for the Deadzone Games site. If his PC "
     "is not connected, Rig's task simply waits. Never write a web prototype for a game, and never claim a game was built unless Rig reports it.\n"
     "- Products: FlipDeck Cards (card-flipping subscription), Marnyx (AI social media manager), Deadzone Games (games site, mobile games "
     "go to Google Play first), Aibussol (this assistant). One shared Stripe account, tagged with metadata app=<product>."
@@ -931,7 +950,9 @@ class CrewEngine:
                 deps += f"\nFiles in the mission outbox (on aibussol.com): {outs}"
             await self.store.add_event(user_id, "task", f'Rig started "{t["title"]}" on your PC.', mission_id=t["mission_id"], task_id=t["id"])
             envx = await self.env_for(user_id)
-            return job_for(claimed, mission, deps, self._for_person(house_rules(envx), envx))
+            job = job_for(claimed, mission, deps, self._for_person(house_rules(envx), envx))
+            job["project"] = pc_project(self.presence.status(user_id).get("projects") or [], claimed, mission)
+            return job
         return None
 
     async def _own_running_pc_task(self, user_id: str, task_id: str) -> Dict[str, Any]:

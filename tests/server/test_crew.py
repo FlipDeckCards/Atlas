@@ -922,3 +922,16 @@ class TestSpecialists:
         out = run(w.engine._numbers({"user_id": "sub-1", "mission_id": "m", "id": "t"}))
         assert "bloomcandles" in out and "flipdeck" not in out and "aibussol" not in out
         assert not any("sk_live_OWNER" in json.dumps(r[2]) for r in w.http.requests)
+
+
+def test_rig_works_in_the_pc_project_the_mission_names_not_the_factory():
+    from openjarvis.server.crew.engine import pc_project
+
+    names = ["Deadzone", "MergeDungeon", "DeadzoneSite"]
+    m2 = {"project": "Deadzone", "goal": "Start a mission: in project DeadzoneSite, have Rig add Merge Dungeon to the Deadzone Games site. "
+                                         "Copy C:\\UnityProjects\\MergeDungeon\\Builds\\WebGL into public/mergedungeon"}
+    assert pc_project(names, {"title": "Set up Merge Dungeon on Deadzone site", "brief": "Copy the build"}, m2) == "DeadzoneSite"
+    m1 = {"project": "Deadzone", "goal": "in project MergeDungeon, have Rig make a WebGL build"}
+    assert pc_project(names, {"title": "WebGL build", "brief": "Build it"}, m1) == "MergeDungeon"
+    assert pc_project(names, {"title": "Fix the jump", "brief": "In project Deadzone, fix the jump"}, m1) == "Deadzone"
+    assert pc_project([], {"title": "x", "brief": "y"}, {"project": "Deadzone", "goal": "z"}) == "Deadzone"

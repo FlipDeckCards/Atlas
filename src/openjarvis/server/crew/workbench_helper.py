@@ -30,7 +30,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-VERSION = "1.2"
+VERSION = "1.3"
 CONFIG = Path.home() / ".aibussol_workbench.json"
 POLL_S, HELLO_S, PROGRESS_S = 20, 60, 120
 
@@ -78,6 +78,7 @@ def project_folder(cfg: dict, project: str) -> tuple[str | None, str]:
 
 
 def build_prompt(job: dict, cfg: dict, folder_name: str) -> str:
+    others = [(n, f) for n, f in (cfg.get("projects") or {}).items() if n != folder_name and Path(f).is_dir()]
     tools = []
     if cfg.get("unity"):
         tools.append(f'Unity editor: "{cfg["unity"]}" (batch mode: -batchmode -nographics -quit -projectPath . -logFile -)')
@@ -91,7 +92,10 @@ def build_prompt(job: dict, cfg: dict, folder_name: str) -> str:
         f"Michael's house rules:\n{job.get('house_rules', '')}\n\n"
         + ("Tools on this computer:\n- " + "\n- ".join(tools) + "\n\n" if tools else "")
         + "Rules for this job:\n"
-        "- Work only inside this folder. Read the existing project first and follow how it is built (for games: like Deadzone Run).\n"
+        "- Change files only inside this folder. Read the existing project first and follow how it is built (for games: like Deadzone Run).\n"
+        + ("- You may READ and copy FROM these other project folders on this computer (never change them, except running a Unity build "
+           "into that project's own Builds folder when the task asks for it): " + "; ".join(f"{n} = {f}" for n, f in others) + "\n" if others else "")
+        +
         "- If this folder is a git repo, create or reuse a branch named crew/<short-name>, commit your work there, and never push to "
         "main or merge anything.\n"
         "- Build and test when you can (Unity batch mode, play-mode tests, compile checks). Fix what fails.\n"
@@ -124,7 +128,8 @@ def run_job(cfg: dict, job: dict) -> None:
 
     threading.Thread(target=progress, daemon=True).start()
     # the job goes in on stdin: on Windows, claude.cmd cuts a command-line argument at its first line break
-    cmd = [claude, "-p", "--output-format", "json", "--permission-mode", "acceptEdits",
+    extra_dirs = [f for n, f in (cfg.get("projects") or {}).items() if n != name and Path(f).is_dir()]
+    cmd = [claude, "-p", "--output-format", "json", *(["--add-dir", *extra_dirs] if extra_dirs else []), "--permission-mode", "acceptEdits",
            "--allowedTools", "Read,Edit,Write,Glob,Grep,Bash", "--max-turns", str(cfg.get("max_turns", 80))]
     ok, summary = False, ""
     try:
