@@ -390,3 +390,50 @@ class TestHelix:
 def test_role_tools():
     assert "use_connection" in [t["function"]["name"] for t in eng_mod.tools_for("operator")]
     assert "use_connection" not in [t["function"]["name"] for t in eng_mod.tools_for("writer")]
+
+
+# ── Scout's web research (GPT Researcher, faked) ─────────────────────────────────────────────────
+
+class TestWebResearch:
+    def _world(self, env, fn):
+        def scout(turn, msgs):
+            if turn == 0:
+                return resp(calls=[("web_research", {"question": "Who buys digital planners for card collectors?"})])
+            return resp("Researched.")
+        w = world({"tasks": [{"title": "Research buyers", "role": "researcher", "brief": "b"}]}, {"Research buyers": scout}, env=env)
+        w.engine.research_fn = fn
+        return w
+
+    def test_runs_saves_a_sourced_report_and_charges_its_cost(self):
+        calls = []
+
+        async def fake(question, env):
+            calls.append(question)
+            return {"report": "Collectors aged 25-45.", "sources": ["https://example.com/a"], "cost_usd": 0.07}
+        w = self._world({"TAVILY_API_KEY": "t", "OPENAI_API_KEY": "o"}, fake)
+        m = run(start(w, budget=2))
+        assert calls == ["Who buys digital planners for card collectors?"]
+        outs = run(w.store.list_outputs(m["id"]))
+        assert outs[0]["name"].startswith("research-")
+        doc = run(w.store.get_output(outs[0]["id"]))["content"]
+        assert "https://example.com/a" in doc and "Collectors aged 25-45." in doc
+        assert m["spent_usd"] == pytest.approx(0.01 + 0.01 + 0.07 + 0.01)      # planner, scout x2, research
+        assert "https://example.com/a" in json.dumps(w.model.calls[-1]["messages"])
+
+    def test_not_connected_means_no_run_and_the_agent_is_told(self):
+        async def fake(question, env):
+            raise AssertionError("must not run")
+        w = self._world({}, fake)
+        run(start(w, budget=2))
+        assert "not connected" in json.dumps(w.model.calls[-1]["messages"])
+
+    def test_too_little_budget_means_no_run(self):
+        async def fake(question, env):
+            raise AssertionError("must not run")
+        w = self._world({"TAVILY_API_KEY": "t", "OPENAI_API_KEY": "o"}, fake)
+        run(start(w, budget=0.2))
+        assert "Not enough budget" in json.dumps(w.model.calls[-1]["messages"])
+
+    def test_only_scout_has_the_tool(self):
+        assert "web_research" in [t["function"]["name"] for t in eng_mod.tools_for("researcher")]
+        assert "web_research" not in [t["function"]["name"] for t in eng_mod.tools_for("writer")]

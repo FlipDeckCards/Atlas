@@ -30,11 +30,16 @@ STATION_PAGE = r"""<!DOCTYPE html>
   .tbtn:hover { border-color:var(--cyan); color:var(--cyan); }
   .tbtn.on { border-color:var(--cyan); color:var(--cyan); background:rgba(0,229,255,0.08); }
   .tbtn.warn.on { border-color:var(--orange); color:var(--orange); background:rgba(255,109,0,0.08); }
-  #main { display:grid; grid-template-columns:1fr 380px; min-height:0; }
+  #main { display:grid; grid-template-columns:300px 1fr 360px; min-height:0; }
+  .col { background:var(--panel); overflow-y:auto; min-height:0; scrollbar-width:thin; scrollbar-color:var(--cyan-dim) transparent; }
+  #left { border-right:1px solid var(--border); }
+  #right { border-left:1px solid var(--border); }
+  #center { display:flex; flex-direction:column; min-width:0; min-height:0; }
+  #center #stage { flex:1 1 auto; }
+  #center #chat { flex:0 0 auto; background:var(--panel); border-top:1px solid var(--border); border-bottom:none; }
   #stage { position:relative; min-width:0; min-height:0; overflow:hidden; }
   #cv { position:absolute; inset:0; width:100%; height:100%; display:block; cursor:default; }
   #hint { position:absolute; left:14px; bottom:12px; font-size:10px; color:var(--text-dim); letter-spacing:1px; pointer-events:none; }
-  #side { background:var(--panel); border-left:1px solid var(--border); overflow-y:auto; min-height:0; scrollbar-width:thin; scrollbar-color:var(--cyan-dim) transparent; }
   .sec { padding:14px 16px; border-bottom:1px solid var(--border); }
   .lbl { font-family:'Orbitron',monospace; font-size:9px; letter-spacing:3px; color:var(--text-dim); text-transform:uppercase; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; gap:8px; }
   .lbl .act { font-family:'Share Tech Mono',monospace; letter-spacing:1px; text-transform:none; }
@@ -69,7 +74,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
   .ev { font-size:10px; line-height:1.55; padding:4px 0; color:var(--text-dim); border-bottom:1px solid rgba(0,229,255,0.04); overflow-wrap:anywhere; }
   .ev b { color:var(--text); font-weight:400; }
   .ev .c { color:var(--orange); }
-  #chat-log { height:250px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; padding-right:2px; scrollbar-width:thin; scrollbar-color:var(--cyan-dim) transparent; }
+  #chat-log { height:190px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; padding-right:2px; scrollbar-width:thin; scrollbar-color:var(--cyan-dim) transparent; }
   .cm { max-width:92%; padding:8px 10px; font-size:12px; line-height:1.5; border-radius:2px; white-space:pre-wrap; overflow-wrap:anywhere; }
   .cm.u { align-self:flex-end; background:rgba(255,109,0,0.08); border:1px solid rgba(255,109,0,0.25); color:#ffa040; }
   .cm.a { align-self:flex-start; background:rgba(0,229,255,0.04); border:1px solid rgba(0,229,255,0.14); }
@@ -90,9 +95,12 @@ STATION_PAGE = r"""<!DOCTYPE html>
     body { grid-template-rows:auto 1fr; height:100dvh; }
     #top { flex-wrap:wrap; padding:8px 12px; gap:8px; }
     .hide-m, #hint { display:none; }
-    #main { grid-template-columns:1fr; grid-template-rows:50dvh 1fr; }
+    #main { display:flex; flex-direction:column; overflow-y:auto; }
+    #center { order:1; flex:0 0 auto; }
+    #center #stage { height:50dvh; flex:0 0 auto; }
+    #right { order:2; border-left:none; border-top:1px solid var(--border); overflow:visible; }
+    #left { order:3; border-right:none; border-top:1px solid var(--border); overflow:visible; }
     #chat-log { height:210px; }
-    #side { border-left:none; border-top:1px solid var(--border); }
     #gate { inset:0; }
   }
 </style>
@@ -109,15 +117,16 @@ STATION_PAGE = r"""<!DOCTYPE html>
   <button class="tbtn" onclick="location.href='/'">← HELIX</button>
 </div>
 <div id="main">
-  <div id="stage"><canvas id="cv"></canvas><div id="hint">Tap Helix for your inbox · a factory for its work · a dock for connections</div></div>
-  <div id="side">
+  <div id="left" class="col"><div id="roster-box"></div></div>
+  <div id="center">
+    <div id="stage"><canvas id="cv"></canvas><div id="hint">Tap Helix for your inbox · a factory for its work · a dock for connections</div></div>
     <div id="chat" class="sec">
       <div class="lbl"><span>Helix</span><span class="act">same chat as the main screen</span></div>
       <div id="chat-log"></div>
       <div class="ans"><input id="chat-in" type="text" maxlength="8000" placeholder='Tell Helix… e.g. "build me…"' autocomplete="off"/><button class="b" id="chat-send">Send</button></div>
     </div>
-    <div id="side-body"></div>
   </div>
+  <div id="right" class="col"><div id="links-box"></div><div id="side-body"></div></div>
 </div>
 <div id="gate"><div class="box"><div class="h" id="gate-h">STATION OFFLINE</div><div id="gate-t"></div></div></div>
 
@@ -181,8 +190,9 @@ function renderSide(force) {
   if (!force && ae && side.contains(ae) && /INPUT|TEXTAREA/.test(ae.tagName) && ae.value) { ae.onblur = () => renderSide(true); return; }
   const focused = document.activeElement && document.activeElement.id;
   side.textContent = '';
-  if (selected === 'hub') side.append(inboxSec(), rosterSec(), missionsSec(), linksSec(), ledgerSec(S.events, 'Station Ledger'));
-  else if (selected === 'links') side.append(backSec(), linksSec());
+  document.getElementById('roster-box').replaceChildren(rosterSec());
+  document.getElementById('links-box').replaceChildren(linksSec());
+  if (selected === 'hub' || selected === 'links') side.append(inboxSec(), missionsSec(), ledgerSec(S.events, 'Station Ledger'));
   else if (String(selected).startsWith('f:')) side.append(backSec(), factorySec(selected.slice(2)));
   else {
     const m = S.missions.find(x => x.id === selected);

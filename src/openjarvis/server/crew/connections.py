@@ -101,6 +101,10 @@ async def status(store, user_id: str, env=None) -> Dict[str, Dict[str, Any]]:
     for k, v in out.items():
         v.update(label=LABELS[k], setup="" if v["connected"] else SETUP[k],
                  actions=[{"name": n, "risk": a["risk"], "about": a["about"]} for n, a in ACTIONS[k].items()])
+    from openjarvis.server.crew import research
+
+    out["web_research"] = {"connected": research.configured(env), "built": True, "label": "Web research (GPT Researcher)",
+                           "setup": "" if research.configured(env) else research.SETUP, "actions": []}
     return out
 
 
@@ -108,6 +112,8 @@ def describe_for_agent(conn_status: Dict[str, Dict[str, Any]]) -> str:
     """The text an operator agent sees: what it can use and the arguments each action takes."""
     lines = []
     for k, v in conn_status.items():
+        if k not in ACTIONS:
+            continue
         if not v["connected"]:
             lines.append(f"- {v['label']}: NOT connected ({'not built yet' if not v['built'] else 'owner must connect it'}). Do not plan on using it.")
             continue

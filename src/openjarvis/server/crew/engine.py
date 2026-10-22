@@ -34,6 +34,7 @@ from openjarvis.server.crew import (
     quiet_hours,
     tick_seconds,
 )
+from openjarvis.server.crew import research as web
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +49,9 @@ PLANNER_MAX_TOKENS = 1600
 AGENT_MAX_TOKENS = 2400
 
 ROLES: Dict[str, Dict[str, str]] = {
-    "researcher": {"name": "Scout", "model": "lookup", "about": "Research and analysis with Gemini. Has NO live web access: works from its own knowledge and must flag anything that needs checking.",
-                   "can": "Market and buyer research, competitor overviews, pricing ideas, fact lists to verify",
-                   "cannot": "Browse the live web or read pages (not built yet)"},
+    "researcher": {"name": "Scout", "model": "lookup", "about": "Research and analysis with Gemini. Uses web_research (GPT Researcher: live web search with sources) when it is connected; otherwise works from its own knowledge and flags what needs checking.",
+                   "can": "Live web research with sources (GPT Researcher), market and buyer research, competitors, pricing",
+                   "cannot": "Log in to sites or post anything"},
     "builder": {"name": "Forge", "model": "writing", "about": "Builds with Claude: code, specs, configs and technical files, saved to the outbox. It cannot deploy or run code.",
                 "can": "Code, specs, landing pages, configs, technical plans, saved as files",
                 "cannot": "Run or deploy code, push to GitHub (not built yet)"},
@@ -86,6 +87,11 @@ _CONNECTION_TOOL = {"type": "function", "function": {
     "parameters": {"type": "object", "properties": {"platform": {"type": "string"}, "action": {"type": "string"}, "args": {"type": "object"}},
                    "required": ["platform", "action"]}}}
 
+_RESEARCH_TOOL = {"type": "function", "function": {
+    "name": "web_research",
+    "description": "Research a question on the live web (GPT Researcher: searches, reads pages, writes a report with sources). Slow (1-4 minutes) and costs about $0.25, so ask one well-formed question at a time.",
+    "parameters": {"type": "object", "properties": {"question": {"type": "string"}}, "required": ["question"]}}}
+
 AcompletionFn = Callable[..., Awaitable[Any]]
 
 
@@ -94,7 +100,7 @@ def _clip(v: Any, n: int) -> str:
 
 
 def tools_for(role: str) -> List[Dict[str, Any]]:
-    return _BASE_TOOLS + ([_CONNECTION_TOOL] if role == "operator" else [])
+    return _BASE_TOOLS + ([_CONNECTION_TOOL] if role == "operator" else []) + ([_RESEARCH_TOOL] if role == "researcher" else [])
 
 
 def parse_plan(text: str, limit: int) -> Optional[Dict[str, Any]]:
@@ -155,7 +161,7 @@ def _msg_dict(msg: Any) -> Dict[str, Any]:
 class CrewEngine:
     def __init__(self, store, acompletion: AcompletionFn, *, notifier=None, env=None, models: Optional[Dict[str, str]] = None,
                  cost_fn: Callable[[Any], float] = hardening.chat_cost_usd, now: Optional[Callable[[], dt.datetime]] = None,
-                 client_factory=None) -> None:
+                 client_factory=None, research_fn=None) -> None:
         self.store = store
         self.acompletion = acompletion
         self.notifier = notifier
@@ -164,6 +170,7 @@ class CrewEngine:
         self.cost_fn = cost_fn
         self.now = now or (lambda: dt.datetime.now(dt.timezone.utc))
         self.client_factory = client_factory
+        self.research_fn = research_fn or web.gpt_researcher_run
         self.running: Dict[str, asyncio.Task] = {}
         self._plans: Dict[str, asyncio.Task] = {}
         self._loop: Optional[asyncio.Task] = None
@@ -568,9 +575,51 @@ class CrewEngine:
             return "Sent to Michael through Helix. Stop here; you will continue with his answer.", "waiting"
         if name == "finish":
             return "Finished.", "finish:" + (str(args.get("summary") or "").strip() or "Finished.")
+        if name == "web_research" and task["role"] == "researcher":
+            return await self._research(task, mission, args)
         if name == "use_connection" and task["role"] == "operator":
             return await self._connection(task, mission, args)
         return f"Error: there is no tool named '{_clip(name, 40)}' for this role.", None
+
+    async def _research(self, task: Dict[str, Any], mission: Dict[str, Any], args: Dict[str, Any]):
+        uid, mid, tid = task["user_id"], task["mission_id"], task["id"]
+        question = _clip(args.get("question"), 500)
+        if len(question) < 8:
+            return "Error: ask a full research question.", None
+        if not web.configured(self.env):
+            return "Web research is not connected (" + web.SETUP + "). Work from your own knowledge and say what needs checking.", None
+        fresh = await self.store.get_task(tid) or task
+        m = await self.store.get_mission(mid) or mission
+        if fresh["budget_usd"] - fresh["spent_usd"] < web.RESEARCH_EST_USD or m["budget_usd"] - m["spent_usd"] < web.RESEARCH_EST_USD \
+                or await self._day_room(uid) < web.RESEARCH_EST_USD:
+            return f"Not enough budget left for web research (about ${web.RESEARCH_EST_USD:.2f}). Finish with what you have, or ask Michael.", None
+        await self.store.add_event(uid, "research", f"Scout is researching the web: {question}", mission_id=mid, task_id=tid)
+        try:
+            out = await self.research_fn(question, self.env)
+        except web.ResearchUnavailable as exc:
+            return f"Web research unavailable: {exc} Work from your own knowledge.", None
+        except asyncio.TimeoutError:
+            await self._charge_usd(uid, mid, tid, web.RESEARCH_EST_USD)
+            return "Web research timed out. Try a narrower question or finish with what you have.", None
+        except Exception:
+            logger.exception("web research failed")
+            await self._charge_usd(uid, mid, tid, web.RESEARCH_EST_USD)
+            return "Web research failed. Work from your own knowledge and say so.", None
+        cost = out.get("cost_usd")
+        cost = web.RESEARCH_EST_USD if cost is None or cost < 0 else float(cost)
+        await self._charge_usd(uid, mid, tid, cost)
+        sources = out.get("sources") or []
+        body = (out.get("report") or "").strip() or "(empty report)"
+        doc = f"# {question}\n\n{body}\n\n## Sources\n" + ("\n".join(f"- {u}" for u in sources) if sources else "- none listed")
+        slug = re.sub(r"[^a-z0-9]+", "-", question.lower()).strip("-")[:40] or "research"
+        await self.store.add_output(mid, tid, uid, f"research-{slug}.md", doc[:MAX_OUTPUT_CHARS])
+        await self.store.add_event(uid, "research", f"Research done ({len(sources)} sources), saved research-{slug}.md.", mission_id=mid, task_id=tid, cost_usd=cost)
+        return (f"Report (saved to the outbox as research-{slug}.md):\n{body[:web.MAX_REPORT_TO_AGENT]}\n\nSources:\n" + "\n".join(sources[:15])), None
+
+    async def _charge_usd(self, user_id: str, mission_id: str, task_id: str, usd: float) -> None:
+        await self.store.add_day_spend(user_id, self._day(), usd)
+        await self.store.add_mission_spend(mission_id, usd)
+        await self.store.add_task_spend(task_id, usd)
 
     async def _connection(self, task: Dict[str, Any], mission: Dict[str, Any], args: Dict[str, Any]):
         uid, mid, tid = task["user_id"], task["mission_id"], task["id"]
