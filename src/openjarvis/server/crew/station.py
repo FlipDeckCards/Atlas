@@ -140,6 +140,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
   #gate { position:fixed; inset:48px 0 0 0; display:none; align-items:center; justify-content:center; background:rgba(5,5,8,0.92); z-index:5; padding:20px; }
   #gate .box { max-width:460px; border:1px solid var(--cyan-dim); padding:28px; background:var(--panel); line-height:1.7; font-size:12px; }
   #gate .box .h { font-family:'Orbitron',monospace; letter-spacing:3px; font-size:12px; margin-bottom:12px; }
+  canvas { -webkit-tap-highlight-color:transparent; }
   @media (max-width: 820px) {
     body { grid-template-rows:auto 1fr; height:100dvh; }
     #top { flex-wrap:wrap; padding:8px 12px; gap:8px; }
@@ -147,7 +148,9 @@ STATION_PAGE = r"""<!DOCTYPE html>
     #main { display:flex; flex-direction:column; overflow-y:auto; }
     #center { order:1; flex:0 0 auto; }
     #center #stage { height:min(100vw, 68dvh); flex:0 0 auto; }
-    #right { order:2; border-left:none; border-top:1px solid var(--border); overflow:visible; }
+    #right { order:2; border-left:none; border-top:1px solid var(--border); overflow:visible; display:flex; flex-direction:column; }
+    #right #side-body { order:1; }      /* what you tapped shows first, above the connections */
+    #right #links-box { order:2; }
     #left { order:3; border-right:none; border-top:1px solid var(--border); overflow:visible; }
     #main > * { flex:0 0 auto !important; min-height:auto !important; height:auto; }   /* stacked, never squeezed on top of each other */
     #center { display:block; }
@@ -490,7 +493,9 @@ async function subscribe() {
 }
 
 function backSec() {
-  const s = mk('div', 'sec'); const b = mk('button', 'b', '← Helix inbox'); b.onclick = () => { selected = 'hub'; renderSide(); }; s.append(b); return s;
+  const s = mk('div', 'sec'); const b = mk('button', 'b', '← Helix inbox'); b.onclick = () => { selected = 'hub'; renderSide();
+    if (window.matchMedia('(max-width: 820px)').matches) document.getElementById('center').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+  s.append(b); return s;
 }
 
 function inboxSec(missionId) {
@@ -1270,7 +1275,11 @@ function hit(x, y) {
 }
 cv.addEventListener('click', e => {
   const r = cv.getBoundingClientRect(), h = hit(e.clientX - r.left, e.clientY - r.top);
-  if (h) { selected = h; renderSide(true); }
+  if (h) {
+    selected = h; renderSide(true);
+    // on a phone the panel sits below the station and the chat: bring it into view
+    if (window.matchMedia('(max-width: 820px)').matches) document.getElementById('right').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 });
 cv.addEventListener('mousemove', e => { const r = cv.getBoundingClientRect(); cv.style.cursor = hit(e.clientX - r.left, e.clientY - r.top) ? 'pointer' : 'default'; });
 
