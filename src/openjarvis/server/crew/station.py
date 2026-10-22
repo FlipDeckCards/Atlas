@@ -428,7 +428,11 @@ function factorySec(key) {
   const r = FIN && FIN.factories ? FIN.factories[key] : null;
   if (r) { s.append(pnlBlock(r, 'P&L')); s.append(mk('div', 'dim', costLine(r))); }
   else s.append(mk('div', 'dim', FIN ? 'No money in or out for this factory yet.' : 'Loading the numbers…'));
-  if (key === 'aibussol' && FIN && FIN.aibussol_stats) { const a = FIN.aibussol_stats; s.append(mk('div', 'dim', a.users_total + ' users · ' + a.active_24h + ' active today · ' + a.subscribers_active + ' subscribers')); }
+  if (FIN && FIN.product_stats && FIN.product_stats[key]) {
+    const ul = mk('div', 'lbl'); ul.style.marginTop = '12px'; ul.textContent = 'Users'; s.append(ul);
+    s.append(mk('div', 'dim', usersLine(key)));
+    s.append(trafficChart(key));
+  }
   // who is working here right now
   const crewHere = b.tasks.filter(t => ['running', 'waiting', 'queued'].includes(t.status));
   const cl = mk('div', 'lbl'); cl.style.marginTop = '12px'; cl.textContent = 'Crew in this factory'; s.append(cl);
@@ -1023,6 +1027,66 @@ async function loadFinance() {
   const net = document.getElementById('c-net'); net.textContent = (t.net_today < 0 ? '-' : '') + money(Math.abs(t.net_today)); net.style.color = t.net_today < 0 ? '#ff3344' : '#00ff99';
   if (S && (selected === 'hub' || String(selected).startsWith('f:'))) renderSide();
 }
+// users line and the daily traffic chart (crew/product_stats.py)
+function usersLine(k) {
+  const p = FIN && FIN.product_stats ? FIN.product_stats[k] : null;
+  if (!p) return 'loading…';
+  if (!p.connected) return p.note || 'not connected';
+  const bits = [];
+  if (p.users_total != null) bits.push(p.users_total + ' users');
+  if (p.active_24h != null) bits.push(p.active_24h + ' active today');
+  if (p.paying != null) bits.push(p.paying + ' paying');
+  if (p.new_24h != null) bits.push(p.new_24h + ' new today');
+  if (p.new_7d != null) bits.push(p.new_7d + ' new this week');
+  const x = p.extra || {};
+  if (x.posts_published_7d != null) bits.push(x.posts_published_7d + ' posts published this week', x.posts_failed_7d + ' failed', x.posts_queued + ' queued');
+  return bits.join(' · ') || 'no user table found';
+}
+const chartRange = {};
+function trafficChart(k) {
+  const p = FIN.product_stats[k], wrap = mk('div');
+  if (!p.connected || !p.traffic) { wrap.append(mk('div', 'dim', p.connected ? 'No daily data to chart yet.' : '')); return wrap; }
+  const tr = p.traffic, days = chartRange[k] || 30;
+  const head = mk('div', 'lbl'); head.style.marginTop = '12px';
+  head.append(mk('span', null, tr.kind === 'views' ? 'Daily traffic' : 'Sign-ups per day'));
+  const sw = mk('span'); sw.style.cssText = 'display:flex;gap:4px';
+  [7, 30, 90].forEach(n => { const b = mk('button', 'lib-f' + (n === days ? ' on' : ''), n + 'd'); b.onclick = (ev) => { ev.stopPropagation(); chartRange[k] = n; renderSide(true); }; sw.append(b); });
+  head.append(sw); wrap.append(head);
+  // fill every day in the range (days with nothing recorded are zero), last day = today so far
+  const byDay = {}; tr.days.forEach(r => { byDay[r.d] = r; });
+  const pts = [], today = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today); d.setDate(d.getDate() - i);
+    const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    const r = byDay[key] || {}; pts.push({ d: key, a: tr.kind === 'views' ? (r.views || 0) : (r.signups || 0), b: tr.kind === 'views' ? (r.visitors || 0) : null });
+  }
+  const series = tr.kind === 'views' ? [['Page views', '#4f8cff', 'a'], ['Unique visitors', '#ffc14d', 'b']] : [['Sign-ups', '#00e5ff', 'a']];
+  const leg = mk('div'); leg.style.cssText = 'display:flex;gap:12px;font-size:10px;margin-bottom:4px';
+  series.forEach(([n, c]) => { const l = mk('span', null, '● ' + n); l.style.color = c; leg.append(l); });
+  wrap.append(leg);
+  const cv = document.createElement('canvas'); cv.style.cssText = 'width:100%;height:150px;display:block';
+  wrap.append(cv);
+  requestAnimationFrame(() => {
+    const W2 = cv.clientWidth || 300, H2 = 150, dpr = window.devicePixelRatio || 1;
+    cv.width = W2 * dpr; cv.height = H2 * dpr; const c = cv.getContext('2d'); c.scale(dpr, dpr);
+    const padL = 28, padB = 18, padT = 6, w = W2 - padL - 4, h = H2 - padB - padT;
+    const max = Math.max(4, ...pts.map(p2 => Math.max(p2.a, p2.b || 0)));
+    const step = Math.pow(10, Math.floor(Math.log10(max))), top = Math.ceil(max / step) * step;
+    c.font = '9px Share Tech Mono, monospace'; c.fillStyle = 'rgba(142,207,224,0.55)'; c.strokeStyle = 'rgba(142,207,224,0.08)'; c.lineWidth = 1;
+    for (let g = 0; g <= 4; g++) { const y = padT + h - h * g / 4; c.beginPath(); c.moveTo(padL, y); c.lineTo(padL + w, y); c.stroke(); c.textAlign = 'right'; c.fillText(String(Math.round(top * g / 4)), padL - 4, y + 3); }
+    const X = i => padL + (pts.length < 2 ? w / 2 : w * i / (pts.length - 1)), Y = v => padT + h - h * v / top;
+    c.textAlign = 'center';
+    [0, Math.floor((pts.length - 1) / 2), pts.length - 1].forEach(i => { const p2 = pts[i]; c.textAlign = i === 0 ? 'left' : i === pts.length - 1 ? 'right' : 'center'; c.fillText(i === pts.length - 1 ? 'today' : p2.d.slice(5).replace('-', '/'), X(i), H2 - 4); });
+    series.forEach(([, col, f]) => {
+      c.strokeStyle = col; c.lineWidth = 1.6; c.beginPath(); pts.forEach((p2, i) => { const y = Y(p2[f] || 0); i ? c.lineTo(X(i), y) : c.moveTo(X(i), y); }); c.stroke();
+      if (days <= 30) { c.fillStyle = col; pts.forEach((p2, i) => { c.beginPath(); c.arc(X(i), Y(p2[f] || 0), 1.8, 0, 6.29); c.fill(); }); }
+    });
+  });
+  if (tr.kind === 'views') wrap.append(mk('div', 'pnl-note', 'Unique visitors are estimated per browser, the same way FlipDeck\'s own analytics page counts them.'));
+  else wrap.append(mk('div', 'pnl-note', 'This product does not record page views, so the chart shows new sign-ups per day.'));
+  return wrap;
+}
+
 function pnlBlock(r, title) {
   const box = mk('div', 'pnl');
   if (title) box.append(mk('div', 'pnl-t', title));
@@ -1056,8 +1120,7 @@ function overviewSec() {
     tb.append(row);
   });
   s.append(tb);
-  const a = FIN.aibussol_stats;
-  if (a) s.append(mk('div', 'dim', 'Aibussol: ' + a.users_total + ' users · ' + a.active_24h + ' active today · ' + a.subscribers_active + ' subscribers · ' + a.new_users_7d + ' new this week'));
+  ['flipdeck', 'marnyx', 'deadzone', 'aibussol'].forEach(k => s.append(mk('div', 'dim', names[k] + ': ' + usersLine(k))));
   const live = Object.entries(FIN.products || {}).map(([k, p]) => (names[k] || k) + (p.live ? ' live' : ' DOWN')).join(' · ');
   if (live) s.append(mk('div', 'dim', 'Sites: ' + live));
   (FIN.notes || []).forEach(n => s.append(mk('div', 'pnl-note', n)));

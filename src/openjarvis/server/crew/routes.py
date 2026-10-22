@@ -136,6 +136,16 @@ async def crew_finance(request: Request):
     keys = list(KNOWN) + [factory_key(m["project"], m["title"], m["goal"], m["id"]) for m in missions]
     out = await fin.report(uid, missions, keys)
     out["products"] = engine.products
+    from openjarvis.server.crew.product_stats import ProductStats
+
+    ps = getattr(request.app.state, "crew_product_stats", None)
+    if ps is None:
+        ps = request.app.state.crew_product_stats = ProductStats(pool=pool)
+    try:
+        out["product_stats"] = await ps.all()
+    except Exception:
+        logger.exception("product stats unavailable")
+        out["product_stats"] = {}
     try:
         out["aibussol_stats"] = await admin_analytics.gather(pool) if pool is not None else None
     except Exception:

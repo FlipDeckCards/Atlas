@@ -674,3 +674,11 @@ class TestHerald:
         assert out["ok"] and bs.rows and h.status()["last"]["ok"]
         roster = run(h.engine.state(UID))["roster"]
         assert any(a["name"] == "Herald" and "next brief" in a["status_text"] for a in roster)
+
+
+def test_product_stats_say_which_database_is_missing():
+    from openjarvis.server.crew.product_stats import ProductStats
+
+    out = run(ProductStats(pool=None, env={}).all())
+    assert set(out) == {"aibussol", "flipdeck", "marnyx", "deadzone"}
+    assert not out["flipdeck"]["connected"] and "FLIPDECK_READ_DATABASE_URL" in out["flipdeck"]["note"]
