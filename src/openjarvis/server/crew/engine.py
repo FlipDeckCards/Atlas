@@ -129,7 +129,7 @@ _READ_OUTPUT_TOOL = {"type": "function", "function": {
 
 _IMAGE_TOOL = {"type": "function", "function": {
     "name": "generate_image",
-    "description": "Generate one image from a detailed description (500 characters at most) and save it to Michael's Aibussol media library. Costs a few cents; at most 4 per task.",
+    "description": "Generate one image from a detailed description (500 characters at most) and save it to Michael's Aibussol media library. Costs a few cents; at most 10 per task.",
     "parameters": {"type": "object", "properties": {"prompt": {"type": "string"}}, "required": ["prompt"]}}}
 
 _REPO_TOOLS = [
@@ -183,7 +183,7 @@ _REVIEW_TOOL = {"type": "function", "function": {
     "description": "Send one finished task back to its agent with concrete fixes (each task can be sent back once). You continue after the rework is done.",
     "parameters": {"type": "object", "properties": {"task_number": {"type": "integer"}, "notes": {"type": "string"}}, "required": ["task_number", "notes"]}}}
 
-LIMITS = {"web_search": 12, "generate_image": 4, "repo_commit": 10, "check_site": 20, "business_numbers": 3}
+LIMITS = {"web_search": 12, "generate_image": 10, "repo_commit": 10, "check_site": 20, "business_numbers": 3}
 SEARCHERS = ("researcher", "reviewer", "marketer", "social", "support", "analyst", "qa", "finance")
 IMAGERS = ("designer", "marketer", "social")
 READERS = ("support", "analyst", "finance")                # read-only platform access
