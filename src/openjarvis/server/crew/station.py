@@ -594,7 +594,8 @@ function modLive(m) { return !!m.powered || m.tasks.some(k => k.status === 'runn
 
 // a docking tube: straight from Helix's core into the middle of the module's inner wall
 function drawSpoke(m, t) {
-  const live = m.tasks.some(k => k.status === 'running') || (m.platform && m.powered);
+  const site = S && S.products ? S.products[m.key] : null;               // a live product site keeps its tube flowing too
+  const live = m.tasks.some(k => k.status === 'running') || (m.platform && m.powered) || !!(site && site.live);
   const col = m.color, hw = hallW() / 2, wall = 4 * SC;
   const r1 = core.r + 3, r2 = m.D - m.h / 2 + 2, ux = m.ux, uy = m.uy, nx = -uy, ny = ux;
   const P = (r, o) => [core.x + ux * r + nx * o, core.y + uy * r + ny * o];
