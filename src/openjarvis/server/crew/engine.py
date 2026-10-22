@@ -48,11 +48,21 @@ PLANNER_MAX_TOKENS = 1600
 AGENT_MAX_TOKENS = 2400
 
 ROLES: Dict[str, Dict[str, str]] = {
-    "researcher": {"model": "lookup", "about": "Research and analysis with Gemini. Has NO live web access: works from its own knowledge and must flag anything that needs checking."},
-    "builder": {"model": "writing", "about": "Builds with Claude: code, specs, configs and technical files, saved to the outbox. It cannot deploy or run code."},
-    "writer": {"model": "writing", "about": "Writes with Claude: product copy, listings, posts, emails, scripts, documents."},
-    "designer": {"model": "writing", "about": "Designs with Claude: brand direction, layouts, color and type choices, and image-generation prompts."},
-    "operator": {"model": "writing", "about": "The only role that can use connected platforms (Stripe, Etsy...). Risky actions become checkpoints for the owner."},
+    "researcher": {"name": "Scout", "model": "lookup", "about": "Research and analysis with Gemini. Has NO live web access: works from its own knowledge and must flag anything that needs checking.",
+                   "can": "Market and buyer research, competitor overviews, pricing ideas, fact lists to verify",
+                   "cannot": "Browse the live web or read pages (not built yet)"},
+    "builder": {"name": "Forge", "model": "writing", "about": "Builds with Claude: code, specs, configs and technical files, saved to the outbox. It cannot deploy or run code.",
+                "can": "Code, specs, landing pages, configs, technical plans, saved as files",
+                "cannot": "Run or deploy code, push to GitHub (not built yet)"},
+    "writer": {"name": "Quill", "model": "writing", "about": "Writes with Claude: product copy, listings, posts, emails, scripts, documents.",
+               "can": "Product copy, Etsy listings, social posts, emails, scripts, docs",
+               "cannot": "Post or send anything itself"},
+    "designer": {"name": "Prism", "model": "writing", "about": "Designs with Claude: brand direction, layouts, color and type choices, and image-generation prompts.",
+                 "can": "Brand direction, layouts, color and type, image prompts",
+                 "cannot": "Generate the images themselves inside a mission (not built yet)"},
+    "operator": {"name": "Relay", "model": "writing", "about": "The only role that can use connected platforms (Stripe, Etsy...). Risky actions become checkpoints for the owner.",
+                 "can": "Use connected platforms: Stripe products and payment links, Etsy draft listings",
+                 "cannot": "Anything public, paid or permanent without your Approve"},
 }
 
 _BASE_TOOLS: List[Dict[str, Any]] = [
@@ -279,7 +289,7 @@ class CrewEngine:
         return await self.store.get_mission(m["id"])
 
     def _planner_prompt(self, conn_text: str) -> str:
-        roles = "\n".join(f"- {k}: {v['about']}" for k, v in ROLES.items())
+        roles = "\n".join(f"- {k} ({v['name']}): {v['about']}" for k, v in ROLES.items())
         return (
             "You are the planner of Aibussol's crew, working for Michael (owner of FlipDeck LLC; products: FlipDeck Cards, Marnyx, Deadzone Games). "
             f"Break his goal into 2 to {max_tasks(self.env)} concrete tasks that agents can do in parallel where possible.\n"
@@ -430,7 +440,7 @@ class CrewEngine:
 
     def _system(self, task: Dict[str, Any], conn_text: str) -> str:
         role = ROLES.get(task["role"], ROLES["builder"])
-        s = (f"You are a {task['role']} agent in Aibussol's crew, working for Michael. {role['about']}\n"
+        s = (f"You are {role['name']}, the {task['role']} agent in Aibussol's crew, working for Michael. {role['about']}\n"
              "Work only on your task. Save every deliverable with save_output (complete files, not outlines). If you truly need Michael's decision, "
              "use ask_michael with one concrete question and short options; do not ask for things you can decide sensibly yourself. "
              "Never claim something was published, paid, uploaded or sent unless a tool result says so. When done, call finish with a short summary.")
@@ -554,7 +564,7 @@ class CrewEngine:
             options = [_clip(o, 60) for o in (args.get("options") or []) if _clip(o, 60)][:4] if isinstance(args.get("options"), list) else []
             await self.store.add_question(mid, tid, uid, "question", question, options)
             await self.store.add_event(uid, "question", f'"{task["title"]}" asks: {question}', mission_id=mid, task_id=tid)
-            await self._notify(uid, f"Question from the crew ({task['role']})", question + (("\nOptions: " + " / ".join(options)) if options else ""))
+            await self._notify(uid, f"Question from the crew · {ROLES.get(task['role'], ROLES['builder'])['name']} ({task['role']})", question + (("\nOptions: " + " / ".join(options)) if options else ""))
             return "Sent to Michael through Helix. Stop here; you will continue with his answer.", "waiting"
         if name == "finish":
             return "Finished.", "finish:" + (str(args.get("summary") or "").strip() or "Finished.")
@@ -673,7 +683,18 @@ class CrewEngine:
                             outputs=await self.store.list_outputs(m["id"])))
         settings = await self.store.get_settings(user_id)
         spent = float(await self.store.get_day_spend(user_id, self._day()))
+        roster = []
+        for key, r in ROLES.items():
+            mine = [t for m in out for t in m["tasks"] if t["role"] == key]
+            roster.append({"role": key, "name": r["name"], "model": hardening.display_name(self.models.get(r["model"], "")),
+                           "can": r["can"], "cannot": r["cannot"],
+                           "working": sum(1 for t in mine if t["status"] == "running"), "waiting": sum(1 for t in mine if t["status"] == "waiting"),
+                           "done": sum(1 for t in mine if t["status"] == "done")})
+        roster.insert(0, {"role": "lead", "name": "Helix", "model": hardening.display_name(self.models.get("writing", "")),
+                          "can": "Talks with you, plans each goal into tasks, assigns the crew, brings you their questions and approvals",
+                          "cannot": "Approve checkpoints for you or spend past your limits", "working": len(self._plans), "waiting": 0, "done": 0})
         return {
+            "roster": roster,
             "missions": out,
             "questions": await self.store.list_questions(user_id, "open"),
             "events": await self.store.list_events(user_id, limit=60),

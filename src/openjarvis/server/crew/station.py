@@ -69,6 +69,17 @@ STATION_PAGE = r"""<!DOCTYPE html>
   .ev { font-size:10px; line-height:1.55; padding:4px 0; color:var(--text-dim); border-bottom:1px solid rgba(0,229,255,0.04); overflow-wrap:anywhere; }
   .ev b { color:var(--text); font-weight:400; }
   .ev .c { color:var(--orange); }
+  #chat-log { height:250px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; padding-right:2px; scrollbar-width:thin; scrollbar-color:var(--cyan-dim) transparent; }
+  .cm { max-width:92%; padding:8px 10px; font-size:12px; line-height:1.5; border-radius:2px; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .cm.u { align-self:flex-end; background:rgba(255,109,0,0.08); border:1px solid rgba(255,109,0,0.25); color:#ffa040; }
+  .cm.a { align-self:flex-start; background:rgba(0,229,255,0.04); border:1px solid rgba(0,229,255,0.14); }
+  .cm .tg { font-size:9px; letter-spacing:2px; opacity:0.55; margin-bottom:3px; }
+  .agent { border:1px solid var(--border); border-radius:2px; padding:9px 10px; margin-bottom:8px; background:rgba(0,229,255,0.02); }
+  .agent-top { display:flex; align-items:center; gap:7px; margin-bottom:5px; }
+  .agent-name { font-family:'Orbitron',monospace; font-size:11px; letter-spacing:2px; font-weight:700; }
+  .agent-can { font-size:11px; line-height:1.5; color:var(--text); }
+  .agent-cannot { font-size:10px; line-height:1.5; color:var(--text-dim); margin-top:2px; }
+  .agent-st { font-size:10px; letter-spacing:1px; color:var(--text-dim); margin-top:5px; text-transform:uppercase; }
   .msg { font-size:11px; min-height:14px; margin-top:6px; color:var(--green); overflow-wrap:anywhere; }
   .msg.err { color:var(--red); }
   a { color:var(--cyan); }
@@ -79,7 +90,8 @@ STATION_PAGE = r"""<!DOCTYPE html>
     body { grid-template-rows:auto 1fr; height:100dvh; }
     #top { flex-wrap:wrap; padding:8px 12px; gap:8px; }
     .hide-m, #hint { display:none; }
-    #main { grid-template-columns:1fr; grid-template-rows:44dvh 1fr; }
+    #main { grid-template-columns:1fr; grid-template-rows:50dvh 1fr; }
+    #chat-log { height:210px; }
     #side { border-left:none; border-top:1px solid var(--border); }
     #gate { inset:0; }
   }
@@ -97,8 +109,15 @@ STATION_PAGE = r"""<!DOCTYPE html>
   <button class="tbtn" onclick="location.href='/'">← HELIX</button>
 </div>
 <div id="main">
-  <div id="stage"><canvas id="cv"></canvas><div id="hint">Tap Helix for your inbox · tap a room for its mission</div></div>
-  <div id="side"></div>
+  <div id="stage"><canvas id="cv"></canvas><div id="hint">Tap Helix for your inbox · a factory for its work · a dock for connections</div></div>
+  <div id="side">
+    <div id="chat" class="sec">
+      <div class="lbl"><span>Helix</span><span class="act">same chat as the main screen</span></div>
+      <div id="chat-log"></div>
+      <div class="ans"><input id="chat-in" type="text" maxlength="8000" placeholder='Tell Helix… e.g. "build me…"' autocomplete="off"/><button class="b" id="chat-send">Send</button></div>
+    </div>
+    <div id="side-body"></div>
+  </div>
 </div>
 <div id="gate"><div class="box"><div class="h" id="gate-h">STATION OFFLINE</div><div id="gate-t"></div></div></div>
 
@@ -106,7 +125,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
 const TOKEN_KEY = 'aibussol_token';
 const token = () => localStorage.getItem(TOKEN_KEY) || '';
 const PROJECT_COLORS = { flipdeck:'#ff6d00', marnyx:'#b06cff', deadzone:'#ff3344', aibussol:'#00e5ff', 'new':'#00ff88' };
-const ROLE_COLORS = { researcher:'#5ad1ff', builder:'#00e5ff', writer:'#ffc14d', designer:'#ff7ad9', operator:'#ff6d00' };
+const ROLE_COLORS = { lead:'#00e5ff', researcher:'#5ad1ff', builder:'#4dffc3', writer:'#ffc14d', designer:'#ff7ad9', operator:'#ff6d00' };
 const STATUS_COLORS = { queued:'#2a5060', running:'#00e5ff', waiting:'#ff6d00', done:'#00ff88', failed:'#ff3344', cancelled:'#2a3a44' };
 let S = null, selected = 'hub', lastDraw = 0, pollTimer = null;
 
@@ -145,7 +164,7 @@ async function refresh() {
   document.getElementById('t-night').classList.toggle('on', !!S.settings.night_shift);
   document.getElementById('t-pause').classList.toggle('on', !!S.settings.paused);
   document.getElementById('t-pause').textContent = S.settings.paused ? 'RESUME ALL' : 'PAUSE ALL';
-  if (selected !== 'hub' && selected !== 'links' && !S.missions.find(m => m.id === selected)) selected = 'hub';
+  if (selected !== 'hub' && selected !== 'links' && !String(selected).startsWith('f:') && !S.missions.find(m => m.id === selected)) selected = 'hub';
   layout();
   renderSide();
 }
@@ -156,16 +175,15 @@ document.getElementById('t-pause').onclick = async () => { if (!S) return; await
 
 // ── side panel ───────────────────────────────────────────────────────────────────────────────
 function renderSide(force) {
-  const side = document.getElementById('side');
+  const side = document.getElementById('side-body');
   const ae = document.activeElement;
   // never rebuild the panel under someone's fingers: wait until they leave the field they are typing in
   if (!force && ae && side.contains(ae) && /INPUT|TEXTAREA/.test(ae.tagName) && ae.value) { ae.onblur = () => renderSide(true); return; }
-  const keepGoal = document.getElementById('goal'); const goalVal = keepGoal ? keepGoal.value : '';
-  const keepBudget = document.getElementById('budget'); const budgetVal = keepBudget ? keepBudget.value : '';
   const focused = document.activeElement && document.activeElement.id;
   side.textContent = '';
-  if (selected === 'hub') side.append(inboxSec(), launchSec(goalVal, budgetVal), missionsSec(), linksSec(), ledgerSec(S.events, 'Station Ledger'));
+  if (selected === 'hub') side.append(inboxSec(), rosterSec(), missionsSec(), linksSec(), ledgerSec(S.events, 'Station Ledger'));
   else if (selected === 'links') side.append(backSec(), linksSec());
+  else if (String(selected).startsWith('f:')) side.append(backSec(), factorySec(selected.slice(2)));
   else {
     const m = S.missions.find(x => x.id === selected);
     side.append(backSec(), missionSec(m), inboxSec(m.id), outboxSec(m), ledgerSec(S.events.filter(e => e.mission_id === m.id), 'Mission Ledger'));
@@ -216,25 +234,36 @@ function questionCard(q) {
   return c;
 }
 
-function launchSec(goalVal, budgetVal) {
+function rosterSec() {
   const s = mk('div', 'sec');
-  s.append(Object.assign(mk('div', 'lbl'), { textContent: 'New mission' }));
-  const ta = mk('textarea'); ta.id = 'goal'; ta.maxLength = 4000; ta.value = goalVal || '';
-  ta.placeholder = 'e.g. Build me a digital planner product for card collectors and get it ready to sell on Etsy';
-  const row = mk('div', 'ans');
-  const bi = mk('input'); bi.type = 'number'; bi.id = 'budget'; bi.min = '0.05'; bi.step = '0.25'; bi.max = String(S.spend.max_mission_budget_usd);
-  bi.value = budgetVal || String(S.spend.default_mission_budget_usd); bi.style.width = '90px'; bi.title = 'Mission budget (USD)';
-  const go = mk('button', 'b', 'Launch'); const msg = mk('div', 'msg');
-  go.onclick = async () => {
-    const goal = ta.value.trim(); if (goal.length < 8) { msg.className = 'msg err'; msg.textContent = 'Describe the goal in a sentence or two.'; return; }
-    go.disabled = true;
-    const r = await api('/api/crew/missions', 'POST', { goal, budget_usd: parseFloat(bi.value) || undefined });
-    go.disabled = false;
-    if (r.ok) { ta.value = ''; msg.className = 'msg'; msg.textContent = 'Launched. Helix is planning it.'; selected = r.data.mission.id; setTimeout(refresh, 400); }
-    else { msg.className = 'msg err'; msg.textContent = r.data.detail || 'Could not launch.'; }
-  };
-  row.append(mk('span', 'dim', 'Budget $'), bi, go);
-  s.append(ta, row, msg, mk('div', 'dim', 'Or just tell Helix "build me…" in chat. The crew stops and asks before spending more or doing anything public.'));
+  const l = mk('div', 'lbl'); l.append(mk('span', null, 'Crew roster'), mk('span', 'act', (S.roster || []).length + ' on the station')); s.append(l);
+  (S.roster || []).forEach(a => {
+    const c = mk('div', 'agent');
+    const top = mk('div', 'agent-top'); const d = mk('span', 'dot'); d.style.background = ROLE_COLORS[a.role] || '#00e5ff';
+    const nm = mk('span', 'agent-name', a.name); nm.style.color = ROLE_COLORS[a.role] || '#00e5ff';
+    top.append(d, nm, mk('span', 'tag', a.role === 'lead' ? 'lead' : a.role), mk('span', 'grow'), mk('span', 'dim', a.model));
+    c.append(top, mk('div', 'agent-can', a.can), mk('div', 'agent-cannot', 'Limits: ' + a.cannot));
+    const st = a.working ? a.working + ' working' : a.waiting ? 'waiting on you' : 'standing by';
+    const sl = mk('div', 'agent-st', st + (a.done ? ' · ' + a.done + ' done' : '')); if (a.working) sl.style.color = '#00ff88'; else if (a.waiting) sl.style.color = '#ff6d00';
+    c.append(sl); s.append(c);
+  });
+  return s;
+}
+
+function factorySec(key) {
+  const b = bays.find(x => x.key === key) || factories().find(x => x.key === key);
+  const s = mk('div', 'sec');
+  if (!b) { s.append(mk('div', 'dim', 'That factory is gone.')); return s; }
+  const l = mk('div', 'lbl'); l.append(mk('span', null, 'Factory'), mk('span', 'tag', b.state)); s.append(l);
+  const h = mk('div', 'h', b.label); h.style.color = b.color; s.append(h);
+  if (!b.missions.length) { s.append(mk('div', 'dim', 'Idle. Tell Helix what to build for ' + (b.isNew ? 'this business' : b.label.charAt(0) + b.label.slice(1).toLowerCase()) + ' and the crew will work here.')); return s; }
+  s.append(mk('div', 'dim', b.missions.length + ' mission(s). Tap one for its crew, files and ledger.'));
+  b.missions.forEach(m => {
+    const r = mk('div', 'row'); r.style.cursor = 'pointer'; r.onclick = () => { selected = m.id; renderSide(true); };
+    const done = m.tasks.filter(t => t.status === 'done').length;
+    r.append(mk('span', 'grow', m.title || m.goal), mk('span', 'tag', m.status), mk('span', 'dim', done + '/' + m.tasks.length));
+    s.append(r);
+  });
   return s;
 }
 
@@ -329,8 +358,19 @@ function ledgerSec(events, title) {
 }
 
 // ── the station picture ──────────────────────────────────────────────────────────────────────
+// A fixed station: Helix's core in the middle, one factory per product (always there, idle until it has work),
+// a new factory for each new business the crew starts, and a dock for each outside platform (lit when connected).
 const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
-let W = 0, H = 0, DPR = 1, rooms = [], hub = { x: 0, y: 0, r: 60 }, stars = [];
+let W = 0, H = 0, DPR = 1, hub = { x: 0, y: 0, r: 60 }, stars = [], bays = [], pods = [];
+const FACTORIES = [
+  { key: 'flipdeck', label: 'FLIPDECK', color: '#ff6d00' },
+  { key: 'marnyx', label: 'MARNYX', color: '#b06cff' },
+  { key: 'deadzone', label: 'DEADZONE', color: '#ff3344' },
+  { key: 'aibussol', label: 'AIBUSSOL', color: '#00e5ff' },
+];
+const DOCKS = [['stripe', 'STRIPE', -1, -1], ['etsy', 'ETSY', 1, -1], ['google_play', 'PLAY', -1, 1], ['app_store', 'APPLE', 1, 1]];   // [key, label, left/right, above/below Helix]
+const WORKING = ['active', 'planning', 'paused', 'stalled'];
+
 function resize() {
   const r = cv.getBoundingClientRect(); DPR = Math.min(window.devicePixelRatio || 1, 2);
   W = r.width; H = r.height; cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR); ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -339,22 +379,59 @@ function resize() {
 }
 window.addEventListener('resize', resize);
 
+function factoryKey(m) {
+  const p = String(m.project || '').toLowerCase().replace(/[^a-z]/g, '');
+  if (FACTORIES.some(f => f.key === p)) return p;
+  return 'new:' + String(m.title || m.goal || m.id).toLowerCase().slice(0, 40);
+}
+
+function factories() {
+  const ms = S ? S.missions.filter(m => m.status !== 'cancelled') : [];
+  const fill = b => {
+    b.missions = ms.filter(m => factoryKey(m) === b.key);
+    const current = b.missions.filter(m => WORKING.includes(m.status));
+    b.tasks = current.flatMap(m => m.tasks.filter(t => t.status !== 'cancelled'));
+    b.planning = current.some(m => m.status === 'planning');
+    b.title = current.length ? (current[0].title || current[0].goal) : '';
+    b.state = b.tasks.some(t => t.status === 'waiting') ? 'NEEDS YOU' : b.tasks.some(t => t.status === 'running') ? 'WORKING'
+      : b.planning ? 'PLANNING' : current.length ? 'QUEUED' : b.missions.length ? 'DONE' : 'IDLE';
+    return b;
+  };
+  const fixed = FACTORIES.map(f => fill(Object.assign({}, f)));
+  const seen = [];
+  ms.forEach(m => { const k = factoryKey(m); if (k.startsWith('new:') && !seen.includes(k)) seen.push(k); });
+  const fresh = seen.slice(0, 4).map(k => {
+    const m = ms.find(x => factoryKey(x) === k);
+    return fill({ key: k, label: String(m.title || 'NEW BUSINESS').toUpperCase(), color: '#00ff88', isNew: true });
+  });
+  return fixed.concat(fresh);
+}
+
 function layout() {
-  const ms = S ? S.missions.filter(m => m.status !== 'cancelled').slice(0, 8) : [];
-  const small = Math.min(W, H);
-  hub = { x: W / 2, y: H / 2, r: Math.max(34, small * 0.11) };
-  const n = ms.length, R = small * (n > 5 ? 0.38 : 0.34);
-  const rw = Math.max(118, Math.min(250, small * (W > 900 ? 0.4 : 0.34))), rh = rw * 0.62;
-  rooms = ms.map((m, i) => {
-    const a = -Math.PI / 2 + (i / Math.max(n, 1)) * Math.PI * 2 + (n === 2 ? Math.PI / 2 : 0);
-    let cx = W / 2 + Math.cos(a) * R * (W > H ? 1.35 : 0.95), cy = H / 2 + Math.sin(a) * R * (W > H ? 0.95 : 1.25);
-    cx = Math.min(Math.max(cx, rw / 2 + 10), W - rw / 2 - 10); cy = Math.min(Math.max(cy, rh / 2 + 22), H - rh / 2 - 26);
-    return { m, x: cx - rw / 2, y: cy - rh / 2, w: rw, h: rh, cx, cy };
+  const small = Math.min(W, H), g = Math.max(10, small * 0.03);
+  hub = { x: W / 2, y: H / 2, r: Math.max(28, small * 0.095) };
+  const narrow = W < 600;
+  const fw = narrow ? Math.max(112, W * 0.31) : Math.max(130, Math.min(W * 0.34, 320)), fh = Math.max(96, Math.min(H * (narrow ? 0.29 : 0.32), 200));
+  const corners = [[g, g], [W - fw - g, g], [g, H - fh - g], [W - fw - g, H - fh - g]];
+  const list = factories();
+  const midW = Math.max(110, Math.min(W - 2 * fw - 4 * g, 220)), midH = Math.max(70, Math.min(H - 2 * fh - 4 * g, 130));
+  const mids = [[g, H / 2 - midH / 2, fw * 0.8, midH], [W - fw * 0.8 - g, H / 2 - midH / 2, fw * 0.8, midH],
+                [W / 2 - midW / 2, g, midW, fh * 0.75], [W / 2 - midW / 2, H - fh * 0.75 - g, midW, fh * 0.75]];
+  bays = list.map((b, i) => {
+    const [x, y, w, h] = i < 4 ? [corners[i][0], corners[i][1], fw, fh] : mids[i - 4];
+    return Object.assign(b, { x, y, w, h, cx: x + w / 2, cy: y + h / 2 });
+  });
+  const pw = narrow ? 46 : Math.max(62, Math.min(84, hub.r * 1.3)), ph = 18;
+  pods = DOCKS.map(([key, label, side, row]) => {
+    const cx = hub.x + side * (pw / 2 + 5), cy = row < 0 ? hub.y - hub.r - 34 : hub.y + hub.r + 50;
+    const c = S && S.connections ? S.connections[key] : null;
+    return { key, label, cx, cy, x: cx - pw / 2, y: cy - ph / 2, w: pw, h: ph, connected: !!(c && c.connected), built: !!(c && c.built) };
   });
 }
 
 function rr(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
 function alpha(hex, a) { const n = parseInt(hex.slice(1), 16); return 'rgba(' + (n >> 16) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')'; }
+function inRect(p, x, y) { return x >= p.x && x <= p.x + p.w && y >= p.y && y <= p.y + p.h; }
 
 function drawStars(t) {
   for (const s of stars) {
@@ -362,45 +439,40 @@ function drawStars(t) {
     ctx.fillStyle = 'rgba(160,220,255,' + (0.15 + 0.5 * s.z) * tw + ')';
     const x = (s.x + t * 0.004 * s.z) % W; ctx.fillRect(x, s.y, s.z > 0.85 ? 1.6 : 1, s.z > 0.85 ? 1.6 : 1);
   }
-  ctx.strokeStyle = 'rgba(0,229,255,0.025)'; ctx.lineWidth = 1;
-  for (let x = (W / 2) % 44; x < W; x += 44) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
-  for (let y = (H / 2) % 44; y < H; y += 44) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
 }
 
-function corridorPoints(room) {
-  const dx = room.cx - hub.x, dy = room.cy - hub.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
-  const sx = hub.x + ux * (hub.r + 10), sy = hub.y + uy * (hub.r + 10);
-  // where the corridor meets the room's edge
-  const tx = Math.abs(ux) > 1e-6 ? (room.w / 2) / Math.abs(ux) : 1e9, ty = Math.abs(uy) > 1e-6 ? (room.h / 2) / Math.abs(uy) : 1e9, k = Math.min(tx, ty);
-  return { sx, sy, ex: room.cx - ux * k, ey: room.cy - uy * k };
+function corridorPoints(b) {
+  const dx = b.cx - hub.x, dy = b.cy - hub.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
+  const sx = hub.x + ux * (hub.r + 18), sy = hub.y + uy * (hub.r + 18);
+  const tx = Math.abs(ux) > 1e-6 ? (b.w / 2) / Math.abs(ux) : 1e9, ty = Math.abs(uy) > 1e-6 ? (b.h / 2) / Math.abs(uy) : 1e9, k = Math.min(tx, ty);
+  return { sx, sy, ex: b.cx - ux * k, ey: b.cy - uy * k };
 }
 
-function drawCorridor(room, t) {
-  const { sx, sy, ex, ey } = corridorPoints(room); const col = projColor(room.m.project);
-  const live = room.m.tasks.some(x => x.status === 'running');
-  ctx.strokeStyle = 'rgba(13,37,53,0.9)'; ctx.lineWidth = 12; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
-  ctx.strokeStyle = alpha(col, live ? 0.45 : 0.18); ctx.lineWidth = 1; ctx.setLineDash([4, 6]); ctx.lineDashOffset = live ? -t * 0.02 : 0;
+function drawCorridor(b, t) {
+  const { sx, sy, ex, ey } = corridorPoints(b);
+  const live = b.tasks.some(x => x.status === 'running');
+  ctx.strokeStyle = 'rgba(16,40,56,0.95)'; ctx.lineWidth = 14; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,229,255,0.06)'; ctx.lineWidth = 14; ctx.setLineDash([2, 10]); ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
+  ctx.strokeStyle = alpha(b.color, live ? 0.6 : 0.16); ctx.lineWidth = 1; ctx.setLineDash([4, 6]); ctx.lineDashOffset = live ? -t * 0.02 : 0;
   ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke(); ctx.setLineDash([]);
   if (live) {
     for (let k = 0; k < 3; k++) {
       const p = ((t * 0.00035 + k / 3) % 1); const x = ex + (sx - ex) * p, y = ey + (sy - ey) * p;
-      ctx.fillStyle = alpha(col, 0.9); ctx.shadowColor = col; ctx.shadowBlur = 8; ctx.beginPath(); ctx.arc(x, y, 2, 0, 6.29); ctx.fill(); ctx.shadowBlur = 0;
+      ctx.fillStyle = alpha(b.color, 0.95); ctx.shadowColor = b.color; ctx.shadowBlur = 8; ctx.beginPath(); ctx.arc(x, y, 2.2, 0, 6.29); ctx.fill(); ctx.shadowBlur = 0;
     }
   }
 }
 
 function drawHub(t) {
   const { x, y, r } = hub; const open = S ? S.questions.length : 0;
-  const g = ctx.createRadialGradient(x, y, r * 0.2, x, y, r * 1.6); g.addColorStop(0, 'rgba(0,229,255,0.16)'); g.addColorStop(1, 'rgba(0,229,255,0)');
-  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 1.6, 0, 6.29); ctx.fill();
+  const g = ctx.createRadialGradient(x, y, r * 0.2, x, y, r * 1.7); g.addColorStop(0, 'rgba(0,229,255,0.16)'); g.addColorStop(1, 'rgba(0,229,255,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 1.7, 0, 6.29); ctx.fill();
   ctx.fillStyle = '#071019'; ctx.strokeStyle = 'rgba(0,229,255,0.5)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.29); ctx.fill(); ctx.stroke();
-  // rotating outer rings
   ctx.save(); ctx.translate(x, y);
   ctx.rotate(t * 0.0003); ctx.strokeStyle = 'rgba(0,229,255,0.35)'; ctx.setLineDash([2, 9]); ctx.beginPath(); ctx.arc(0, 0, r + 8, 0, 6.29); ctx.stroke();
   ctx.rotate(-t * 0.0007); ctx.strokeStyle = open ? 'rgba(255,109,0,' + (0.45 + 0.4 * Math.sin(t * 0.005)) + ')' : 'rgba(255,109,0,0.18)';
   ctx.setLineDash([14, 10]); ctx.lineWidth = open ? 2 : 1; ctx.beginPath(); ctx.arc(0, 0, r + 15, 0, 6.29); ctx.stroke(); ctx.setLineDash([]);
   ctx.restore();
-  // the helix: two strands turning around a vertical axis, joined by rungs
   const hgt = r * 1.25, n = 18, tw = t * 0.0016;
   for (let i = 0; i < n; i++) {
     const f = i / (n - 1), yy = y - hgt / 2 + f * hgt, ph = f * Math.PI * 3 + tw;
@@ -413,12 +485,25 @@ function drawHub(t) {
     }
   }
   ctx.shadowBlur = 0;
-  ctx.font = '700 ' + Math.max(9, r * 0.2) + 'px Orbitron, monospace'; ctx.textAlign = 'center'; ctx.fillStyle = '#00e5ff';
-  ctx.fillText('HELIX', x, y + r + 32);
+  ctx.font = '700 ' + Math.max(9, r * 0.22) + 'px Orbitron, monospace'; ctx.textAlign = 'center'; ctx.fillStyle = '#00e5ff';
+  ctx.fillText('HELIX', x, y + r + 30);
   if (open) {
     ctx.fillStyle = '#ff6d00'; ctx.beginPath(); ctx.arc(x + r * 0.78, y - r * 0.78, 11, 0, 6.29); ctx.fill();
     ctx.fillStyle = '#050508'; ctx.font = '700 11px Share Tech Mono, monospace'; ctx.fillText(String(open), x + r * 0.78, y - r * 0.78 + 4);
   }
+}
+
+function drawPod(p, t) {
+  const col = p.connected ? '#00ff88' : p.built ? '#ff6d00' : '#2a4452';
+  const up = p.cy < hub.y, ay = up ? p.y + p.h : p.y, hy = hub.y + (up ? -1 : 1) * Math.sqrt(Math.max(0, hub.r * hub.r - (p.cx - hub.x) * (p.cx - hub.x)));
+  ctx.strokeStyle = alpha(col, p.connected ? 0.5 : 0.18); ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(p.cx, hy); ctx.lineTo(p.cx, ay); ctx.stroke();
+  ctx.fillStyle = p.connected ? 'rgba(0,40,24,0.95)' : 'rgba(8,14,20,0.95)'; rr(p.x, p.y, p.w, p.h, 4); ctx.fill();
+  ctx.strokeStyle = alpha(col, p.connected ? 0.9 : 0.35); ctx.lineWidth = selected === 'links' ? 1.6 : 1; rr(p.x, p.y, p.w, p.h, 4); ctx.stroke();
+  ctx.fillStyle = p.connected ? alpha('#00ff88', 0.6 + 0.4 * Math.sin(t * 0.004 + p.cx)) : alpha(col, 0.5);
+  ctx.beginPath(); ctx.arc(p.x + 7, p.cy, 2.5, 0, 6.29); ctx.fill();
+  ctx.font = '8px Share Tech Mono, monospace'; ctx.textAlign = 'left'; ctx.fillStyle = p.connected ? '#bfffe0' : alpha('#8ecfe0', p.built ? 0.6 : 0.35);
+  ctx.fillText(p.label, p.x + 13, p.cy + 3);
 }
 
 function drawBot(x, y, color, status, t, seed, facing, sc) {
@@ -427,10 +512,10 @@ function drawBot(x, y, color, status, t, seed, facing, sc) {
   const dim = status === 'queued' || status === 'cancelled';
   ctx.save(); ctx.translate(x, y - bob); ctx.scale(sc, sc); ctx.globalAlpha = dim ? 0.45 : 1;
   ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.ellipse(0, 8 + bob, 5, 1.6, 0, 0, 6.29); ctx.fill();
-  ctx.fillStyle = '#c8d6de'; rr(-4, -2, 8, 9, 3); ctx.fill();                     // body
-  ctx.fillStyle = color; ctx.fillRect(-4, 2, 8, 1.5);                              // role stripe
-  ctx.fillStyle = '#e8f1f5'; ctx.beginPath(); ctx.arc(0, -5, 4.2, 0, 6.29); ctx.fill(); // head
-  ctx.fillStyle = '#0b1a24'; rr(-3 + facing, -6.4, 6, 2.8, 1.4); ctx.fill();       // visor
+  ctx.fillStyle = '#c8d6de'; rr(-4, -2, 8, 9, 3); ctx.fill();
+  ctx.fillStyle = color; ctx.fillRect(-4, 2, 8, 1.5);
+  ctx.fillStyle = '#e8f1f5'; ctx.beginPath(); ctx.arc(0, -5, 4.2, 0, 6.29); ctx.fill();
+  ctx.fillStyle = '#0b1a24'; rr(-3 + facing, -6.4, 6, 2.8, 1.4); ctx.fill();
   ctx.fillStyle = alpha(color, 0.9); ctx.fillRect(-2 + facing, -5.6, 4, 1);
   ctx.restore();
   if (status === 'running') {
@@ -438,60 +523,76 @@ function drawBot(x, y, color, status, t, seed, facing, sc) {
   }
 }
 
-function drawRoom(room, t) {
-  const { m, x, y, w, h } = room; const col = projColor(m.project); const sel = selected === m.id;
-  ctx.fillStyle = 'rgba(8,12,20,0.94)'; rr(x, y, w, h, 6); ctx.fill();
-  ctx.strokeStyle = alpha(col, sel ? 0.9 : 0.45); ctx.lineWidth = sel ? 2 : 1; rr(x, y, w, h, 6); ctx.stroke();
-  // floor plates
-  ctx.strokeStyle = alpha(col, 0.07); ctx.lineWidth = 1;
-  for (let gx = x + 12; gx < x + w; gx += 12) { ctx.beginPath(); ctx.moveTo(gx, y + 20); ctx.lineTo(gx, y + h - 4); ctx.stroke(); }
-  ctx.fillStyle = alpha(col, 0.12); ctx.fillRect(x + 1, y + 1, w - 2, 17);
-  ctx.font = '9px Share Tech Mono, monospace'; const stW = ctx.measureText(m.status.toUpperCase()).width;
-  ctx.font = '700 9px Orbitron, monospace'; ctx.textAlign = 'left'; ctx.fillStyle = col;
-  let title = (m.title || m.goal || 'mission').toUpperCase(); while (title.length > 4 && ctx.measureText(title + '…').width > w - stW - 22) title = title.slice(0, -1);
-  ctx.fillText(title + ((m.title || m.goal || '').length > title.length ? '…' : ''), x + 7, y + 12);
-  ctx.textAlign = 'right'; ctx.font = '9px Share Tech Mono, monospace'; ctx.fillStyle = 'rgba(142,207,224,0.7)';
-  ctx.fillText(m.status.toUpperCase(), x + w - 6, y + 12);
-  // budget strip
-  const pct = m.budget_usd ? Math.min(1, m.spent_usd / m.budget_usd) : 0;
-  ctx.fillStyle = 'rgba(0,229,255,0.08)'; ctx.fillRect(x + 6, y + h - 6, w - 12, 2);
-  ctx.fillStyle = pct > 0.8 ? '#ff6d00' : col; ctx.fillRect(x + 6, y + h - 6, (w - 12) * pct, 2);
-  if (m.status === 'planning') {
-    ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(142,207,224,' + (0.4 + 0.4 * Math.sin(t * 0.004)) + ')'; ctx.font = '10px Share Tech Mono, monospace';
-    ctx.fillText('HELIX IS PLANNING…', room.cx, room.cy + 6); return;
-  }
-  const sc = Math.max(1, Math.min(1.7, w / 140));
-  const inside = m.tasks.filter(tk => tk.status !== 'waiting');
-  const cols = Math.max(1, Math.min(4, Math.ceil(Math.sqrt(inside.length * 1.6)))), rows = Math.ceil(inside.length / cols) || 1;
-  const cw = (w - 16) / cols, ch = (h - 34) / rows;
-  inside.forEach((tk, i) => {
-    const c = i % cols, r = Math.floor(i / cols), bx = x + 8 + cw * c + cw / 2, by = y + 24 + ch * r + ch / 2;
-    ctx.fillStyle = 'rgba(13,37,53,0.9)'; ctx.fillRect(bx - 9 * sc, by - 2 * sc, 18 * sc, 5 * sc);                  // desk
-    const scr = tk.status === 'running' ? alpha(ROLE_COLORS[tk.role] || col, 0.5 + 0.3 * Math.sin(t * 0.01 + i)) : 'rgba(42,80,96,0.5)';
-    ctx.fillStyle = scr; ctx.fillRect(bx - 6 * sc, by - 9 * sc, 12 * sc, 6 * sc);                                   // screen
-    drawBot(bx + (tk.status === 'done' ? 10 * sc : 0), by + 6 * sc, ROLE_COLORS[tk.role] || col, tk.status, t, i * 1.7, tk.status === 'running' ? 0 : 1, sc);
-    const my = by - 14 * sc;
-    if (tk.status === 'done') { ctx.strokeStyle = '#00ff88'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(bx - 4, my); ctx.lineTo(bx - 1, my + 3); ctx.lineTo(bx + 4, my - 3); ctx.stroke(); }
-    if (tk.status === 'failed') { ctx.strokeStyle = '#ff3344'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(bx - 3, my - 2); ctx.lineTo(bx + 3, my + 4); ctx.moveTo(bx + 3, my - 2); ctx.lineTo(bx - 3, my + 4); ctx.stroke(); }
-  });
-  // crew members waiting on Michael walk the corridor to Helix and hold up a question
-  const waiting = m.tasks.filter(tk => tk.status === 'waiting');
-  if (waiting.length) {
-    const { sx, sy, ex, ey } = corridorPoints(room);
-    waiting.forEach((tk, i) => {
-      const p = 0.78 - i * 0.12 + Math.sin(t * 0.0012 + i) * 0.015; const bx = ex + (sx - ex) * p, by = ey + (sy - ey) * p;
-      drawBot(bx, by, ROLE_COLORS[tk.role] || col, 'waiting', t, i * 3.1, sx < ex ? -1 : 1, sc);
-      const qy = by - 18 * sc - 6;
-      ctx.fillStyle = '#ff6d00'; rr(bx - 5, qy, 10, 10, 3); ctx.fill();
-      ctx.fillStyle = '#050508'; ctx.font = '700 9px Share Tech Mono, monospace'; ctx.textAlign = 'center'; ctx.fillText('?', bx, qy + 8);
-    });
-  }
+function fitText(text, maxW) {
+  let s = text; while (s.length > 3 && ctx.measureText(s + '…').width > maxW) s = s.slice(0, -1);
+  return s === text ? s : s + '…';
 }
 
-function drawEmpty() {
-  ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(142,207,224,0.55)'; ctx.font = '11px Share Tech Mono, monospace';
-  ctx.fillText('NO MISSIONS YET', W / 2, hub.y + hub.r + 56);
-  ctx.fillStyle = 'rgba(61,106,122,0.9)'; ctx.fillText('Tell Helix "build me…" or launch one from the panel', W / 2, hub.y + hub.r + 74);
+function drawBay(b, t) {
+  const { x, y, w, h, color } = b; const sel = selected === 'f:' + b.key;
+  const idle = !b.tasks.length && !b.planning, live = b.tasks.some(k => k.status === 'running');
+  const sc = Math.max(1, Math.min(1.8, w / 150));
+  // hull
+  ctx.fillStyle = 'rgba(7,11,18,0.96)'; rr(x, y, w, h, 7); ctx.fill();
+  if (live) { ctx.shadowColor = color; ctx.shadowBlur = 14; }
+  ctx.strokeStyle = alpha(color, sel ? 0.95 : idle ? 0.28 : 0.7); ctx.lineWidth = sel ? 2 : 1.2; rr(x, y, w, h, 7); ctx.stroke(); ctx.shadowBlur = 0;
+  // header
+  ctx.fillStyle = alpha(color, idle ? 0.07 : 0.16); ctx.fillRect(x + 1, y + 1, w - 2, 18);
+  ctx.font = '9px Share Tech Mono, monospace'; const st = b.state; const stW = ctx.measureText(st).width;
+  ctx.textAlign = 'right'; ctx.fillStyle = st === 'NEEDS YOU' ? '#ff6d00' : st === 'WORKING' ? '#00ff88' : 'rgba(142,207,224,0.55)'; ctx.fillText(st, x + w - 7, y + 13);
+  ctx.font = '700 9px Orbitron, monospace'; ctx.textAlign = 'left'; ctx.fillStyle = alpha(color, idle ? 0.6 : 1);
+  ctx.fillText(fitText((b.isNew ? '◆ ' : '') + b.label, w - stW - 24), x + 8, y + 13);
+  // floor plating and the conveyor line
+  ctx.strokeStyle = alpha(color, 0.05); ctx.lineWidth = 1;
+  for (let gx = x + 14; gx < x + w - 4; gx += 14) { ctx.beginPath(); ctx.moveTo(gx, y + 20); ctx.lineTo(gx, y + h - 16); ctx.stroke(); }
+  const by0 = y + h - 13;
+  ctx.fillStyle = 'rgba(20,34,46,0.95)'; ctx.fillRect(x + 6, by0, w - 12, 7);
+  ctx.strokeStyle = alpha(color, live ? 0.55 : 0.12); ctx.lineWidth = 1;
+  const off = live ? (t * 0.03) % 10 : 0;
+  for (let sx = x + 6 + off; sx < x + w - 6; sx += 10) { ctx.beginPath(); ctx.moveTo(sx, by0 + 1); ctx.lineTo(sx + 4, by0 + 6); ctx.stroke(); }
+  if (live) {
+    for (let k = 0; k < 3; k++) { const p = (t * 0.00012 + k / 3) % 1; ctx.fillStyle = alpha(color, 0.85); ctx.fillRect(x + 8 + (w - 22) * p, by0 + 1.5, 6, 4); }
+  }
+  // current mission name
+  if (b.title) {
+    ctx.font = '9px Share Tech Mono, monospace'; ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(142,207,224,0.75)';
+    ctx.fillText(fitText(b.title, w - 16), x + 8, y + 31);
+  }
+  if (b.planning && !b.tasks.length) {
+    ctx.setLineDash([5, 5]); ctx.strokeStyle = alpha(color, 0.5 + 0.3 * Math.sin(t * 0.004)); rr(x + 10, y + 38, w - 20, h - 58, 4); ctx.stroke(); ctx.setLineDash([]);
+    ctx.textAlign = 'center'; ctx.fillStyle = alpha('#8ecfe0', 0.5 + 0.4 * Math.sin(t * 0.004)); ctx.font = '10px Share Tech Mono, monospace';
+    ctx.fillText(b.isNew ? 'BUILDING NEW FACTORY…' : 'HELIX IS PLANNING…', b.cx, y + h / 2 + 10);
+    return;
+  }
+  // work stations: at least 3 machines; a crew member at each one that has a task
+  const inside = b.tasks.filter(k => k.status !== 'waiting');
+  const slots = Math.max(3, Math.min(8, b.tasks.length));
+  const cols = Math.min(slots, w > 220 ? 4 : 3), rows = Math.ceil(slots / cols);
+  const top = y + (b.title ? 38 : 26), cw = (w - 16) / cols, ch = (by0 - 4 - top) / rows;
+  for (let i = 0; i < slots; i++) {
+    const c = i % cols, r = Math.floor(i / cols), mx = x + 8 + cw * c + cw / 2, my = top + ch * r + ch * 0.55;
+    const tk = inside[i];
+    ctx.fillStyle = 'rgba(16,40,56,0.95)'; ctx.fillRect(mx - 10 * sc, my - 2 * sc, 20 * sc, 5 * sc);
+    const scr = tk && tk.status === 'running' ? alpha(ROLE_COLORS[tk.role] || color, 0.55 + 0.3 * Math.sin(t * 0.01 + i)) : tk ? 'rgba(42,80,96,0.6)' : 'rgba(30,52,66,0.35)';
+    ctx.fillStyle = scr; ctx.fillRect(mx - 7 * sc, my - 10 * sc, 14 * sc, 7 * sc);
+    if (!tk) continue;
+    drawBot(mx + (tk.status === 'done' ? 11 * sc : 0), my + 7 * sc, ROLE_COLORS[tk.role] || color, tk.status, t, i * 1.7, tk.status === 'running' ? 0 : 1, sc);
+    const ky = my - 15 * sc;
+    if (tk.status === 'done') { ctx.strokeStyle = '#00ff88'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(mx - 4, ky); ctx.lineTo(mx - 1, ky + 3); ctx.lineTo(mx + 4, ky - 3); ctx.stroke(); }
+    if (tk.status === 'failed') { ctx.strokeStyle = '#ff3344'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(mx - 3, ky - 2); ctx.lineTo(mx + 3, ky + 4); ctx.moveTo(mx + 3, ky - 2); ctx.lineTo(mx - 3, ky + 4); ctx.stroke(); }
+  }
+  // crew members waiting on Michael walk the corridor to Helix and hold up a question
+  const waiting = b.tasks.filter(k => k.status === 'waiting');
+  if (waiting.length) {
+    const { sx, sy, ex, ey } = corridorPoints(b);
+    waiting.slice(0, 3).forEach((tk, i) => {
+      const p = 0.72 - i * 0.14 + Math.sin(t * 0.0012 + i) * 0.015; const qx = ex + (sx - ex) * p, qyb = ey + (sy - ey) * p;
+      drawBot(qx, qyb, ROLE_COLORS[tk.role] || color, 'waiting', t, i * 3.1, sx < ex ? -1 : 1, Math.min(sc, 1.4));
+      const qy = qyb - 18 * Math.min(sc, 1.4) - 6;
+      ctx.fillStyle = '#ff6d00'; rr(qx - 5, qy, 10, 10, 3); ctx.fill();
+      ctx.fillStyle = '#050508'; ctx.font = '700 9px Share Tech Mono, monospace'; ctx.textAlign = 'center'; ctx.fillText('?', qx, qy + 8);
+    });
+  }
 }
 
 function frame(t) {
@@ -499,28 +600,70 @@ function frame(t) {
   if (document.hidden || t - lastDraw < 33) return; lastDraw = t;
   ctx.clearRect(0, 0, W, H); ctx.fillStyle = '#050508'; ctx.fillRect(0, 0, W, H);
   drawStars(t);
-  rooms.forEach(r => drawCorridor(r, t));
+  bays.forEach(b => drawCorridor(b, t));
+  pods.forEach(p => drawPod(p, t));
   drawHub(t);
-  rooms.forEach(r => drawRoom(r, t));
-  if (S && !rooms.length) drawEmpty();
+  bays.forEach(b => drawBay(b, t));
 }
 
+function hit(x, y) {
+  if (Math.hypot(x - hub.x, y - hub.y) <= hub.r + 16) return 'hub';
+  if (pods.some(p => inRect(p, x, y))) return 'links';
+  const b = bays.find(b => inRect(b, x, y));
+  return b ? 'f:' + b.key : null;
+}
 cv.addEventListener('click', e => {
-  const b = cv.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
-  if (Math.hypot(x - hub.x, y - hub.y) <= hub.r + 16) { selected = 'hub'; renderSide(); return; }
-  const r = rooms.find(r => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);
-  if (r) { selected = r.m.id; renderSide(); }
+  const r = cv.getBoundingClientRect(), h = hit(e.clientX - r.left, e.clientY - r.top);
+  if (h) { selected = h; renderSide(true); }
 });
-cv.addEventListener('mousemove', e => {
-  const b = cv.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
-  const over = Math.hypot(x - hub.x, y - hub.y) <= hub.r + 16 || rooms.some(r => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);
-  cv.style.cursor = over ? 'pointer' : 'default';
-});
+cv.addEventListener('mousemove', e => { const r = cv.getBoundingClientRect(); cv.style.cursor = hit(e.clientX - r.left, e.clientY - r.top) ? 'pointer' : 'default'; });
 
-function poll() { clearTimeout(pollTimer); if (!document.hidden) refresh(); pollTimer = setTimeout(poll, 4000); }
+// ── one chat with Helix: the same conversation as the main screen ────────────────────────────────
+let chatSig = '', chatBusy = false, chatTick = 0;
+function chatMsg(role, text) {
+  const d = mk('div', 'cm ' + (role === 'user' ? 'u' : 'a'));
+  d.append(mk('div', 'tg', role === 'user' ? 'YOU' : (String(text).startsWith('CREW ·') ? 'CREW' : 'HELIX')), mk('div', null, text));
+  return d;
+}
+async function loadChat(force) {
+  if (chatBusy && !force) return;
+  const r = await api('/api/session/history').catch(() => null);
+  if (!r || !r.ok) return;
+  const msgs = (r.data.messages || []).slice(-30);
+  const sig = msgs.length + '|' + (msgs.length ? String(msgs[msgs.length - 1].content).slice(-80) : '');
+  if (sig === chatSig && !force) return;
+  chatSig = sig;
+  const log = document.getElementById('chat-log');
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
+  log.textContent = '';
+  if (!msgs.length) log.append(mk('div', 'dim', 'Talk to Helix here. Say "build me…" to start a mission.'));
+  msgs.forEach(m => log.append(chatMsg(m.role, m.content)));
+  if (atBottom || force) log.scrollTop = log.scrollHeight;
+}
+async function sendChat() {
+  const inp = document.getElementById('chat-in'), text = inp.value.trim();
+  if (!text || chatBusy) return;
+  chatBusy = true; inp.value = '';
+  const log = document.getElementById('chat-log');
+  log.append(chatMsg('user', text)); const wait = chatMsg('assistant', '…'); log.append(wait); log.scrollTop = log.scrollHeight;
+  const r = await api('/api/chat', 'POST', { message: text, client_date: new Date().toLocaleString('en-US', { timeZoneName: 'short' }) }).catch(() => null);
+  wait.lastChild.textContent = r ? (r.data.reply || r.data.detail || 'No answer.') : 'No connection.';
+  log.scrollTop = log.scrollHeight;
+  chatBusy = false;
+  if (r && (r.data.ui_actions || []).some(a => a.type === 'crew_refresh')) setTimeout(refresh, 1200);
+  setTimeout(() => loadChat(true), 500);
+}
+document.getElementById('chat-send').onclick = sendChat;
+document.getElementById('chat-in').addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
+
+function poll() {
+  clearTimeout(pollTimer);
+  if (!document.hidden) { refresh(); if (chatTick++ % 3 === 0) loadChat(); }
+  pollTimer = setTimeout(poll, 4000);
+}
 document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
 if (new URLSearchParams(location.search).get('connected') === 'etsy') { selected = 'links'; history.replaceState(null, '', '/station'); }
-resize(); poll(); requestAnimationFrame(frame);
+resize(); poll(); loadChat(true); requestAnimationFrame(frame);
 </script>
 </body>
 </html>
