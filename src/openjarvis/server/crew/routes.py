@@ -217,6 +217,19 @@ async def crew_settings(body: SettingsIn, request: Request):
     return {"settings": {"night_shift": ns, "paused": ps}}
 
 
+@router.post("/api/crew/brief/run")
+async def crew_brief_now(request: Request):
+    """Herald makes a brief right now (stored in the feed, posted to Helix chat, pushed to the phone)."""
+    g = _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    _, engine = g
+    if engine.herald is None:
+        return JSONResponse({"detail": "Herald is not running."}, status_code=503)
+    out = await engine.herald.run()
+    return out if out.get("ok") else JSONResponse(out, status_code=409 if "already" in out.get("detail", "") else 502)
+
+
 @router.post("/api/crew/run")
 async def crew_run_now(request: Request):
     g = _gate(request)

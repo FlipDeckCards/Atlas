@@ -165,7 +165,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
 const TOKEN_KEY = 'aibussol_token';
 const token = () => localStorage.getItem(TOKEN_KEY) || '';
 const PROJECT_COLORS = { flipdeck:'#ff6d00', marnyx:'#b06cff', deadzone:'#ff3344', aibussol:'#00e5ff', 'new':'#ff4fb8' };
-const ROLE_COLORS = { lead:'#00e5ff', researcher:'#5ad1ff', builder:'#4dffc3', writer:'#ffc14d', designer:'#ff7ad9', operator:'#ff6d00', reviewer:'#c8ff4d' };
+const ROLE_COLORS = { lead:'#00e5ff', researcher:'#5ad1ff', builder:'#4dffc3', writer:'#ffc14d', designer:'#ff7ad9', operator:'#ff6d00', reviewer:'#c8ff4d', briefer:'#eef3ff' };
 const STATUS_COLORS = { queued:'#2a5060', running:'#00e5ff', waiting:'#ff6d00', done:'#00ff88', failed:'#ff3344', cancelled:'#2a3a44' };
 let S = null, selected = 'hub', lastDraw = 0, pollTimer = null;
 
@@ -397,10 +397,20 @@ function rosterSec() {
       const det = mk('div', 'agent-det');
       det.append(mk('div', 'agent-k', 'Does'), mk('div', 'agent-can', a.can), mk('div', 'agent-k', 'Limits'), mk('div', 'agent-cannot', a.cannot),
                  mk('div', 'agent-k', 'Model'), mk('div', 'agent-cannot', a.model || '—'));
+      if (a.herald) {
+        const go = mk('button', 'b', a.working ? 'Making a brief…' : 'Send a brief now'); go.style.marginTop = '8px'; go.disabled = !!a.working;
+        go.onclick = async (ev) => {
+          ev.stopPropagation(); go.disabled = true; go.textContent = 'Making a brief…';
+          const r = await api('/api/crew/brief/run', 'POST', {}).catch(() => null);
+          go.textContent = r && r.ok ? 'Sent. Check your phone and Helix chat.' : ((r && r.data && r.data.detail) || 'It could not be made just now.');
+          setTimeout(() => refresh(), 1500);
+        };
+        det.append(go);
+      }
       c._det = det;
     }
     c.onclick = () => { if (openAgents.has(a.role)) openAgents.delete(a.role); else openAgents.add(a.role); renderSide(true); };
-    const st = a.working ? a.working + ' working' : a.waiting ? 'waiting on you' : 'standing by';
+    const st = a.status_text || (a.working ? a.working + ' working' : a.waiting ? 'waiting on you' : 'standing by');
     const sl = mk('div', 'agent-st', st + (a.done ? ' · ' + a.done + ' done' : '')); if (a.working) sl.style.color = '#00ff88'; else if (a.waiting) sl.style.color = '#ff6d00';
     c.append(sl); if (c._det) c.append(c._det); s.append(c);
   });
@@ -541,8 +551,8 @@ const bots = new Map();
 const helixImg = new Image(); let helixReady = false;
 helixImg.onload = () => { helixReady = true; }; helixImg.src = '/crew/helix.jpg';
 // the crew: Michael's robot model, rendered per role (front, facing right, facing left) into one sheet: crew/assets/bots.png
-const BOT_VER = '1c13d86a';   // changes whenever bots.png changes, so browsers never mix an old sheet with new code
-const BOT_ROWS = ['lead', 'researcher', 'builder', 'writer', 'designer', 'operator', 'reviewer'], BOT_CELL = 64;
+const BOT_VER = '2acfeb9c';   // changes whenever bots.png changes, so browsers never mix an old sheet with new code
+const BOT_ROWS = ['lead', 'researcher', 'builder', 'writer', 'designer', 'operator', 'reviewer', 'briefer'], BOT_CELL = 64;
 // sheet columns: 0 standing (front), then 4 walk frames each for front, back, right, left
 const BOT_DIRS = { front: 0, back: 1, right: 2, left: 3 };
 function dirOf(dx, dy, prev) { if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return prev || 'front'; return Math.abs(dx) >= Math.abs(dy) * 0.8 ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'front' : 'back'); }

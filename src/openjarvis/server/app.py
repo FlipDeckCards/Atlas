@@ -319,8 +319,12 @@ def create_app(
                 catalog = getattr(app.state, "media_catalog", None) or ms.MediaCatalog(pool)
                 return ms.Ctx(uid, "crew", store, catalog, storage)
 
-            engine = CrewEngine(CrewStore(pool), litellm.acompletion, media_ctx_fn=crew_media_ctx,
-                                notifier=Notifier(store, base_url=os.environ.get("PUBLIC_BASE_URL", "https://aibussol.com")))
+            notifier = Notifier(store, base_url=os.environ.get("PUBLIC_BASE_URL", "https://aibussol.com"))
+            engine = CrewEngine(CrewStore(pool), litellm.acompletion, media_ctx_fn=crew_media_ctx, notifier=notifier)
+            from openjarvis.server.briefs import BriefStore
+            from openjarvis.server.crew.herald import Herald
+
+            engine.herald = Herald(engine, getattr(app.state, "brief_store", None) or BriefStore(pool), pool=pool, notifier=notifier)
             await engine.start()
             app.state.crew_engine = engine
             logger.info("crew engine started")

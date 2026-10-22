@@ -618,3 +618,55 @@ class TestNewHands:
         tasks = run(w.store.list_tasks(m["id"]))
         assert m["status"] == "done" and writes["n"] == 2
         assert tasks[1]["result"] == "Listing written v2" and tasks[2]["result"] == "Reviewed after fixes."
+
+
+# ── Herald: briefs made inside Aibussol, on schedule, pushed to the phone ──
+
+class TestHerald:
+    def _herald(self, now, notes=None):
+        from openjarvis.server.briefs import MemoryBriefStore
+        from openjarvis.server.crew.herald import Herald
+
+        store = MemoryCrewStore(clock=lambda: now)
+        engine = CrewEngine(store, Model({"tasks": []}, {}), env=dict(ENV), cost_fn=lambda r: 0.0, now=lambda: now,
+                            models={"writing": "claude-x", "lookup": "gemini-x", "default": "gpt-x"})
+        engine.products = {"flipdeck": {"live": True}, "deadzone": {"live": False}}
+
+        async def make_brief(period, n, env):
+            return {"product": "FlipDeck and Marnyx", "period": period, "body_markdown": "Good morning, Michael.\n\n## FlipDeck\n- No deploys.\n\n## Act on first\nNothing urgent.",
+                    "spoken_summary": "Good morning, Michael. Nothing urgent."}
+
+        class Fin:
+            async def report(self, uid, missions, keys):
+                row = {"revenue_today": 12.0, "revenue_30d": 300.0, "cost_today": 1.0, "cost_30d": 20.0, "mrr": 250.0, "subscribers": 18,
+                       "net_today": 11.0, "net_30d": 280.0}
+                return {"total": dict(row), "factories": {"marnyx": dict(row)}, "stripe_ok": True, "notes": []}
+
+        async def stats():
+            return {"users_total": 212, "active_24h": 14, "new_users_7d": 9, "subscribers_active": 3}
+
+        notes = notes if notes is not None else Notes()
+        bs = MemoryBriefStore(clock=lambda: now)
+        h = Herald(engine, bs, notifier=notes, env={"HERALD_ENABLED": "true"}, now=lambda: now, make_brief=make_brief, finance=Fin(), stats_fn=stats)
+        h._owner = UID
+        engine.herald = h
+        return h, bs, notes
+
+    def test_makes_the_due_brief_once_and_pushes_it(self):
+        slot = dt.datetime(2026, 10, 21, 13, 55, tzinfo=dt.timezone.utc)          # 06:55 in Los Angeles: the morning slot
+        h, bs, notes = self._herald(slot)
+        out = run(h.maybe_run())
+        assert out["ok"] and out["period"] == "morning"
+        assert run(h.maybe_run()) is None                                        # the same slot is never made twice
+        body = bs.rows[0]["body"]
+        assert "## At a glance" in body and "in $12.00, out $1.00, net $11.00" in body and "DOWN: Deadzone" in body and "212 users" in body
+        assert notes.sent and notes.sent[0][1] == "Morning brief" and "Money today" in notes.sent[0][2]
+
+    def test_nothing_outside_the_slots_but_send_now_works(self):
+        noon_ish = dt.datetime(2026, 10, 21, 17, 0, tzinfo=dt.timezone.utc)      # 10:00 in Los Angeles: no slot
+        h, bs, notes = self._herald(noon_ish)
+        assert run(h.maybe_run()) is None and not bs.rows
+        out = run(h.run())
+        assert out["ok"] and bs.rows and h.status()["last"]["ok"]
+        roster = run(h.engine.state(UID))["roster"]
+        assert any(a["name"] == "Herald" and "next brief" in a["status_text"] for a in roster)

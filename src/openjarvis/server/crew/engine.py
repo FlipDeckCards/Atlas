@@ -268,6 +268,8 @@ class CrewEngine:
         self._ticks = 0
         self.products: Dict[str, Dict[str, Any]] = {}
         self._product_task: Optional[asyncio.Task] = None
+        self.herald = None                                  # crew/herald.py, set by the app: makes the briefs on schedule
+        self._herald_task: Optional[asyncio.Task] = None
 
     # ── lifecycle ────────────────────────────────────────────────────────────────────────────────
 
@@ -319,6 +321,8 @@ class CrewEngine:
     async def tick(self) -> int:
         """Start as many runnable tasks as there are free slots. Returns how many were started."""
         self._ticks += 1
+        if self.herald is not None and (self._herald_task is None or self._herald_task.done()):
+            self._herald_task = asyncio.create_task(self.herald.maybe_run())
         if self._ticks % 30 == 0:
             self._refresh_products_soon()
             await self.store.requeue_stale(STALE_RUNNING_S)
@@ -1035,6 +1039,17 @@ class CrewEngine:
                            "can": r["can"], "cannot": r["cannot"],
                            "working": sum(1 for t in mine if t["status"] == "running"), "waiting": sum(1 for t in mine if t["status"] == "waiting"),
                            "done": sum(1 for t in mine if t["status"] == "done")})
+        if self.herald is not None:
+            hs = self.herald.status()
+            last = hs["last"]
+            roster.append({"role": "briefer", "name": "Herald", "model": "LIVE DATA, NO MODEL",
+                           "can": "Makes your morning, afternoon and evening briefs inside Aibussol from live data (money per business, MRR, sites, "
+                                  "deploys, errors, commits, users, the crew) and sends them to your phone",
+                           "cannot": "Guess: anything it cannot read is marked unchecked",
+                           "working": 1 if hs["busy"] else 0, "waiting": 0, "done": 0,
+                           "status_text": ("making a brief" if hs["busy"] else ("next brief " + hs["next_label"] if hs["enabled"] else "schedule off")) +
+                                          (" · last " + last["period"] + (" sent" if last["ok"] else " failed") if last else ""),
+                           "herald": True})
         roster.insert(0, {"role": "lead", "name": "Helix", "model": hardening.display_name(self.models.get("writing", "")),
                           "can": "Talks with you, plans each goal into tasks, assigns the crew, brings you their questions and approvals",
                           "cannot": "Approve checkpoints for you or spend past your limits", "working": len(self._plans), "waiting": 0, "done": 0})

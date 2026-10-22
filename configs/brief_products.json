@@ -5,7 +5,7 @@
       "name": "FlipDeck",
       "render_services": [{ "id": "srv-d74uu6pr0fns73d4klo0", "name": "FlipDeck Cards website" }],
       "github_repos": ["FlipDeckCards/FlipDeckCards"],
-      "stripe": true
+      "stripe": false
     },
     {
       "name": "Marnyx",
@@ -14,6 +14,21 @@
         { "id": "srv-dav8mh5g1s2s73cme1mg", "name": "Marnyx worker" }
       ],
       "github_repos": ["FlipDeckCards/Marnyx"],
+      "stripe": false
+    },
+    {
+      "name": "Deadzone",
+      "render_services": [
+        { "id": "srv-d7metuvlk1mc73bjo7tg", "name": "Deadzone site" },
+        { "id": "srv-db9h253bc2fs73doq1vg", "name": "Deadzone backend" }
+      ],
+      "github_repos": ["FlipDeckCards/CyberVoid", "FlipDeckCards/deadzone-backend"],
+      "stripe": false
+    },
+    {
+      "name": "Aibussol",
+      "render_services": [{ "id": "srv-d8p48537uimc739qbd0g", "name": "Aibussol (Atlas)" }],
+      "github_repos": ["FlipDeckCards/Atlas"],
       "stripe": false
     }
   ]

@@ -221,7 +221,7 @@ class TestOneOfEverythingAndNoMeta:
 class TestConfigAndDocs:
     def test_the_products_file_is_valid_and_has_no_secrets(self):
         cfg = job.load_config()
-        assert [p["name"] for p in cfg["products"]] == ["FlipDeck", "Marnyx"]
+        assert [p["name"] for p in cfg["products"]] == ["FlipDeck", "Marnyx", "Deadzone", "Aibussol"]
         text = job.CONFIG_PATH.read_text(encoding="utf-8")
         for word in ("token", "secret", "password", "sk_", "Bearer"):
             assert word not in text, word
