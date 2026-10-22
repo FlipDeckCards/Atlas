@@ -664,9 +664,11 @@ async def crew_etsy_callback(request: Request, code: str = "", state: str = "", 
     try:
         uid = await conns.etsy_finish_connect(engine.store, state, code)
     except conns.ConnectionError_ as exc:
+        logger.warning("etsy connect refused: %s", exc)
         return HTMLResponse(f"<p>{html.escape(str(exc))} <a href='/station'>Back to the Station</a></p>", status_code=400)
     except Exception:
         logger.exception("etsy connect failed")
         return HTMLResponse("<p>Etsy could not be connected right now. <a href='/station'>Back to the Station</a></p>", status_code=502)
-    await engine.store.add_event(uid, "connection", "Etsy connected.")
+    note = await engine.store.get_secret(uid, "etsy_shop_note")
+    await engine.store.add_event(uid, "connection", note or "Etsy connected.")
     return RedirectResponse("/station?connected=etsy", status_code=303)

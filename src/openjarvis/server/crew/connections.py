@@ -118,7 +118,8 @@ async def status(store, user_id: str, env=None) -> Dict[str, Dict[str, Any]]:
     etsy_linked = bool(await store.get_secret(user_id, "etsy_refresh"))
     out = {
         "stripe": {"connected": stripe_on, "built": True},
-        "etsy": {"connected": etsy_app_configured(env) and etsy_linked, "built": True, "can_connect": etsy_app_configured(env) and not etsy_linked},
+        "etsy": {"connected": etsy_app_configured(env) and etsy_linked, "built": True, "can_connect": etsy_app_configured(env) and not etsy_linked,
+                 "note": (await store.get_secret(user_id, "etsy_shop_note")) or ""},
         "marnyx": {"connected": bool(marnyx_key(env)), "built": True},
         "google_play": {"connected": False, "built": False},
         "app_store": {"connected": False, "built": False},
@@ -510,11 +511,20 @@ async def etsy_finish_connect(store, state: str, code: str, env=None, states: OA
         body = _ok(r, "Etsy")
         await _save_etsy_tokens(store, pending["user_id"], body)
         etsy_user = str(body["access_token"]).split(".", 1)[0]
-        shops = _ok(await c.get(f"{ETSY_API}/users/{etsy_user}/shops", headers={"x-api-key": _etsy_key_header(env),
-                                                                                 "Authorization": f"Bearer {body['access_token']}"}), "Etsy")
+        try:
+            shops = _ok(await c.get(f"{ETSY_API}/users/{etsy_user}/shops", headers={"x-api-key": _etsy_key_header(env),
+                                                                                     "Authorization": f"Bearer {body['access_token']}"}), "Etsy")
+        except ConnectionError_ as exc:
+            # the account is connected (tokens saved); the shop lookup failed: keep the reason, the Station and Relay show it
+            logger.warning("etsy shop lookup failed: %s", exc)
+            await store.set_secret(pending["user_id"], "etsy_shop_note", f"Connected, but Etsy did not return a shop: {exc}")
+            return pending["user_id"]
     shop_id = shops.get("shop_id") or ((shops.get("results") or [{}])[0].get("shop_id"))
     if shop_id:
         await store.set_secret(pending["user_id"], "etsy_shop_id", str(shop_id))
+        await store.delete_secret(pending["user_id"], "etsy_shop_note")
+    else:
+        await store.set_secret(pending["user_id"], "etsy_shop_note", "Connected, but this Etsy account has no shop yet. Open a shop on Etsy, then reconnect.")
     return pending["user_id"]
 
 
@@ -535,7 +545,8 @@ async def _etsy_access(store, user_id: str, env, c: httpx.AsyncClient) -> str:
 async def _etsy(action: str, args: Dict[str, Any], *, store, user_id: str, env, cf: ClientFactory) -> str:
     shop_id = await store.get_secret(user_id, "etsy_shop_id")
     if not shop_id:
-        raise ConnectionError_("No Etsy shop was found on the connected account. Open a shop on Etsy, then reconnect.")
+        note = await store.get_secret(user_id, "etsy_shop_note")
+        raise ConnectionError_(note or "No Etsy shop was found on the connected account. Open a shop on Etsy, then reconnect.")
     async with cf() as c:
         token = await _etsy_access(store, user_id, env, c)
         h = {"x-api-key": _etsy_key_header(env), "Authorization": f"Bearer {token}"}

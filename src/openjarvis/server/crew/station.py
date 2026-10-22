@@ -898,6 +898,7 @@ function linksSec() {
     const r = mk('div', 'row'); const d = mk('span', 'dot'); d.style.background = c.connected ? '#00ff88' : c.built ? '#ff6d00' : '#2a3a44';
     const g = mk('div', 'grow'); g.append(mk('div', null, c.label + (c.connected ? ' · connected' : c.built ? ' · not connected' : ' · not built yet')));
     if (!c.connected && c.setup) g.append(mk('div', 'dim', c.setup));
+    if (c.note) g.append(mk('div', 'dim', c.note));
     r.append(d, g);
     if (c.guide) {
       const b = mk('button', c.connected ? 'b no' : 'b', c.connected ? 'Disconnect' : 'Connect');
