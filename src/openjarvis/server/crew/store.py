@@ -320,6 +320,13 @@ class CrewStore:
             await conn.execute("INSERT INTO crew_events (mission_id, task_id, user_id, kind, text, cost_usd) VALUES ($1,$2,$3,$4,$5,$6)",
                                mission_id, task_id, user_id, kind, text[:2000], cost_usd)
 
+    async def cost_by_mission(self, user_id: str, since) -> Dict[str, float]:
+        """Crew spend per mission since a moment (every priced step, plan and research run is an event with its cost)."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch("SELECT mission_id, COALESCE(SUM(cost_usd), 0) AS usd FROM crew_events WHERE user_id = $1 AND created_at >= $2 "
+                                    "GROUP BY mission_id", user_id, since)
+        return {r["mission_id"]: float(r["usd"]) for r in rows}
+
     async def list_events(self, user_id: str, mission_id: str = "", limit: int = 60) -> List[Dict[str, Any]]:
         async with self._pool.acquire() as conn:
             if mission_id:
@@ -524,6 +531,13 @@ class MemoryCrewStore:
     async def add_event(self, user_id, kind, text, mission_id="", task_id="", cost_usd=0.0):
         self.events.append({"id": len(self.events) + 1, "mission_id": mission_id, "task_id": task_id, "user_id": user_id, "kind": kind,
                             "text": text[:2000], "cost_usd": float(cost_usd), "created_at": self._tick()})
+
+    async def cost_by_mission(self, user_id, since):
+        out: Dict[str, float] = {}
+        for e in self.events:
+            if e["user_id"] == user_id and e["created_at"] >= since:
+                out[e["mission_id"]] = out.get(e["mission_id"], 0.0) + float(e["cost_usd"])
+        return out
 
     async def list_events(self, user_id, mission_id="", limit=60):
         rows = [e for e in reversed(self.events) if e["user_id"] == user_id and (not mission_id or e["mission_id"] == mission_id)]

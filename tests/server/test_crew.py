@@ -437,3 +437,61 @@ class TestWebResearch:
     def test_only_scout_has_the_tool(self):
         assert "web_research" in [t["function"]["name"] for t in eng_mod.tools_for("researcher")]
         assert "web_research" not in [t["function"]["name"] for t in eng_mod.tools_for("writer")]
+
+
+# ── finance: P&L per factory ──
+
+def test_finance_attributes_stripe_and_costs():
+    import datetime as dt
+
+    from openjarvis.server.crew.finance import Finance, factory_key
+    from openjarvis.server.crew.store import MemoryCrewStore
+
+    now = dt.datetime(2026, 10, 21, 20, 0, tzinfo=dt.timezone.utc)  # 1pm in Los Angeles
+    today = int(now.timestamp()) - 3600
+    old = int((now - dt.timedelta(days=5)).timestamp())
+    subs = [{"id": "s1", "customer": "c_m", "status": "active", "metadata": {"app": "marnyx"},
+             "items": {"data": [{"quantity": 1, "price": {"unit_amount": 1200, "recurring": {"interval": "month"}}}]}},
+            {"id": "s2", "customer": "c_a", "status": "active", "metadata": {"app": "aibussol"},
+             "items": {"data": [{"quantity": 1, "price": {"unit_amount": 12000, "recurring": {"interval": "year"}}}]}}]
+    charges = [{"id": "ch1", "status": "succeeded", "paid": True, "currency": "usd", "amount": 1200, "customer": "c_m", "created": today},
+               {"id": "ch2", "status": "succeeded", "paid": True, "currency": "usd", "amount": 500, "amount_refunded": 100, "customer": "c_x", "created": old},
+               {"id": "ch3", "status": "succeeded", "paid": True, "currency": "usd", "amount": 900, "metadata": {"app": "aibussol"}, "created": today},
+               {"id": "ch4", "status": "failed", "currency": "usd", "amount": 9999, "created": today},
+               {"id": "ch5", "status": "succeeded", "paid": True, "currency": "eur", "amount": 700, "created": today}]
+
+    class R:
+        def __init__(self, data):
+            self.status_code, self._d = 200, data
+
+        def json(self):
+            return {"data": self._d, "has_more": False}
+
+    class C:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, params=None, headers=None):
+            return R(subs if url.endswith("subscriptions") else charges)
+
+    async def go():
+        store = MemoryCrewStore()
+        m = await store.create_mission("u1", "Grow Marnyx signups", 1.0)
+        await store.add_event("u1", "task", "x", mission_id=m["id"], cost_usd=0.40)
+        fin = Finance(store, env={"STRIPE_SECRET_KEY": "sk_test_x", "CREW_FIXED_COSTS": "marnyx=30"}, client_factory=C, now=lambda: now)
+        missions = [dict(m, project="Marnyx", title="Grow", goal=m.get("goal", ""))]
+        return await fin.report("u1", missions, ["flipdeck", "marnyx", "deadzone", "aibussol"])
+
+    out = run(go())
+    f = out["factories"]
+    assert f["marnyx"]["revenue_today"] == 12.0 and f["marnyx"]["mrr"] == 12.0 and f["marnyx"]["subscribers"] == 1
+    assert f["marnyx"]["crew_cost_today"] == 0.4 and f["marnyx"]["fixed_cost_today"] == 1.0
+    assert f["marnyx"]["net_today"] == round(12.0 - 1.4, 2)
+    assert f["flipdeck"]["revenue_30d"] == 4.0 and f["flipdeck"]["revenue_today"] == 0.0  # untagged, refund subtracted
+    assert f["aibussol"]["revenue_today"] == 9.0 and f["aibussol"]["mrr"] == 10.0
+    assert out["total"]["revenue_today"] == 21.0 and out["stripe_ok"]
+    assert any("non-USD" in n for n in out["notes"])
+    assert factory_key("Dead Zone") == "deadzone" and factory_key("", "Candle shop").startswith("new:")

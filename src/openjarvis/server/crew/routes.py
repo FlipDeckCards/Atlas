@@ -107,6 +107,32 @@ async def crew_state(request: Request):
     return st
 
 
+@router.get("/api/crew/finance")
+async def crew_finance(request: Request):
+    """P&L per factory and in total (crew/finance.py), the products' live status and Aibussol's own counts."""
+    g = _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    from openjarvis.server import admin_analytics
+    from openjarvis.server.crew.finance import KNOWN, Finance, factory_key
+
+    pool = getattr(getattr(request.app.state, "session_store", None), "_pool", None)
+    fin = getattr(request.app.state, "crew_finance", None)
+    if fin is None:
+        fin = request.app.state.crew_finance = Finance(engine.store, pool=pool)
+    missions = await engine.store.list_missions(uid, 200)
+    keys = list(KNOWN) + [factory_key(m["project"], m["title"], m["goal"], m["id"]) for m in missions]
+    out = await fin.report(uid, missions, keys)
+    out["products"] = engine.products
+    try:
+        out["aibussol_stats"] = await admin_analytics.gather(pool) if pool is not None else None
+    except Exception:
+        logger.exception("aibussol stats unavailable")
+        out["aibussol_stats"] = None
+    return out
+
+
 @router.post("/api/crew/missions")
 async def crew_start(body: MissionIn, request: Request):
     g = _gate(request)

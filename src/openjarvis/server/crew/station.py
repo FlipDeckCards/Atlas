@@ -86,6 +86,16 @@ STATION_PAGE = r"""<!DOCTYPE html>
   .agent-can { font-size:11px; line-height:1.5; color:var(--text); }
   .agent-cannot { font-size:10px; line-height:1.5; color:var(--text-dim); margin-top:2px; }
   .agent-st { font-size:10px; letter-spacing:1px; color:var(--text-dim); margin-top:5px; text-transform:uppercase; }
+  .pnl { border:1px solid var(--border); border-radius:2px; padding:8px 10px; margin:8px 0; background:rgba(0,229,255,0.02); }
+  .pnl-t { font-size:9px; letter-spacing:2px; color:var(--text-dim); margin-bottom:6px; text-transform:uppercase; }
+  .pnl-g { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px 10px; }
+  .pnl-l { font-size:9px; letter-spacing:1px; color:var(--text-dim); text-transform:uppercase; }
+  .pnl-v { font-size:14px; color:var(--text); margin-top:2px; }
+  .pnl-table { margin:8px 0; font-size:11px; }
+  .pnl-row { display:grid; grid-template-columns:1.6fr 1fr 1fr 1fr 1fr; gap:6px; padding:5px 0; border-bottom:1px solid rgba(0,229,255,0.05); align-items:center; }
+  .pnl-row span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pnl-row.hd { font-size:9px; letter-spacing:1px; color:var(--text-dim); text-transform:uppercase; }
+  .pnl-note { font-size:10px; color:var(--text-dim); margin-top:5px; line-height:1.5; opacity:0.8; }
   .msg { font-size:11px; min-height:14px; margin-top:6px; color:var(--green); overflow-wrap:anywhere; }
   .msg.err { color:var(--red); }
   a { color:var(--cyan); }
@@ -110,7 +120,8 @@ STATION_PAGE = r"""<!DOCTYPE html>
 <div id="top">
   <div id="brand">AIBUS<span>SOL</span><small>STATION</small></div>
   <span class="chip hide-m">RUNNING <b id="c-run">0</b></span>
-  <span class="chip">TODAY <b id="c-spend">$0.00</b></span>
+  <span class="chip" title="Money in today (Stripe, all products) and money out today (crew + Helix AI + hosting)">TODAY IN <b id="c-in" style="color:#00ff99">$0.00</b> · OUT <b id="c-out" style="color:#ff8a2a">$0.00</b> · NET <b id="c-net">$0.00</b></span>
+  <span class="chip hide-m" title="The crew's AI spend today against its daily safety cap (CREW_DAILY_CAP_USD)">CREW AI <b id="c-spend">$0.00</b></span>
   <span class="chip hide-m" id="c-state"></span>
   <span class="spacer"></span>
   <button class="tbtn" id="t-night" title="Let the crew keep working through quiet hours">NIGHT SHIFT</button>
@@ -169,7 +180,7 @@ async function refresh() {
   gate(null);
   S = r.data;
   document.getElementById('c-run').textContent = S.running;
-  document.getElementById('c-spend').textContent = money(S.spend.today_usd) + ' / ' + money(S.spend.daily_cap_usd);
+  document.getElementById('c-spend').textContent = money(S.spend.today_usd) + ' of ' + money(S.spend.daily_cap_usd) + ' cap';
   setState(S.blocked ? 'HOLD: ' + String(S.blocked).toUpperCase() : 'CREW READY');
   document.getElementById('t-night').classList.toggle('on', !!S.settings.night_shift);
   document.getElementById('t-pause').classList.toggle('on', !!S.settings.paused);
@@ -193,7 +204,7 @@ function renderSide(force) {
   side.textContent = '';
   document.getElementById('roster-box').replaceChildren(rosterSec());
   document.getElementById('links-box').replaceChildren(linksSec());
-  if (selected === 'hub' || selected === 'links') side.append(inboxSec(), missionsSec(), ledgerSec(S.events, 'Station Ledger'));
+  if (selected === 'hub' || selected === 'links') side.append(overviewSec(), inboxSec(), missionsSec(), ledgerSec(S.events, 'Station Ledger'));
   else if (String(selected).startsWith('f:')) side.append(backSec(), factorySec(selected.slice(2)));
   else {
     const m = S.missions.find(x => x.id === selected);
@@ -267,7 +278,23 @@ function factorySec(key) {
   if (!b) { s.append(mk('div', 'dim', 'That factory is gone.')); return s; }
   const l = mk('div', 'lbl'); l.append(mk('span', null, 'Factory'), mk('span', 'tag', b.state)); s.append(l);
   const h = mk('div', 'h', b.label); h.style.color = b.color; s.append(h);
-  if (!b.missions.length) { s.append(mk('div', 'dim', 'Idle. Tell Helix what to build for ' + (b.isNew ? 'this business' : b.label.charAt(0) + b.label.slice(1).toLowerCase()) + ' and the crew will work here.')); return s; }
+  const site = (S && S.products && S.products[key]) || (FIN && FIN.products && FIN.products[key]) || null;
+  if (site) s.append(mk('div', 'dim', (site.live ? 'Site live' : 'Site NOT answering') + (site.url ? ' · ' + site.url : '') + (site.checked_at ? ' · checked ' + ago(site.checked_at) : '')));
+  const r = FIN && FIN.factories ? FIN.factories[key] : null;
+  if (r) { s.append(pnlBlock(r, 'P&L')); s.append(mk('div', 'dim', costLine(r))); }
+  else s.append(mk('div', 'dim', FIN ? 'No money in or out for this factory yet.' : 'Loading the numbers…'));
+  if (key === 'aibussol' && FIN && FIN.aibussol_stats) { const a = FIN.aibussol_stats; s.append(mk('div', 'dim', a.users_total + ' users · ' + a.active_24h + ' active today · ' + a.subscribers_active + ' subscribers')); }
+  // who is working here right now
+  const crewHere = b.tasks.filter(t => ['running', 'waiting', 'queued'].includes(t.status));
+  const cl = mk('div', 'lbl'); cl.style.marginTop = '12px'; cl.textContent = 'Crew in this factory'; s.append(cl);
+  if (!crewHere.length) s.append(mk('div', 'dim', 'Nobody is working here right now.'));
+  crewHere.forEach(t => {
+    const who = (S.roster || []).find(a => a.role === t.role);
+    const row = mk('div', 'row'); const d = mk('span', 'dot'); d.style.background = ROLE_COLORS[t.role] || '#00e5ff';
+    row.append(d, mk('span', 'grow', (who ? who.name : t.role) + ' · ' + t.title), mk('span', 'tag', t.status)); s.append(row);
+  });
+  const ml = mk('div', 'lbl'); ml.style.marginTop = '12px'; ml.textContent = 'Missions'; s.append(ml);
+  if (!b.missions.length) { s.append(mk('div', 'dim', 'None yet. Tell Helix what to build for ' + (b.isNew ? 'this business' : b.label.charAt(0) + b.label.slice(1).toLowerCase()) + ' and the crew will work here.')); return s; }
   s.append(mk('div', 'dim', b.missions.length + ' mission(s). Tap one for its crew, files and ledger.'));
   b.missions.forEach(m => {
     const r = mk('div', 'row'); r.style.cursor = 'pointer'; r.onclick = () => { selected = m.id; renderSide(true); };
@@ -809,9 +836,62 @@ async function sendChat() {
 document.getElementById('chat-send').onclick = sendChat;
 document.getElementById('chat-in').addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
 
+// ── money: P&L per factory and in total (refreshed every minute; the server caches Stripe for 5) ──
+let FIN = null, finTick = 0;
+async function loadFinance() {
+  const r = await api('/api/crew/finance').catch(() => null);
+  if (!r || !r.ok) return;
+  FIN = r.data;
+  const t = FIN.total;
+  document.getElementById('c-in').textContent = money(t.revenue_today);
+  document.getElementById('c-out').textContent = money(t.cost_today);
+  const net = document.getElementById('c-net'); net.textContent = (t.net_today < 0 ? '-' : '') + money(Math.abs(t.net_today)); net.style.color = t.net_today < 0 ? '#ff3344' : '#00ff99';
+  if (S && (selected === 'hub' || String(selected).startsWith('f:'))) renderSide();
+}
+function pnlBlock(r, title) {
+  const box = mk('div', 'pnl');
+  if (title) box.append(mk('div', 'pnl-t', title));
+  const grid = mk('div', 'pnl-g');
+  const cell = (label, v, color) => { const c = mk('div', 'pnl-c'); c.append(mk('div', 'pnl-l', label)); const b = mk('div', 'pnl-v', v); if (color) b.style.color = color; c.append(b); grid.append(c); };
+  const sign = v => (v < 0 ? '-' : '') + money(Math.abs(v));
+  cell('In today', money(r.revenue_today), '#00ff99'); cell('Out today', money(r.cost_today), '#ff8a2a'); cell('Net today', sign(r.net_today), r.net_today < 0 ? '#ff3344' : '#00ff99');
+  cell('In 30d', money(r.revenue_30d)); cell('Out 30d', money(r.cost_30d)); cell('Net 30d', sign(r.net_30d), r.net_30d < 0 ? '#ff3344' : '#00ff99');
+  cell('MRR', money(r.mrr)); cell('Subscribers', String(r.subscribers || 0));
+  box.append(grid);
+  return box;
+}
+function costLine(r) {
+  return 'Out today: crew ' + money(r.crew_cost_today || 0) + ' · AI ' + money(r.ai_cost_today || 0) + ' · hosting ' + money(r.fixed_cost_today || 0);
+}
+function overviewSec() {
+  const s = mk('div', 'sec');
+  const l = mk('div', 'lbl'); l.append(mk('span', null, 'All businesses'), mk('span', 'act', FIN ? 'as of ' + new Date(FIN.as_of).toLocaleTimeString() : 'loading…')); s.append(l);
+  if (!FIN) { s.append(mk('div', 'dim', 'Loading the numbers…')); return s; }
+  s.append(pnlBlock(FIN.total));
+  const names = { flipdeck: 'FlipDeck', marnyx: 'Marnyx', deadzone: 'Deadzone', aibussol: 'Aibussol', crew: 'Crew-made products' };
+  const rows = Object.entries(FIN.factories).sort((a, b) => (b[1].revenue_30d - a[1].revenue_30d) || (b[1].cost_30d - a[1].cost_30d));
+  const tb = mk('div', 'pnl-table');
+  const hd = mk('div', 'pnl-row hd'); ['Today →', 'In', 'Out', 'Net 30d', 'MRR'].forEach(h => hd.append(mk('span', null, h))); tb.append(hd);
+  rows.forEach(([k, r]) => {
+    const row = mk('div', 'pnl-row'); row.style.cursor = k in names || k.startsWith('new:') ? 'pointer' : 'default';
+    row.onclick = () => { if (k !== 'crew') { selected = 'f:' + k; renderSide(true); } };
+    const nm = names[k] || (k.startsWith('new:') ? k.slice(4) : k);
+    row.append(mk('span', 'grow', nm), mk('span', null, money(r.revenue_today)), mk('span', null, money(r.cost_today)));
+    const n = mk('span', null, (r.net_30d < 0 ? '-' : '') + money(Math.abs(r.net_30d))); n.style.color = r.net_30d < 0 ? '#ff3344' : '#00ff99'; row.append(n, mk('span', null, money(r.mrr)));
+    tb.append(row);
+  });
+  s.append(tb);
+  const a = FIN.aibussol_stats;
+  if (a) s.append(mk('div', 'dim', 'Aibussol: ' + a.users_total + ' users · ' + a.active_24h + ' active today · ' + a.subscribers_active + ' subscribers · ' + a.new_users_7d + ' new this week'));
+  const live = Object.entries(FIN.products || {}).map(([k, p]) => (names[k] || k) + (p.live ? ' live' : ' DOWN')).join(' · ');
+  if (live) s.append(mk('div', 'dim', 'Sites: ' + live));
+  (FIN.notes || []).forEach(n => s.append(mk('div', 'pnl-note', n)));
+  return s;
+}
+
 function poll() {
   clearTimeout(pollTimer);
-  if (!document.hidden) { refresh(); if (chatTick++ % 3 === 0) loadChat(); }
+  if (!document.hidden) { refresh(); if (chatTick++ % 3 === 0) loadChat(); if (finTick++ % 15 === 0) loadFinance(); }
   pollTimer = setTimeout(poll, 4000);
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
