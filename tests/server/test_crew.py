@@ -1215,3 +1215,25 @@ def test_factory_catalogs():
     out = run(catalog.for_factory("etsy", store=store, uid=UID, env=env, cf=Http(), businesses=[]))
     assert [(i["name"], i["status"], i["price"]) for i in out["items"]] == [("Planner active", "for sale", "4.99 USD"), ("Planner draft", "draft", "4.99 USD")]
     assert "1 for sale" in out["note"]
+
+
+def test_etsy_finds_a_shop_opened_after_connecting():
+    import time as _t
+
+    store = MemoryCrewStore()
+    for k, v in (("etsy_access", "123.tok"), ("etsy_refresh", "r"), ("etsy_expires", str(int(_t.time()) + 3600)), ("etsy_shop_note", "no shop")):
+        run(store.set_secret(UID, k, v))
+    http = FakeHttp({("GET", f"{conns.ETSY_API}/users/123/shops"): {"shop_id": 77, "shop_name": "DZ"},
+                     ("GET", f"{conns.ETSY_API}/shops/77"): {"shop_name": "DZ", "listing_active_count": 0}})
+    env = {"ETSY_API_KEY": "k", "ETSY_REDIRECT_URI": "https://x/cb"}
+    out = run(conns.run("etsy", "get_shop", {}, store=store, user_id=UID, env=env, client_factory=http))
+    assert 'Etsy shop "DZ"' in out and run(store.get_secret(UID, "etsy_shop_id")) == "77" and not run(store.get_secret(UID, "etsy_shop_note"))
+    empty = FakeHttp({("GET", f"{conns.ETSY_API}/users/9/shops"): {"count": 0, "results": []}})
+    store2 = MemoryCrewStore()
+    for k, v in (("etsy_access", "9.tok"), ("etsy_refresh", "r"), ("etsy_expires", str(int(_t.time()) + 3600))):
+        run(store2.set_secret(UID, k, v))
+    try:
+        run(conns.run("etsy", "get_shop", {}, store=store2, user_id=UID, env=env, client_factory=empty))
+        raise AssertionError("no shop should refuse")
+    except conns.ConnectionError_ as exc:
+        assert "etsy.com/sell" in str(exc)

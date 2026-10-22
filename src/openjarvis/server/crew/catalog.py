@@ -29,11 +29,9 @@ def _item(name, status="", price="", url="") -> Dict[str, str]:
 
 
 async def etsy(store, uid: str, env, cf) -> Dict[str, Any]:
-    shop_id = await store.get_secret(uid, "etsy_shop_id")
-    if not shop_id:
-        return {"items": [], "note": (await store.get_secret(uid, "etsy_shop_note")) or "No Etsy shop found on the connected account yet."}
     items: List[Dict[str, str]] = []
     async with cf() as c:
+        shop_id = await conns.etsy_shop_id(store, uid, env, c)
         token = await conns._etsy_access(store, uid, env, c)
         h = {"x-api-key": conns._etsy_key_header(env), "Authorization": f"Bearer {token}"}
         for state in ("active", "draft"):

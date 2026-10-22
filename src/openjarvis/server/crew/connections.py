@@ -573,12 +573,29 @@ def _listing_id(args: Dict[str, Any]) -> int:
     return int(v)
 
 
-async def _etsy(action: str, args: Dict[str, Any], *, store, user_id: str, env, cf: ClientFactory, mission_id: str = "", media_fetch=None) -> str:
+async def etsy_shop_id(store, user_id: str, env, c) -> str:
+    """The connected shop's id. When none was found at connect time, ask Etsy again (the owner may have opened the shop since),
+    so no reconnect is needed."""
     shop_id = await store.get_secret(user_id, "etsy_shop_id")
+    if shop_id:
+        return shop_id
+    token = await _etsy_access(store, user_id, env, c)
+    etsy_user = token.split(".", 1)[0]
+    try:
+        body = _ok(await c.get(f"{ETSY_API}/users/{etsy_user}/shops", headers={"x-api-key": _etsy_key_header(env), "Authorization": f"Bearer {token}"}), "Etsy")
+    except ConnectionError_ as exc:
+        raise ConnectionError_(f"No Etsy shop yet on the connected account ({exc}). Finish opening the shop at etsy.com/sell; the crew finds it automatically.")
+    shop_id = str(body.get("shop_id") or ((body.get("results") or [{}])[0].get("shop_id")) or "")
     if not shop_id:
-        note = await store.get_secret(user_id, "etsy_shop_note")
-        raise ConnectionError_(note or "No Etsy shop was found on the connected account. Open a shop on Etsy, then reconnect.")
+        raise ConnectionError_("No Etsy shop yet on the connected account. Finish opening the shop at etsy.com/sell; the crew finds it automatically.")
+    await store.set_secret(user_id, "etsy_shop_id", shop_id)
+    await store.delete_secret(user_id, "etsy_shop_note")
+    return shop_id
+
+
+async def _etsy(action: str, args: Dict[str, Any], *, store, user_id: str, env, cf: ClientFactory, mission_id: str = "", media_fetch=None) -> str:
     async with cf() as c:
+        shop_id = await etsy_shop_id(store, user_id, env, c)
         token = await _etsy_access(store, user_id, env, c)
         h = {"x-api-key": _etsy_key_header(env), "Authorization": f"Bearer {token}"}
         if action == "get_shop":
