@@ -48,6 +48,12 @@ Today's date and time is {date_str}.
 Be direct, sharp, and helpful."""
 
 
+def _with_fallback(model_id: str) -> list:
+    """The routed model, then the writing model (Claude) when they differ: a provider out of quota (Gemini's free tier) must not stop Helix."""
+    writing = hardening.model_config().get("writing")
+    return [model_id] + ([writing] if writing and writing != model_id else [])
+
+
 def classify_model(message: str, has_image: bool, models: Optional[dict] = None) -> tuple:
     """Returns (litellm_model_id, display_name, color_class). Model names come from configuration
     (ATLAS_DEFAULT_MODEL, ATLAS_WRITING_MODEL, ATLAS_LOOKUP_MODEL); see hardening.model_config.
@@ -1777,15 +1783,21 @@ async def chat(req: ChatRequest, request: Request):
         async def _crew_exec(name, args):
             return await crew_helix.execute(crew_ctx, name, args)
 
-        try:
-            out = await helix_tools.run_model_with_tools(
-                media_ctx, messages, model_id, req.message,
-                acompletion=litellm.acompletion, on_cost=_cost, max_tokens=hardening.CHAT_MAX_TOKENS,
-                extra_tools=crew_helix.CREW_TOOLS if crew_ctx is not None else None,
-                extra_executor=_crew_exec if crew_ctx is not None else None,
-            )
-        except Exception:
-            logger.exception("model call with tools failed (%s)", model_id)
+        out = None
+        for mid_ in _with_fallback(model_id):
+            try:
+                out = await helix_tools.run_model_with_tools(
+                    media_ctx, messages, mid_, req.message,
+                    acompletion=litellm.acompletion, on_cost=_cost, max_tokens=hardening.CHAT_MAX_TOKENS,
+                    extra_tools=crew_helix.CREW_TOOLS if crew_ctx is not None else None,
+                    extra_executor=_crew_exec if crew_ctx is not None else None,
+                )
+                if mid_ != model_id:
+                    model_display, model_color = hardening.display_name(mid_), "orange"
+                break
+            except Exception:
+                logger.exception("model call with tools failed (%s)", mid_)
+        if out is None:
             return JSONResponse({"reply": "The model could not answer right now. Please try again.", "model_display": model_display, "model_color": model_color})
         if crew_ctx is not None:
             out["reply"] = crew_helix.after_turn(crew_ctx, out["reply"], crew_before)
@@ -1793,11 +1805,18 @@ async def chat(req: ChatRequest, request: Request):
         await store.append_message(user_id, CHANNEL, "assistant", out["reply"])
         return JSONResponse({"reply": out["reply"], "ui_actions": out["ui"], "model_display": model_display, "model_color": model_color})
 
-    try:
-        response = await litellm.acompletion(model=model_id, messages=messages, max_tokens=hardening.CHAT_MAX_TOKENS)
-        reply = response.choices[0].message.content
-    except Exception:
-        logger.exception("model call failed (%s)", model_id)       # details stay in the server log, not in the answer
+    response = None
+    for mid_ in _with_fallback(model_id):
+        try:
+            response = await litellm.acompletion(model=mid_, messages=messages, max_tokens=hardening.CHAT_MAX_TOKENS)
+            reply = response.choices[0].message.content
+            if mid_ != model_id:
+                model_display, model_color = hardening.display_name(mid_), "orange"
+            break
+        except Exception:
+            logger.exception("model call failed (%s)", mid_)       # details stay in the server log, not in the answer
+            response = None
+    if response is None:
         return JSONResponse({"reply": "The model could not answer right now. Please try again.", "model_display": model_display, "model_color": model_color})
     await store.add_spend(user_id, hardening.utc_day(), hardening.chat_cost_usd(response))
 
