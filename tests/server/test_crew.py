@@ -647,7 +647,11 @@ class TestHerald:
 
         notes = notes if notes is not None else Notes()
         bs = MemoryBriefStore(clock=lambda: now)
-        h = Herald(engine, bs, notifier=notes, env={"HERALD_ENABLED": "true"}, now=lambda: now, make_brief=make_brief, finance=Fin(), stats_fn=stats)
+        async def numbers(env):
+            return ["- FlipDeck: 32 total users, 4 paying now."]
+
+        h = Herald(engine, bs, notifier=notes, env={"HERALD_ENABLED": "true"}, now=lambda: now, make_brief=make_brief, finance=Fin(), stats_fn=stats,
+                   numbers_fn=numbers)
         h._owner = UID
         engine.herald = h
         return h, bs, notes
@@ -659,7 +663,7 @@ class TestHerald:
         assert out["ok"] and out["period"] == "morning"
         assert run(h.maybe_run()) is None                                        # the same slot is never made twice
         body = bs.rows[0]["body"]
-        assert "## At a glance" in body and "in $12.00, out $1.00, net $11.00" in body and "DOWN: Deadzone" in body and "212 users" in body
+        assert "## At a glance" in body and "in $12.00, out $1.00, net $11.00" in body and "DOWN: Deadzone" in body and "212 users" in body and "32 total users" in body
         assert notes.sent and notes.sent[0][1] == "Morning brief" and "Money today" in notes.sent[0][2]
 
     def test_nothing_outside_the_slots_but_send_now_works(self):

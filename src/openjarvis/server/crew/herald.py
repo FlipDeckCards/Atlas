@@ -29,6 +29,55 @@ PERIOD_NAMES = {"morning": "Morning", "afternoon": "Afternoon", "evening": "Even
 NAMES = {"flipdeck": "FlipDeck", "marnyx": "Marnyx", "deadzone": "Deadzone", "aibussol": "Aibussol", "crew": "Crew-made products"}
 
 
+# Product numbers, read-only, straight from each product's own database (the same queries the old outside briefs ran).
+# Set FLIPDECK_READ_DATABASE_URL and MARNYX_READ_DATABASE_URL on Render (Atlas service) to each database's connection string;
+# a read-only database user is best. Unset or failing: the brief says "unchecked" for that product's numbers.
+PRODUCT_SQL = {
+    "FlipDeck": ("FLIPDECK_READ_DATABASE_URL",
+                 "SELECT (SELECT count(*) FROM users) AS users_total, "
+                 "(SELECT count(*) FROM subscriptions WHERE status='active' AND stripe_subscription_id IS NOT NULL AND tier IN ('pro','elite')) AS paying_now, "
+                 "(SELECT count(*) FROM users WHERE created_at > now()-interval '24 hours') AS new_users_24h, "
+                 "(SELECT count(*) FROM users WHERE created_at > now()-interval '7 days') AS new_users_7d, "
+                 "(SELECT count(DISTINCT COALESCE(sub_token,'u'||user_id::text,user_agent)) FROM page_views WHERE created_at > now()-interval '24 hours') AS visitors_24h, "
+                 "(SELECT count(*) FROM page_views WHERE created_at > now()-interval '24 hours') AS page_visits_24h"),
+    "Marnyx": ("MARNYX_READ_DATABASE_URL",
+               "SELECT (SELECT count(*) FROM users) AS users_total, "
+               "(SELECT count(*) FROM subscriptions WHERE status IN ('active','trialing')) AS paying_now, "
+               "(SELECT count(*) FROM users WHERE created_at > now()-interval '24 hours') AS new_users_24h, "
+               "(SELECT count(*) FROM users WHERE created_at > now()-interval '7 days') AS new_users_7d, "
+               "(SELECT count(*) FROM posts WHERE status='published' AND published_at > now()-interval '7 days') AS published_7d, "
+               "(SELECT count(*) FROM posts WHERE status='failed' AND updated_at > now()-interval '7 days') AS failed_7d"),
+}
+NUMBER_WORDS = {"users_total": "total users", "paying_now": "paying now", "new_users_24h": "new in 24 hours", "new_users_7d": "new in 7 days",
+                "visitors_24h": "visitors in 24 hours", "page_visits_24h": "page visits in 24 hours", "published_7d": "posts published in 7 days",
+                "failed_7d": "posts failed in 7 days"}
+
+
+async def product_numbers(env) -> List[str]:
+    out = []
+    for name, (var, sql) in PRODUCT_SQL.items():
+        dsn = (env.get(var) or "").strip()
+        if not dsn:
+            out.append(brief_content.unchecked_line(f"{name} user numbers", f"{var} is not set"))
+            continue
+        try:
+            import asyncio
+
+            import asyncpg
+
+            conn = await asyncio.wait_for(asyncpg.connect(dsn, timeout=10), timeout=15)
+            try:
+                await conn.execute("SET default_transaction_read_only = on")
+                row = await asyncio.wait_for(conn.fetchrow(sql), timeout=20)
+            finally:
+                await conn.close()
+            out.append(f"- {name}: " + ", ".join(f"{int(row[k] or 0)} {NUMBER_WORDS.get(k, k)}" for k in row.keys()) + ".")
+        except Exception as exc:
+            logger.warning("herald: %s numbers failed: %s", name, type(exc).__name__)
+            out.append(brief_content.unchecked_line(f"{name} user numbers", "the database could not be read"))
+    return out
+
+
 def enabled(env=None) -> bool:
     e = os.environ if env is None else env
     return str(e.get("HERALD_ENABLED", "true")).strip().lower() not in ("0", "false", "no", "off")
@@ -88,7 +137,8 @@ def push_text(glance: List[str], act: str) -> str:
 
 
 class Herald:
-    def __init__(self, engine, brief_store, pool=None, notifier=None, env=None, now=None, make_brief=None, finance=None, stats_fn=None) -> None:
+    def __init__(self, engine, brief_store, pool=None, notifier=None, env=None, now=None, make_brief=None, finance=None, stats_fn=None,
+                 numbers_fn=None) -> None:
         self.engine = engine
         self.store = brief_store
         self.pool = pool
@@ -98,6 +148,7 @@ class Herald:
         self.make_brief = make_brief or brief_job.make_brief
         self.finance = finance
         self.stats_fn = stats_fn
+        self.numbers_fn = numbers_fn or product_numbers
         self.busy = False
         self.last: Optional[Dict[str, Any]] = None        # {period, at, ok, note}
         self._owner: Optional[str] = None
@@ -196,6 +247,10 @@ class Herald:
             base = await self.make_brief(period, n, env)
             fin = await self._finance(uid) if uid else None
             glance = glance_lines(fin, dict(getattr(self.engine, "products", {}) or {}), await self._stats(), await self._crew_counts(uid) if uid else {})
+            try:
+                glance += await self.numbers_fn(env)
+            except Exception:
+                logger.exception("herald: product numbers failed")
             act = base["body_markdown"].split("## Act on first", 1)[-1].strip().splitlines()[0] if "## Act on first" in base["body_markdown"] else ""
             body = base["body_markdown"]
             head, _, rest = body.partition("\n\n")
