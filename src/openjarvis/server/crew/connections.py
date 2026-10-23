@@ -94,6 +94,10 @@ ACTIONS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "app_store": {},
 }
 
+RENDER_SETUP = ("Paste your Render API key in the Connections panel on the Station. Create it in Render: Account Settings, API Keys, Create API Key. "
+                "Aibussol only checks it can read your services; it never shows the key again.")
+RENDER_API = "https://api.render.com/v1"
+
 LABELS = {"stripe": "Stripe", "etsy": "Etsy", "marnyx": "Marnyx (your socials and email)", "google_play": "Google Play", "app_store": "App Store"}
 
 SETUP = {
@@ -145,6 +149,9 @@ async def status(store, user_id: str, env=None) -> Dict[str, Dict[str, Any]]:
     out["github"] = {"connected": github.configured(env), "built": True, "label": "GitHub (Forge's code)",
                      "setup": "" if github.configured(env) else github.SETUP, "actions": []}
     out["workbench"] = {"connected": False, "built": True, "label": "Your PC (Workbench for Rig)", "setup": "", "actions": [], "pc": True}
+    rk = bool((e.get("RENDER_API_KEY") or "").strip())
+    out["render"] = {"connected": rk, "built": True, "label": "Render (your hosting)", "actions": [],
+                     "setup": "" if rk else RENDER_SETUP}
     out["web_research"] = {"connected": research.configured(env), "built": True, "label": "Web research (GPT Researcher)",
                            "setup": "" if research.configured(env) else research.SETUP, "actions": []}
     return out

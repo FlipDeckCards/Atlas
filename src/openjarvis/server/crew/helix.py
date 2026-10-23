@@ -45,6 +45,14 @@ CREW_TOOLS: List[Dict[str, Any]] = [
                                                         "url": {"type": "string", "description": "Its website, if given."},
                                                         "color": {"type": "string", "description": "A hex color like #00e5ff, if given."}}, "required": ["name"]}}},
     {"type": "function", "function": {
+        "name": "rename_business",
+        "description": "Change the display name of a business you added (its numbers stay with it). The FlipDeck, Marnyx and Deadzone rows cannot be renamed.",
+        "parameters": {"type": "object", "properties": {"old_name": {"type": "string"}, "new_name": {"type": "string"}}, "required": ["old_name", "new_name"]}}},
+    {"type": "function", "function": {
+        "name": "check_connections",
+        "description": "Check the connections a user needs before missions can run (GitHub, Stripe, Render, their PC for Rig) and say what to connect next.",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
         "name": "remove_business",
         "description": "Remove a business you added from the All businesses box. The FlipDeck, Marnyx and Deadzone rows cannot be removed.",
         "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "The business name to remove."}}, "required": ["name"]}}},
@@ -138,6 +146,39 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
             eng.drop_products_cache(ctx.user_id)
             await eng.store.add_event(ctx.user_id, "business", f"Added {name_} to the Station (by Helix).")
             return f'Added "{name_}" to the All businesses box on the Station. It has {len(items)} business(es) you added.'
+        if name == "check_connections":
+            from openjarvis.server.crew import connections as conns
+
+            st = await conns.status(eng.store, ctx.user_id, await eng.env_for(ctx.user_id))
+            pc = eng.presence.status(ctx.user_id).get("online")
+            lines, todo = [], []
+            for k in ("github", "stripe", "render"):
+                ok = st[k]["connected"]
+                lines.append(f'{st[k]["label"]}: {"connected" if ok else "not connected"}')
+                if not ok:
+                    todo.append(f'{st[k]["label"]}: {st[k]["setup"]}')
+            lines.append(f'Your PC (Rig): {"online" if pc else "not online"}')
+            if not pc:
+                todo.append("Your PC (Rig): run the Workbench helper on the computer that has your project; the Connections panel shows the command.")
+            return "\n".join(lines) + ("\nNext: " + " ".join(todo) if todo else "\nAll set: missions can run.")
+        if name == "rename_business":
+            from openjarvis.server.crew import tenant
+            import json as _json
+
+            old, new = _clip(args.get("old_name"), 40), _clip(args.get("new_name"), 40)
+            if len(new) < 2:
+                return "Give the business a new name."
+            if tenant.slug(old) in OWNER_FIXED_KEYS_HELIX:
+                return f'"{old}" cannot be renamed: it is one of the fixed rows on the Station.'
+            items = await tenant.businesses(eng.store, ctx.user_id)
+            hit = [b for b in items if b["name"].lower() == old.lower()]
+            if not hit:
+                return f'No business called "{old}" that you added.'
+            hit[0]["name"] = new                            # the key stays, so its numbers stay with it
+            await eng.store.set_secret(ctx.user_id, "businesses", _json.dumps(items))
+            eng.drop_products_cache(ctx.user_id)
+            await eng.store.add_event(ctx.user_id, "business", f"Renamed {old} to {new} (by Helix).")
+            return f'Renamed "{old}" to "{new}" on the All businesses box.'
         if name == "remove_business":
             from openjarvis.server.crew import tenant
 

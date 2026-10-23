@@ -733,7 +733,7 @@ class CrewEngine:
         if await self.is_owner(user_id):
             return []
         st = await conns.status(self.store, user_id, await self.env_for(user_id))
-        return [st[k]["label"] for k in ("github", "stripe") if not st[k]["connected"]]
+        return [st[k]["label"] for k in ("github", "stripe", "render") if not st[k]["connected"]]
 
     async def start_mission(self, user_id: str, goal: str, budget: Any = None, *, background: bool = True) -> Dict[str, Any]:
         goal = str(goal or "").strip()[:4000]
@@ -882,6 +882,8 @@ class CrewEngine:
         if not m or m["status"] != "active":
             return
         tasks = await self.store.list_tasks(mission_id)
+        if await self._hold_for_art(m, tasks):
+            return
         if tasks and all(t["status"] == "done" for t in tasks):
             summary = "\n".join(f'- {t["title"]}: {_clip(t["result"], 300)}' for t in tasks)
             # a mission is not done while work is unfinished: it stalls with the reason, and Michael is told
@@ -915,6 +917,64 @@ class CrewEngine:
                 if t["status"] == "queued" and failed_idx.intersection(t["depends_on"]):
                     await self.store.update_task(t["id"], status="failed", result="Not started: a task it depends on failed.")
             await self._recheck_once(mission_id, tasks)
+
+    async def _art_state(self, uid: str, mid: str):
+        """The artwork gate of a mission: 'waiting', 'approved', 'declined', or None when no gate was raised."""
+        v = await self.store.get_secret(uid, f"artgate:{mid}")       # one stored value per mission: no event scans on every check
+        return v if v in ("waiting", "approved", "declined") else None
+
+    async def _art_blocks(self, uid: str, mid: str) -> bool:
+        """True while Etsy listing actions must not run: the owner has not approved the artwork yet."""
+        state = await self._art_state(uid, mid)
+        if state == "approved":
+            return False
+        if state is not None:
+            return True
+        return any(t.get("role") == "designer" and t["status"] != "done" for t in await self.store.list_tasks(mid))
+
+    async def _hold_for_art(self, m: Dict[str, Any], tasks: List[Dict[str, Any]]) -> bool:
+        """Once all artwork is finished for a listing mission, hold the rest until Michael approves the art on one card.
+        Returns True while the mission is held."""
+        import re as _re
+        if not _re.search(r"\betsy\b|\blisting|\bdraft|\bstore\b|\bpublish", f'{m.get("title") or ""} {m.get("goal") or ""}', _re.I):
+            return False
+        designers = [t for t in tasks if t.get("role") == "designer"]
+        if not designers or any(t["status"] != "done" for t in designers):
+            return False
+        state = await self._art_state(m["user_id"], m["id"])
+        if state in ("approved", "declined"):
+            return False                                  # declined: the held tasks were stopped, so the mission can settle
+        held = [t for t in tasks if t["status"] == "queued" and t.get("role") not in ("designer", "reviewer")]
+        if state is None:
+            if not held:
+                return False
+            what = ("Approve the artwork for this mission: " + "; ".join(t["title"] for t in designers)[:300]
+                    + ". Nothing is drafted or published until you approve it.")
+            await self.store.add_question(m["id"], designers[-1]["id"], m["user_id"], "checkpoint", what, ["Approve", "Decline"],
+                                          {"platform": "internal", "action": "approve_art", "args": {}})
+            await self.store.add_event(m["user_id"], "checkpoint", f"Checkpoint for Michael: {what}", mission_id=m["id"], task_id=designers[-1]["id"])
+            await self.store.set_secret(m["user_id"], f"artgate:{m['id']}", "waiting")
+            await self.store.add_event(m["user_id"], "checkpoint", "Artwork waiting for approval.", mission_id=m["id"])
+            await self._notify(m["user_id"], "Art approval needed", what + "\nApprove or decline it in Aibussol.")
+        for t in held:
+            await self.store.update_task(t["id"], status="waiting")
+        return True
+
+    async def _settle_art(self, mid: str, uid: str, approve: bool) -> None:
+        """Michael answered the art card: release the held tasks, or stop them."""
+        open_task_ids = {q["task_id"] for q in await self.store.list_questions(uid, status="open")}
+        held = [t for t in await self.store.list_tasks(mid) if t["status"] == "waiting" and t["id"] not in open_task_ids]
+        if approve:
+            await self.store.set_secret(uid, f"artgate:{mid}", "approved")
+            await self.store.add_event(uid, "checkpoint", "Artwork approved.", mission_id=mid)
+            for t in held:
+                await self.store.update_task(t["id"], status="queued")
+        else:
+            await self.store.set_secret(uid, f"artgate:{mid}", "declined")
+            await self.store.add_event(uid, "checkpoint", "Artwork declined.", mission_id=mid)
+            for t in held:
+                await self.store.update_task(t["id"], status="failed", result="Stopped: the artwork was not approved.")
+            await self._check_mission(mid)
 
     async def _unfinished_reason(self, m: Dict[str, Any], tasks: List[Dict[str, Any]]) -> str:
         """Why a mission whose tasks are all done still is not finished ('' when it is). Two checks:
@@ -1621,6 +1681,8 @@ class CrewEngine:
         risk = conns.risk_of(platform, action)
         if risk is None:
             return f"Error: {platform}.{action} is not an available action.", None
+        if platform == "etsy" and risk != "read" and await self._art_blocks(uid, mid):
+            return "Blocked: Michael has not approved the artwork yet. Do not create or publish listings until he does.", None
         envx = task.get("_env", self.env)
         st = (await conns.status(self.store, uid, envx)).get(platform, {})
         if not st.get("connected"):
@@ -1674,6 +1736,9 @@ class CrewEngine:
                 raise ValueError("Approve or decline it.")
             if not await self.store.close_question(question_id, "approved" if approve else "declined", answer):
                 raise ValueError("That was already answered.")
+            if (q["action"] or {}).get("action") == "approve_art":
+                await self._settle_art(mid, user_id, bool(approve))
+                return {"ok": True, "message": "Artwork approved. The crew will draft the listings now." if approve else "Artwork declined. Nothing was drafted or published."}
             if approve:
                 act = q["action"] or {}
                 if act.get("platform") == "github":

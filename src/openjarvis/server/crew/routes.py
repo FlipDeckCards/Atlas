@@ -428,6 +428,48 @@ async def crew_connect_off(kind: str, request: Request):
     return {"ok": True}
 
 
+class RenderKeyIn(BaseModel):
+    api_key: str = Field("", max_length=200)
+
+
+@router.post("/api/crew/render/connect")
+async def crew_render_connect(body: RenderKeyIn, request: Request):
+    g = await _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    from openjarvis.server.crew import tenant
+
+    key = body.api_key.strip()
+    if len(key) < 12:
+        return JSONResponse({"detail": "That does not look like a Render API key."}, status_code=400)
+    try:
+        async with (engine.client_factory or conns._default_client)() as c:
+            r = await c.get(f"{conns.RENDER_API}/services", headers={"Authorization": f"Bearer {key}"}, params={"limit": 1})
+    except Exception:
+        return JSONResponse({"detail": "Render could not be reached just now. Try again."}, status_code=502)
+    if r.status_code != 200:
+        return JSONResponse({"detail": "Render did not accept that key. Create a new API key in Render and paste it again."}, status_code=400)
+    await tenant.put(engine.store, uid, "render_key", key, engine.env)
+    engine.drop_products_cache(uid)
+    await engine.store.add_event(uid, "connection", "Render connected.")
+    return {"ok": True}
+
+
+@router.post("/api/crew/render/disconnect")
+async def crew_render_disconnect(request: Request):
+    g = await _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    from openjarvis.server.crew import tenant
+
+    await tenant.put(engine.store, uid, "render_key", "", engine.env)
+    engine.drop_products_cache(uid)
+    await engine.store.add_event(uid, "connection", "Render disconnected.")
+    return {"ok": True}
+
+
 @router.post("/api/crew/businesses")
 async def crew_business_add(body: BusinessIn, request: Request):
     g = await _gate(request)

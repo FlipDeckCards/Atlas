@@ -299,6 +299,7 @@ def connect_subscriber(w):
     from openjarvis.server.crew import tenant
     run(tenant.put(w.store, UID, "stripe_key", "sk_test_x"))
     run(tenant.put(w.store, UID, "github_token", "ghp_test"))
+    run(tenant.put(w.store, UID, "render_key", "rnd_test_key_123456"))
 
 
 class TestSubscriberGate:
@@ -310,6 +311,39 @@ class TestSubscriberGate:
         except ValueError as exc:
             assert "GitHub" in str(exc) and "Stripe" in str(exc)
         assert run(w.store.list_missions(UID)) == [] if hasattr(w.store, "list_missions") else True
+
+class TestArtGate:
+    PLAN = {"tasks": [{"title": "Make the artwork", "role": "designer", "brief": "b"},
+                      {"title": "Write the listing", "role": "writer", "brief": "b", "depends_on": [0]}]}
+    GOAL = "Make 1 Etsy draft listing with mockups"
+
+    def test_drafting_waits_for_the_art_card_then_runs_on_approval(self):
+        w = world(self.PLAN, {"Make the artwork": [resp("art made")], "Write the listing": [resp("listing written")]}, owner=UID)
+        m = run(start(w, goal=self.GOAL))
+        assert run(w.store.list_tasks(m["id"]))[1]["status"] == "waiting"
+        qs = [q for q in run(w.store.list_questions(UID)) if (q["action"] or {}).get("action") == "approve_art"]
+        assert len(qs) == 1
+        run(w.engine.answer(UID, qs[0]["id"], approve=True))
+        assert run(w.store.list_tasks(m["id"]))[1]["status"] in ("queued", "running", "done")
+
+    def test_declining_the_art_stops_the_listing_and_the_mission(self):
+        w = world(self.PLAN, {"Make the artwork": [resp("art made")], "Write the listing": [resp("listing written")]}, owner=UID)
+        m = run(start(w, goal=self.GOAL))
+        q = [q for q in run(w.store.list_questions(UID)) if (q["action"] or {}).get("action") == "approve_art"][0]
+        run(w.engine.answer(UID, q["id"], approve=False))
+        assert run(w.store.list_tasks(m["id"]))[1]["status"] == "failed"
+        assert run(w.store.get_mission(m["id"]))["status"] == "stalled"
+
+    def test_etsy_listing_actions_are_blocked_until_the_art_is_approved(self):
+        w = world(self.PLAN, {"Make the artwork": [resp("art made")], "Write the listing": [resp("listing written")]}, owner=UID)
+        m = run(start(w, goal=self.GOAL))
+        assert run(w.engine._art_blocks(UID, m["id"])) is True
+
+    def test_a_mission_without_listing_work_is_not_held(self):
+        w = world(self.PLAN, {"Make the artwork": [resp("art made")], "Write the listing": [resp("listing written")]}, owner=UID)
+        m = run(start(w, goal="Make 3 digital mockups for my records"))
+        assert run(w.store.get_mission(m["id"]))["status"] == "done"
+
 
 class TestHelixBusinesses:
     def test_helix_adds_and_removes_a_business_on_the_station(self):
@@ -324,6 +358,18 @@ class TestHelixBusinesses:
         run(helix.execute(ctx, "remove_business", {"name": "Helix Business"}))
         assert run(tenant.businesses(w.store, UID)) == []
 
+
+class TestHelixSetup:
+    def test_helix_renames_a_business_and_says_what_is_left_to_connect(self):
+        from openjarvis.server.crew import helix, tenant
+        w = world(two_task_plan(), {"Research buyers": [resp("r")], "Write listing": [resp("w")]}, owner=None)
+        ctx = helix.CrewCtx(UID, w.engine)
+        run(helix.execute(ctx, "add_business", {"name": "Helix Business"}))
+        out = run(helix.execute(ctx, "rename_business", {"old_name": "Helix Business", "new_name": "Helix Labs"}))
+        assert out.startswith('Renamed "Helix Business" to "Helix Labs"')
+        assert [b["name"] for b in run(tenant.businesses(w.store, UID))] == ["Helix Labs"]
+        check = run(helix.execute(ctx, "check_connections", {}))
+        assert "GitHub" in check and "Render" in check and "Next:" in check
 
 class TestBudgets:
     def test_a_task_out_of_budget_asks_and_continues_only_if_approved(self):
