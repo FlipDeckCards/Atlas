@@ -643,18 +643,6 @@ async def etsy_shop_id(store, user_id: str, env, c) -> str:
     return shop_id
 
 
-async def etsy_drafts(store, user_id: str, env, cf: ClientFactory) -> List[Dict[str, Any]]:
-    """The shop's draft listings (not yet visible to buyers): [{listing_id, title}]. Read only."""
-    cf = cf or _default_client
-    async with cf() as c:
-        shop_id = await etsy_shop_id(store, user_id, env, c)
-        token = await _etsy_access(store, user_id, env, c)
-        h = {"x-api-key": _etsy_key_header(env), "Authorization": f"Bearer {token}"}
-        b = _ok(await c.get(f"{ETSY_API}/shops/{shop_id}/listings", headers=h, params={"state": "draft", "limit": 100}), "Etsy")
-        return [{"listing_id": int(r["listing_id"]), "title": str(r.get("title") or "")}
-                for r in (b.get("results") or []) if str(r.get("listing_id", "")).isdigit()]
-
-
 async def _etsy(action: str, args: Dict[str, Any], *, store, user_id: str, env, cf: ClientFactory, mission_id: str = "", media_fetch=None) -> str:
     async with cf() as c:
         shop_id = await etsy_shop_id(store, user_id, env, c)

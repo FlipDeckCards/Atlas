@@ -496,34 +496,6 @@ async def crew_answer(question_id: str, body: AnswerIn, request: Request):
         return _err(exc, 409 if "already" in str(exc) else 400)
 
 
-@router.post("/api/crew/etsy/publish-drafts")
-async def crew_publish_drafts(request: Request):
-    """The Station's Publish button: finds the shop's draft listings and puts ONE publish approval in the inbox.
-    Nothing is published here; the approval (Approve button or voice) is what publishes."""
-    g = await _gate(request)
-    if isinstance(g, JSONResponse):
-        return g
-    uid, engine = g
-    from openjarvis.server.crew import connections as conns
-    store = engine.store
-    try:
-        drafts = await conns.etsy_drafts(store, uid, engine.env, engine.client_factory)
-    except conns.ConnectionError_ as exc:
-        return _err(exc, 400)
-    if not drafts:
-        return {"ok": False, "message": "There are no draft listings on the Etsy shop to publish."}
-    ids = [d["listing_id"] for d in drafts]
-    mission = await store.create_mission(uid, goal="Publish the Etsy draft listings", budget_usd=0.0, title="Publish Etsy drafts", status="active")
-    tasks = await store.create_tasks(mission["id"], uid, [{"idx": 0, "title": "Publish the Etsy drafts (needs your approval)", "role": "operator",
-                                                           "brief": "Publish the listed drafts after Michael approves.", "depends_on": [], "budget_usd": 0.0}])
-    tid = tasks[0]["id"]
-    await store.update_task(tid, status="waiting")
-    what = conns.describe_action("etsy", "publish_listings", {"listing_ids": ids}) + " " + "; ".join(d["title"][:60] for d in drafts)
-    await store.add_question(mission["id"], tid, uid, "checkpoint", what, ["Approve", "Decline"], {"platform": "etsy", "action": "publish_listings", "args": {"listing_ids": ids}})
-    await store.add_event(uid, "checkpoint", "Checkpoint for Michael: " + what, mission_id=mission["id"], task_id=tid)
-    return {"ok": True, "message": f"Ready to publish {len(ids)} drafts. Approve it in the Helix inbox, or say approve."}
-
-
 @router.get("/api/crew/outputs/{output_id}")
 async def crew_output(output_id: str, request: Request):
     g = await _gate(request)
