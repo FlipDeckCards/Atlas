@@ -58,7 +58,8 @@ STATION_PAGE = r"""<!DOCTYPE html>
   .vit .k { color:var(--text-dim); } .vit .v { color:var(--cyan); text-transform:uppercase; } .vit .v.g { color:#00ff99; } .vit .v.o { color:#ff8a2a; }
   .lib-f { background:transparent; border:1px solid var(--border); color:var(--text-dim); font-size:9px; letter-spacing:1px; padding:3px 6px; cursor:pointer; border-radius:2px; text-transform:uppercase; }
   .lib-f.on { border-color:var(--cyan); color:var(--cyan); }
-  .lib-grid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:8px; }
+  .lib-grid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:8px; margin-bottom:8px; }
+  .lib-folder { display:block; width:100%; text-align:left; background:transparent; border:0; border-bottom:1px solid var(--border); color:var(--cyan); font-size:10px; letter-spacing:1px; padding:6px 2px; margin:4px 0; cursor:pointer; }
   .lib-row { display:flex; flex-direction:column; gap:5px; align-items:stretch; padding:4px; border:1px solid var(--border); border-radius:3px; background:#0a1520; cursor:pointer; font-size:10px; min-width:0; }
   .lib-row:hover, .lib-row.sel { background:rgba(0,229,255,0.06); }
   .lib-thumb { width:100%; aspect-ratio:1; object-fit:cover; border-radius:2px; background:#050b12; }
@@ -523,7 +524,7 @@ function vitalsSec() {
 }
 
 // ── media library (below the crew) and its viewer (right panel) ──
-const LIB = { on: false, kind: 'all', items: [], open: null, note: '' };
+const LIB = { on: false, kind: 'all', items: [], open: null, note: '', folded: new Set() };
 async function loadLibrary() {
   const st = await api('/api/media/status').catch(() => null);
   LIB.on = !!(st && st.ok && st.data && st.data.enabled);
@@ -545,14 +546,28 @@ function librarySec() {
   s.append(f);
   if (LIB.note) s.append(mk('div', 'dim', LIB.note));
   else if (!LIB.items.length) s.append(mk('div', 'dim', 'Nothing saved yet. Ask Helix (or Prism) to make something.'));
-  const grid = mk('div', 'lib-grid'); s.append(grid);
-  LIB.items.slice(0, 60).forEach(it => {
+  // one folder per day (newest first); the newest day opens, the others stay closed until you tap them
+  const dayOf = it => new Date(it.created_at || Date.now()).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  const va = mk('button', 'lib-f' + (LIB.viewAll ? ' on' : ''), LIB.viewAll ? 'Fold days' : 'View all');
+  va.onclick = () => { LIB.viewAll = !LIB.viewAll; renderSide(true); };
+  s.append(va);
+  const days = [];
+  LIB.items.slice(0, 200).forEach(it => { const d = dayOf(it); let g = days.find(x => x.day === d); if (!g) { g = { day: d, items: [] }; days.push(g); } g.items.push(it); });
+  days.forEach((g, i) => {
+    const open = LIB.viewAll || (i === 0 ? !LIB.folded.has(g.day) : !!(LIB.opened && LIB.opened.has(g.day)));
+    const head = mk('button', 'lib-folder', (open ? '▾ ' : '▸ ') + g.day + '  ·  ' + g.items.length);
+    head.onclick = () => { if (i === 0) { if (LIB.folded.has(g.day)) LIB.folded.delete(g.day); else LIB.folded.add(g.day); } else { LIB.opened = LIB.opened || new Set(); if (LIB.opened.has(g.day)) LIB.opened.delete(g.day); else LIB.opened.add(g.day); } renderSide(true); };
+    s.append(head);
+    if (!open) return;
+    const grid = mk('div', 'lib-grid'); s.append(grid);
+    g.items.forEach(it => {
     const r = mk('div', 'lib-row' + (selected === 'm:' + it.id ? ' sel' : ''));
     if (it.kind === 'image') { const im = mk('img', 'lib-thumb'); im.alt = ''; im.loading = 'lazy'; mediaBlob(it).then(u => { im.src = u; }).catch(() => { im.style.opacity = '0.3'; }); r.append(im); }
     else r.append(mk('span', 'lib-ico', it.kind === 'sound' ? '♪' : '▶'));
     const box = mk('div'); box.style.minWidth = '0'; box.append(mk('div', 'lib-t', it.title), mk('div', 'lib-k', it.kind)); r.append(box);
     r.onclick = () => openMedia(it.id);
     grid.append(r);
+    });
   });
   return s;
 }
