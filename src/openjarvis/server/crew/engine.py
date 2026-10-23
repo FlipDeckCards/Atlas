@@ -874,6 +874,14 @@ class CrewEngine:
         tasks = await self.store.list_tasks(mission_id)
         if tasks and all(t["status"] == "done" for t in tasks):
             summary = "\n".join(f'- {t["title"]}: {_clip(t["result"], 300)}' for t in tasks)
+            # a mission is not done while the reviewer (Lens) says work is missing: it stalls and tells Michael
+            import re as _re
+            flagged = [t for t in tasks if t.get("role") == "reviewer" and _re.search(r"\bmissing\b|\bnot (?:yet )?(?:made|created|drafted)\b", str(t.get("result") or ""), _re.I)]
+            if flagged:
+                await self.store.update_mission(mission_id, status="stalled", summary=summary)
+                await self.store.add_event(m["user_id"], "error", "Mission not finished: the reviewer found missing work, so nothing was marked complete.", mission_id=mission_id)
+                await self._notify(m["user_id"], "Mission not finished", f'"{m["title"] or _clip(m["goal"], 60)}" still has missing work. Open the Station to see what is left.')
+                return
             await self.store.update_mission(mission_id, status="done", summary=summary)
             outs = await self.store.list_outputs(mission_id)
             await self.store.add_event(m["user_id"], "done", f"Mission complete. {len(outs)} file(s) in the outbox. Spent ${m['spent_usd']:.2f}.", mission_id=mission_id)
