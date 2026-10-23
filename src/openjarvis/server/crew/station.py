@@ -1811,9 +1811,14 @@ function overviewSec() {
   const s = mk('div', 'sec');
   const l = mk('div', 'lbl'); l.append(mk('span', null, 'All businesses'), mk('span', 'act', FIN ? 'as of ' + new Date(FIN.as_of).toLocaleTimeString() : 'loading…')); s.append(l);
   if (!FIN) { s.append(mk('div', 'dim', 'Loading the numbers…')); return s; }
-  const names = {}; Object.keys(FIN.factories).forEach(k => { if (!k.startsWith('new:')) names[k] = bizName(k); });
+  // the main factories always show (zeros until they have activity); missions (new: rows) and the crew total stay out
+  const MAIN = ['flipdeck', 'marnyx', 'deadzone', 'aibussol', 'etsy'];
+  const LABEL = { flipdeck: 'FlipDeck', marnyx: 'Marnyx', deadzone: 'Deadzone', aibussol: 'Aibussol', etsy: 'Etsy' };
+  const keys = [...new Set([...MAIN, ...Object.keys(FIN.factories).filter(k => !k.startsWith('new:') && k !== 'crew')])];
+  const ZERO = { revenue_today: 0, cost_today: 0, revenue_30d: 0, cost_30d: 0, net_30d: 0, mrr: 0 };
+  const names = {}; keys.forEach(k => { names[k] = LABEL[k] || bizName(k); });
   // only the main factories: one row per product or business. Missions (new: rows) and the crew total stay out; tap a factory for its missions.
-  const rows = Object.entries(FIN.factories).filter(([k]) => !k.startsWith('new:') && k !== 'crew').sort((a, b) => (b[1].revenue_30d - a[1].revenue_30d) || (b[1].cost_30d - a[1].cost_30d));
+  const rows = keys.map(k => [k, FIN.factories[k] || ZERO]).sort((a, b) => (b[1].revenue_30d - a[1].revenue_30d) || (b[1].cost_30d - a[1].cost_30d));
   const tb = mk('div', 'pnl-table');
   const hd = mk('div', 'pnl-row hd'); ['Today →', 'In', 'Out', 'Net 30d', 'MRR'].forEach(h => hd.append(mk('span', null, h))); tb.append(hd);
   rows.forEach(([k, r]) => {
