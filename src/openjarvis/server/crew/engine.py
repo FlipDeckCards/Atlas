@@ -728,10 +728,20 @@ class CrewEngine:
         await asyncio.gather(*(one(k, u) for k, u in urls.items()), return_exceptions=True)
         return self.products
 
+    async def missing_for_missions(self, user_id: str) -> List[str]:
+        """Subscribers must connect their own GitHub and Stripe before a mission can run. The owner is not held to this."""
+        if await self.is_owner(user_id):
+            return []
+        st = await conns.status(self.store, user_id, await self.env_for(user_id))
+        return [st[k]["label"] for k in ("github", "stripe") if not st[k]["connected"]]
+
     async def start_mission(self, user_id: str, goal: str, budget: Any = None, *, background: bool = True) -> Dict[str, Any]:
         goal = str(goal or "").strip()[:4000]
         if len(goal) < 8:
             raise ValueError("Describe the goal in a sentence or two.")
+        missing = await self.missing_for_missions(user_id)
+        if missing:
+            raise ValueError("Connect " + " and ".join(missing) + " first. Helix can walk you through it.")
         m = await self.store.create_mission(user_id, goal, self.clamp_budget(budget) if budget is not None else default_mission_budget(self.env))
         await self.store.add_event(user_id, "mission", f"New mission: {_clip(goal, 200)} (budget ${m['budget_usd']:.2f})", mission_id=m["id"])
         if background:

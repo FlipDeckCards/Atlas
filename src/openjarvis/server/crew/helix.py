@@ -120,6 +120,9 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
             goal = str(args.get("goal") or "").strip()[:4000]
             if len(goal) < 8:
                 return "Error: ask the user what the mission should achieve."
+            missing = await eng.missing_for_missions(ctx.user_id)
+            if missing:
+                return "NOT STARTED: connect " + " and ".join(missing) + " first. Walk the user through it; do not start the mission."
             budget = eng.clamp_budget(args.get("budget_usd")) if args.get("budget_usd") is not None else eng.clamp_budget(None)
             CREW_PENDING.create(ctx.user_id, "start_mission", {"goal": goal, "budget_usd": budget}, budget, f'start a crew mission: "{_clip(goal, 140)}"')
             return f"NOT STARTED YET. Waiting for the user's confirmation. Tell them the crew will plan and work this with a ${budget:.2f} budget, and ask them to reply 'yes'."

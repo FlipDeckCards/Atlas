@@ -276,23 +276,40 @@ class TestUnfinishedMissions:
         plan = {"tasks": [{"title": "Write guide", "role": "writer", "brief": "b"},
                           {"title": "Review work", "role": "reviewer", "brief": "b"}]}
         lens = "Lens began reviewing the work but is waiting for the Baby Shower product guide rework to complete."
-        w = world(plan, {"Write guide": [resp("guide written")], "Review work": [resp(lens)]}, owner=None)
+        w = world(plan, {"Write guide": [resp("guide written")], "Review work": [resp(lens)]}, owner=UID)
         m = run(start(w))
         assert run(w.store.get_mission(m["id"]))["status"] == "stalled"
 
     def test_an_etsy_draft_mission_without_drafts_is_not_done(self):
         plan = {"tasks": [{"title": "Write guide", "role": "writer", "brief": "b"}]}
-        w = world(plan, {"Write guide": [resp("guide written")]}, owner=None)
+        w = world(plan, {"Write guide": [resp("guide written")]}, owner=UID)
         m = run(start(w, goal="Make 3 Etsy draft listings with mockups"))
         assert run(w.store.get_mission(m["id"]))["status"] == "stalled"
 
     def test_a_clean_review_still_finishes_the_mission(self):
         plan = {"tasks": [{"title": "Write guide", "role": "writer", "brief": "b"},
                           {"title": "Review work", "role": "reviewer", "brief": "b"}]}
-        w = world(plan, {"Write guide": [resp("guide written")], "Review work": [resp("All three products are complete.")]}, owner=None)
+        w = world(plan, {"Write guide": [resp("guide written")], "Review work": [resp("All three products are complete.")]}, owner=UID)
         m = run(start(w))
         assert run(w.store.get_mission(m["id"]))["status"] == "done"
 
+
+def connect_subscriber(w):
+    """A subscriber with their own GitHub and Stripe connected, so their missions may run."""
+    from openjarvis.server.crew import tenant
+    run(tenant.put(w.store, UID, "stripe_key", "sk_test_x"))
+    run(tenant.put(w.store, UID, "github_token", "ghp_test"))
+
+
+class TestSubscriberGate:
+    def test_a_subscriber_cannot_start_a_mission_until_github_and_stripe_are_connected(self):
+        w = world(two_task_plan(), {"Research buyers": [resp("r")], "Write listing": [resp("w")]}, owner=None)
+        try:
+            run(w.engine.start_mission(UID, "Make a planner product for card collectors", background=False))
+            raise AssertionError("the mission should not start")
+        except ValueError as exc:
+            assert "GitHub" in str(exc) and "Stripe" in str(exc)
+        assert run(w.store.list_missions(UID)) == [] if hasattr(w.store, "list_missions") else True
 
 class TestHelixBusinesses:
     def test_helix_adds_and_removes_a_business_on_the_station(self):
@@ -313,6 +330,7 @@ class TestBudgets:
         def writer(turn, msgs):
             return resp(calls=[("save_output", {"name": f"part{turn}.md", "content": "x"})]) if turn < 4 else resp("done")
         w = world({"tasks": [{"title": "Write listing", "role": "writer", "brief": "b"}]}, {"Write listing": writer}, owner=None)
+        connect_subscriber(w)
         m = run(start(w, budget=0.06))                       # planner 0.01, then the task gets 0.05: two calls of 0.02 estimate
         q = run(w.store.list_questions(UID))
         assert len(q) == 1 and q[0]["kind"] == "budget" and run(w.store.list_tasks(m["id"]))[0]["status"] == "waiting"
@@ -323,6 +341,7 @@ class TestBudgets:
     def test_declining_more_budget_stops_the_task_and_the_mission_says_so(self):
         w = world({"tasks": [{"title": "Write listing", "role": "writer", "brief": "b"}]},
                   {"Write listing": lambda turn, msgs: resp(calls=[("save_output", {"name": "a.md", "content": "x"})])}, owner=None)
+        connect_subscriber(w)
         m = run(start(w, budget=0.06))
         q = run(w.store.list_questions(UID))[0]
         run(w.engine.answer(UID, q["id"], approve=False))
@@ -331,6 +350,7 @@ class TestBudgets:
 
     def test_the_daily_cap_stops_new_work_and_is_reported_once(self):
         w = world(two_task_plan(), {"Research buyers": [resp("r")], "Write listing": [resp("w")]}, env={"CREW_DAILY_CAP_USD": "0.02"}, owner=None)
+        connect_subscriber(w)
         m = run(start(w))                                    # planning (0.01) leaves 0.01: below one call's estimate
         assert [t["status"] for t in run(w.store.list_tasks(m["id"]))] == ["queued", "queued", "queued"]
         run(w.engine.tick())
