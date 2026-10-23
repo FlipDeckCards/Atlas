@@ -1793,11 +1793,12 @@ document.getElementById('chat-in').addEventListener('keydown', e => { if (e.key 
 (() => {
   const ci = document.getElementById('chat-in'); let typed = false;
   // autofill also fires input events, so count only real key presses and pastes as typing
-  ci.addEventListener('keydown', e => { if (e.key && e.key.length === 1) typed = true; });
+  ci.addEventListener('keydown', e => { if (e.key === 'Enter') typed = false; else if (e.key && e.key.length === 1) typed = true; });
   ci.addEventListener('paste', () => { typed = true; });
   const clearEmail = () => { if (!typed && /@/.test(ci.value)) ci.value = ''; };
-  clearEmail(); const t = setInterval(clearEmail, 400); setTimeout(() => clearEmail(), 15000); setTimeout(() => clearearly(t), 15000);
-  function clearearly(id) { clearInterval(id); }
+  ci.addEventListener('input', clearEmail);
+  ci.addEventListener('focus', clearEmail);
+  clearEmail(); setInterval(clearEmail, 400);            // keeps running: autofill can land long after load
   window.addEventListener('pageshow', clearEmail);
 })();
 
