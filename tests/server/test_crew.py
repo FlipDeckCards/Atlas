@@ -294,6 +294,20 @@ class TestUnfinishedMissions:
         assert run(w.store.get_mission(m["id"]))["status"] == "done"
 
 
+class TestHelixBusinesses:
+    def test_helix_adds_and_removes_a_business_on_the_station(self):
+        from openjarvis.server.crew import helix, tenant
+        w = world(two_task_plan(), {"Research buyers": [resp("r")], "Write listing": [resp("w")]}, owner=None)
+        ctx = helix.CrewCtx(UID, w.engine)
+        out = run(helix.execute(ctx, "add_business", {"name": "Helix Business", "url": "helixbusiness.com"}))
+        assert out.startswith('Added "Helix Business"')
+        assert [b["name"] for b in run(tenant.businesses(w.store, UID))] == ["Helix Business"]
+        assert "already" in run(helix.execute(ctx, "add_business", {"name": "FlipDeck"}))
+        assert "stay" in run(helix.execute(ctx, "remove_business", {"name": "FlipDeck"}))
+        run(helix.execute(ctx, "remove_business", {"name": "Helix Business"}))
+        assert run(tenant.businesses(w.store, UID)) == []
+
+
 class TestBudgets:
     def test_a_task_out_of_budget_asks_and_continues_only_if_approved(self):
         def writer(turn, msgs):

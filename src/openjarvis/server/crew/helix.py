@@ -22,6 +22,7 @@ from openjarvis.server.media.helix_tools import PendingActions, is_explicit_yes
 logger = logging.getLogger(__name__)
 
 CREW_PENDING = PendingActions()
+OWNER_FIXED_KEYS_HELIX = {"flipdeck", "marnyx", "deadzone"}   # the owner's rows that are not stored (see routes.OWNER_BUSINESSES)
 
 CREW_TOOLS: List[Dict[str, Any]] = [
     {"type": "function", "function": {
@@ -37,6 +38,16 @@ CREW_TOOLS: List[Dict[str, Any]] = [
         "name": "answer_crew_question",
         "description": "Pass the user's answer to an agent's open QUESTION (not a checkpoint or budget request; those need his tap on Approve/Decline).",
         "parameters": {"type": "object", "properties": {"question_id": {"type": "string"}, "answer": {"type": "string"}}, "required": ["question_id", "answer"]}}},
+    {"type": "function", "function": {
+        "name": "add_business",
+        "description": "Add a business to the All businesses box on the Station (its name, and optionally its website and a color). Nothing is spent and nothing is published; the user can remove it.",
+        "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "The business name, as the user said it."},
+                                                        "url": {"type": "string", "description": "Its website, if given."},
+                                                        "color": {"type": "string", "description": "A hex color like #00e5ff, if given."}}, "required": ["name"]}}},
+    {"type": "function", "function": {
+        "name": "remove_business",
+        "description": "Remove a business you added from the All businesses box. The FlipDeck, Marnyx and Deadzone rows cannot be removed.",
+        "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "The business name to remove."}}, "required": ["name"]}}},
     {"type": "function", "function": {
         "name": "pause_mission",
         "description": "Pause a mission (its agents stop starting new steps).",
@@ -94,7 +105,8 @@ async def system_addendum(ctx: CrewCtx) -> str:
         qs = []
     s = (" You lead the user's crew of agents. When he asks you to build, make or launch something bigger than one answer (a product, a business, "
          "a campaign, an app), call start_mission with his goal; the system asks him to confirm. Use crew_status when he asks what the crew is doing. "
-         "Never say a mission started unless a tool result says so. Checkpoints and budget requests are approved only by his tap on the buttons.")
+         "Never say a mission started unless a tool result says so. Checkpoints and budget requests are approved only by his tap on the buttons. "
+         "To put a business on the All businesses box, call add_business with the name he gave; never say it was added unless the tool result says so.")
     if qs:
         s += " Open crew items: " + " | ".join(f'{q["kind"]} {q["id"]}: {_clip(q["text"], 160)}' for q in qs[:5])
         s += ". If his message answers an open question, call answer_crew_question with that id."
@@ -113,6 +125,27 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
             return f"NOT STARTED YET. Waiting for the user's confirmation. Tell them the crew will plan and work this with a ${budget:.2f} budget, and ask them to reply 'yes'."
         if name == "crew_status":
             return await status_text(ctx)
+        if name == "add_business":
+            from openjarvis.server.crew import tenant
+
+            name_ = _clip(args.get("name"), 40)
+            if tenant.slug(name_) in OWNER_FIXED_KEYS_HELIX:
+                return f'"{name_}" is already on the Station.'
+            items = await tenant.add_business(eng.store, ctx.user_id, name_, _clip(args.get("url"), 200), _clip(args.get("color"), 9))
+            eng.drop_products_cache(ctx.user_id)
+            await eng.store.add_event(ctx.user_id, "business", f"Added {name_} to the Station (by Helix).")
+            return f'Added "{name_}" to the All businesses box on the Station. It has {len(items)} business(es) you added.'
+        if name == "remove_business":
+            from openjarvis.server.crew import tenant
+
+            key = tenant.slug(_clip(args.get("name"), 40))
+            if key in OWNER_FIXED_KEYS_HELIX:
+                return "Not removed: the FlipDeck, Marnyx and Deadzone rows stay on the Station."
+            await tenant.remove_business(eng.store, ctx.user_id, key)
+            eng.drop_products_cache(ctx.user_id)
+            await eng.store.add_event(ctx.user_id, "business", f"Removed {_clip(args.get('name'), 40)} from the Station (by Helix).")
+            return f'Removed "{_clip(args.get("name"), 40)}" from the All businesses box.'
+
         if name == "answer_crew_question":
             q = await eng.store.get_question(str(args.get("question_id") or ""))
             if not q or q["user_id"] != ctx.user_id:

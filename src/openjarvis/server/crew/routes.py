@@ -220,6 +220,15 @@ OWNER_BUSINESSES = (
     {"key": "flipdeck", "name": "FlipDeck", "url": "https://flipdeckcards.com", "color": "#ff6d00"},
     {"key": "marnyx", "name": "Marnyx", "url": "https://marnyx.onrender.com", "color": "#b06cff"},
     {"key": "deadzone", "name": "Deadzone", "url": "https://cybervoid-6tbo.onrender.com", "color": "#ff3344"})
+OWNER_FIXED_KEYS = {b["key"] for b in OWNER_BUSINESSES}
+
+
+async def owner_businesses(engine, uid: str):
+    """The owner's rows on the Station: the fixed three, then any business Helix or the owner added."""
+    from openjarvis.server.crew import tenant
+
+    stored = await tenant.businesses(engine.store, uid)
+    return list(OWNER_BUSINESSES) + [b for b in stored if b["key"] not in OWNER_FIXED_KEYS]
 
 
 class CatalogEdit(BaseModel):
@@ -240,7 +249,7 @@ async def crew_catalog(key: str, request: Request):
     owner = await engine.is_owner(uid)
     if key == "stripe" and not owner:
         return {"items": [], "note": ""}
-    biz = list(OWNER_BUSINESSES) if owner else await tenant.businesses(engine.store, uid)
+    biz = await owner_businesses(engine, uid) if owner else await tenant.businesses(engine.store, uid)
     return await catalog.for_factory(key, store=engine.store, uid=uid, env=await engine.env_for(uid),
                                      cf=engine.client_factory or conns._default_client, businesses=biz)
 
@@ -294,7 +303,7 @@ async def crew_state(request: Request):
         # the owner's keys live on Render, except Marnyx, which is pasted once on the Station like a subscriber's
         st["connections"]["marnyx"].update(guide="marnyx")
         st["guides"] = {"marnyx": guide.GUIDES["marnyx"]}
-    st["businesses"] = await tenant.businesses(engine.store, uid) if not owner else list(OWNER_BUSINESSES)
+    st["businesses"] = await tenant.businesses(engine.store, uid) if not owner else await owner_businesses(engine, uid)
     if not owner:
         st["products"] = await engine.products_for(uid, st["businesses"])
 
@@ -427,8 +436,8 @@ async def crew_business_add(body: BusinessIn, request: Request):
     uid, engine = g
     from openjarvis.server.crew import tenant
 
-    if await engine.is_owner(uid):
-        return JSONResponse({"detail": "The owner's businesses are FlipDeck, Marnyx and Deadzone; new ones are created by missions."}, status_code=409)
+    if tenant.slug(body.name) in OWNER_FIXED_KEYS:
+        return JSONResponse({"detail": "That business is already on the Station."}, status_code=409)
     try:
         items = await tenant.add_business(engine.store, uid, body.name, body.url, body.color)
     except ValueError as exc:
