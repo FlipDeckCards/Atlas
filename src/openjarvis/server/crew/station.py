@@ -560,13 +560,25 @@ function librarySec() {
     s.append(head);
     if (!open) return;
     const grid = mk('div', 'lib-grid'); s.append(grid);
+    // a design pack (color and B&W PNG and JPG, one slug) shows as ONE tile; its color PNG is the picture
+    const tiles = [], designs = new Map();
     g.items.forEach(it => {
-    const r = mk('div', 'lib-row' + (selected === 'm:' + it.id ? ' sel' : ''));
-    if (it.kind === 'image') { const im = mk('img', 'lib-thumb'); im.alt = ''; im.loading = 'lazy'; mediaBlob(it).then(u => { im.src = u; }).catch(() => { im.style.opacity = '0.3'; }); r.append(im); }
-    else r.append(mk('span', 'lib-ico', it.kind === 'sound' ? '♪' : '▶'));
-    const box = mk('div'); box.style.minWidth = '0'; box.append(mk('div', 'lib-t', it.title), mk('div', 'lib-k', it.kind)); r.append(box);
-    r.onclick = () => openMedia(it.id);
-    grid.append(r);
+      if (it.provider !== 'aibussol-design') { tiles.push({ it }); return; }
+      const key = String(it.title).replace(/ (color|bw)$/, '');
+      let t = designs.get(key);
+      if (!t) { t = { design: true, key, files: [] }; designs.set(key, t); tiles.push(t); }
+      t.files.push(it);
+    });
+    tiles.forEach(t => {
+      const rep = t.design ? (t.files.find(f => /color$/.test(f.title)) || t.files[0]) : t.it;
+      const label = t.design ? t.key : rep.title;
+      const sub = t.design ? 'design pack · ' + t.files.length + ' files' : rep.kind;
+      const r = mk('div', 'lib-row' + (selected === 'm:' + rep.id ? ' sel' : ''));
+      if (rep.kind === 'image') { const im = mk('img', 'lib-thumb'); im.alt = ''; im.loading = 'lazy'; mediaBlob(rep).then(u => { im.src = u; }).catch(() => { im.style.opacity = '0.3'; }); r.append(im); }
+      else r.append(mk('span', 'lib-ico', rep.kind === 'sound' ? '♪' : '▶'));
+      const box = mk('div'); box.style.minWidth = '0'; box.append(mk('div', 'lib-t', label), mk('div', 'lib-k', sub)); r.append(box);
+      r.onclick = () => openMedia(rep.id);
+      grid.append(r);
     });
   });
   return s;
