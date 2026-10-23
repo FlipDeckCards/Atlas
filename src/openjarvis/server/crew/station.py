@@ -1593,7 +1593,12 @@ document.getElementById('img-clear').onclick = clearImg;
 let voiceOn = true;
 try { voiceOn = localStorage.getItem('aibussol_voice') !== 'off'; } catch (e) {}
 function paintVoice() { const b = document.getElementById('voice-tog'); b.textContent = voiceOn ? '🔊 ON' : '🔇 OFF'; b.classList.toggle('on', voiceOn); }
-document.getElementById('voice-tog').onclick = () => { voiceOn = !voiceOn; try { localStorage.setItem('aibussol_voice', voiceOn ? 'on' : 'off'); } catch (e) {} paintVoice(); };
+let _curAudio = null, _speakGen = 0;
+function stopSpeech() {
+  _speakGen++;
+  if (_curAudio) { const a = _curAudio; _curAudio = null; try { a.pause(); } catch (e) {} window._helixTalking = false; wakeLabel(wakeOn ? 'SAY "HEY HELIX"' : 'VOICE: TAP TO WAKE', wakeOn ? 'on' : ''); if (!isRec) resumeWake(); }
+}
+document.getElementById('voice-tog').onclick = () => { voiceOn = !voiceOn; if (!voiceOn) stopSpeech(); try { localStorage.setItem('aibussol_voice', voiceOn ? 'on' : 'off'); } catch (e) {} paintVoice(); };
 paintVoice();
 function wakeLabel(text, cls) { const w = document.getElementById('wake'); w.textContent = text; w.className = cls || ''; }
 let _audioUnlocked = false;
@@ -1611,21 +1616,26 @@ function speechChunks(text) {
 }
 async function speakReply(text, el, always) {
   if (!voiceOn && !always) return;
+  stopSpeech();                       // one voice at a time: a new reply replaces the one still playing
+  const gen = _speakGen;
   try {
     const parts = [];
     for (const chunk of speechChunks(text)) {
       const res = await fetch('/api/voice/speak', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token(), 'Content-Type': 'application/json' }, body: JSON.stringify({ message: chunk }) });
+      if (gen !== _speakGen) return;
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         if (el) el.append(mk('div', 'vn', 'Voice unavailable: ' + (typeof d.detail === 'string' ? d.detail : 'HTTP ' + res.status)));
         resumeWake(); return;
       }
       parts.push(await res.arrayBuffer());
+      if (gen !== _speakGen) return;
     }
     const total = parts.reduce((n, p2) => n + p2.byteLength, 0), joined = new Uint8Array(total); let off = 0;
     for (const p2 of parts) { joined.set(new Uint8Array(p2), off); off += p2.byteLength; }
     const url = URL.createObjectURL(new Blob([joined.buffer], { type: 'audio/mpeg' })), audio = new Audio(url);
-    const done = () => { window._helixTalking = false; URL.revokeObjectURL(url); wakeLabel(wakeOn ? 'SAY "HEY HELIX"' : 'VOICE: TAP TO WAKE', wakeOn ? 'on' : ''); if (!isRec) resumeWake(); };
+    _curAudio = audio;
+    const done = () => { if (_curAudio === audio) { _curAudio = null; window._helixTalking = false; wakeLabel(wakeOn ? 'SAY "HEY HELIX"' : 'VOICE: TAP TO WAKE', wakeOn ? 'on' : ''); if (!isRec) resumeWake(); } URL.revokeObjectURL(url); };
     audio.onplay = () => { window._helixTalking = true; wakeLabel('HELIX IS SPEAKING', 'busy'); };
     audio.onended = done; audio.onerror = done;
     pauseWake();
