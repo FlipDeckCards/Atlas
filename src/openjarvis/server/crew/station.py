@@ -1161,6 +1161,9 @@ function factoryKey(m) {
   const p = String(m.project || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   if ((p === 'aibussol' && isOwner()) || prods().some(f => f.key === p)) return p;
   if (PLATFORM_KEY[p]) return PLATFORM_KEY[p];
+  const words = ((m.title || '') + ' ' + (m.goal || '')).toLowerCase();
+  const biz = (S && S.businesses ? S.businesses : []).find(b => b.name && words.includes(String(b.name).toLowerCase()));
+  if (biz) return biz.key;                                                       // work for a business lives in that business's factory
   if (/\betsy\b/i.test((m.title || '') + ' ' + (m.goal || ''))) return 'etsy';   // Etsy work lives in the Etsy factory
   return 'new:' + String(m.title || m.goal || m.id).toLowerCase().slice(0, 40);
 }
