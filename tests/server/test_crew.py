@@ -270,6 +270,30 @@ class TestCheckpoints:
 
 # ── money limits ─────────────────────────────────────────────────────────────────────────────────
 
+class TestUnfinishedMissions:
+    def test_a_reviewer_still_waiting_on_rework_keeps_the_mission_from_done(self):
+        # the failed FlipDeck run: Lens said it was still waiting on a rework, and the mission was marked done anyway
+        plan = {"tasks": [{"title": "Write guide", "role": "writer", "brief": "b"},
+                          {"title": "Review work", "role": "reviewer", "brief": "b"}]}
+        lens = "Lens began reviewing the work but is waiting for the Baby Shower product guide rework to complete."
+        w = world(plan, {"Write guide": [resp("guide written")], "Review work": [resp(lens)]}, owner=None)
+        m = run(start(w))
+        assert run(w.store.get_mission(m["id"]))["status"] == "stalled"
+
+    def test_an_etsy_draft_mission_without_drafts_is_not_done(self):
+        plan = {"tasks": [{"title": "Write guide", "role": "writer", "brief": "b"}]}
+        w = world(plan, {"Write guide": [resp("guide written")]}, owner=None)
+        m = run(start(w, goal="Make 3 Etsy draft listings with mockups"))
+        assert run(w.store.get_mission(m["id"]))["status"] == "stalled"
+
+    def test_a_clean_review_still_finishes_the_mission(self):
+        plan = {"tasks": [{"title": "Write guide", "role": "writer", "brief": "b"},
+                          {"title": "Review work", "role": "reviewer", "brief": "b"}]}
+        w = world(plan, {"Write guide": [resp("guide written")], "Review work": [resp("All three products are complete.")]}, owner=None)
+        m = run(start(w))
+        assert run(w.store.get_mission(m["id"]))["status"] == "done"
+
+
 class TestBudgets:
     def test_a_task_out_of_budget_asks_and_continues_only_if_approved(self):
         def writer(turn, msgs):

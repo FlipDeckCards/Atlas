@@ -874,13 +874,12 @@ class CrewEngine:
         tasks = await self.store.list_tasks(mission_id)
         if tasks and all(t["status"] == "done" for t in tasks):
             summary = "\n".join(f'- {t["title"]}: {_clip(t["result"], 300)}' for t in tasks)
-            # a mission is not done while the reviewer (Lens) says work is missing: it stalls and tells Michael
-            import re as _re
-            flagged = [t for t in tasks if t.get("role") == "reviewer" and _re.search(r"\bmissing\b|\bnot (?:yet )?(?:made|created|drafted)\b", str(t.get("result") or ""), _re.I)]
-            if flagged:
+            # a mission is not done while work is unfinished: it stalls with the reason, and Michael is told
+            reason = await self._unfinished_reason(m, tasks)
+            if reason:
                 await self.store.update_mission(mission_id, status="stalled", summary=summary)
-                await self.store.add_event(m["user_id"], "error", "Mission not finished: the reviewer found missing work, so nothing was marked complete.", mission_id=mission_id)
-                await self._notify(m["user_id"], "Mission not finished", f'"{m["title"] or _clip(m["goal"], 60)}" still has missing work. Open the Station to see what is left.')
+                await self.store.add_event(m["user_id"], "error", f"Mission not finished: {reason} Nothing was marked complete.", mission_id=mission_id)
+                await self._notify(m["user_id"], "Mission not finished", f'"{m["title"] or _clip(m["goal"], 60)}": {reason} Open the Station to see what is left.')
                 return
             await self.store.update_mission(mission_id, status="done", summary=summary)
             await self._ask_publish_drafts(m, tasks)          # the next step is an approval, never a chat promise
@@ -906,6 +905,25 @@ class CrewEngine:
                 if t["status"] == "queued" and failed_idx.intersection(t["depends_on"]):
                     await self.store.update_task(t["id"], status="failed", result="Not started: a task it depends on failed.")
             await self._recheck_once(mission_id, tasks)
+
+    async def _unfinished_reason(self, m: Dict[str, Any], tasks: List[Dict[str, Any]]) -> str:
+        """Why a mission whose tasks are all done still is not finished ('' when it is). Two checks:
+        1) the reviewer (Lens) says something is missing, unfinished, waiting or needs rework;
+        2) the goal asks for Etsy drafts and no draft listing was actually created."""
+        import re as _re
+        for t in tasks:
+            if t.get("role") == "reviewer" and _re.search(
+                    r"\bmissing\b|\bnot (?:yet )?(?:made|created|drafted|finished|complete|completed|reworked|ready)\b"
+                    r"|\bwaiting (?:for|on)\b|\bincomplete\b|\bunfinished\b|\bneeds? (?:a )?rework\b|\bpending\b",
+                    str(t.get("result") or ""), _re.I):
+                return "the reviewer found work still missing or waiting, so the mission is not complete."
+        goal = f'{m.get("title") or ""} {m.get("goal") or ""}'
+        if _re.search(r"\betsy\b", goal, _re.I) and _re.search(r"\bdraft", goal, _re.I):
+            made = any("Etsy draft listing created:" in str(e.get("text") or "")
+                       for e in await self.store.list_events(m["user_id"], m["id"], limit=500))
+            if not made:
+                return "the goal asks for Etsy drafts, but no draft listing was created."
+        return ""
 
     async def _ask_publish_drafts(self, m: Dict[str, Any], tasks: List[Dict[str, Any]]) -> None:
         """When a mission made Etsy draft listings, the next step is ONE approval to publish exactly those drafts.
