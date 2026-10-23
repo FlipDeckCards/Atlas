@@ -60,9 +60,11 @@ without an official API.
 2. Set `ETSY_API_KEY` (the keystring), `ETSY_SHARED_SECRET` if Etsy shows one, and
    `ETSY_REDIRECT_URI=https://aibussol.com/crew/connect/etsy/callback` (also add that exact URL as the app's callback on Etsy).
 3. Deploy, open the Station → Connections → **Connect** next to Etsy, and allow access. Tokens are stored in `crew_secrets` and refreshed automatically.
-4. The crew then runs a listing end to end: `create_draft_listing` (draft, with tags), `add_listing_image` (a photo from the
-   media library), `add_listing_file` (an outbox file; markdown/text becomes a PDF through `crew/pdf.py`), and one
-   `publish_listings` checkpoint ($0.20 per listing on Etsy) that the owner approves.
+4. The crew then runs a listing end to end: Prism makes the artwork and `make_design_files` turns it into a design pack
+   (`crew/designs.py`, traced by `crew/vector.py`: color and black-and-white PNG and JPG in the media library, SVG and DXF cut
+   files in the outbox). `create_draft_listing` (draft, with tags), `add_listing_image` (a photo from the media library), and
+   `add_listing_file` with `pack=<name>.pack.json` (one zip for the buyer, with color/ and bw/ folders and a README). The owner
+   approves the designs in his library, then one `publish_listings` checkpoint ($0.20 per listing on Etsy) makes them live.
 
 Stripe uses the existing `STRIPE_SECRET_KEY`. Crew-made products carry `metadata app=crew`, so the Aibussol subscription webhook
 (which only reads `app=aibussol`) ignores them.

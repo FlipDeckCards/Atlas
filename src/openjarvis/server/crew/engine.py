@@ -133,6 +133,13 @@ _IMAGE_TOOL = {"type": "function", "function": {
     "description": "Generate one image from a detailed description (500 characters at most) and save it to Michael's Aibussol media library. Costs a few cents; at most 10 per task.",
     "parameters": {"type": "object", "properties": {"prompt": {"type": "string"}}, "required": ["prompt"]}}}
 
+_DESIGN_TOOL = {"type": "function", "function": {
+    "name": "make_design_files",
+    "description": "Turn one of your generate_image artworks (a dark design on a plain background) into a finished design pack: color PNG and JPG, "
+                   "black-and-white PNG and JPG, and SVG and DXF cut files traced from the artwork. Saves the images to Michael's media library and "
+                   "the cut files and a pack file to this mission's outbox. Name the pack (short, lowercase, e.g. gnome-snow-globe). At most 10 per task.",
+    "parameters": {"type": "object", "properties": {"media_item_id": {"type": "string"}, "name": {"type": "string"}}, "required": ["media_item_id", "name"]}}}
+
 _REPO_TOOLS = [
     {"type": "function", "function": {
         "name": "repo_files",
@@ -184,7 +191,7 @@ _REVIEW_TOOL = {"type": "function", "function": {
     "description": "Send one finished task back to its agent with concrete fixes (each task can be sent back once). You continue after the rework is done.",
     "parameters": {"type": "object", "properties": {"task_number": {"type": "integer"}, "notes": {"type": "string"}}, "required": ["task_number", "notes"]}}}
 
-LIMITS = {"web_search": 12, "generate_image": 10, "repo_commit": 10, "check_site": 20, "business_numbers": 3}
+LIMITS = {"web_search": 12, "generate_image": 10, "make_design_files": 10, "repo_commit": 10, "check_site": 20, "business_numbers": 3}
 SEARCHERS = ("researcher", "reviewer", "marketer", "social", "support", "analyst", "qa", "finance")
 IMAGERS = ("designer", "marketer", "social")
 READERS = ("support", "analyst", "finance")                # read-only platform access
@@ -238,10 +245,13 @@ HOUSE_RULES = (
     "- Social and email go through Marnyx (connection 'marnyx'): Echo plans each brand's week (FlipDeck, Marnyx, and Aibussol once its "
     "accounts exist) and sends it with marnyx.schedule_week, one approval per brand per week; Spark writes campaigns and sends them with "
     "marnyx.send_email, one approval each. Never post or email any other way.\n"
-    "- Etsy (connection 'etsy') is done end to end by the crew: Quill writes the product as an outbox file (markdown is fine; it becomes a "
-    "clean PDF), Prism makes 2-3 mockup photos with generate_image, then Relay runs create_draft_listing (with 13 tags), add_listing_image "
-    "for each photo (first = main), add_listing_file for the download, and finally ONE publish_listings checkpoint for the whole batch. "
-    "Never ask Michael to upload anything by hand.\n"
+    "- Etsy (connection 'etsy') is done end to end by the crew. For each product: Prism makes the artwork with generate_image (a dark design on "
+    "a plain background), then make_design_files on it (color and black-and-white PNG and JPG go to the library, SVG and DXF cut files go to "
+    "the outbox, plus a .pack.json). Prism also makes 2-3 mockup photos with generate_image. Quill writes the product guide as an outbox "
+    "file (markdown becomes a clean PDF). Relay runs create_draft_listing (with 13 tags), add_listing_image for each photo (first = main), "
+    "add_listing_file with pack=<name>.pack.json (the buyer's download: one zip with every format) and the guide, then asks Michael once, "
+    "with ask_michael, to approve the designs in his library, listing the product names. Only after he says yes does Relay run ONE "
+    "publish_listings checkpoint for the whole batch. Never ask Michael to upload anything by hand.\n"
     "- Products: FlipDeck Cards (card-flipping subscription), Marnyx (AI social media manager), Deadzone Games (games site, mobile games "
     "go to Google Play first), Aibussol (this assistant). One shared Stripe account, tagged with metadata app=<product>."
 )
@@ -263,6 +273,8 @@ def tools_for(role: str) -> List[Dict[str, Any]]:
         extra += [_SEARCH_TOOL, _RESEARCH_TOOL]
     if role in IMAGERS:
         extra.append(_IMAGE_TOOL)
+    if role == "designer":
+        extra.append(_DESIGN_TOOL)
     if role == "builder":
         extra += _REPO_TOOLS
     if role == "reviewer":
@@ -1243,6 +1255,8 @@ class CrewEngine:
             return await self._search(task, args)
         if name == "generate_image" and task["role"] in IMAGERS:
             return await self._image(task, mission, args)
+        if name == "make_design_files" and task["role"] == "designer":
+            return await self._design(task, mission, args)
         if name in ("repo_files", "repo_read", "repo_commit", "request_merge") and task["role"] == "builder":
             return await self._repo(task, mission, name, args)
         if name in ("repo_files", "repo_read") and task["role"] == "qa":
@@ -1427,6 +1441,56 @@ class CrewEngine:
                                     f"# {item.title}\n\nSaved to your Aibussol media library (item {item.id}).\n\nPrompt: {prompt}\n")
         await self.store.add_event(uid, "output", f'Prism made an image: "{item.title}" (in your media library).', mission_id=mid, task_id=tid, cost_usd=est)
         return f'Saved the image "{item.title}" to Michael\'s media library (item {item.id}); a note is in the outbox.', None
+
+    async def _design(self, task: Dict[str, Any], mission: Dict[str, Any], args: Dict[str, Any]):
+        """A design pack from one library artwork: four images to the library, SVG and DXF cut files and a pack file to the outbox."""
+        import asyncio
+        import json
+
+        from openjarvis.server.crew import designs
+
+        uid, mid, tid = task["user_id"], task["mission_id"], task["id"]
+        item_id = _clip(args.get("media_item_id"), 80)
+        slug = re.sub(r"[^a-z0-9]+", "-", str(args.get("name") or "").lower()).strip("-")[:40]
+        if not item_id or not slug:
+            return "Error: give the media_item_id of the artwork and a short pack name.", None
+        ctx = None
+        try:
+            ctx = self.media_ctx_fn(uid) if self.media_ctx_fn else None
+        except Exception:
+            logger.exception("crew media context failed")
+        if ctx is None:
+            return "Image saving is not set up on the server, so the design pack cannot be made.", None
+        try:
+            data, _mime = await self._media_fetcher(uid)(item_id)
+            versions = await asyncio.to_thread(designs.make_versions, data)
+        except conns.ConnectionError_ as exc:
+            return f"The artwork could not be read: {exc}", None
+        except ValueError as exc:
+            return f"The artwork could not be traced: {exc} Make a new artwork with generate_image and try again.", None
+        except Exception:
+            logger.exception("design pack failed")
+            return "The design pack could not be made just now. Try again.", None
+        from openjarvis.server.media import service as media
+
+        ids: Dict[str, str] = {}
+        try:
+            for key, mime, ext in (("color_png", "image/png", "png"), ("color_jpg", "image/jpeg", "jpg"),
+                                   ("bw_png", "image/png", "png"), ("bw_jpg", "image/jpeg", "jpg")):
+                variant = "color" if key.startswith("color") else "bw"
+                item = await media.save_item(ctx, kind="image", data=versions[key], mime=mime, title=f"{slug} {variant}",
+                                             prompt=None, provider="aibussol-design")
+                ids[key] = item.id
+        except media.MediaServiceError as exc:
+            return f"The images could not be saved to the library: {exc.detail}", None
+        await self.store.add_output(mid, tid, uid, f"{slug}.svg", versions["svg"])
+        await self.store.add_output(mid, tid, uid, f"{slug}.dxf", versions["dxf"])
+        pack = {"name": slug, **ids, "svg": f"{slug}.svg", "dxf": f"{slug}.dxf"}
+        await self.store.add_output(mid, tid, uid, f"{slug}.pack.json", json.dumps(pack, indent=2))
+        await self.store.add_event(uid, "output", f'Prism made the design pack "{slug}" ({versions["shapes"]} cut shapes): PNG, JPG, SVG and DXF.',
+                                   mission_id=mid, task_id=tid)
+        return (f'Design pack "{slug}" is ready: color and black-and-white PNG and JPG are in Michael\'s media library, and the SVG and DXF '
+                f'cut files are in the outbox. Attach it to Etsy with add_listing_file, pack="{slug}.pack.json".'), None
 
     async def _repo(self, task: Dict[str, Any], mission: Dict[str, Any], name: str, args: Dict[str, Any]):
         uid, mid, tid = task["user_id"], task["mission_id"], task["id"]

@@ -66,9 +66,12 @@ ACTIONS: Dict[str, Dict[str, Dict[str, Any]]] = {
         "add_listing_image": {"risk": "draft", "about": "Add a photo or mockup to a DRAFT Etsy listing from the media library (Prism's generate_image "
                                                        "gives the item id). The first image is the main photo; up to 10.",
                               "args": {"listing_id": "integer", "media_item_id": "media library item id", "rank": "1-10, optional"}},
-        "add_listing_file": {"risk": "draft", "about": "Attach the download file to a DRAFT digital Etsy listing from THIS mission's outbox. "
-                                                      "Markdown or text files are turned into a clean PDF first.",
-                             "args": {"listing_id": "integer", "file": "outbox file name", "name": "file name buyers see, e.g. Planner.pdf"}},
+        "add_listing_file": {"risk": "draft", "about": "Attach a download file to a DRAFT digital Etsy listing. Give pack (a design pack from "
+                                                      "make_design_files, e.g. gnome-snow-globe.pack.json) to attach one zip with the color PNG and JPG, "
+                                                      "and the black-and-white PNG, JPG, SVG and DXF cut files. Or give file: an outbox file, sent as it is "
+                                                      "(SVG, DXF, PDF); markdown or text is turned into a clean PDF first.",
+                             "args": {"listing_id": "integer", "pack": "design pack file name (*.pack.json), optional",
+                                      "file": "outbox file name, when not a pack", "name": "file name buyers see, e.g. Gnome-Snow-Globe.zip"}},
         "publish_listings": {"risk": "checkpoint", "about": "Make DRAFT Etsy listings live (public; Etsy charges $0.20 per listing). One approval "
                                                            "for the whole batch. Each listing needs a photo, and digital ones a file.",
                              "args": {"listing_ids": "list of integers"}},
@@ -568,6 +571,41 @@ async def _find_output(store, user_id: str, mission_id: str, fname: str) -> Opti
     return None
 
 
+async def _design_pack(store, user_id: str, mission_id: str, pack_name: str, media_fetch, title: str):
+    """One zip for a listing: color/ and bw/ folders with the PNG and JPG images, and the SVG and DXF cut files."""
+    import json
+
+    from openjarvis.server.crew import designs
+
+    if not pack_name.endswith(".pack.json"):
+        pack_name = re.sub(r"\.\w+$", "", pack_name) + ".pack.json"
+    manifest = await _find_output(store, user_id, mission_id, pack_name)
+    if not manifest:
+        raise ConnectionError_(f"{pack_name} is not in any of your missions' outboxes. Make the design pack first.")
+    try:
+        pack = json.loads(manifest.get("content") or "{}")
+    except ValueError:
+        raise ConnectionError_(f"{pack_name} is not readable.")
+    if media_fetch is None:
+        raise ConnectionError_("The media library is not available to attach the pack.")
+    base = re.sub(r"[^a-z0-9-]", "", str(pack.get("name") or "design"))[:40] or "design"
+    files: Dict[str, bytes] = {}
+    for key, path in (("color_png", f"color/{base}-color.png"), ("color_jpg", f"color/{base}-color.jpg"),
+                      ("bw_png", f"bw/{base}-bw.png"), ("bw_jpg", f"bw/{base}-bw.jpg")):
+        if not pack.get(key):
+            raise ConnectionError_(f"{pack_name} is missing {key}.")
+        data, _mime = await media_fetch(str(pack[key]))
+        files[path] = data
+    for key, path in (("svg", f"bw/{base}.svg"), ("dxf", f"bw/{base}.dxf")):
+        out = await _find_output(store, user_id, mission_id, str(pack.get(key) or ""))
+        if not out:
+            raise ConnectionError_(f"{pack.get(key)} is not in any of your missions' outboxes.")
+        files[path] = (out.get("content") or "").encode("utf-8")
+    shown = re.sub(r"[^A-Za-z0-9 ._-]", "", _clip(title, 60)) or base
+    shown = (re.sub(r"\.zip$", "", shown, flags=re.I) or base) + ".zip"
+    return shown, "application/zip", designs.pack_zip(files)
+
+
 def _listing_ids(args: Dict[str, Any]) -> List[int]:
     raw = args.get("listing_ids") if isinstance(args.get("listing_ids"), list) else str(args.get("listing_ids") or "").split(",")
     ids = [int(str(x).strip()) for x in raw if str(x).strip().isdigit()]
@@ -647,21 +685,30 @@ async def _etsy(action: str, args: Dict[str, Any], *, store, user_id: str, env, 
             b = _ok(await c.post(f"{ETSY_API}/shops/{shop_id}/listings/{lid}/images", headers=h, files=files, data=form), "Etsy")
             return f"Photo added to Etsy draft {lid} (image {b.get('listing_image_id')})."
         if action == "add_listing_file":
-            lid, fname = _listing_id(args), _clip(args.get("file"), 120)
-            full = await _find_output(store, user_id, mission_id, fname)
-            if not full:
-                raise ConnectionError_(f"{fname or 'That file'} is not in any of your missions' outboxes. Check the file name.")
-            shown = re.sub(r"[^A-Za-z0-9 ._-]", "", _clip(args.get("name"), 60)) or re.sub(r"\.(md|txt)$", "", fname) + ".pdf"
-            content = full.get("content") or ""
-            if content.startswith("%PDF"):
-                data = content.encode("latin-1", "replace")
+            lid = _listing_id(args)
+            if str(args.get("pack") or "").strip():
+                shown, mime, data = await _design_pack(store, user_id, mission_id, _clip(args.get("pack"), 120), media_fetch,
+                                                       _clip(args.get("name"), 60))
             else:
-                from openjarvis.server.crew.pdf import make_pdf
+                fname = _clip(args.get("file"), 120)
+                full = await _find_output(store, user_id, mission_id, fname)
+                if not full:
+                    raise ConnectionError_(f"{fname or 'That file'} is not in any of your missions' outboxes. Check the file name.")
+                content = full.get("content") or ""
+                if content.startswith("%PDF") or re.search(r"\.(svg|dxf|json|csv|pdf)$", fname, re.I):
+                    shown = re.sub(r"[^A-Za-z0-9 ._-]", "", _clip(args.get("name"), 60)) or fname
+                    mime = "application/pdf" if fname.lower().endswith(".pdf") or content.startswith("%PDF") else "application/octet-stream"
+                    data = content.encode("latin-1", "replace") if mime == "application/pdf" else content.encode("utf-8")
+                else:
+                    # Written notes (markdown or text) become a PDF product guide
+                    shown = re.sub(r"[^A-Za-z0-9 ._-]", "", _clip(args.get("name"), 60)) or re.sub(r"\.(md|txt)$", "", fname) + ".pdf"
+                    from openjarvis.server.crew.pdf import make_pdf
 
-                data = make_pdf(re.sub(r"\.(md|txt|pdf)$", "", shown).replace("_", " "), content)
-                shown = re.sub(r"\.\w+$", "", shown) + ".pdf"
+                    data = make_pdf(re.sub(r"\.(md|txt|pdf)$", "", shown).replace("_", " "), content)
+                    shown = re.sub(r"\.\w+$", "", shown) + ".pdf"
+                    mime = "application/pdf"
             b = _ok(await c.post(f"{ETSY_API}/shops/{shop_id}/listings/{lid}/files", headers=h,
-                                 files={"file": (shown, data, "application/pdf")}, data={"name": shown}), "Etsy")
+                                 files={"file": (shown, data, mime)}, data={"name": shown}), "Etsy")
             return f'Download file "{shown}" ({len(data) // 1024} KB) attached to Etsy draft {lid} (file {b.get("listing_file_id")}).'
         if action == "publish_listings":
             done, bad = [], []

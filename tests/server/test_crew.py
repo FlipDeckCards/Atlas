@@ -1257,3 +1257,40 @@ def test_etsy_file_found_in_another_mission():
     hit = run(_find_output(store, UID, b["id"], "reels_pack.md"))
     assert hit and "Reels" in hit["content"]
     assert run(_find_output(store, UID, b["id"], "missing.md")) is None
+
+
+def test_trace_finds_outlines_and_holes():
+    from PIL import Image, ImageDraw
+
+    from openjarvis.server.crew import vector
+
+    img = Image.new("RGB", (300, 300), "white")
+    d = ImageDraw.Draw(img)
+    d.rectangle([30, 30, 270, 270], fill="black")
+    d.ellipse([90, 90, 210, 210], fill="white")            # a hole in the square
+    outlines, w, h = vector.trace(vector.prepare_bw(img))
+    assert (w, h) == (300, 300)
+    assert len(outlines) == 2                               # the square and its hole
+    svg = vector.to_svg(outlines, w, h)
+    assert 'fill-rule="evenodd"' in svg and svg.count("C") > 8
+    dxf = vector.to_dxf(outlines, w, h)
+    assert dxf.count("LWPOLYLINE") == 2 and dxf.strip().endswith("EOF")
+
+
+def test_design_pack_makes_every_file():
+    import io
+    import zipfile
+
+    from PIL import Image, ImageDraw
+
+    from openjarvis.server.crew import designs
+
+    art = Image.new("RGBA", (400, 400), (0, 0, 0, 0))
+    ImageDraw.Draw(art).ellipse([40, 40, 360, 360], fill=(200, 30, 30, 255))
+    buf = io.BytesIO()
+    art.save(buf, "PNG")
+    v = designs.make_versions(buf.getvalue())
+    assert v["shapes"] >= 1 and v["svg"].startswith("<svg") and "LWPOLYLINE" in v["dxf"]
+    assert v["color_png"][:4] == b"\x89PNG" and v["color_jpg"][:2] == b"\xff\xd8" and v["bw_jpg"][:2] == b"\xff\xd8"
+    z = zipfile.ZipFile(io.BytesIO(designs.pack_zip({"color/a.png": v["color_png"], "bw/a.svg": v["svg"].encode()})))
+    assert sorted(z.namelist()) == ["README.txt", "bw/a.svg", "color/a.png"]
