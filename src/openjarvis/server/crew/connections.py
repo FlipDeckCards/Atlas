@@ -645,6 +645,7 @@ async def etsy_shop_id(store, user_id: str, env, c) -> str:
 
 async def etsy_drafts(store, user_id: str, env, cf: ClientFactory) -> List[Dict[str, Any]]:
     """The shop's draft listings (not yet visible to buyers): [{listing_id, title}]. Read only."""
+    cf = cf or _default_client
     async with cf() as c:
         shop_id = await etsy_shop_id(store, user_id, env, c)
         token = await _etsy_access(store, user_id, env, c)
