@@ -1814,7 +1814,8 @@ function overviewSec() {
   // the main factories always show (zeros until they have activity); missions (new: rows) and the crew total stay out
   const MAIN = ['flipdeck', 'marnyx', 'deadzone', 'aibussol', 'etsy'];
   const LABEL = { flipdeck: 'FlipDeck', marnyx: 'Marnyx', deadzone: 'Deadzone', aibussol: 'Aibussol', etsy: 'Etsy' };
-  const keys = [...new Set([...MAIN, ...Object.keys(FIN.factories).filter(k => !k.startsWith('new:') && k !== 'crew')])];
+  // one row per main factory and per business that has a factory (a business you add gets its row here); mission factories stay out
+  const keys = [...new Set([...MAIN, ...(S && S.businesses ? S.businesses.map(b => b.key).filter(Boolean) : [])])];
   const ZERO = { revenue_today: 0, cost_today: 0, revenue_30d: 0, cost_30d: 0, net_30d: 0, mrr: 0 };
   const names = {}; keys.forEach(k => { names[k] = LABEL[k] || bizName(k); });
   // only the main factories: one row per product or business. Missions (new: rows) and the crew total stay out; tap a factory for its missions.
