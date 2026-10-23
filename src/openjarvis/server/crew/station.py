@@ -1626,13 +1626,24 @@ function speechChunks(text) {
   if (cur) out.push(cur);
   return out.length ? out : [''];
 }
+// markdown symbols are read aloud as words, so strip them: **bold**, # headers, bullets, numbered lists, code ticks
+function cleanForSpeech(text) {
+  return String(text)
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/^\s{0,3}#{1,6}\s*/gm, '')
+    .replace(/^\s*(?:[-*•]|\d+[.)])\s+/gm, '')
+    .replace(/\*\*|__|[*_`#>|]/g, '')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
 async function speakReply(text, el, always) {
   if (!voiceOn && !always) return;
   stopSpeech();                       // one voice at a time: a new reply replaces the one still playing
   const gen = _speakGen;
   try {
     const parts = [];
-    for (const chunk of speechChunks(text)) {
+    for (const chunk of speechChunks(cleanForSpeech(text))) {
       const res = await fetch('/api/voice/speak', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token(), 'Content-Type': 'application/json' }, body: JSON.stringify({ message: chunk }) });
       if (gen !== _speakGen) return;
       if (!res.ok) {
