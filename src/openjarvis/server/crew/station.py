@@ -233,7 +233,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
       <div id="chat-media" hidden></div>
       <div id="chat-log"></div>
       <div id="img-bar" hidden><img id="img-thumb" alt=""/><span id="img-name"></span><button class="xbtn" id="img-clear" title="Remove the image">✕</button></div>
-      <div class="ans"><button class="b tool" id="mic" title='Talk to Helix (or say "Hey Helix", then "send")'>🎙</button><label class="b tool" for="img-in" title="Attach an image">📎</label><input id="img-in" type="file" accept="image/*" hidden/><input id="chat-in" type="text" maxlength="8000" placeholder='Type, or say "Hey Helix"…' autocomplete="off"/><button class="b" id="chat-send">Send</button></div>
+      <div class="ans"><button class="b tool" id="mic" title='Talk to Helix (or say "Hey Helix", then "send")'>🎙</button><label class="b tool" for="img-in" title="Attach an image">📎</label><input id="img-in" type="file" accept="image/*" hidden/><input id="chat-in" name="helix-message" type="text" maxlength="8000" placeholder='Type, or say "Hey Helix"…' autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other"/><button class="b" id="chat-send">Send</button></div>
     </div>
   </div>
   <div id="right" class="col"><div class="col-grip" id="right-grip" title="Drag to resize"></div><div id="links-box"></div><div id="side-body"></div></div>
@@ -1774,6 +1774,13 @@ async function sendChat() {
 }
 document.getElementById('chat-send').onclick = sendChat;
 document.getElementById('chat-in').addEventListener('keydown', e => { if (e.key === 'Enter') { unlockAudio(); sendChat(); } });
+// the browser sometimes fills the message box with a saved sign-in email after load: clear it unless Michael typed it
+(() => {
+  const ci = document.getElementById('chat-in'); let typed = false;
+  ci.addEventListener('input', () => { typed = true; });
+  const clearEmail = () => { if (!typed && /@/.test(ci.value)) ci.value = ''; };
+  clearEmail(); setTimeout(clearEmail, 300); setTimeout(clearEmail, 1200); window.addEventListener('pageshow', clearEmail);
+})();
 
 // ── money: P&L per factory and in total (refreshed every minute; the server caches Stripe for 5) ──
 let FIN = null, finTick = 0;
