@@ -163,13 +163,44 @@ async def save_item(ctx: Ctx, *, kind: str, data: bytes, mime: str, title: str, 
     return item
 
 
+FALLBACK_STATUS = (429, 502, 503)     # the provider is out of free quota, busy or down: the next one may still make it
+
+
+async def _image_with_fallback(ctx: Ctx, prompt: str, steps: int, edited_from_id: Optional[str]) -> MediaItem:
+    """Try the image providers in order (Cloudflare, then Gemini, then OpenAI). Each call is checked against the spend cap first."""
+    last: Optional[MediaError] = None
+    for provider in image_mod.get_chain():
+        estimate = provider.estimate_cost_usd(steps=steps)
+        await gate_generation(ctx, provider, estimate)
+        try:
+            result = await provider.generate(prompt=prompt, steps=steps)
+        except MediaError as exc:
+            logger.warning("image provider %s could not make the image (HTTP %s); trying the next one", provider.id, exc.status_code)
+            last = exc
+            if exc.status_code in FALLBACK_STATUS:
+                continue
+            raise MediaServiceError(exc.status_code, "media_failed", exc.public_message) from None
+        except Exception:
+            logger.exception("image generation failed on %s", provider.id)
+            last = MediaError("That could not be made. Please try again.", 502)
+            continue
+        day = hardening.utc_day()                               # the provider call happened: the cost counts even if saving fails
+        await ctx.store.add_spend("media:" + ctx.user_id, day, estimate)
+        await ctx.store.add_spend(GLOBAL_KEY, day, estimate)
+        return await save_item(ctx, kind="image", data=result.data, mime=result.mime, title=prompt, prompt=prompt, provider=result.provider,
+                               edited_from_id=edited_from_id)
+    if last is not None:
+        raise MediaServiceError(last.status_code, "media_failed", last.public_message)
+    raise MediaServiceError(503, "media_not_configured", "No image provider is configured.")
+
+
 async def generate_and_save(ctx: Ctx, kind: str, *, prompt: str = "", steps: Optional[int] = None, text: str = "", lang: Optional[str] = None,
                             edited_from_id: Optional[str] = None) -> MediaItem:
     if kind == "image":
-        provider, p, st = image_mod.get_provider(), image_mod.clean_prompt(prompt), image_mod.clamp_steps(steps)
+        p, st = image_mod.clean_prompt(prompt), image_mod.clamp_steps(steps)
         if not p:
             raise MediaServiceError(422, "bad_request", "Describe the image you want.")
-        request, estimate, label = {"prompt": p, "steps": st}, provider.estimate_cost_usd(steps=st), p
+        return await _image_with_fallback(ctx, p, st, edited_from_id)
     elif kind == "sound":
         provider, t = sound_mod.get_provider(), sound_mod.clean_text(text)
         if not t:
