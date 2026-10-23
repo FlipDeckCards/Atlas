@@ -1798,9 +1798,13 @@ document.getElementById('chat-in').addEventListener('keydown', e => { if (e.key 
 // the browser sometimes fills the message box with a saved sign-in email after load: clear it unless Michael typed it
 (() => {
   const ci = document.getElementById('chat-in'); let typed = false;
-  ci.addEventListener('input', () => { typed = true; });
+  // autofill also fires input events, so count only real key presses and pastes as typing
+  ci.addEventListener('keydown', e => { if (e.key && e.key.length === 1) typed = true; });
+  ci.addEventListener('paste', () => { typed = true; });
   const clearEmail = () => { if (!typed && /@/.test(ci.value)) ci.value = ''; };
-  clearEmail(); setTimeout(clearEmail, 300); setTimeout(clearEmail, 1200); window.addEventListener('pageshow', clearEmail);
+  clearEmail(); const t = setInterval(clearEmail, 400); setTimeout(() => clearEmail(), 15000); setTimeout(() => clearearly(t), 15000);
+  function clearearly(id) { clearInterval(id); }
+  window.addEventListener('pageshow', clearEmail);
 })();
 
 // ── money: P&L per factory and in total (refreshed every minute; the server caches Stripe for 5) ──
