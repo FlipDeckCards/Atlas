@@ -705,12 +705,6 @@ function inboxSec(missionId) {
   const qs = S.questions.filter(q => !missionId || q.mission_id === missionId);
   const l = mk('div', 'lbl'); l.append(mk('span', null, missionId ? 'Waiting on you' : 'Helix inbox'), mk('span', 'act', qs.length ? qs.length + ' open' : 'all clear'));
   s.append(l);
-  if (!missionId) {
-    const pb = mk('button', 'b ok', 'Publish Etsy drafts'), pm = mk('div', 'dim', '');
-    pb.onclick = async () => { pb.disabled = true; const r = await api('/api/crew/etsy/publish-drafts', 'POST', {}).catch(() => null);
-      pm.textContent = !r ? 'Could not reach the server.' : r.ok ? (r.data.message || 'Ready.') : (r.data.detail || r.data.message || 'Failed.'); pb.disabled = false; setTimeout(refresh, 700); };
-    s.append(pb, pm);
-  }
   if (!qs.length) { s.append(mk('div', 'dim', missionId ? 'Nothing from this mission needs you.' : 'Nothing needs you. Questions, approvals and budget requests from the crew land here and in Helix chat.')); return s; }
   if (!_qSeeded) { S.questions.forEach(q => SPOKEN_Q.add(q.id)); _qSeeded = true; }   // existing cards are not read out again on load
   qs.forEach(q => {
