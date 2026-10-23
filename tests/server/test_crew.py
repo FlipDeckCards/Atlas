@@ -294,6 +294,41 @@ class TestUnfinishedMissions:
         assert run(w.store.get_mission(m["id"]))["status"] == "done"
 
 
+class TestArtGate:
+    PLAN = {"tasks": [{"title": "Make the artwork", "role": "designer", "brief": "b"},
+                      {"title": "Write the listing", "role": "writer", "brief": "b", "depends_on": [0]}]}
+    GOAL = "Make 1 Etsy draft listing with mockups"
+
+    def test_drafting_waits_for_the_art_card_then_runs_on_approval(self):
+        w = world(self.PLAN, {"Make the artwork": [resp("art made")], "Write the listing": [resp("listing written")]}, owner=None)
+        m = run(start(w, goal=self.GOAL))
+        tasks = {t["title"]: t for t in run(w.store.list_tasks(m["id"]))}
+        assert tasks["Write the listing"]["status"] == "waiting"
+        qs = [q for q in run(w.store.list_questions(UID)) if (q["action"] or {}).get("action") == "approve_art"]
+        assert len(qs) == 1
+        run(w.engine.answer(UID, qs[0]["id"], approve=True))
+        assert run(w.store.list_tasks(m["id"]))[1]["status"] in ("queued", "running", "done")
+
+    def test_declining_the_art_stops_the_listing_and_the_mission(self):
+        w = world(self.PLAN, {"Make the artwork": [resp("art made")], "Write the listing": [resp("listing written")]}, owner=None)
+        m = run(start(w, goal=self.GOAL))
+        q = [q for q in run(w.store.list_questions(UID)) if (q["action"] or {}).get("action") == "approve_art"][0]
+        run(w.engine.answer(UID, q["id"], approve=False))
+        assert run(w.store.list_tasks(m["id"]))[1]["status"] == "failed"
+        assert run(w.store.get_mission(m["id"]))["status"] == "stalled"
+
+    def test_etsy_listing_actions_are_blocked_until_the_art_is_approved(self):
+        w = world(self.PLAN, {"Make the artwork": [resp("art made")], "Write the listing": [resp("listing written")]}, owner=None)
+        m = run(start(w, goal=self.GOAL))
+        out = run(w.engine._art_blocks(UID, m["id"]))
+        assert out is True
+
+    def test_a_mission_without_listing_work_is_not_held(self):
+        w = world(self.PLAN, {"Make the artwork": [resp("art made")], "Write the listing": [resp("listing written")]}, owner=None)
+        m = run(start(w, goal="Make 3 digital mockups for my records"))
+        assert run(w.store.get_mission(m["id"]))["status"] == "done"
+
+
 class TestBudgets:
     def test_a_task_out_of_budget_asks_and_continues_only_if_approved(self):
         def writer(turn, msgs):
