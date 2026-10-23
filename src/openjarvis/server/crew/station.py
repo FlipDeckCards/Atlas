@@ -31,7 +31,13 @@ STATION_PAGE = r"""<!DOCTYPE html>
   .tbtn:hover { border-color:var(--cyan); color:var(--cyan); }
   .tbtn.on { border-color:var(--cyan); color:var(--cyan); background:rgba(0,229,255,0.08); }
   .tbtn.warn.on { border-color:var(--orange); color:var(--orange); background:rgba(255,109,0,0.08); }
-  #main { display:grid; grid-template-columns:210px 1fr 210px; min-height:0; }
+  #main { display:grid; grid-template-columns:var(--lw, 210px) 1fr var(--rw, 210px); min-height:0; }
+  #left, #right { position:relative; }
+  .col-grip { position:absolute; top:0; bottom:0; width:8px; cursor:ew-resize; touch-action:none; z-index:5; }
+  .col-grip::after { content:""; position:absolute; top:50%; left:3px; width:2px; height:44px; margin-top:-22px; border-radius:1px; background:var(--cyan-dim); opacity:0.5; }
+  .col-grip:hover::after { opacity:1; }
+  #left .col-grip { right:-4px; }
+  #right .col-grip { left:-4px; }
   .col { background:var(--panel); overflow-y:auto; min-height:0; scrollbar-width:thin; scrollbar-color:var(--cyan-dim) transparent; }
   #left { border-right:1px solid var(--border); }
   #right { border-left:1px solid var(--border); }
@@ -190,6 +196,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
     #main { display:flex; flex-direction:column; overflow-y:auto; }
     #center { order:1; flex:0 0 auto; }
     #center #stage { height:min(100vw, 68dvh); flex:0 0 auto; }
+    .col-grip { display:none; }
     #right { order:2; border-left:none; border-top:1px solid var(--border); overflow:visible; display:flex; flex-direction:column; }
     #right #side-body { order:1; }      /* what you tapped shows first, above the connections */
     #right #links-box { order:2; }
@@ -216,7 +223,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
   <button class="tbtn" onclick="logout()">LOGOUT</button>
 </div>
 <div id="main">
-  <div id="left" class="col"><div id="vitals-box"></div><div id="roster-box"></div><div id="library-box"></div></div>
+  <div id="left" class="col"><div id="vitals-box"></div><div id="roster-box"></div><div id="library-box"></div><div class="col-grip" id="left-grip" title="Drag to resize"></div></div>
   <div id="center">
     <div id="stage"><canvas id="cv"></canvas></div>
     <div id="chat" class="sec">
@@ -228,7 +235,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
       <div class="ans"><button class="b tool" id="mic" title='Talk to Helix (or say "Hey Helix", then "send")'>🎙</button><label class="b tool" for="img-in" title="Attach an image">📎</label><input id="img-in" type="file" accept="image/*" hidden/><input id="chat-in" type="text" maxlength="8000" placeholder='Type, or say "Hey Helix"…' autocomplete="off"/><button class="b" id="chat-send">Send</button></div>
     </div>
   </div>
-  <div id="right" class="col"><div id="links-box"></div><div id="side-body"></div></div>
+  <div id="right" class="col"><div class="col-grip" id="right-grip" title="Drag to resize"></div><div id="links-box"></div><div id="side-body"></div></div>
 </div>
 <div id="auth"><div class="land">
   <div class="nav"><div class="logo">AIBUS<span>SOL</span></div><a href="#signin" class="b" id="nav-cta" onclick="setAuthMode('register')">GET STARTED</a></div>
@@ -1825,6 +1832,27 @@ function poll() {
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
 if (new URLSearchParams(location.search).get('connected') === 'etsy') { selected = 'links'; history.replaceState(null, '', '/station'); }
+(function columnGrips() {
+  const main = document.getElementById('main'); if (!main) return;
+  const CLAMP = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const apply = (name, px) => main.style.setProperty(name, Math.round(px) + 'px');
+  try { const l = Number(localStorage.getItem('colLW')), r = Number(localStorage.getItem('colRW'));
+    if (l >= 150) apply('--lw', l); if (r >= 150) apply('--rw', r); } catch (e) {}
+  const drag = (gripId, side) => {
+    const grip = document.getElementById(gripId); if (!grip) return;
+    grip.addEventListener('pointerdown', e => {
+      const startX = e.clientX, startW = document.getElementById(side === 'left' ? 'left' : 'right').getBoundingClientRect().width;
+      grip.setPointerCapture(e.pointerId);
+      const move = ev => { const dx = ev.clientX - startX; const w = CLAMP(side === 'left' ? startW + dx : startW - dx, 150, window.innerWidth * 0.4);
+        apply(side === 'left' ? '--lw' : '--rw', w); };
+      const up = () => { grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', up);
+        try { const w = document.getElementById(side === 'left' ? 'left' : 'right').getBoundingClientRect().width;
+          localStorage.setItem(side === 'left' ? 'colLW' : 'colRW', String(Math.round(w))); } catch (e2) {} };
+      grip.addEventListener('pointermove', move); grip.addEventListener('pointerup', up);
+    });
+  };
+  drag('left-grip', 'left'); drag('right-grip', 'right');
+})();
 (function chatGrip() {
   const grip = document.getElementById('chat-grip'), log = document.getElementById('chat-log'); if (!grip || !log) return;
   try { const saved = Number(localStorage.getItem('chatLogH')); if (saved >= 60) log.style.height = saved + 'px'; } catch (e) {}
