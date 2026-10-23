@@ -22,6 +22,12 @@ from openjarvis.server.media.helix_tools import PendingActions, is_explicit_yes
 logger = logging.getLogger(__name__)
 
 CREW_PENDING = PendingActions()
+SETUP_STEPS = [
+    ("github", "GitHub", "Create a GitHub token that can read and write the repos the crew should use. Paste it into the GitHub box in the Connections panel on the Station.", "https://github.com/settings/tokens"),
+    ("render", "Render hosting", "In Render, open Account Settings, go to API Keys, and create a key. Paste it into the Render box in the Connections panel.", "https://dashboard.render.com"),
+    ("stripe", "Stripe", "In Stripe, open Developers, then API keys, and copy your secret key. Paste it into the Stripe box in the Connections panel.", "https://dashboard.stripe.com/apikeys"),
+    ("workbench", "your PC (Rig)", "Run the Workbench helper on the computer that has your project. The Connections panel shows the command to copy.", ""),
+]
 OWNER_FIXED_KEYS_HELIX = {"flipdeck", "marnyx", "deadzone"}   # the owner's rows that are not stored (see routes.OWNER_BUSINESSES)
 
 CREW_TOOLS: List[Dict[str, Any]] = [
@@ -48,6 +54,10 @@ CREW_TOOLS: List[Dict[str, Any]] = [
         "name": "rename_business",
         "description": "Change the display name of a business you added (its numbers stay with it). The FlipDeck, Marnyx and Deadzone rows cannot be renamed.",
         "parameters": {"type": "object", "properties": {"old_name": {"type": "string"}, "new_name": {"type": "string"}}, "required": ["old_name", "new_name"]}}},
+    {"type": "function", "function": {
+        "name": "next_setup_step",
+        "description": "Setup guide: the next connection the user needs (GitHub, Render, Stripe, then their PC for Rig), with what to do and where. Call it when the user asks to set up or connect, and again after each step.",
+        "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
         "name": "rename_mission",
         "description": "Change a mission's title (the name on the Station's missions list). Keeps the mission and its work as they are.",
@@ -122,7 +132,8 @@ async def system_addendum(ctx: CrewCtx) -> str:
     s = (" You lead the user's crew of agents. When he asks you to build, make or launch something bigger than one answer (a product, a business, "
          "a campaign, an app), call start_mission with his goal; the system asks him to confirm. Use crew_status when he asks what the crew is doing. "
          "Never say a mission started unless a tool result says so. Checkpoints and budget requests are approved only by his tap on the buttons. "
-         "To put a business on the All businesses box, call add_business with the name he gave; never say it was added unless the tool result says so.")
+         "To put a business on the All businesses box, call add_business with the name he gave; never say it was added unless the tool result says so. "
+         "When someone asks to set up or connect things, call next_setup_step and walk them through one step at a time; never ask for a key or password in chat.")
     if qs:
         s += " Open crew items: " + " | ".join(f'{q["kind"]} {q["id"]}: {_clip(q["text"], 160)}' for q in qs[:5])
         s += ". If his message answers an open question, call answer_crew_question with that id."
@@ -154,6 +165,19 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
             eng.drop_products_cache(ctx.user_id)
             await eng.store.add_event(ctx.user_id, "business", f"Added {name_} to the Station (by Helix).")
             return f'Added "{name_}" to the All businesses box on the Station. It has {len(items)} business(es) you added.'
+        if name == "next_setup_step":
+            from openjarvis.server.crew import connections as conns
+
+            st = await conns.status(eng.store, ctx.user_id, await eng.env_for(ctx.user_id))
+            pc_online = bool(eng.presence.status(ctx.user_id).get("online"))
+            done = {"github": st["github"]["connected"], "stripe": st["stripe"]["connected"],
+                    "render": st["render"]["connected"], "workbench": pc_online}
+            for i, (key, label, how, url) in enumerate(SETUP_STEPS, 1):
+                if not done[key]:
+                    link = f" Link: {url}." if url else ""
+                    return (f"Step {i} of {len(SETUP_STEPS)}: {label}. {how}{link} Do not paste any key or password into this chat. "
+                            "When it's done, tell me and I'll check it.")
+            return "All four are connected. Missions can run now."
         if name == "rename_mission":
             mid = _clip(args.get("mission_id"), 80)
             m = await eng.store.get_mission(mid)

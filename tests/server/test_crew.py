@@ -392,6 +392,16 @@ class TestHelixRenameMission:
         assert run(w.store.get_mission(m["id"]))["title"] == "HELIX BUSINESS"
         assert "no such mission" in run(helix.execute(ctx, "rename_mission", {"mission_id": "nope", "title": "X Y"}))
 
+class TestSetupGuide:
+    def test_helix_walks_a_new_subscriber_through_setup_one_step_at_a_time(self):
+        from openjarvis.server.crew import helix, tenant
+        w = world(two_task_plan(), {"Research buyers": [resp("r")], "Write listing": [resp("w")]}, owner=None)
+        ctx = helix.CrewCtx(UID, w.engine)
+        first = run(helix.execute(ctx, "next_setup_step", {}))
+        assert first.startswith("Step 1 of 4: GitHub") and "Do not paste" in first
+        run(tenant.put(w.store, UID, "github_token", "ghp_test"))
+        assert run(helix.execute(ctx, "next_setup_step", {})).startswith("Step 2 of 4: Render")
+
 class TestBudgets:
     def test_a_task_out_of_budget_asks_and_continues_only_if_approved(self):
         def writer(turn, msgs):
