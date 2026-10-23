@@ -371,6 +371,15 @@ class TestHelixSetup:
         check = run(helix.execute(ctx, "check_connections", {}))
         assert "GitHub" in check and "Render" in check and "Next:" in check
 
+class TestHelixFactories(object):
+    def test_helix_lists_a_factory_and_says_when_one_is_missing(self):
+        from openjarvis.server.crew import helix
+        w = world(two_task_plan(), {"Research buyers": [resp("r")], "Write listing": [resp("w")]}, owner=None)
+        ctx = helix.CrewCtx(UID, w.engine)
+        assert "No factory called" in run(helix.execute(ctx, "factory_products", {"factory": "Nonexistent Shop"}))
+        out = run(helix.execute(ctx, "factory_products", {"factory": "Google Play"}))
+        assert out.startswith("Google Play:")
+
 class TestBudgets:
     def test_a_task_out_of_budget_asks_and_continues_only_if_approved(self):
         def writer(turn, msgs):

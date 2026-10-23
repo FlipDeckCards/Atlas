@@ -49,6 +49,10 @@ CREW_TOOLS: List[Dict[str, Any]] = [
         "description": "Change the display name of a business you added (its numbers stay with it). The FlipDeck, Marnyx and Deadzone rows cannot be renamed.",
         "parameters": {"type": "object", "properties": {"old_name": {"type": "string"}, "new_name": {"type": "string"}}, "required": ["old_name", "new_name"]}}},
     {"type": "function", "function": {
+        "name": "factory_products",
+        "description": "List what a factory has for sale or live: its products and listings. Name a factory: etsy, stripe, google_play, app_store, or a business on the All businesses box.",
+        "parameters": {"type": "object", "properties": {"factory": {"type": "string"}}, "required": ["factory"]}}},
+    {"type": "function", "function": {
         "name": "check_connections",
         "description": "Check the connections a user needs before missions can run (GitHub, Stripe, Render, their PC for Rig) and say what to connect next.",
         "parameters": {"type": "object", "properties": {}}}},
@@ -146,6 +150,27 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
             eng.drop_products_cache(ctx.user_id)
             await eng.store.add_event(ctx.user_id, "business", f"Added {name_} to the Station (by Helix).")
             return f'Added "{name_}" to the All businesses box on the Station. It has {len(items)} business(es) you added.'
+        if name == "factory_products":
+            from openjarvis.server.crew import catalog, tenant
+            from openjarvis.server.crew import connections as conns_mod
+            from openjarvis.server.crew.routes import owner_businesses
+
+            want = _clip(args.get("factory"), 40)
+            biz = await owner_businesses(eng, ctx.user_id)
+            key = None
+            if want.lower().replace(" ", "_") in ("etsy", "stripe", "google_play", "app_store"):
+                key = want.lower().replace(" ", "_")
+            else:
+                hit = [b for b in biz if b["name"].lower() == want.lower() or b["key"] == tenant.slug(want)]
+                key = hit[0]["key"] if hit else None
+            if not key:
+                return f'No factory called "{want}" on the Station.'
+            res = await catalog.for_factory(key, store=eng.store, uid=ctx.user_id, env=await eng.env_for(ctx.user_id),
+                                            cf=eng.client_factory or conns_mod._default_client, businesses=biz)
+            items = res.get("items") or []
+            rows = [f'{i.get("name")} ({i.get("status") or "listed"}{", " + i["price"] if i.get("price") else ""})' for i in items[:15]]
+            more = f" and {len(items) - 15} more" if len(items) > 15 else ""
+            return (f'{want}: ' + ("; ".join(rows) + more if rows else "nothing listed yet") + ". " + (res.get("note") or "")).strip()
         if name == "check_connections":
             from openjarvis.server.crew import connections as conns
 
