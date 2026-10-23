@@ -49,6 +49,8 @@ MAX_OUTPUT_CHARS = 200_000
 MAX_OUTPUTS_PER_MISSION = 60
 PLANNER_MAX_TOKENS = 5000
 AGENT_MAX_TOKENS = 8000          # room to write a whole file in one save_output call (only tokens used are paid)
+_CUT_OFF_MSG = ("Error: your reply was cut off at the length limit, so this call was incomplete and nothing was saved. "
+                "Save each chapter or section as its own file, about 4,000 words per save_output call, then finish.")
 
 ROLES: Dict[str, Dict[str, str]] = {
     "researcher": {"name": "Scout", "model": "lookup", "about": "Research and analysis with Gemini. Searches the live web with web_search (quick, free) and, for a deep sourced report, web_research (GPT Researcher) when it is connected. Cites the pages it used.",
@@ -1098,7 +1100,8 @@ class CrewEngine:
         envx = self.env if envx is None else envx
         role = ROLES.get(task["role"], ROLES["builder"])
         s = (f"You are {role['name']}, the {task['role']} agent in Aibussol's crew, working for Michael. {role['about']}\n"
-             "Work only on your task. Save every deliverable with save_output (complete files, not outlines). If you truly need Michael's decision, "
+             "Work only on your task. Save every deliverable with save_output (complete files, not outlines). Keep each save_output call to about "
+             "4,000 words or less: a long book part is several files, one per chapter, never one huge file. If you truly need Michael's decision, "
              "use ask_michael with one concrete question and short options; do not ask for things you can decide sensibly yourself. "
              "Never claim something was published, paid, uploaded or sent unless a tool result says so. When done, call finish with a short summary.\n"
              f"Michael's house rules:\n{house_rules(envx)}")
@@ -1171,8 +1174,7 @@ class CrewEngine:
                 except ValueError:
                     args = None
                 if args is None and getattr(resp.choices[0], "finish_reason", "") == "length":
-                    transcript.append({"role": "tool", "tool_call_id": tc.id, "content": "Error: your reply was cut off at the length limit, so this call "
-                                       "was incomplete. Save the file in smaller parts (part1, part2, ...) or shorten it."})
+                    transcript.append({"role": "tool", "tool_call_id": tc.id, "content": _CUT_OFF_MSG})
                     continue
                 text, outcome = await self._tool(dict(task, _transcript=transcript, _env=envx), mission, tc.function.name, args if isinstance(args, dict) else None)
                 transcript.append({"role": "tool", "tool_call_id": tc.id, "content": text})
@@ -1224,8 +1226,10 @@ class CrewEngine:
             try:
                 args = json.loads(tc.function.arguments or "{}")
             except ValueError:
-                args = {}
-            if tc.function.name == "save_output" and isinstance(args, dict):
+                args = None
+            if args is None and getattr(resp.choices[0], "finish_reason", "") == "length":
+                text = _CUT_OFF_MSG
+            elif tc.function.name == "save_output" and isinstance(args, dict):
                 text, _ = await self._tool(dict(task, _transcript=transcript, _env=envx), {}, "save_output", args)
             elif tc.function.name == "finish":
                 summary = str((args or {}).get("summary") or "").strip() or "Finished."
