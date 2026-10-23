@@ -698,13 +698,22 @@ function backSec() {
   s.append(b); return s;
 }
 
+// approvals can be given by voice: Helix reads a new checkpoint aloud, then "approve" or "decline" presses that card's own button
+const SPOKEN_Q = new Set(); let _qSeeded = false, pendingVoice = null;
 function inboxSec(missionId) {
   const s = mk('div', 'sec');
   const qs = S.questions.filter(q => !missionId || q.mission_id === missionId);
   const l = mk('div', 'lbl'); l.append(mk('span', null, missionId ? 'Waiting on you' : 'Helix inbox'), mk('span', 'act', qs.length ? qs.length + ' open' : 'all clear'));
   s.append(l);
   if (!qs.length) { s.append(mk('div', 'dim', missionId ? 'Nothing from this mission needs you.' : 'Nothing needs you. Questions, approvals and budget requests from the crew land here and in Helix chat.')); return s; }
-  qs.forEach(q => s.append(questionCard(q)));
+  if (!_qSeeded) { S.questions.forEach(q => SPOKEN_Q.add(q.id)); _qSeeded = true; }   // existing cards are not read out again on load
+  qs.forEach(q => {
+    if (q.kind === 'checkpoint' && !SPOKEN_Q.has(q.id)) {
+      SPOKEN_Q.add(q.id); pendingVoice = { id: q.id, until: Date.now() + 120000 };
+      speakReply('Approval needed. ' + q.text + '. Say approve to confirm, or decline.', null, false);
+    }
+    s.append(questionCard(q));
+  });
   return s;
 }
 
@@ -712,6 +721,7 @@ function questionCard(q) {
   const m = S.missions.find(x => x.id === q.mission_id);
   const isQ = q.kind === 'question';
   const c = mk('div', 'card' + (isQ ? ' q' : ''));
+  c.setAttribute('data-qid', q.id);
   c.append(mk('div', 'k', (q.kind === 'checkpoint' ? 'Approval needed' : q.kind === 'budget' ? 'Budget request' : 'Question') + (m ? ' · ' + (m.title || 'mission') : '')));
   c.append(mk('div', 't', q.text));
   const msg = mk('div', 'msg');
@@ -1686,6 +1696,11 @@ function initWake() {
   SR.onresult = (e) => {
     let heard = ''; for (let i = e.resultIndex; i < e.results.length; i++) heard += ' ' + e.results[i][0].transcript;
     const t = norm(heard);
+    if (pendingVoice && Date.now() < pendingVoice.until && /\b(approve|decline)\b/.test(t)) {
+      const pv = pendingVoice, yes = /\bapprove\b/.test(t);
+      const btn = document.querySelector('[data-qid="' + pv.id + '"] .b.' + (yes ? 'ok' : 'no'));
+      if (btn && !btn.disabled) { pendingVoice = null; btn.click(); wakeLabel(yes ? 'APPROVED BY VOICE' : 'DECLINED BY VOICE', 'on'); return; }
+    }
     if (srMode === 'wake') { if (!fired && !isRec && WAKE_RE.test(t)) { fired = true; setTimeout(() => { fired = false; }, 3000); startRec(); } }
     else if (srMode === 'send' && isRec && /\bsend\b/.test(t)) stopRec();
   };
