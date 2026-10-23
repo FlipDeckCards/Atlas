@@ -989,7 +989,9 @@ function setupSec() {
 function linksSec() {
   const s = mk('div', 'sec');
   s.append(Object.assign(mk('div', 'lbl'), { textContent: 'Connections' }));
-  Object.entries(S.connections || {}).forEach(([key, c]) => {
+  // connected first, then built but not connected, then not built yet (same order within each group)
+  const rank = c => (c && c.connected ? 2 : c && c.built ? 1 : 0);
+  Object.entries(S.connections || {}).sort((a, b) => rank(b[1]) - rank(a[1])).forEach(([key, c]) => {
     const r = mk('div', 'row'); const d = mk('span', 'dot'); d.style.background = c.connected ? '#00ff88' : c.built ? '#ff6d00' : '#2a3a44';
     const g = mk('div', 'grow'); g.append(mk('div', null, c.label + (c.connected ? ' · connected' : c.built ? ' · not connected' : ' · not built yet')));
     if (!c.connected && c.setup) g.append(mk('div', 'dim', c.setup));
@@ -1810,7 +1812,8 @@ function overviewSec() {
   const l = mk('div', 'lbl'); l.append(mk('span', null, 'All businesses'), mk('span', 'act', FIN ? 'as of ' + new Date(FIN.as_of).toLocaleTimeString() : 'loading…')); s.append(l);
   if (!FIN) { s.append(mk('div', 'dim', 'Loading the numbers…')); return s; }
   const names = {}; Object.keys(FIN.factories).forEach(k => { if (!k.startsWith('new:')) names[k] = bizName(k); });
-  const rows = Object.entries(FIN.factories).sort((a, b) => (b[1].revenue_30d - a[1].revenue_30d) || (b[1].cost_30d - a[1].cost_30d));
+  // only the main factories: one row per product or business. Missions (new: rows) and the crew total stay out; tap a factory for its missions.
+  const rows = Object.entries(FIN.factories).filter(([k]) => !k.startsWith('new:') && k !== 'crew').sort((a, b) => (b[1].revenue_30d - a[1].revenue_30d) || (b[1].cost_30d - a[1].cost_30d));
   const tb = mk('div', 'pnl-table');
   const hd = mk('div', 'pnl-row hd'); ['Today →', 'In', 'Out', 'Net 30d', 'MRR'].forEach(h => hd.append(mk('span', null, h))); tb.append(hd);
   rows.forEach(([k, r]) => {
