@@ -1630,6 +1630,13 @@ function speechChunks(text) {
 function cleanForSpeech(text) {
   return String(text)
     .replace(/```[\s\S]*?```/g, ' ')
+    // money read the way people say it: $2.00 is "2 dollars", $2.19 is "2 dollars and 19 cents"
+    .replace(/\$(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?/g, (m, d, c) => {
+      const dol = parseInt(d.replace(/,/g, ''), 10), dw = dol + (dol === 1 ? ' dollar' : ' dollars');
+      if (!c || parseInt(c, 10) === 0) return dw;
+      const cents = parseInt(c.length === 1 ? c + '0' : c, 10), cw = cents + (cents === 1 ? ' cent' : ' cents');
+      return dol === 0 ? cw : dw + ' and ' + cw;
+    })
     .replace(/^\s{0,3}#{1,6}\s*/gm, '')
     .replace(/^\s*(?:[-*•]|\d+[.)])\s+/gm, '')
     .replace(/\*\*|__|[*_`#>|]/g, '')
