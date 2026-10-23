@@ -380,6 +380,18 @@ class TestHelixFactories(object):
         out = run(helix.execute(ctx, "factory_products", {"factory": "Google Play"}))
         assert out.startswith("Google Play:")
 
+class TestHelixRenameMission:
+    def test_helix_renames_a_mission_and_refuses_someone_elses(self):
+        from openjarvis.server.crew import helix
+        w = world(two_task_plan(), {"Research buyers": [resp("r")], "Write listing": [resp("w")]}, owner=None)
+        connect_subscriber(w)
+        m = run(start(w, goal="Launch Helix Business: Fast-Profit Product Strategy"))
+        ctx = helix.CrewCtx(UID, w.engine)
+        out = run(helix.execute(ctx, "rename_mission", {"mission_id": m["id"], "title": "HELIX BUSINESS"}))
+        assert out == 'Mission renamed to "HELIX BUSINESS".'
+        assert run(w.store.get_mission(m["id"]))["title"] == "HELIX BUSINESS"
+        assert "no such mission" in run(helix.execute(ctx, "rename_mission", {"mission_id": "nope", "title": "X Y"}))
+
 class TestBudgets:
     def test_a_task_out_of_budget_asks_and_continues_only_if_approved(self):
         def writer(turn, msgs):

@@ -49,6 +49,10 @@ CREW_TOOLS: List[Dict[str, Any]] = [
         "description": "Change the display name of a business you added (its numbers stay with it). The FlipDeck, Marnyx and Deadzone rows cannot be renamed.",
         "parameters": {"type": "object", "properties": {"old_name": {"type": "string"}, "new_name": {"type": "string"}}, "required": ["old_name", "new_name"]}}},
     {"type": "function", "function": {
+        "name": "rename_mission",
+        "description": "Change a mission's title (the name on the Station's missions list). Keeps the mission and its work as they are.",
+        "parameters": {"type": "object", "properties": {"mission_id": {"type": "string", "description": "The mission id from crew_status."}, "title": {"type": "string"}}, "required": ["mission_id", "title"]}}},
+    {"type": "function", "function": {
         "name": "factory_products",
         "description": "List what a factory has for sale or live: its products and listings. Name a factory: etsy, stripe, google_play, app_store, or a business on the All businesses box.",
         "parameters": {"type": "object", "properties": {"factory": {"type": "string"}}, "required": ["factory"]}}},
@@ -150,6 +154,17 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
             eng.drop_products_cache(ctx.user_id)
             await eng.store.add_event(ctx.user_id, "business", f"Added {name_} to the Station (by Helix).")
             return f'Added "{name_}" to the All businesses box on the Station. It has {len(items)} business(es) you added.'
+        if name == "rename_mission":
+            mid = _clip(args.get("mission_id"), 80)
+            m = await eng.store.get_mission(mid)
+            if not m or m["user_id"] != ctx.user_id:
+                return "Error: no such mission."
+            title = _clip(args.get("title"), 80)
+            if len(title) < 2:
+                return "Give the mission a title."
+            await eng.store.update_mission(mid, title=title)
+            await eng.store.add_event(ctx.user_id, "mission", f'Renamed to "{title}" (by Helix).', mission_id=mid)
+            return f'Mission renamed to "{title}".'
         if name == "factory_products":
             from openjarvis.server.crew import catalog, tenant
             from openjarvis.server.crew import connections as conns_mod
