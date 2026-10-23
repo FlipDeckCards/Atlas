@@ -883,6 +883,7 @@ class CrewEngine:
                 await self._notify(m["user_id"], "Mission not finished", f'"{m["title"] or _clip(m["goal"], 60)}" still has missing work. Open the Station to see what is left.')
                 return
             await self.store.update_mission(mission_id, status="done", summary=summary)
+            await self._ask_publish_drafts(m, tasks)          # the next step is an approval, never a chat promise
             outs = await self.store.list_outputs(mission_id)
             await self.store.add_event(m["user_id"], "done", f"Mission complete. {len(outs)} file(s) in the outbox. Spent ${m['spent_usd']:.2f}.", mission_id=mission_id)
             import os
@@ -905,6 +906,25 @@ class CrewEngine:
                 if t["status"] == "queued" and failed_idx.intersection(t["depends_on"]):
                     await self.store.update_task(t["id"], status="failed", result="Not started: a task it depends on failed.")
             await self._recheck_once(mission_id, tasks)
+
+    async def _ask_publish_drafts(self, m: Dict[str, Any], tasks: List[Dict[str, Any]]) -> None:
+        """When a mission made Etsy draft listings, the next step is ONE approval to publish exactly those drafts.
+        Only listings this mission created are included (never other drafts in the shop)."""
+        import re as _re
+        from openjarvis.server.crew import connections as conns
+        found: Dict[int, str] = {}
+        for e in await self.store.list_events(m["user_id"], m["id"], limit=500):
+            for lid, title in _re.findall(r'Etsy draft listing created: (\d+) "([^"]*)"', str(e.get("text") or "")):
+                found[int(lid)] = title
+        if not found or not tasks:
+            return
+        ids = sorted(found)
+        tid = tasks[-1]["id"]
+        what = conns.describe_action("etsy", "publish_listings", {"listing_ids": ids}) + " " + "; ".join(found[i][:60] for i in ids)
+        await self.store.add_question(m["id"], tid, m["user_id"], "checkpoint", what, ["Approve", "Decline"],
+                                      {"platform": "etsy", "action": "publish_listings", "args": {"listing_ids": ids}})
+        await self.store.add_event(m["user_id"], "checkpoint", "Checkpoint for Michael: " + what, mission_id=m["id"], task_id=tid)
+        await self._notify(m["user_id"], "Approval needed", f"Publish {len(ids)} Etsy draft(s) from this mission? Approve in Aibussol, or say approve.")
 
     async def write_report(self, user_id: str, mission_id: str) -> Dict[str, Any]:
         """The report on demand (for missions that finished before reports existed, or to refresh one)."""
