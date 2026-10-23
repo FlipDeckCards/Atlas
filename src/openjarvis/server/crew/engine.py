@@ -191,7 +191,7 @@ _REVIEW_TOOL = {"type": "function", "function": {
     "description": "Send one finished task back to its agent with concrete fixes (each task can be sent back once). You continue after the rework is done.",
     "parameters": {"type": "object", "properties": {"task_number": {"type": "integer"}, "notes": {"type": "string"}}, "required": ["task_number", "notes"]}}}
 
-LIMITS = {"web_search": 12, "generate_image": 10, "make_design_files": 10, "repo_commit": 10, "check_site": 20, "business_numbers": 3}
+LIMITS = {"web_search": 12, "generate_image": 16, "make_design_files": 10, "repo_commit": 10, "check_site": 20, "business_numbers": 3}
 SEARCHERS = ("researcher", "reviewer", "marketer", "social", "support", "analyst", "qa", "finance")
 IMAGERS = ("designer", "marketer", "social")
 READERS = ("support", "analyst", "finance")                # read-only platform access
@@ -391,6 +391,7 @@ class CrewEngine:
         self.search_fn = search_fn or _web_search
         self.media_ctx_fn = media_ctx_fn          # user_id -> media Ctx (or None when media is off); set by the app
         self.running: Dict[str, asyncio.Task] = {}
+        self._role_of: Dict[str, str] = {}              # task id -> role, so designers can run one at a time
         self._plans: Dict[str, asyncio.Task] = {}
         self._loop: Optional[asyncio.Task] = None
         self._cap_noted: set = set()
@@ -600,11 +601,17 @@ class CrewEngine:
                 blocked[uid] = await self.may_run(uid)
             if blocked[uid]:
                 continue
+            if t["role"] == "designer" and self._designer_busy():
+                continue                                    # designers make one design at a time: the image service has a rate limit
             claimed = await self.store.claim(t["id"])
             if claimed:
+                self._role_of[claimed["id"]] = claimed["role"]
                 self.running[claimed["id"]] = asyncio.create_task(self._run_guarded(claimed))
                 started += 1
         return started
+
+    def _designer_busy(self) -> bool:
+        return any(not t.done() for tid, t in self.running.items() if self._role_of.get(tid) == "designer")
 
     async def run_until_idle(self, max_ticks: int = 50) -> None:
         """Tick and wait until nothing more can start (used by tests and by a manual 'run now')."""
