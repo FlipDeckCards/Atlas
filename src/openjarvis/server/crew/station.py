@@ -52,10 +52,11 @@ STATION_PAGE = r"""<!DOCTYPE html>
   .vit .k { color:var(--text-dim); } .vit .v { color:var(--cyan); text-transform:uppercase; } .vit .v.g { color:#00ff99; } .vit .v.o { color:#ff8a2a; }
   .lib-f { background:transparent; border:1px solid var(--border); color:var(--text-dim); font-size:9px; letter-spacing:1px; padding:3px 6px; cursor:pointer; border-radius:2px; text-transform:uppercase; }
   .lib-f.on { border-color:var(--cyan); color:var(--cyan); }
-  .lib-row { display:flex; gap:7px; align-items:center; padding:5px 4px; border-bottom:1px solid rgba(0,229,255,0.05); cursor:pointer; font-size:10px; }
+  .lib-grid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:8px; }
+  .lib-row { display:flex; flex-direction:column; gap:5px; align-items:stretch; padding:4px; border:1px solid var(--border); border-radius:3px; background:#0a1520; cursor:pointer; font-size:10px; min-width:0; }
   .lib-row:hover, .lib-row.sel { background:rgba(0,229,255,0.06); }
-  .lib-thumb { width:30px; height:30px; object-fit:cover; border-radius:2px; flex-shrink:0; background:#0a1520; }
-  .lib-ico { width:30px; height:30px; display:flex; align-items:center; justify-content:center; color:var(--cyan); border:1px solid var(--border); border-radius:2px; flex-shrink:0; }
+  .lib-thumb { width:100%; aspect-ratio:1; object-fit:cover; border-radius:2px; background:#050b12; }
+  .lib-ico { width:100%; height:64px; display:flex; align-items:center; justify-content:center; color:var(--cyan); border:1px solid var(--border); border-radius:2px; }
   .lib-t { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--text); }
   .lib-k { font-size:8px; letter-spacing:1px; color:var(--text-dim); text-transform:uppercase; }
   .viewer img, .viewer audio { width:100%; border-radius:2px; margin:8px 0; background:#050a12; }
@@ -537,13 +538,14 @@ function librarySec() {
   s.append(f);
   if (LIB.note) s.append(mk('div', 'dim', LIB.note));
   else if (!LIB.items.length) s.append(mk('div', 'dim', 'Nothing saved yet. Ask Helix (or Prism) to make something.'));
+  const grid = mk('div', 'lib-grid'); s.append(grid);
   LIB.items.slice(0, 60).forEach(it => {
     const r = mk('div', 'lib-row' + (selected === 'm:' + it.id ? ' sel' : ''));
     if (it.kind === 'image') { const im = mk('img', 'lib-thumb'); im.alt = ''; im.loading = 'lazy'; mediaBlob(it).then(u => { im.src = u; }).catch(() => { im.style.opacity = '0.3'; }); r.append(im); }
     else r.append(mk('span', 'lib-ico', it.kind === 'sound' ? '♪' : '▶'));
     const box = mk('div'); box.style.minWidth = '0'; box.append(mk('div', 'lib-t', it.title), mk('div', 'lib-k', it.kind)); r.append(box);
     r.onclick = () => openMedia(it.id);
-    s.append(r);
+    grid.append(r);
   });
   return s;
 }
