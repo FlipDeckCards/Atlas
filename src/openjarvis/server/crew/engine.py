@@ -879,6 +879,25 @@ class CrewEngine:
             await self.store.add_event(user_id, "mission", "Mission cancelled.", mission_id=mission_id)
         return await self.store.get_mission(mission_id)
 
+    async def set_mission_budget(self, user_id: str, mission_id: str, budget: Any) -> Dict[str, Any]:
+        """Michael sets a mission's budget himself. Clamped to the allowed maximum and never below what is already spent.
+        A stalled mission stays stalled: Michael resumes it when he is ready."""
+        m = await self._owned_mission(user_id, mission_id)
+        try:
+            b = float(budget)
+        except (TypeError, ValueError):
+            raise ValueError("Enter a dollar amount.")
+        spent = float(m["spent_usd"] or 0.0)
+        cap = max_mission_budget(self.env)
+        if b > cap:
+            raise ValueError(f"The most a mission can have is ${cap:.2f}.")
+        if b < spent:
+            raise ValueError(f"It has already spent ${spent:.2f}, so the budget cannot go below that.")
+        b = round(max(b, 0.05), 2)
+        await self.store.update_mission(mission_id, budget_usd=b)
+        await self.store.add_event(user_id, "budget", f"Mission budget set to ${b:.2f} by Michael.", mission_id=mission_id)
+        return await self.store.get_mission(mission_id)
+
     async def _check_mission(self, mission_id: str) -> None:
         m = await self.store.get_mission(mission_id)
         if not m or m["status"] != "active":

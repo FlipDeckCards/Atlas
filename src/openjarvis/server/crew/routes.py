@@ -518,6 +518,24 @@ async def crew_start(body: MissionIn, request: Request):
     return JSONResponse({"mission": m}, status_code=201)
 
 
+class MissionBudgetIn(BaseModel):
+    budget_usd: float = Field(..., ge=0.05, le=10000)
+
+
+@router.post("/api/crew/missions/{mission_id}/budget")
+async def crew_mission_budget(mission_id: str, body: MissionBudgetIn, request: Request):
+    g = await _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    try:
+        return {"mission": await engine.set_mission_budget(uid, mission_id, body.budget_usd)}
+    except LookupError as exc:
+        return _err(exc, 404)
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
+
 @router.post("/api/crew/missions/{mission_id}/{action}")
 async def crew_mission_action(mission_id: str, action: str, request: Request):
     g = await _gate(request)

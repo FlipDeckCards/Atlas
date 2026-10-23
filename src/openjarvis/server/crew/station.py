@@ -915,6 +915,19 @@ function missionSec(m) {
   const pct = m.budget_usd ? Math.min(100, m.spent_usd / m.budget_usd * 100) : 0;
   const bar = mk('div', 'bar'); const i = mk('i', pct > 80 ? 'hot' : ''); i.style.width = pct + '%'; bar.append(i);
   s.append(bar, mk('div', 'dim', money(m.spent_usd) + ' of ' + money(m.budget_usd) + (m.project ? ' · ' + m.project : '') + ' · started ' + ago(m.created_at)));
+  if (!['done', 'cancelled'].includes(m.status)) {
+    const bw = mk('div', 'btns'); bw.style.marginTop = '10px';
+    const inp = document.createElement('input'); inp.type = 'number'; inp.step = '0.5'; inp.min = String(Math.max(0.05, m.spent_usd || 0).toFixed(2));
+    inp.value = (m.budget_usd || 0).toFixed(2); inp.style.width = '110px';
+    const msg = mk('span', 'dim');
+    const set = mk('button', 'b', 'Set budget');
+    set.onclick = async () => {
+      const r = await api('/api/crew/missions/' + m.id + '/budget', 'POST', { budget_usd: parseFloat(inp.value) });
+      if (r.ok) { refresh(); } else { msg.textContent = (r.data && r.data.detail) || 'Could not set the budget.'; }
+    };
+    bw.append(mk('span', 'dim', 'Budget $'), inp, set, msg);
+    s.append(bw);
+  }
   const btns = mk('div', 'btns'); btns.style.marginTop = '10px';
   const act = (a, label, cls) => { const b = mk('button', 'b' + (cls ? ' ' + cls : ''), label); b.onclick = async () => { if (a === 'cancel' && !confirm('Cancel this mission? Its open work stops.')) return; await api('/api/crew/missions/' + m.id + '/' + a, 'POST'); refresh(); }; btns.append(b); };
   if (m.status === 'active' || m.status === 'planning') act('pause', 'Pause');
