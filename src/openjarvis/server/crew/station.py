@@ -31,10 +31,16 @@ STATION_PAGE = r"""<!DOCTYPE html>
   .tbtn:hover { border-color:var(--cyan); color:var(--cyan); }
   .tbtn.on { border-color:var(--cyan); color:var(--cyan); background:rgba(0,229,255,0.08); }
   .tbtn.warn.on { border-color:var(--orange); color:var(--orange); background:rgba(255,109,0,0.08); }
-  #main { display:grid; grid-template-columns:210px 1fr 340px; min-height:0; }
+  #main { display:grid; grid-template-columns:210px 1fr 210px; min-height:0; }
   .col { background:var(--panel); overflow-y:auto; min-height:0; scrollbar-width:thin; scrollbar-color:var(--cyan-dim) transparent; }
   #left { border-right:1px solid var(--border); }
   #right { border-left:1px solid var(--border); }
+  #links-box { font-size:11px; }
+  #links-box .sec { padding:8px 10px; }
+  #chat-grip { height:12px; cursor:ns-resize; touch-action:none; display:flex; align-items:center; justify-content:center; }
+  #chat-grip::after { content:""; width:44px; height:3px; border-radius:2px; background:var(--cyan-dim); }
+  #chat-media { border-bottom:1px solid var(--border); max-height:46vh; overflow-y:auto; }
+  #chat-media .viewer { padding:10px 14px; }
   #center { display:flex; flex-direction:column; min-width:0; min-height:0; }
   #center #stage { flex:1 1 auto; }
   #center #chat { flex:0 0 auto; background:var(--panel); border-top:1px solid var(--border); border-bottom:none; }
@@ -213,7 +219,9 @@ STATION_PAGE = r"""<!DOCTYPE html>
   <div id="center">
     <div id="stage"><canvas id="cv"></canvas></div>
     <div id="chat" class="sec">
+      <div id="chat-grip" title="Drag up or down to resize the chat"></div>
       <div class="lbl"><span>Helix</span><span class="act"><span id="wake">VOICE: TAP TO WAKE</span> · <button class="lib-f" id="voice-tog" title="Helix reads her replies aloud">🔊 ON</button></span></div>
+      <div id="chat-media" hidden></div>
       <div id="chat-log"></div>
       <div id="img-bar" hidden><img id="img-thumb" alt=""/><span id="img-name"></span><button class="xbtn" id="img-clear" title="Remove the image">✕</button></div>
       <div class="ans"><button class="b tool" id="mic" title='Talk to Helix (or say "Hey Helix", then "send")'>🎙</button><label class="b tool" for="img-in" title="Attach an image">📎</label><input id="img-in" type="file" accept="image/*" hidden/><input id="chat-in" type="text" maxlength="8000" placeholder='Type, or say "Hey Helix"…' autocomplete="off"/><button class="b" id="chat-send">Send</button></div>
@@ -458,7 +466,7 @@ function renderSide(force) {
   if (!S) {                                                    // no crew on this account: chat, vitals, library and the viewer still work
     document.getElementById('vitals-box').replaceChildren(vitalsSec());
     document.getElementById('library-box').replaceChildren(librarySec());
-    if (String(selected).startsWith('m:')) { side.textContent = ''; side.append(mediaSec()); }
+    renderChatMedia();
     return;
   }
   side.textContent = '';
@@ -466,9 +474,8 @@ function renderSide(force) {
   document.getElementById('links-box').replaceChildren(linksSec());
   document.getElementById('vitals-box').replaceChildren(vitalsSec());
   document.getElementById('library-box').replaceChildren(librarySec());
-  if (String(selected).startsWith('m:')) side.append(backSec(), mediaSec());
-  else if (selected === 'setup') side.append(backSec(), setupSec());
-  else if (selected === 'hub' || selected === 'links') {
+  if (selected === 'setup') side.append(backSec(), setupSec());
+  else if (selected === 'hub' || selected === 'links' || String(selected).startsWith('m:')) {
     if (!isOwner() && (!S.businesses.length || !S.connections.stripe.connected)) side.append(setupSec());
     side.append(overviewSec(), inboxSec(), missionsSec(), ledgerSec(S.events, 'Station Ledger'));
   }
@@ -477,7 +484,18 @@ function renderSide(force) {
     const m = S.missions.find(x => x.id === selected);
     side.append(backSec(), missionSec(m), inboxSec(m.id), outboxSec(m), ledgerSec(S.events.filter(e => e.mission_id === m.id), 'Mission Ledger'));
   }
+  renderChatMedia();
   if (focused) { const el = document.getElementById(focused); if (el) el.focus(); }
+}
+
+function renderChatMedia() {
+  const box = document.getElementById('chat-media'); if (!box) return;
+  if (!String(selected).startsWith('m:')) { box.hidden = true; box.replaceChildren(); return; }
+  if (box.contains(document.activeElement) && document.activeElement.value) return;   // never rebuild under someone's fingers
+  const x = mk('button', 'xbtn', '✕'); x.title = 'Close'; x.style.float = 'right';
+  x.onclick = () => { selected = 'hub'; LIB.open = null; renderSide(true); };
+  const m = mediaSec(); m.prepend(x);
+  box.replaceChildren(m); box.hidden = false;
 }
 
 // ── system vitals (top left) ──
@@ -1782,7 +1800,6 @@ function overviewSec() {
   const s = mk('div', 'sec');
   const l = mk('div', 'lbl'); l.append(mk('span', null, 'All businesses'), mk('span', 'act', FIN ? 'as of ' + new Date(FIN.as_of).toLocaleTimeString() : 'loading…')); s.append(l);
   if (!FIN) { s.append(mk('div', 'dim', 'Loading the numbers…')); return s; }
-  s.append(pnlBlock(FIN.total));
   const names = {}; Object.keys(FIN.factories).forEach(k => { if (!k.startsWith('new:')) names[k] = bizName(k); });
   const rows = Object.entries(FIN.factories).sort((a, b) => (b[1].revenue_30d - a[1].revenue_30d) || (b[1].cost_30d - a[1].cost_30d));
   const tb = mk('div', 'pnl-table');
@@ -1796,11 +1813,6 @@ function overviewSec() {
     tb.append(row);
   });
   s.append(tb);
-  if (isOwner()) ['flipdeck', 'marnyx', 'deadzone', 'aibussol'].forEach(k => s.append(mk('div', 'dim', names[k] + ': ' + usersLine(k))));
-  if (S && S.usage) s.append(mk('div', 'dim', usageLine(S.usage)));
-  const live = Object.entries(FIN.products || {}).map(([k, p]) => (names[k] || k) + (p.live ? ' live' : ' DOWN')).join(' · ');
-  if (live) s.append(mk('div', 'dim', 'Sites: ' + live));
-  (FIN.notes || []).forEach(n => s.append(mk('div', 'pnl-note', n)));
   return s;
 }
 
@@ -1811,6 +1823,18 @@ function poll() {
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
 if (new URLSearchParams(location.search).get('connected') === 'etsy') { selected = 'links'; history.replaceState(null, '', '/station'); }
+(function chatGrip() {
+  const grip = document.getElementById('chat-grip'), log = document.getElementById('chat-log'); if (!grip || !log) return;
+  try { const saved = Number(localStorage.getItem('chatLogH')); if (saved >= 60) log.style.height = saved + 'px'; } catch (e) {}
+  grip.addEventListener('pointerdown', e => {
+    const startY = e.clientY, startH = log.getBoundingClientRect().height;
+    grip.setPointerCapture(e.pointerId);
+    const move = ev => { log.style.height = Math.round(Math.max(60, Math.min(window.innerHeight * 0.7, startH + (startY - ev.clientY)))) + 'px'; };
+    const up = () => { grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', up);
+      try { localStorage.setItem('chatLogH', String(Math.round(log.getBoundingClientRect().height))); } catch (e2) {} };
+    grip.addEventListener('pointermove', move); grip.addEventListener('pointerup', up);
+  });
+})();
 resize(); requestAnimationFrame(frame);
 if (token()) boot(); else showAuth();
 poll();
