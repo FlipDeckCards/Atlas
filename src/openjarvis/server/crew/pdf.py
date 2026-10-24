@@ -134,8 +134,41 @@ def prepare_image(data: bytes, w_pt: float, h_pt: float, dpi: int = 220, quality
     return buf.getvalue(), wpx, hpx
 
 
-def _build(pages, w: float, h: float, m: float, front=None, back=None) -> bytes:
-    """Assemble the PDF. front / back: optional (jpeg, wpx, hpx) shown full-bleed as the first and last page."""
+def back_cover_ops(w: float, h: float, m: float, tagline: str, blurb: str, author: str, barcode_space: bool) -> str:
+    """Page-content operators that typeset a back cover over the picture: a dark panel for legibility, the tagline, the blurb, the author, and a white
+    box where the printer's barcode goes. Real text in a real font: image generators cannot spell, so the words are never part of the picture."""
+    inner = w - 2 * m
+    lines: List[Tuple[str, float, bool]] = []                                  # (text, size, bold)
+    if tagline.strip():
+        lines += [(ln, 18, True) for ln in _wrap(_clean(tagline.strip()), 18, inner, True)] + [("", 10, False)]
+    for para in re.split(r"\n\s*\n", blurb.strip()):
+        if para.strip():
+            lines += [(ln, 11.5, False) for ln in _wrap(_clean(" ".join(para.split())), 11.5, inner)] + [("", 6, False)]
+    if author.strip():
+        lines += [("", 8, False), (_clean(author.strip()), 12, True)]
+    box_h = 72 if barcode_space else 0
+    floor = m + box_h + (22 if barcode_space else 0)
+    pitch = lambda size: size * 1.38
+    need = sum(pitch(sz) for _t, sz, _b in lines)
+    top = min(h - m - 30, floor + need)
+    ops = []
+    if lines:
+        ops.append(f"q /GS1 gs 0.02 0.04 0.09 rg {m - 14:g} {floor - 16:g} {inner + 28:g} {top - floor + 30:g} re f Q")        # translucent panel
+    y = top
+    ops.append("BT 1 1 1 rg")
+    for text, size, bold in lines:
+        y -= pitch(size)
+        if text:
+            ops.append(f"/{'F2' if bold else 'F1'} {size:g} Tf 1 0 0 1 {m:g} {y:.1f} Tm ({_esc(text)}) Tj")
+    ops.append("ET")
+    if barcode_space:
+        ops.append(f"q 1 1 1 rg {w - m - 144:g} {m:g} 144 {box_h:g} re f Q")                                                     # white box for the printer's barcode
+    return "\n".join(ops)
+
+
+def _build(pages, w: float, h: float, m: float, front=None, back=None, back_text=None) -> bytes:
+    """Assemble the PDF. front / back: optional (jpeg, wpx, hpx) shown full-bleed as the first and last page. back_text: optional
+    {tagline, blurb, author, barcode_space} typeset over the back cover (or on a plain dark back page when there is no picture)."""
     objs: List[bytes] = []
 
     def add(b: "str | bytes") -> int:
@@ -148,12 +181,19 @@ def _build(pages, w: float, h: float, m: float, front=None, back=None) -> bytes:
     f2 = add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")
     kids = []
 
-    def image_page(img) -> int:
-        data, wpx, hpx = img
-        iid = add(f"<< /Type /XObject /Subtype /Image /Width {wpx} /Height {hpx} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {len(data)} >>\nstream\n".encode("latin-1") + data + b"\nendstream")
-        stream = f"q {w:g} 0 0 {h:g} 0 0 cm /Im0 Do Q".encode()
+    gs = add("<< /Type /ExtGState /ca 0.58 /CA 0.58 >>")
+
+    def image_page(img, overlay: str = "") -> int:
+        if img:
+            data, wpx, hpx = img
+            iid = add(f"<< /Type /XObject /Subtype /Image /Width {wpx} /Height {hpx} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {len(data)} >>\nstream\n".encode("latin-1") + data + b"\nendstream")
+            base = f"q {w:g} 0 0 {h:g} 0 0 cm /Im0 Do Q\n"
+            xo = f"/XObject << /Im0 {iid} 0 R >> "
+        else:
+            base, xo = f"0.02 0.04 0.09 rg 0 0 {w:g} {h:g} re f\n", ""                          # no picture: a plain dark page
+        stream = (base + overlay).encode("latin-1", "replace")
         cid = add(b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream")
-        return add(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w:g} {h:g}] /Resources << /XObject << /Im0 {iid} 0 R >> >> /Contents {cid} 0 R >>")
+        return add(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w:g} {h:g}] /Resources << {xo}/Font << /F1 {f1} 0 R /F2 {f2} 0 R >> /ExtGState << /GS1 {gs} 0 R >> >> /Contents {cid} 0 R >>")
 
     if front:
         kids.append(image_page(front))
@@ -168,8 +208,10 @@ def _build(pages, w: float, h: float, m: float, front=None, back=None) -> bytes:
         cid = add(b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream")
         kids.append(add(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w:g} {h:g}] /Resources << /Font << /F1 {f1} 0 R /F2 {f2} 0 R >> >> "
                         f"/Contents {cid} 0 R >>"))
-    if back:
-        kids.append(image_page(back))
+    if back or back_text:
+        bt = back_text or {}
+        has = bool(str(bt.get("tagline") or "").strip() or str(bt.get("blurb") or "").strip() or str(bt.get("author") or "").strip() or bt.get("barcode_space"))
+        kids.append(image_page(back, back_cover_ops(w, h, m, str(bt.get("tagline") or ""), str(bt.get("blurb") or ""), str(bt.get("author") or ""), bool(bt.get("barcode_space"))) if has else ""))
     objs[1] = f"<< /Type /Pages /Kids [{' '.join(f'{k} 0 R' for k in kids)}] /Count {len(kids)} >>".encode()
     out = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
     offsets = []
@@ -189,11 +231,14 @@ def make_pdf(title: str, body: str) -> bytes:
 BOOK_W, BOOK_H, BOOK_M = 432, 648, 54                    # 6 x 9 inch trade paperback, 0.75 inch margins
 
 
-def make_book_pdf(title: str, author: str, body: str, cover: "bytes | None" = None, back_cover: "bytes | None" = None) -> Tuple[bytes, int]:
+def make_book_pdf(title: str, author: str, body: str, cover: "bytes | None" = None, back_cover: "bytes | None" = None,
+                  back_text: "dict | None" = None) -> Tuple[bytes, int]:
     """A 6 x 9 inch book: the front cover as page one, a title page, the manuscript (every '# ' chapter on a new page, no pictures inside),
     and the back cover as the last page. cover and back_cover are image files of any size or type; they are cropped to the page and compressed.
+    back_text {tagline, blurb, author, barcode_space} is typeset over the back cover in real type (the picture should have no words in it).
     -> (pdf bytes, number of pages)"""
     front = prepare_image(cover, BOOK_W, BOOK_H) if cover else None
     back = prepare_image(back_cover, BOOK_W, BOOK_H) if back_cover else None
     pages = layout(title, body, BOOK_W, BOOK_H, BOOK_M, author=author, chapter_breaks=True, body_size=11)
-    return _build(pages, BOOK_W, BOOK_H, BOOK_M, front, back), len(pages) + (1 if front else 0) + (1 if back else 0)
+    has_back = bool(back or back_text)
+    return _build(pages, BOOK_W, BOOK_H, BOOK_M, front, back, back_text), len(pages) + (1 if front else 0) + (1 if has_back else 0)

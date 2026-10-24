@@ -142,10 +142,14 @@ _BOOK_TOOL = {"type": "function", "function": {
     "description": "Compile manuscript files from the outbox into a print-ready PDF book (6 x 9 inch, text only: NO pictures inside). Page one is the front cover, then a title page, "
                    "the chapters (every '# ' heading starts a new page), and the back cover as the last page. cover_item and back_cover_item are media library item ids "
                    "(the front cover is the image Michael attached: see the attached-image-*.md file in the outbox; make the back cover with generate_image). "
-                   "Saves <filename>.pdf to the outbox. Use it instead of compiling or rendering a PDF yourself.",
+                   "Saves <filename>.pdf to the outbox. The back cover's words (back_tagline, back_blurb, author) are typeset by this tool in clean type over the picture, so the back cover "
+                   "IMAGE must contain no words at all. Use it instead of compiling or rendering a PDF yourself.",
     "parameters": {"type": "object", "properties": {"title": {"type": "string"}, "author": {"type": "string"}, "filename": {"type": "string"},
                                                     "files": {"type": "array", "items": {"type": "string"}, "description": "Outbox file names in reading order."},
-                                                    "cover_item": {"type": "string"}, "back_cover_item": {"type": "string"}},
+                                                    "cover_item": {"type": "string"}, "back_cover_item": {"type": "string"},
+                                                    "back_tagline": {"type": "string", "description": "One line for the top of the back cover."},
+                                                    "back_blurb": {"type": "string", "description": "The back-cover description (2-4 short paragraphs). It is typeset in real type over the picture; never ask the image to contain words."},
+                                                    "barcode_space": {"type": "boolean", "description": "Leave a white box for the printer's barcode (default true)."}},
                    "required": ["title", "files"]}}}
 
 _IMAGE_TOOL = {"type": "function", "function": {
@@ -1362,7 +1366,9 @@ class CrewEngine:
             s += ("\nTo make a book PDF call make_book with the manuscript files in order (it builds a 6 x 9 inch text-only book: front cover, title page, chapters, back cover). "
                   "Michael wants NO pictures inside the book unless he says otherwise. The front cover is the image he attached: its media library item id is in the "
                   "attached-image-*.md file in the outbox. Make the back cover with generate_image, describing it to match the front cover's colors, mood and style "
-                  "(and the book's title or tagline), then pass its item id as back_cover_item. Never say a PDF exists unless make_book says it saved one.")
+                  "then pass its item id as back_cover_item. The back cover image must be ARTWORK ONLY: no letters, words, numbers, logos or barcodes in it (image generators cannot spell and invent "
+                  "barcodes). Put the words in make_book instead: back_tagline, back_blurb (2 to 4 short paragraphs you write from the manuscript) and the author. "
+                  "Never say a PDF exists unless make_book says it saved one.")
         if task["role"] == "reviewer":
             s += "\nBe strict but fair: send work back only for real problems (wrong, missing, risky, or not what was asked), with exact fixes."
         return self._for_person(s, envx)
@@ -1790,6 +1796,8 @@ class CrewEngine:
         prompt = _clip(args.get("prompt"), 500)
         if len(prompt) < 8:
             return "Error: describe the image in detail.", None
+        if re.search(r"\b(back cover|book cover|front cover|cover art|cover image)\b", prompt, re.I):
+            prompt += " Artwork only: no text, no letters, no words, no numbers, no logos, no barcode."          # image models cannot spell; words are added in real type later
         ctx = None
         try:
             ctx = self.media_ctx_fn(uid) if self.media_ctx_fn else None
@@ -1856,7 +1864,9 @@ class CrewEngine:
         except conns.ConnectionError_ as exc:
             return f"Error: {exc}", None
         try:
-            data, pages = await asyncio.to_thread(pdfmod.make_book_pdf, title, author, text, cover, back)
+            back_text = {"tagline": _clip(args.get("back_tagline"), 160), "blurb": str(args.get("back_blurb") or "").strip()[:1400], "author": author,
+                         "barcode_space": args.get("barcode_space") is not False}
+            data, pages = await asyncio.to_thread(pdfmod.make_book_pdf, title, author, text, cover, back, back_text)
         except Exception as exc:
             logger.exception("make_book failed")
             return f"The book could not be built: {_clip(exc, 160)}", None
@@ -1869,7 +1879,8 @@ class CrewEngine:
         words = len(text.split())
         await self.store.add_event(uid, "output", f'Saved the book "{fname}": {pages} pages, {words:,} words, {len(data) // 1024} KB.', mission_id=mid, task_id=tid)
         return (f'Saved "{fname}" to the outbox: {pages} pages (6 x 9 in), about {words:,} words, {len(data) // 1024} KB; front cover {"included" if cover else "NOT included"}, '
-                f'back cover {"included" if back else "NOT included"}; no pictures inside.'), None
+                f'back cover {"picture included" if back else "picture NOT included"}'
+                f'{" with the tagline and description typeset on it" if back_text["tagline"] or back_text["blurb"] else " (no back-cover text given)"}; no pictures inside.'), None
 
     async def _design(self, task: Dict[str, Any], mission: Dict[str, Any], args: Dict[str, Any]):
         """A design pack from one library artwork: four images to the library, SVG and DXF cut files and a pack file to the outbox."""

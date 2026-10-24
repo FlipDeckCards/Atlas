@@ -687,7 +687,7 @@ class TestMakeBookTool:
         w, m, task = self.setup()
         mission = run(w.store.get_mission(m["id"]))
         out, _ = run(w.engine._tool(task, mission, "make_book", {"title": "My Book", "author": "Michael", "files": ["part1.md", "part2.md"], "cover_item": "c1", "back_cover_item": "b1", "filename": "My Book"}))
-        assert 'Saved "My Book.pdf"' in out and "front cover included" in out and "back cover included" in out and "no pictures inside" in out
+        assert 'Saved "My Book.pdf"' in out and "front cover included" in out and "back cover picture included" in out and "no pictures inside" in out
         o = [x for x in run(w.store.list_outputs(m["id"])) if x["name"] == "My Book.pdf"][0]
         raw = base64.b64decode(run(w.store.get_output(o["id"]))["content"][7:])
         r = pypdf.PdfReader(io.BytesIO(raw))
@@ -818,3 +818,50 @@ class TestArtPipeline:
         assert "helix-views.png" in routes.ART_FILES
         for needle in ("loadArt('helix-views.png'", "ART.helixViews", "a walk made in code from still pictures"):
             assert needle in STATION_PAGE
+
+
+class TestBackCoverIsTypesetNotDrawn:
+    def test_the_back_cover_words_are_real_text_over_artwork_with_a_barcode_box(self):
+        import io
+        import pypdf
+        from openjarvis.server.crew import pdf
+        bt = {"tagline": "Stop defending your interface.", "blurb": "First paragraph of the blurb.\n\nSecond paragraph here.", "author": "Michael Dano", "barcode_space": True}
+        data, n = pdf.make_book_pdf("T", "Michael Dano", "# A\n\nbody", _png((8, 20, 46)), _png((8, 20, 46), (1024, 1536)), bt)
+        r = pypdf.PdfReader(io.BytesIO(data))
+        last = r.pages[-1].extract_text()
+        assert n == len(r.pages) and "Stop defending your interface." in last and "Second paragraph here." in last and "Michael Dano" in last
+        assert "/XObject" in str(r.pages[-1].get("/Resources")) and "/ExtGState" in str(r.pages[-1].get("/Resources"))
+        no_box, _ = pdf.make_book_pdf("T", "", "# A\n\nbody", None, _png((8, 20, 46)), {"tagline": "x", "blurb": "y", "author": "", "barcode_space": False})
+        assert len(no_box) < len(data)
+        text_only, _ = pdf.make_book_pdf("T", "A", "# A\n\nbody", None, None, {"tagline": "Only words", "blurb": "", "author": "", "barcode_space": False})
+        assert "Only words" in pypdf.PdfReader(io.BytesIO(text_only)).pages[-1].extract_text()                    # no picture: a plain dark page with the words
+
+    def test_cover_image_prompts_are_told_to_contain_no_words_and_the_tool_takes_the_words(self):
+        w = world(two_task_plan(), AGENTS)
+        captured = []
+
+        async def fake_generate(ctx, kind, prompt="", **kw):
+            captured.append(prompt)
+            raise eng_mod_media_stop()
+        from openjarvis.server.media import service as media
+
+        class Stop(Exception):
+            pass
+
+        def eng_mod_media_stop():
+            return media.MediaServiceError(400, "stop", "stopped for the test")
+        w.engine.media_ctx_fn = lambda uid: SimpleNamespace()
+        orig = media.generate_and_save
+        media.generate_and_save = fake_generate
+        try:
+            m = run(start(w))
+            task = dict(run(w.store.list_tasks(m["id"]))[0], role="designer")
+            mission = run(w.store.get_mission(m["id"]))
+            run(w.engine._tool(task, mission, "generate_image", {"prompt": "A back cover for the book AI: The User Experience, navy with a cyan spiral"}))
+            run(w.engine._tool(task, mission, "generate_image", {"prompt": "A cute fox sitting in a field of flowers"}))
+        finally:
+            media.generate_and_save = orig
+        assert "no text, no letters, no words" in captured[0].lower() and "barcode" in captured[0].lower()
+        assert "no text" not in captured[1].lower()
+        props = [t for t in eng_mod.tools_for("designer") if t["function"]["name"] == "make_book"][0]["function"]["parameters"]["properties"]
+        assert {"back_tagline", "back_blurb", "barcode_space"} <= set(props)
