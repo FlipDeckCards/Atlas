@@ -1138,6 +1138,12 @@ const BOT_DIRS = { front: 0, back: 1, right: 2, left: 3 };
 function dirOf(dx, dy, prev) { if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return prev || 'front'; return Math.abs(dx) >= Math.abs(dy) * 0.8 ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'front' : 'back'); }
 const botSheet = new Image(); let botReady = false;
 botSheet.onload = () => { botReady = true; }; botSheet.src = '/crew/bots.png?v=' + BOT_VER;
+// Michael's own artwork, used when the file exists (a 404 leaves the built-in drawing): asteroids, the satellite, and Helix walking the deck
+const ART = { rocks: [], satellite: null, helix: null };
+function loadArt(name, done) { const im = new Image(); im.onload = () => done(im); im.onerror = () => {}; im.src = '/crew/art/' + name; }
+['asteroid1.png', 'asteroid2.png', 'asteroid3.png'].forEach(n => loadArt(n, im => ART.rocks.push(im)));
+loadArt('satellite.png', im => { ART.satellite = im; });
+loadArt('helix-walk.png', im => { ART.helix = im; });           // the same sheet layout as bots.png, one row: standing, then 4 walk frames each for front, back, right, left
 // the businesses on this Station: the owner's products, or a subscriber's own (from the server)
 function prods() {
   return (S && S.businesses ? S.businesses : []).map(b => ({ key: b.key, label: String(b.name).toUpperCase(), color: b.color || '#ff4fb8', url: b.url || '' }));
@@ -1157,10 +1163,20 @@ const RING = ['p0', 'stripe', 'p1', 'etsy', 'p2', 'google_play', 'new', 'app_sto
 const MAX_EXTRA_BRANCHES = 8;
 const WORKING = ['active', 'planning', 'paused', 'stalled'];
 
+// The size the station has when it first loads with the columns and the chat at their default sizes: the window minus the two 210px columns, the
+// 48px top bar and the chat box. Dragging a column or the chat changes the window onto the station, but not the size of the station itself.
+const DEFAULT_COL = 210, TOP_BAR = 48, DEFAULT_CHAT = 225;
+function designSize() {
+  try { if (window.matchMedia('(max-width: 820px)').matches) return [W, H]; } catch (e) {}
+  return [Math.max(520, window.innerWidth - 2 * DEFAULT_COL), Math.max(380, window.innerHeight - TOP_BAR - DEFAULT_CHAT)];
+}
+let _seed = 20261024;
+function srand() { _seed = (_seed * 1664525 + 1013904223) % 4294967296; return _seed / 4294967296; }      // the same sky every time the canvas is resized
 function resize() {
+  _seed = 20261024;
   const r = cv.getBoundingClientRect(); DPR = Math.min(window.devicePixelRatio || 1, 2);
   W = r.width; H = r.height; cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR); ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  stars = Array.from({ length: Math.round(W * H / 2200) }, () => ({ x: Math.random() * W, y: Math.random() * H, z: Math.random(), p: Math.random() * 6.28 }));
+  stars = Array.from({ length: Math.round(W * H / 2200) }, () => ({ x: srand() * W, y: srand() * H, z: srand(), p: srand() * 6.28 }));
   sky = document.createElement('canvas'); sky.width = Math.max(1, Math.round(W)); sky.height = Math.max(1, Math.round(H));
   const s = sky.getContext('2d');
   s.fillStyle = '#04050a'; s.fillRect(0, 0, W, H);
@@ -1169,10 +1185,20 @@ function resize() {
     g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)'); s.fillStyle = g; s.fillRect(0, 0, W, H);
   }
   drawMilkyWay(s, W, H);
-  mini = { x: W * 0.13, y: H * 0.2, vx: 0.0055, vy: 0.0012, rot: 0.35 };
+  mini = mini ? Object.assign(mini, { x: Math.min(mini.x, W + 40), y: Math.min(mini.y, H) }) : { x: W * 0.13, y: H * 0.2, vx: 0.0055, vy: 0.0012, rot: 0.35 };
   layout();
 }
 window.addEventListener('resize', resize);
+// dragging a column or the chat changes the stage's box: redraw the canvas at its real size (it was being stretched, which squished the ring)
+(function () {
+  const stage = document.getElementById('stage'); if (!stage || !window.ResizeObserver) return;
+  let last = '', queued = false;
+  new ResizeObserver(() => {
+    const r = stage.getBoundingClientRect(), key = Math.round(r.width) + 'x' + Math.round(r.height);
+    if (key === last || queued) return;
+    queued = true; requestAnimationFrame(() => { queued = false; last = key; resize(); });
+  }).observe(stage);
+})();
 
 const PLATFORM_KEY = { etsy: 'etsy', stripe: 'stripe', googleplay: 'google_play', playstore: 'google_play', appstore: 'app_store', ios: 'app_store' };
 function factoryKey(m) {
@@ -1233,11 +1259,11 @@ function drawMilkyWay(c, w, h) {
   glow(L * 0.5, L * 0.07, 'rgba(255,225,190,A)', 0.24);                  // warm bright core
   c.save(); c.translate(0, L * 0.015); glow(L * 0.7, L * 0.02, 'rgba(3,4,10,A)', 0.55); c.restore();   // the dark dust lane
   for (let i = 0; i < 520; i++) {                                         // thousands of faint suns, thickest on the band's middle
-    const u = (Math.random() * 2 - 1), v = (Math.random() + Math.random() + Math.random() - 1.5) / 1.5;
-    const x = u * L * (0.2 + 0.8 * Math.random()), y = v * L * 0.12 * (1 - Math.abs(u) * 0.6);
-    const a = (0.1 + Math.random() * 0.5) * (1 - Math.abs(u) * 0.7);
-    c.fillStyle = Math.random() < 0.2 ? 'rgba(255,214,170,' + a + ')' : 'rgba(205,225,255,' + a + ')';
-    c.fillRect(x, y, Math.random() < 0.1 ? 1.6 : 0.9, Math.random() < 0.1 ? 1.6 : 0.9);
+    const u = (srand() * 2 - 1), v = (srand() + srand() + srand() - 1.5) / 1.5;
+    const x = u * L * (0.2 + 0.8 * srand()), y = v * L * 0.12 * (1 - Math.abs(u) * 0.6);
+    const a = (0.1 + srand() * 0.5) * (1 - Math.abs(u) * 0.7);
+    c.fillStyle = srand() < 0.2 ? 'rgba(255,214,170,' + a + ')' : 'rgba(205,225,255,' + a + ')';
+    c.fillRect(x, y, srand() < 0.1 ? 1.6 : 0.9, srand() < 0.1 ? 1.6 : 0.9);
   }
   c.restore();
 }
@@ -1273,7 +1299,7 @@ function spawnRock(t) {                                                   // an 
   const r = 7 + 26 * d, speed = 0.018 + 0.05 * d, pts = 9 + Math.floor(Math.random() * 4);
   const shape = Array.from({ length: pts }, (_, i) => ({ a: i / pts * 6.2832, k: 0.72 + Math.random() * 0.4 }));
   const craters = Array.from({ length: 3 }, () => ({ x: (Math.random() - 0.5) * r * 0.9, y: (Math.random() - 0.5) * r * 0.9, r: r * (0.1 + Math.random() * 0.14) }));
-  rocks.push({ t0: t, sx, sy, ux: dx / n, uy: dy / n, speed, r, spin: (Math.random() - 0.5) * 0.0012, rot0: Math.random() * 6.28, shape, craters, a: 0.45 + 0.5 * d, tint: Math.random() < 0.35 ? [128, 108, 92] : [112, 118, 128],
+  rocks.push({ pick: Math.floor(Math.random() * 1000), t0: t, sx, sy, ux: dx / n, uy: dy / n, speed, r, spin: (Math.random() - 0.5) * 0.0012, rot0: Math.random() * 6.28, shape, craters, a: 0.45 + 0.5 * d, tint: Math.random() < 0.35 ? [128, 108, 92] : [112, 118, 128],
                dur: (Math.hypot(W, H) * 1.15) / speed });
   if (rocks.length > 3) rocks.shift();
 }
@@ -1284,6 +1310,11 @@ function drawRocks(t) {
     const e = t - k.t0, x = k.sx + k.ux * k.speed * e, y = k.sy + k.uy * k.speed * e;
     if (x < -90 || x > W + 90 || y < -90 || y > H + 90) continue;
     const [cr, cg, cb] = k.tint;
+    if (ART.rocks.length) {                                                // Michael's asteroid art, tumbling
+      const im = ART.rocks[k.pick % ART.rocks.length], d = k.r * 2.4;
+      ctx.save(); ctx.translate(x, y); ctx.rotate(k.rot0 + k.spin * e); ctx.globalAlpha = k.a; ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(im, -d / 2, -d * (im.naturalHeight / im.naturalWidth) / 2, d, d * (im.naturalHeight / im.naturalWidth)); ctx.restore(); continue;
+    }
     ctx.save(); ctx.translate(x, y); ctx.rotate(k.rot0 + k.spin * e); ctx.globalAlpha = k.a;
     ctx.beginPath(); k.shape.forEach((v, i) => { const px = Math.cos(v.a) * k.r * v.k, py = Math.sin(v.a) * k.r * v.k; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }); ctx.closePath();
     const g = ctx.createRadialGradient(-k.r * 0.4, -k.r * 0.4, k.r * 0.1, 0, 0, k.r * 1.2);      // lit from the upper left, like the sun
@@ -1301,6 +1332,12 @@ function drawMiniStation(t, dt) {                                         // far
     if (mini.x > W + 60) { mini.x = -60; mini.y = H * (0.08 + Math.random() * 0.8); }
   }
   const u = Math.max(0.55, Math.min(1.1, SC)) * 1.35;
+  if (ART.satellite) {                                                    // Michael's satellite art, drifting and turning slowly
+    const d = 96 * u, im = ART.satellite;
+    ctx.save(); ctx.translate(mini.x, mini.y); ctx.rotate(mini.rot); ctx.globalAlpha = 0.95; ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(im, -d / 2, -d * (im.naturalHeight / im.naturalWidth) / 2, d, d * (im.naturalHeight / im.naturalWidth)); ctx.restore();
+    return;
+  }
   ctx.save(); ctx.translate(mini.x, mini.y); ctx.rotate(mini.rot); ctx.scale(u, u); ctx.globalAlpha = 0.8;
   ctx.shadowColor = 'rgba(90,170,255,0.5)'; ctx.shadowBlur = 8;
   ctx.fillStyle = '#7f93a8'; ctx.fillRect(-26, -2.2, 52, 4.4);              // truss
@@ -1459,7 +1496,9 @@ function layout() {
   const extras = pl.slice(4).map(b => fillBay(Object.assign({}, b)))
     .concat((pl[3] ? nk : nk.slice(1)).map(newBay)).slice(0, MAX_EXTRA_BRANCHES);
   const N = RING.length + extras.length;
-  SC = Math.max(0.34, Math.min(1.25, Math.min(W / 1060, H / 800)));
+  const [dw, dh] = designSize();                          // the ring's scale follows the browser window, never the panels you dragged
+  // the optimal scale for this window, shrunk evenly (never stretched) only when the station's box is really too small to hold it
+  SC = Math.max(0.34, Math.min(1.25, Math.min(dw / 1060, dh / 800), Math.min(W / 1060, H / 800)));
   if (N > 8) SC *= Math.sin(Math.PI / N) / Math.sin(Math.PI / 8);             // more branches, smaller modules, so the ring keeps its size
   core = { x: W / 2, y: H / 2, r: 94 * SC };
   const mw = 184 * SC, mh = 116 * SC, gap = 46 * SC;
@@ -1692,6 +1731,7 @@ function drawCore(t) {
   });
   // each figure has its own pace and mind: it wanders around the deck, turns back, pauses, and drifts between the inner and outer lane
   const hash = (str) => { let h = 7; for (let c = 0; c < str.length; c++) h = (h * 31 + str.charCodeAt(c)) % 100003; return h; };
+  if (ART.helix) onDeck.push({ role: 'lead', status: 'idle' });                                           // Helix herself, walking among her crew
   onDeck.forEach((a, i) => {
     const h = hash(a.role), R = (k) => { const v = Math.sin(h * 12.9898 + k * 78.233) * 43758.5453; return v - Math.floor(v); };
     const dir = R(1) < 0.5 ? -1 : 1, a0 = -Math.PI / 2 + i * (Math.PI * 2 / Math.max(onDeck.length, 1)) + R(2) * 0.5;
@@ -1701,6 +1741,12 @@ function drawCore(t) {
     const [px, py] = at(t), [qx, qy] = at(t + 40), step = Math.hypot(qx - px, qy - py) / 40;
     const moving = step > 0.0012;                                                                            // slowed to a stop at the turn-around points: stands still
     const face = moving ? dirOf(qx - px, qy - py, 'front') : 'front';
+    if (a.role === 'lead' && ART.helix) {
+      const d = BOT_DIRS[face] != null ? BOT_DIRS[face] : 0, col = moving ? 1 + d * 4 + Math.floor(t * 0.006 + i) % 4 : 0, Hh = 44;
+      ctx.save(); ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(ART.helix, col * BOT_CELL, 0, BOT_CELL, BOT_CELL, px - Hh / 2, py + 10.5 - Hh * 0.873, Hh, Hh); ctx.restore();
+      return;
+    }
     drawBot(px, py, ROLE_COLORS[a.role] || '#00e5ff', a.status, t, i * 4.1, face, sc, moving);
   });
   // the open-items badge (no name plate: the portrait is Helix)

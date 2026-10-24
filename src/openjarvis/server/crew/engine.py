@@ -137,6 +137,17 @@ _LIST_OUTBOX_TOOL = {"type": "function", "function": {
     "description": "List the files in Michael's outboxes across ALL his missions (any status), with the mission each belongs to. Use it to find earlier work to read or build on.",
     "parameters": {"type": "object", "properties": {}}}}
 
+_BOOK_TOOL = {"type": "function", "function": {
+    "name": "make_book",
+    "description": "Compile manuscript files from the outbox into a print-ready PDF book (6 x 9 inch, text only: NO pictures inside). Page one is the front cover, then a title page, "
+                   "the chapters (every '# ' heading starts a new page), and the back cover as the last page. cover_item and back_cover_item are media library item ids "
+                   "(the front cover is the image Michael attached: see the attached-image-*.md file in the outbox; make the back cover with generate_image). "
+                   "Saves <filename>.pdf to the outbox. Use it instead of compiling or rendering a PDF yourself.",
+    "parameters": {"type": "object", "properties": {"title": {"type": "string"}, "author": {"type": "string"}, "filename": {"type": "string"},
+                                                    "files": {"type": "array", "items": {"type": "string"}, "description": "Outbox file names in reading order."},
+                                                    "cover_item": {"type": "string"}, "back_cover_item": {"type": "string"}},
+                   "required": ["title", "files"]}}}
+
 _IMAGE_TOOL = {"type": "function", "function": {
     "name": "generate_image",
     "description": "Generate one image from a detailed description (500 characters at most) and save it to Michael's Aibussol media library. Costs a few cents; at most 10 per task.",
@@ -204,7 +215,7 @@ _REVIEW_TOOL = {"type": "function", "function": {
     "description": "Send one finished task back to its agent with concrete fixes (each task can be sent back once). You continue after the rework is done.",
     "parameters": {"type": "object", "properties": {"task_number": {"type": "integer"}, "notes": {"type": "string"}}, "required": ["task_number", "notes"]}}}
 
-LIMITS = {"repo_checks": 10, "web_search": 12, "generate_image": 16, "make_design_files": 10, "repo_commit": 10, "check_site": 20, "business_numbers": 3}
+LIMITS = {"make_book": 6, "repo_checks": 10, "web_search": 12, "generate_image": 16, "make_design_files": 10, "repo_commit": 10, "check_site": 20, "business_numbers": 3}
 SEARCHERS = ("researcher", "reviewer", "marketer", "social", "support", "analyst", "qa", "finance")
 IMAGERS = ("designer", "marketer", "social")
 READERS = ("support", "analyst", "finance")                # read-only platform access
@@ -308,6 +319,8 @@ def tools_for(role: str) -> List[Dict[str, Any]]:
         extra.append(_IMAGE_TOOL)
     if role == "designer":
         extra.append(_DESIGN_TOOL)
+    if role in ("designer", "writer"):
+        extra.append(_BOOK_TOOL)
     if role == "builder":
         extra += _REPO_TOOLS
     if role == "reviewer":
@@ -1001,6 +1014,8 @@ class CrewEngine:
         if not full or full["user_id"] != user_id:
             return "No file by that name in any outbox."
         body = full.get("content") or ""
+        if body.startswith("base64:"):
+            return f'"{files[0]["name"]}" is a binary file ({len(body) * 3 // 4 // 1024} KB), not text; download it from the outbox.'
         try:
             start = max(0, int(offset or 0))
         except (TypeError, ValueError):
@@ -1337,6 +1352,11 @@ class CrewEngine:
                       "on merge, so be careful there. If a change is not ready to merge, finish without request_merge and say why.")
             else:
                 s += "\nGitHub is not connected yet, so save code as files with save_output and say in your summary that GitHub needs connecting."
+        if task["role"] in ("designer", "writer"):
+            s += ("\nTo make a book PDF call make_book with the manuscript files in order (it builds a 6 x 9 inch text-only book: front cover, title page, chapters, back cover). "
+                  "Michael wants NO pictures inside the book unless he says otherwise. The front cover is the image he attached: its media library item id is in the "
+                  "attached-image-*.md file in the outbox. Make the back cover with generate_image, describing it to match the front cover's colors, mood and style "
+                  "(and the book's title or tagline), then pass its item id as back_cover_item. Never say a PDF exists unless make_book says it saved one.")
         if task["role"] == "reviewer":
             s += "\nBe strict but fair: send work back only for real problems (wrong, missing, risky, or not what was asked), with exact fixes."
         return self._for_person(s, envx)
@@ -1604,6 +1624,8 @@ class CrewEngine:
             return await self._search(task, args)
         if name == "generate_image" and task["role"] in IMAGERS:
             return await self._image(task, mission, args)
+        if name == "make_book" and task["role"] in ("designer", "writer"):
+            return await self._book(task, mission, args)
         if name == "make_design_files" and task["role"] == "designer":
             return await self._design(task, mission, args)
         if name in ("repo_files", "repo_read", "repo_commit", "repo_checks", "request_merge") and task["role"] == "builder":
@@ -1790,6 +1812,58 @@ class CrewEngine:
                                     f"# {item.title}\n\nSaved to your Aibussol media library (item {item.id}).\n\nPrompt: {prompt}\n")
         await self.store.add_event(uid, "output", f'Prism made an image: "{item.title}" (in your media library).', mission_id=mid, task_id=tid, cost_usd=est)
         return f'Saved the image "{item.title}" to Michael\'s media library (item {item.id}); a note is in the outbox.', None
+
+    async def _book(self, task: Dict[str, Any], mission: Dict[str, Any], args: Dict[str, Any]):
+        import base64
+
+        from openjarvis.server.crew import pdf as pdfmod
+
+        uid, mid, tid = task["user_id"], task["mission_id"], task["id"]
+        title, author = _clip(args.get("title"), 120), _clip(args.get("author"), 80)
+        files = [_clip(f, 120) for f in (args.get("files") if isinstance(args.get("files"), list) else []) if str(f).strip()][:60]
+        if not title or not files:
+            return "Error: give the book's title and its manuscript files (outbox file names) in reading order.", None
+        index = await self.outbox_index(uid)
+        parts = []
+        for f in files:
+            hit = [o for o in index if o["name"].lower() == f.lower()]
+            mine = [o for o in hit if o["mission_id"] == mid]
+            if not (mine or hit):
+                return f'Error: there is no outbox file called "{f}". Use list_outbox to see the exact names.', None
+            if not mine and len({o["mission_id"] for o in hit}) > 1:
+                return f'Error: several missions have a file called "{f}". Save a copy in this mission or pick another name.', None
+            full = await self.store.get_output((mine or hit)[0]["id"])
+            body = (full or {}).get("content") or ""
+            if body.startswith("base64:"):
+                return f'Error: "{f}" is not a text file.', None
+            parts.append(body)
+        text = "\n\n".join(parts)
+        text = re.sub(r"(?m)^\s*!\[[^\]]*\]\([^)]*\)\s*$", "", text)                                      # no pictures inside the book
+        text = re.sub(r"(?im)^\s*\[?\s*(image|graphic|figure|illustration)\b[^\n]{0,160}\]?\s*$", "", text)       # nor placeholders for them
+        fetch = self._media_fetcher(uid)
+        cover = back = None
+        try:
+            if _clip(args.get("cover_item"), 80):
+                cover = (await fetch(_clip(args.get("cover_item"), 80)))[0]
+            if _clip(args.get("back_cover_item"), 80):
+                back = (await fetch(_clip(args.get("back_cover_item"), 80)))[0]
+        except conns.ConnectionError_ as exc:
+            return f"Error: {exc}", None
+        try:
+            data, pages = await asyncio.to_thread(pdfmod.make_book_pdf, title, author, text, cover, back)
+        except Exception as exc:
+            logger.exception("make_book failed")
+            return f"The book could not be built: {_clip(exc, 160)}", None
+        b64 = base64.b64encode(data).decode("ascii")
+        if len(b64) > 14_000_000:
+            return "The book is too large to keep (over 10 MB). Use a smaller cover image or fewer pages.", None
+        fname = (re.sub(r"[^A-Za-z0-9._ -]", "_", _clip(args.get("filename"), 80) or title).strip(" ._") or "book")
+        fname = fname if fname.lower().endswith(".pdf") else fname + ".pdf"
+        await self.store.add_output(mid, tid, uid, fname, "base64:" + b64)
+        words = len(text.split())
+        await self.store.add_event(uid, "output", f'Saved the book "{fname}": {pages} pages, {words:,} words, {len(data) // 1024} KB.', mission_id=mid, task_id=tid)
+        return (f'Saved "{fname}" to the outbox: {pages} pages (6 x 9 in), about {words:,} words, {len(data) // 1024} KB; front cover {"included" if cover else "NOT included"}, '
+                f'back cover {"included" if back else "NOT included"}; no pictures inside.'), None
 
     async def _design(self, task: Dict[str, Any], mission: Dict[str, Any], args: Dict[str, Any]):
         """A design pack from one library artwork: four images to the library, SVG and DXF cut files and a pack file to the outbox."""
