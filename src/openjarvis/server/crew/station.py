@@ -230,7 +230,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
     <div id="stage"><canvas id="cv"></canvas></div>
     <div id="chat" class="sec">
       <div id="chat-grip" title="Drag up or down to resize the chat"></div>
-      <div class="lbl"><span>Helix</span><span class="act"><span id="wake">VOICE: TAP TO WAKE</span> · <button class="lib-f" id="voice-tog" title="Helix reads her replies aloud">🔊 ON</button></span></div>
+      <div class="lbl"><span>Helix</span><span class="act"><span id="wake">VOICE: TAP TO WAKE</span> · <button class="lib-f" id="voice-tog" title="Helix reads her replies aloud">🔊 ON</button> <button class="lib-f" id="speed-tog" title="How fast Helix speaks. Click to change.">1×</button></span></div>
       <div id="chat-media" hidden></div>
       <div id="chat-log"></div>
       <div id="img-bar" hidden></div>
@@ -1885,6 +1885,17 @@ function stopSpeech() {
 }
 document.getElementById('voice-tog').onclick = () => { voiceOn = !voiceOn; if (!voiceOn) stopSpeech(); try { localStorage.setItem('aibussol_voice', voiceOn ? 'on' : 'off'); } catch (e) {} paintVoice(); };
 paintVoice();
+const SPEEDS = [0.75, 0.9, 1, 1.15, 1.3, 1.5, 1.75, 2];
+let voiceSpeed = 1;
+try { const v = parseFloat(localStorage.getItem('aibussol_voice_speed')); if (SPEEDS.includes(v)) voiceSpeed = v; } catch (e) {}
+function applySpeed(a) { if (!a) return; try { a.preservesPitch = true; a.mozPreservesPitch = true; a.webkitPreservesPitch = true; a.playbackRate = voiceSpeed; } catch (e) {} }
+function paintSpeed() { const b = document.getElementById('speed-tog'); b.textContent = voiceSpeed + '×'; b.classList.toggle('on', voiceSpeed !== 1); }
+document.getElementById('speed-tog').onclick = () => {
+  voiceSpeed = SPEEDS[(SPEEDS.indexOf(voiceSpeed) + 1) % SPEEDS.length];
+  try { localStorage.setItem('aibussol_voice_speed', String(voiceSpeed)); } catch (e) {}
+  applySpeed(_curAudio); paintSpeed();                         // takes effect on what she is saying right now
+};
+paintSpeed();
 function wakeLabel(text, cls) { const w = document.getElementById('wake'); w.textContent = text; w.className = cls || ''; }
 let _audioUnlocked = false;
 function unlockAudio() { if (_audioUnlocked) return; _audioUnlocked = true; try { const c = new (window.AudioContext || window.webkitAudioContext)(); c.resume().then(() => c.close()).catch(() => {}); } catch (e) {} }
@@ -1938,6 +1949,7 @@ async function speakReply(text, el, always) {
     for (const p2 of parts) { joined.set(new Uint8Array(p2), off); off += p2.byteLength; }
     const url = URL.createObjectURL(new Blob([joined.buffer], { type: 'audio/mpeg' })), audio = new Audio(url);
     _curAudio = audio;
+    applySpeed(audio);
     const done = () => { if (_curAudio === audio) { _curAudio = null; window._helixTalking = false; wakeLabel(wakeOn ? 'SAY "HEY HELIX"' : 'VOICE: TAP TO WAKE', wakeOn ? 'on' : ''); if (!isRec) resumeWake(); } URL.revokeObjectURL(url); };
     audio.onplay = () => { window._helixTalking = true; wakeLabel('HELIX IS SPEAKING', 'busy'); };
     audio.onended = done; audio.onerror = done;
