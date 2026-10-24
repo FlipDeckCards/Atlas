@@ -746,12 +746,12 @@ class TestHelixKeepsAttachedPictures:
 class TestStationArt:
     def test_art_is_served_only_from_the_allowed_names_and_a_missing_file_is_a_plain_404(self):
         from openjarvis.server.crew import routes
-        assert {"asteroid1.png", "asteroid2.png", "asteroid3.png", "satellite.png", "helix-walk.png"} == routes.ART_FILES
+        assert {"asteroid1.png", "asteroid2.png", "asteroid3.png", "satellite.png", "helix-walk.png", "helix-views.png"} == routes.ART_FILES
         assert run(routes.station_art("../../etc/passwd")).status_code == 404 and run(routes.station_art("satellite.png")).status_code == 404
 
     def test_the_station_uses_the_art_when_it_loads_and_keeps_its_drawings_otherwise(self):
         from openjarvis.server.crew.station import STATION_PAGE
-        for needle in ("const ART = ", "loadArt('helix-walk.png'", "if (ART.rocks.length)", "if (ART.satellite)", "if (ART.helix) onDeck.push"):
+        for needle in ("const ART = ", "loadArt('helix-walk.png'", "if (ART.rocks.length)", "if (ART.satellite)", "if (ART.helix || ART.helixViews) onDeck.push"):
             assert needle in STATION_PAGE
 
 
@@ -782,3 +782,39 @@ class TestStationNeverGoesBlankWhileDragging:
         from openjarvis.server.crew.station import STATION_PAGE
         assert "function paint(t)" in STATION_PAGE and "resize();                                              // resizing the canvas clears it" in STATION_PAGE
         assert "paint(performance.now());" in STATION_PAGE and "requestAnimationFrame(() => { queued = false; last = key; resize(); })" not in STATION_PAGE
+
+
+class TestArtPipeline:
+    def test_the_packer_trims_shrinks_and_builds_a_four_view_helix_sheet(self, tmp_path):
+        import importlib.util
+        from PIL import Image
+        spec = importlib.util.spec_from_file_location("make_station_art", "tools/art/make_station_art.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        src, out = tmp_path / "r", tmp_path / "o"
+        src.mkdir()
+
+        def render(name, size, box, color):
+            im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+            im.paste(Image.new("RGBA", (box[2] - box[0], box[3] - box[1]), color), box[:2])
+            im.save(src / f"{name}.png")
+        for n in ("asteroid1", "asteroid2", "asteroid3"):
+            render(n, 512, (40, 40, 440, 440), (150, 140, 130, 255))
+        render("satellite", 512, (100, 200, 400, 300), (80, 90, 200, 255))
+        for t, c in (("ny", (255, 0, 0, 255)), ("py", (0, 255, 0, 255)), ("px", (0, 0, 255, 255)), ("nx", (255, 255, 0, 255))):
+            render(f"helix_{t}", 256, (90, 20, 170, 240), c)
+        import sys
+        sys.argv = ["x", str(src), "--out", str(out), "--right", "px"]
+        mod.main()
+        assert Image.open(out / "asteroid1.png").size[0] <= 220 and Image.open(out / "satellite.png").size[0] <= 300
+        sheet = Image.open(out / "helix-views.png")
+        assert sheet.size == (mod.CELL * 4, mod.CELL)
+        cell = lambda k: sheet.crop((k * mod.CELL, 0, (k + 1) * mod.CELL, mod.CELL)).getpixel((mod.CELL // 2, mod.CELL - 20))
+        assert cell(0)[:3] == (255, 0, 0) and cell(1)[:3] == (0, 255, 0) and cell(2)[:3] == (0, 0, 255) and cell(3)[:3] == (255, 255, 0)     # front, back, right, left
+
+    def test_the_station_serves_and_draws_the_four_view_helix(self):
+        from openjarvis.server.crew import routes
+        from openjarvis.server.crew.station import STATION_PAGE
+        assert "helix-views.png" in routes.ART_FILES
+        for needle in ("loadArt('helix-views.png'", "ART.helixViews", "a walk made in code from still pictures"):
+            assert needle in STATION_PAGE

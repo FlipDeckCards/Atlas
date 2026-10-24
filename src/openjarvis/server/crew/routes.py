@@ -96,7 +96,7 @@ async def helix_portrait():
 
 
 _ART_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "art")
-ART_FILES = {"asteroid1.png", "asteroid2.png", "asteroid3.png", "satellite.png", "helix-walk.png"}      # Michael's own artwork for the Station's sky and deck
+ART_FILES = {"asteroid1.png", "asteroid2.png", "asteroid3.png", "satellite.png", "helix-walk.png", "helix-views.png"}      # Michael's own artwork for the Station's sky and deck
 
 
 @router.get("/crew/art/{name}")

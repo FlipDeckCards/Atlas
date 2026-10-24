@@ -1139,11 +1139,12 @@ function dirOf(dx, dy, prev) { if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) r
 const botSheet = new Image(); let botReady = false;
 botSheet.onload = () => { botReady = true; }; botSheet.src = '/crew/bots.png?v=' + BOT_VER;
 // Michael's own artwork, used when the file exists (a 404 leaves the built-in drawing): asteroids, the satellite, and Helix walking the deck
-const ART = { rocks: [], satellite: null, helix: null };
+const ART = { rocks: [], satellite: null, helix: null, helixViews: null };
 function loadArt(name, done) { const im = new Image(); im.onload = () => done(im); im.onerror = () => {}; im.src = '/crew/art/' + name; }
 ['asteroid1.png', 'asteroid2.png', 'asteroid3.png'].forEach(n => loadArt(n, im => ART.rocks.push(im)));
 loadArt('satellite.png', im => { ART.satellite = im; });
-loadArt('helix-walk.png', im => { ART.helix = im; });           // the same sheet layout as bots.png, one row: standing, then 4 walk frames each for front, back, right, left
+loadArt('helix-walk.png', im => { ART.helix = im; });
+loadArt('helix-views.png', im => { ART.helixViews = im; });     // four square pictures in a row: front, back, facing right, facing left; her walk is animated in code           // the same sheet layout as bots.png, one row: standing, then 4 walk frames each for front, back, right, left
 // the businesses on this Station: the owner's products, or a subscriber's own (from the server)
 function prods() {
   return (S && S.businesses ? S.businesses : []).map(b => ({ key: b.key, label: String(b.name).toUpperCase(), color: b.color || '#ff4fb8', url: b.url || '' }));
@@ -1733,7 +1734,7 @@ function drawCore(t) {
   });
   // each figure has its own pace and mind: it wanders around the deck, turns back, pauses, and drifts between the inner and outer lane
   const hash = (str) => { let h = 7; for (let c = 0; c < str.length; c++) h = (h * 31 + str.charCodeAt(c)) % 100003; return h; };
-  if (ART.helix) onDeck.push({ role: 'lead', status: 'idle' });                                           // Helix herself, walking among her crew
+  if (ART.helix || ART.helixViews) onDeck.push({ role: 'lead', status: 'idle' });                                           // Helix herself, walking among her crew
   onDeck.forEach((a, i) => {
     const h = hash(a.role), R = (k) => { const v = Math.sin(h * 12.9898 + k * 78.233) * 43758.5453; return v - Math.floor(v); };
     const dir = R(1) < 0.5 ? -1 : 1, a0 = -Math.PI / 2 + i * (Math.PI * 2 / Math.max(onDeck.length, 1)) + R(2) * 0.5;
@@ -1743,6 +1744,13 @@ function drawCore(t) {
     const [px, py] = at(t), [qx, qy] = at(t + 40), step = Math.hypot(qx - px, qy - py) / 40;
     const moving = step > 0.0012;                                                                            // slowed to a stop at the turn-around points: stands still
     const face = moving ? dirOf(qx - px, qy - py, 'front') : 'front';
+    if (a.role === 'lead' && !ART.helix && ART.helixViews) {
+      const d = BOT_DIRS[face] != null ? BOT_DIRS[face] : 0, cell = ART.helixViews.naturalHeight, ph = t * 0.008 + i, Hh = 46;
+      const bob = moving ? Math.abs(Math.sin(ph)) * 2.4 : Math.sin(t * 0.002 + i) * 0.6, lean = moving ? Math.sin(ph) * 0.07 : 0;       // a walk made in code from still pictures
+      ctx.save(); ctx.imageSmoothingQuality = 'high'; ctx.translate(px, py + 10.5); ctx.rotate(lean);
+      ctx.drawImage(ART.helixViews, d * cell, 0, cell, cell, -Hh / 2, -Hh * 0.95 - bob, Hh, Hh); ctx.restore();
+      return;
+    }
     if (a.role === 'lead' && ART.helix) {
       const d = BOT_DIRS[face] != null ? BOT_DIRS[face] : 0, col = moving ? 1 + d * 4 + Math.floor(t * 0.006 + i) % 4 : 0, Hh = 44;
       ctx.save(); ctx.imageSmoothingQuality = 'high';
