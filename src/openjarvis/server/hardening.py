@@ -229,6 +229,9 @@ MAX_UPLOAD_BODY_BYTES = MAX_AUDIO_BYTES + 64 * 1024  # a voice upload, by Conten
 CHAT_MAX_TOKENS = (
     1024  # reply length asked from the model (bounds the cost of one call)
 )
+CREW_CHAT_MAX_TOKENS = 3000  # the same, when Helix leads the crew and investigates (diagnoses, plans, long answers)
+CREW_TOOL_ROUNDS = 10  # how many tool calls in a row Helix may make to work something out
+CREW_HISTORY_MESSAGES = 24  # how much of the conversation she remembers (ordinary chat keeps 10)
 
 
 def too_large_for_path(path: str, content_length: Optional[str]) -> bool:

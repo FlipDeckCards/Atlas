@@ -229,7 +229,8 @@ async def pre_turn(ctx: Ctx, message: str, pending: Optional[PendingActions] = N
 async def run_model_with_tools(ctx: Optional[Ctx], messages: List[Dict[str, Any]], model_id: str, user_message: str, *, acompletion: Callable[..., Awaitable[Any]],
                                on_cost: Callable[[Any], Awaitable[None]], max_tokens: int, pending: Optional[PendingActions] = None,
                                extra_tools: Optional[List[Dict[str, Any]]] = None,
-                               extra_executor: Optional[Callable[[str, Dict[str, Any]], Awaitable[str]]] = None) -> Dict[str, Any]:
+                               extra_executor: Optional[Callable[[str, Dict[str, Any]], Awaitable[str]]] = None,
+                               max_rounds: int = MAX_TOOL_ROUNDS) -> Dict[str, Any]:
     """Call the model with the tools; run what it asks; return {'reply', 'ui'}. A pending paid action is armed after the reply is produced.
     ctx is None when media is off: then only extra_tools (the crew's, see server/crew/helix.py) are offered, run by extra_executor."""
     pending = pending or PENDING
@@ -238,7 +239,7 @@ async def run_model_with_tools(ctx: Optional[Ctx], messages: List[Dict[str, Any]
     extra_names = {t["function"]["name"] for t in extra_tools}
     tools = (TOOLS if ctx is not None else []) + extra_tools
     created_before = pending.get(ctx.user_id) if ctx is not None else None
-    for _ in range(MAX_TOOL_ROUNDS + 1):
+    for _ in range(max_rounds + 1):
         resp = await acompletion(model=model_id, messages=messages, tools=tools, max_tokens=max_tokens)
         await on_cost(resp)
         msg = resp.choices[0].message
