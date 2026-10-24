@@ -1008,3 +1008,7 @@ class TestImageTouchUps:
         w = world(two_task_plan(), AGENTS)
         out = run(w.engine.edit_image_item(UID, "item1", [{"op": "text", "text": ":"}]))
         assert out.startswith("Error:")
+
+
+def test_helix_is_told_to_offer_a_forge_fix_when_a_tool_is_missing():
+    assert "WHEN YOU CANNOT DO SOMETHING" in helix.OPERATING and "Forge" in helix.OPERATING and "Approve" in helix.OPERATING
