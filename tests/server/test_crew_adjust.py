@@ -1167,3 +1167,22 @@ class TestEtsySales:
         ctx = helix.CrewCtx(UID, w.engine)
         out = run(helix.execute(ctx, "read_platform", {"platform": "etsy", "action": "publish_listings"}))
         assert out.startswith("I can only read") and "etsy.get_sales" in out
+
+
+def test_briefs_sit_above_the_conversation_and_a_backlog_shows_only_two():
+    from openjarvis.server.crew.station import STATION_PAGE
+
+    assert STATION_PAGE.index("BRIEFS.slice(-2).forEach(b => log.append(briefCard(b)))") < STATION_PAGE.index("msgs.forEach(m => log.append(chatMsg(m.role, m.content)))")
+    assert "fresh.slice(-2).forEach(b => BRIEFS.push(b))" in STATION_PAGE
+
+
+def test_the_brief_lists_what_is_waiting_on_michael_and_stays_basic():
+    from openjarvis.server.crew.herald import glance_lines, pending_lines
+
+    qs = [{"text": "Merge   Forge's branch crew/x into main of FlipDeckCards/Atlas: " + "very long " * 30}] + [{"text": f"Item {i}"} for i in range(6)]
+    lines = pending_lines(qs, {})
+    assert len(lines) == 6 and lines[0].startswith("- Merge Forge's branch") and len(lines[0]) <= 114 and lines[-1].startswith("- ...and 2 more")
+    assert pending_lines([], {}) == ["- Nothing is waiting on you."]
+    g = glance_lines({"total": {"revenue_today": 1.0, "cost_today": 2.0, "net_today": -1.0, "revenue_30d": 5.0, "cost_30d": 9.0, "net_30d": -4.0, "mrr": 4.99, "subscribers": 1}},
+                     {}, {"users_total": 4, "active_24h": 1, "new_users_7d": 0}, {"running": 1, "queued": 4, "done_today": 3})
+    assert len(g) == 5 and not any("unchecked" in x.lower() or "Sites" in x for x in g)

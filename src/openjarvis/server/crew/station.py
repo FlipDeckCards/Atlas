@@ -1826,7 +1826,8 @@ async function checkBriefs() {
   const r = await api('/api/briefs/latest').catch(() => null);
   if (!r || !r.ok) return;
   const fresh = (r.data.items || []).filter(b => !seenBriefs().includes(b.id)).reverse();
-  fresh.forEach(b => { BRIEFS.push(b); markBriefSeen(b.id); });
+  fresh.forEach(b => markBriefSeen(b.id));
+  fresh.slice(-2).forEach(b => BRIEFS.push(b));                          // a long backlog (a new browser has seen none) shows only the 2 newest, not all of them
   if (fresh.length) loadChat(true);
 }
 function briefCard(b) {
@@ -2039,8 +2040,8 @@ async function loadChat(force) {
   const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
   log.textContent = '';
   if (!msgs.length && !BRIEFS.length) log.append(mk('div', 'dim', 'Talk to Helix here, type or say "Hey Helix". Say "build me…" to start a mission.'));
+  BRIEFS.slice(-2).forEach(b => log.append(briefCard(b)));                // new briefs sit above the conversation (the 2 newest), so the latest replies are what you see at the bottom
   msgs.forEach(m => log.append(chatMsg(m.role, m.content)));
-  BRIEFS.forEach(b => log.append(briefCard(b)));
   if (atBottom || force) log.scrollTop = log.scrollHeight;
 }
 async function sendChat() {
