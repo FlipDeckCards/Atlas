@@ -1695,11 +1695,11 @@ function drawCore(t) {
   onDeck.forEach((a, i) => {
     const h = hash(a.role), R = (k) => { const v = Math.sin(h * 12.9898 + k * 78.233) * 43758.5453; return v - Math.floor(v); };
     const dir = R(1) < 0.5 ? -1 : 1, a0 = -Math.PI / 2 + i * (Math.PI * 2 / Math.max(onDeck.length, 1)) + R(2) * 0.5;
-    const v = 0.00002 + R(3) * 0.00009, A = 0.5 + R(4) * 1.4, w = 0.00018 + R(5) * 0.0005, ph = R(6) * 6.28;       // steady walk plus a back-and-forth swing
-    const lane = ring * (0.1 + R(7) * 0.2), w2 = 0.0002 + R(8) * 0.0006, ph2 = R(9) * 6.28;
+    const v = 0.00001 + R(3) * 0.00003, A = 0.3 + R(4) * 0.4, w = 0.00008 + R(5) * 0.00014, ph = R(6) * 6.28;       // steady walk plus a back-and-forth swing
+    const lane = ring * (0.1 + R(7) * 0.2), w2 = 0.0001 + R(8) * 0.0003, ph2 = R(9) * 6.28;
     const at = (tt) => { const ang = a0 + dir * (v * tt + A * Math.sin(w * tt + ph)), rr = track + lane * Math.sin(w2 * tt + ph2); return [x + Math.cos(ang) * rr, y + Math.sin(ang) * rr + 4 * sc]; };
     const [px, py] = at(t), [qx, qy] = at(t + 40), step = Math.hypot(qx - px, qy - py) / 40;
-    const moving = step > 0.004;                                                                            // slowed to a stop at the turn-around points: stands still
+    const moving = step > 0.0012;                                                                            // slowed to a stop at the turn-around points: stands still
     const face = moving ? dirOf(qx - px, qy - py, 'front') : 'front';
     drawBot(px, py, ROLE_COLORS[a.role] || '#00e5ff', a.status, t, i * 4.1, face, sc, moving);
   });
