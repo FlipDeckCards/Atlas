@@ -183,7 +183,7 @@ def break_lines(words: List[List[Tuple[str, str]]], first_w: float, rest_w: floa
         for j in range(i, min(n, i + 60)):
             w += wl[j] + (sp if j > i else 0.0)
             gaps = j - i
-            if w > target + 0.14 * sp * gaps and j > i:
+            if w > target + (0.14 * sp * gaps if justify and j < n - 1 else 0.0) and j > i:
                 break
             slack = target - w
             if j == n - 1:
@@ -287,7 +287,22 @@ def block_split(text: str) -> List[Dict[str, Any]]:
             flush()
         para.append(s)
     flush()
-    return blocks
+    return drop_stray_rules(blocks)
+
+
+def drop_stray_rules(blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """A rule only means something between two passages of text: not at the start or end, beside a heading, or beside another rule."""
+    def opens(b):
+        return b["t"] == "h" and (b["level"] == 1 or PART.match(b["text"]) or CHAPTERISH.match(b["text"]))
+    out: List[Dict[str, Any]] = []
+    for i, b in enumerate(blocks):
+        if b["t"] == "hr":
+            prev = out[-1] if out else None
+            nxt = blocks[i + 1] if i + 1 < len(blocks) else None
+            if prev is None or nxt is None or prev["t"] in ("hr", "h") or nxt["t"] == "hr" or opens(nxt):
+                continue
+        out.append(b)
+    return out
 
 
 class Book:
