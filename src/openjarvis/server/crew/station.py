@@ -1168,6 +1168,8 @@ function resize() {
     const g = s.createRadialGradient(W * fx, H * fy, 0, W * fx, H * fy, Math.max(W, H) * rad);
     g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)'); s.fillStyle = g; s.fillRect(0, 0, W, H);
   }
+  drawMilkyWay(s, W, H);
+  mini = { x: W * 0.13, y: H * 0.2, vx: 0.0055, vy: 0.0012, rot: 0.35 };
   layout();
 }
 window.addEventListener('resize', resize);
@@ -1216,7 +1218,80 @@ function fitText(text, maxW) { let s = text; while (s.length > 3 && ctx.measureT
 function hash(str) { let h = 0; for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0; return Math.abs(h); }
 
 
+// ── deep space: a Milky Way in the far upper-right corner, shooting stars from any side at any depth, and a small station adrift ──
+function drawMilkyWay(c, w, h) {
+  const L = Math.max(w, h) * 0.78;
+  c.save(); c.translate(w * 0.9, h * 0.1); c.rotate(2.35);                 // a diagonal band running from the corner toward the middle
+  const glow = (len, thick, col, a) => {
+    c.save(); c.scale(1, thick / len);
+    const g = c.createRadialGradient(0, 0, 0, 0, 0, len);
+    g.addColorStop(0, col.replace('A', a)); g.addColorStop(0.55, col.replace('A', a * 0.45)); g.addColorStop(1, col.replace('A', 0));
+    c.fillStyle = g; c.beginPath(); c.arc(0, 0, len, 0, 6.29); c.fill(); c.restore();
+  };
+  glow(L, L * 0.34, 'rgba(70,60,150,A)', 0.2);                           // wide violet haze
+  glow(L * 0.85, L * 0.17, 'rgba(120,150,220,A)', 0.2);                  // blue-white arm
+  glow(L * 0.5, L * 0.07, 'rgba(255,225,190,A)', 0.24);                  // warm bright core
+  c.save(); c.translate(0, L * 0.015); glow(L * 0.7, L * 0.02, 'rgba(3,4,10,A)', 0.55); c.restore();   // the dark dust lane
+  for (let i = 0; i < 520; i++) {                                         // thousands of faint suns, thickest on the band's middle
+    const u = (Math.random() * 2 - 1), v = (Math.random() + Math.random() + Math.random() - 1.5) / 1.5;
+    const x = u * L * (0.2 + 0.8 * Math.random()), y = v * L * 0.12 * (1 - Math.abs(u) * 0.6);
+    const a = (0.1 + Math.random() * 0.5) * (1 - Math.abs(u) * 0.7);
+    c.fillStyle = Math.random() < 0.2 ? 'rgba(255,214,170,' + a + ')' : 'rgba(205,225,255,' + a + ')';
+    c.fillRect(x, y, Math.random() < 0.1 ? 1.6 : 0.9, Math.random() < 0.1 ? 1.6 : 0.9);
+  }
+  c.restore();
+}
+let meteors = [], nextMeteor = 0, mini = null, lastSkyT = 0;
+function spawnMeteor(t) {
+  const d = Math.random();                                                // 0 = far away (small, slow, faint), 1 = close (big, fast, bright)
+  const side = Math.floor(Math.random() * 4), m = 30;
+  const sx = side === 0 ? -m : side === 1 ? W + m : Math.random() * W, sy = side === 2 ? -m : side === 3 ? H + m : Math.random() * H;
+  const tx = W * (0.15 + Math.random() * 0.7), ty = H * (0.15 + Math.random() * 0.7), dx = tx - sx, dy = ty - sy, n = Math.hypot(dx, dy) || 1;
+  const speed = 0.22 + 0.7 * d, reach = Math.max(W, H) * (0.35 + Math.random() * 0.5);
+  meteors.push({ t0: t, sx, sy, ux: dx / n, uy: dy / n, speed, len: 36 + 170 * d, w: 0.7 + 2.1 * d, dur: reach / speed, a: 0.35 + 0.65 * d, warm: Math.random() < 0.25 });
+  if (meteors.length > 6) meteors.shift();
+}
+function drawMeteors(t) {
+  if (!reducedMotion && t > nextMeteor) { spawnMeteor(t); nextMeteor = t + 2200 + Math.random() * 7000; }
+  meteors = meteors.filter(k => t - k.t0 < k.dur);
+  for (const k of meteors) {
+    const e = t - k.t0, p = e / k.dur, hx = k.sx + k.ux * k.speed * e, hy = k.sy + k.uy * k.speed * e;
+    const fade = Math.min(1, p * 8, (1 - p) * 4) * k.a, tx = hx - k.ux * k.len, ty = hy - k.uy * k.len;
+    const col = k.warm ? '255,214,160' : '200,230,255';
+    const g = ctx.createLinearGradient(hx, hy, tx, ty);
+    g.addColorStop(0, 'rgba(' + col + ',' + fade + ')'); g.addColorStop(1, 'rgba(' + col + ',0)');
+    ctx.strokeStyle = g; ctx.lineWidth = k.w; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(tx, ty); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,' + fade + ')'; ctx.beginPath(); ctx.arc(hx, hy, k.w * 0.9, 0, 6.29); ctx.fill();
+  }
+}
+function drawMiniStation(t, dt) {                                         // far away and tiny: it only drifts and turns very slowly
+  if (!mini) return;
+  if (!reducedMotion) {
+    mini.x += mini.vx * dt; mini.y += mini.vy * dt; mini.rot += 0.00006 * dt;
+    if (mini.x > W + 60) { mini.x = -60; mini.y = H * (0.08 + Math.random() * 0.8); }
+  }
+  const u = Math.max(0.55, Math.min(1.1, SC)) * 0.9;
+  ctx.save(); ctx.translate(mini.x, mini.y); ctx.rotate(mini.rot); ctx.scale(u, u); ctx.globalAlpha = 0.8;
+  ctx.shadowColor = 'rgba(90,170,255,0.5)'; ctx.shadowBlur = 8;
+  ctx.fillStyle = '#7f93a8'; ctx.fillRect(-26, -2.2, 52, 4.4);              // truss
+  for (const sx of [-1, 1]) {                                               // solar wings, with their cell grid
+    ctx.fillStyle = '#1d4f8f'; ctx.fillRect(sx * 27 - (sx < 0 ? 13 : 0), -9, 13, 18);
+    ctx.strokeStyle = 'rgba(160,210,255,0.5)'; ctx.lineWidth = 0.5;
+    for (let i = 1; i < 4; i++) { const gx = sx * 27 + (sx < 0 ? -13 : 0) + i * 3.25; ctx.beginPath(); ctx.moveTo(gx, -9); ctx.lineTo(gx, 9); ctx.stroke(); }
+    ctx.beginPath(); ctx.moveTo(sx * 27 - (sx < 0 ? 13 : 0), 0); ctx.lineTo(sx * 27 + (sx < 0 ? 0 : 13), 0); ctx.stroke();
+  }
+  ctx.shadowBlur = 0; ctx.fillStyle = '#c4cfda'; ctx.fillRect(-6, -5, 12, 10);   // the hub
+  ctx.fillStyle = '#9fb0c2'; ctx.beginPath(); ctx.arc(0, 0, 4.6, 0, 6.29); ctx.fill();
+  ctx.strokeStyle = '#6a7d90'; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(0, 0, 11, 3.4, 0, 0, 6.29); ctx.stroke();      // habitat ring
+  ctx.beginPath(); ctx.moveTo(0, -5); ctx.lineTo(0, -12); ctx.stroke();                                                     // antenna
+  const blink = Math.sin(t * 0.004) > 0.4;
+  ctx.fillStyle = blink ? '#ff4455' : 'rgba(255,68,85,0.25)'; ctx.beginPath(); ctx.arc(0, -12, 1.3, 0, 6.29); ctx.fill();
+  ctx.fillStyle = blink ? 'rgba(80,255,150,0.25)' : '#50ff96'; ctx.beginPath(); ctx.arc(-26, 0, 1.2, 0, 6.29); ctx.fill();
+  ctx.restore();
+}
+
 function drawSky(t) {
+  const dt = lastSkyT ? Math.min(100, t - lastSkyT) : 16; lastSkyT = t;
   if (sky) ctx.drawImage(sky, 0, 0, W, H);
   for (const s of stars) {
     const tw = 0.35 + 0.65 * Math.abs(Math.sin(t * 0.0006 * (0.4 + s.z) + s.p));
@@ -1224,6 +1299,8 @@ function drawSky(t) {
     const x = (s.x + t * 0.003 * s.z) % W; const sz = s.z > 0.9 ? 1.8 : 1;
     ctx.fillRect(x, s.y, sz, sz);
   }
+  drawMiniStation(t, dt);
+  drawMeteors(t);
 }
 
 // where a line from the core towards a module meets that module's edge

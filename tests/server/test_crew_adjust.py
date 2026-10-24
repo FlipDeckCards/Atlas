@@ -261,3 +261,10 @@ class TestMissionsWithoutABusiness:
     def test_a_mission_no_business_owns_gets_no_factory_of_its_own(self):
         from openjarvis.server.crew.station import STATION_PAGE
         assert "return 'aibussol';" in STATION_PAGE and "return 'new:' + String(m.title" not in STATION_PAGE
+
+
+class TestDeepSpace:
+    def test_the_station_sky_has_a_milky_way_shooting_stars_and_a_drifting_station(self):
+        from openjarvis.server.crew.station import STATION_PAGE
+        for needle in ("function drawMilkyWay", "function spawnMeteor", "function drawMiniStation", "drawMeteors(t);", "drawMilkyWay(s, W, H);"):
+            assert needle in STATION_PAGE
