@@ -669,6 +669,8 @@ class CrewEngine:
             self._sentinel_task = asyncio.create_task(self.sentinel.maybe_run())
         if self.weekly is not None and self._ticks % 6 == 1 and (self._weekly_task is None or self._weekly_task.done()):
             self._weekly_task = asyncio.create_task(self.weekly.maybe_run())
+        if self._ticks % 6 == 3:
+            await self._auto_approve_due()
         if self._ticks % 30 == 0:
             self._refresh_products_soon()
             await self.store.requeue_stale(STALE_RUNNING_S)
@@ -695,6 +697,30 @@ class CrewEngine:
                 self.running[claimed["id"]] = asyncio.create_task(self._run_guarded(claimed))
                 started += 1
         return started
+
+    async def _auto_approve_due(self) -> int:
+        """Held social weeks (a question with action.auto_at) schedule themselves once their hold has passed, unless Michael declined first."""
+        done = 0
+        try:
+            now = self.now()
+            for q in await self.store.open_questions_all():
+                at = (q.get("action") or {}).get("auto_at")
+                if not at or q["kind"] not in ("checkpoint", "ops"):
+                    continue
+                try:
+                    due = dt.datetime.fromisoformat(str(at)) <= now
+                except ValueError:
+                    continue
+                if due:
+                    try:
+                        await self.answer(q["user_id"], q["id"], approve=True)
+                        await self.store.add_event(q["user_id"], "ops", "A held social week scheduled itself after its hold.", mission_id=q.get("mission_id") or "")
+                        done += 1
+                    except (ValueError, LookupError):
+                        pass
+        except Exception:
+            logger.exception("auto-approve of held social weeks failed")
+        return done
 
     def _designer_busy(self) -> bool:
         return any(not t.done() for tid, t in self.running.items() if self._role_of.get(tid) == "designer")
@@ -2158,9 +2184,16 @@ class CrewEngine:
             what = conns.describe_action(platform, action, params)
         except conns.ConnectionError_ as exc:
             return f"Error: {exc}", None
-        await self.store.add_question(mid, tid, uid, "checkpoint", what, ["Approve", "Decline"], {"platform": platform, "action": action, "args": params})
-        await self.store.add_event(uid, "checkpoint", f"Checkpoint for Michael: {what}", mission_id=mid, task_id=tid)
-        await self._notify(uid, "Approval needed", what + "\nApprove or decline it in Aibussol.")
+        act = {"platform": platform, "action": action, "args": params}
+        hold = ""
+        if platform == "marnyx" and action == "schedule_week":
+            from openjarvis.server.crew import weekly
+
+            act["auto_at"] = weekly.auto_at(envx, self.now())                           # a social week is held, then schedules itself unless declined
+            hold = (f" It schedules itself in {weekly.hold_hours(envx):g} hours unless you decline it." if act["auto_at"] else "")
+        await self.store.add_question(mid, tid, uid, "checkpoint", what + hold, ["Approve", "Decline"], act)
+        await self.store.add_event(uid, "checkpoint", f"Checkpoint for Michael: {what}{hold}", mission_id=mid, task_id=tid)
+        await self._notify(uid, "Approval needed" if not hold else "Social week held", what + hold + "\nApprove or decline it in Aibussol.")
         return "Sent to Michael as a checkpoint. It has NOT run. Stop here; you will continue with the result.", "waiting"
 
     # ── answers from the owner ───────────────────────────────────────────────────────────────────
@@ -2282,6 +2315,9 @@ class CrewEngine:
             if kind == "start_mission":
                 m = await self.start_mission(user_id, act.get("goal") or "", act.get("budget_usd"))
                 result = f'Mission started with a ${m["budget_usd"]:.2f} budget. Forge will fix it on a crew/ branch and ask you before merging.'
+            elif kind == "marnyx_schedule":
+                result = await conns.run("marnyx", "schedule_week", {"business": act.get("business"), "posts": act.get("posts")}, store=self.store, user_id=user_id,
+                                         env=envx, client_factory=self.client_factory)
             else:
                 rd = devtools.Render(envx, self.client_factory)
                 sid = str(act.get("service_id") or "")
@@ -2293,7 +2329,7 @@ class CrewEngine:
                     result = await rd.rollback(sid, str(act.get("deploy_id") or ""))
                 else:
                     raise ValueError("Unknown action.")
-        except (devtools.DevError, ValueError) as exc:
+        except (devtools.DevError, ValueError, conns.ConnectionError_) as exc:
             result = f"It failed: {exc}"
         except Exception:
             logger.exception("ops action failed")

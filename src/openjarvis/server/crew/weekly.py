@@ -20,12 +20,42 @@ DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 GOAL = (
     "Weekly social plan for the week of {week}. For every brand's social calendar: first Echo runs marnyx.list_accounts "
     "to see the brands (FlipDeck, Marnyx, Aibussol when it has accounts) and their connected socials. For EACH brand with connected "
-    "socials, Echo plans the coming Monday to Sunday: 1 to 2 posts a day on the platforms that brand has connected, scheduled at good "
-    "times in Los Angeles time (ISO with offset), varied (tips, behind the scenes, product, community, offers), on brand and honest, with "
-    "hashtags; no claims or prices that are not true. Then Echo sends each brand's week with ONE marnyx.schedule_week call, which "
-    "becomes a single approval for Michael. If a brand has email subscribers, Spark writes one short, useful email for that brand's "
-    "subscribers this week and sends it with marnyx.send_email (its own approval). Lens reviews before anything is sent. Budget $1."
+    "socials, Echo plans the coming Monday to Sunday: {per_day} posts a day spread across the day (about 7am to 10pm) on the platforms that "
+    "brand has connected, scheduled in Los Angeles time (ISO with offset), varied (tips, behind the scenes, product, community, offers, "
+    "questions to the audience), on brand and honest, with hashtags; no claims or prices that are not true and no two posts alike. "
+    "Marnyx takes at most 28 posts per call, so Echo sends each brand's week in TWO marnyx.schedule_week calls (Monday to Wednesday, then "
+    "Thursday to Sunday). Each call becomes one held approval for Michael: {hold}. If a brand has email subscribers, Spark writes one short, "
+    "useful email for that brand's subscribers this week and sends it with marnyx.send_email (its own approval). Lens reviews before "
+    "anything is sent. Budget $3."
 )
+
+
+def social_mode(env=None) -> str:
+    """'auto_pause' (default): a brand's week schedules itself after a hold, unless declined; 'approve': it waits for the Approve tap."""
+    raw = ((os.environ if env is None else env).get("CREW_SOCIAL_MODE") or "auto_pause").strip().lower()
+    return "approve" if raw in ("approve", "manual", "off") else "auto_pause"
+
+
+def hold_hours(env=None) -> float:
+    try:
+        return min(72.0, max(0.25, float((os.environ if env is None else env).get("CREW_SOCIAL_HOLD_HOURS") or 6)))
+    except (TypeError, ValueError):
+        return 6.0
+
+
+def per_day(env=None) -> int:
+    try:
+        return min(8, max(1, int((os.environ if env is None else env).get("CREW_SOCIAL_PER_DAY") or 6)))
+    except (TypeError, ValueError):
+        return 6
+
+
+def auto_at(env=None, now=None) -> str:
+    """When a held social week schedules itself (an ISO time), or '' in approve mode."""
+    if social_mode(env) != "auto_pause":
+        return ""
+    base = now or dt.datetime.now(dt.timezone.utc)
+    return (base + dt.timedelta(hours=hold_hours(env))).isoformat()
 
 
 def schedule(env=None):
@@ -73,10 +103,13 @@ class WeeklySocial:
             return None
         await store.set_secret(uid, mark, self.now().isoformat())
         try:
-            m_ = await self.engine.start_mission(uid, GOAL.format(week=week.strftime("%B %d")), 1.0)
+            hold = ("each schedules itself automatically after a " + f"{hold_hours(envx):g}-hour hold unless Michael declines" if social_mode(envx) == "auto_pause"
+                    else "Michael approves each one")
+            m_ = await self.engine.start_mission(uid, GOAL.format(week=week.strftime("%B %d"), per_day=per_day(envx), hold=hold), 3.0)
         except Exception:
             logger.exception("weekly social plan could not start")
             return None
         await self.engine._notify(uid, "Weekly social plan started", "The crew is planning next week's posts for each brand. "
-                                  "You'll get one approval per brand in Helix's inbox.")
+                                  + ("Each week schedules itself after the hold unless you decline it in Helix's inbox." if social_mode(envx) == "auto_pause"
+                                     else "You'll get approvals in Helix's inbox."))
         return m_["id"]
