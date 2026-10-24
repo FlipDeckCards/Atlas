@@ -1909,7 +1909,7 @@ class CrewEngine:
         note = f"Edited picture saved to the media library as item {item.id} (from item {item_id}): {imageedit.summary(edits)}.\n"
         if mission_id:
             await self.store.add_output(mission_id, task_id, uid, f"edited-image-{item.id[:8]}.md", note)
-            await self.store.add_event(uid, "output", f'Edited a picture: "{item.title}" (new item in your media library).', mission_id=mission_id, task_id=task_id or None)
+            await self.store.add_event(uid, "output", f'Edited a picture: "{item.title}" (new item in your media library).', mission_id=mission_id, task_id=task_id or "")
         return (note + "Use inspect_image on the NEW item to check the lettering landed where you wanted; the original is unchanged. "
                 "Use the new item id wherever the picture is needed (for a book: cover_item).")
 
@@ -2003,7 +2003,7 @@ class CrewEngine:
                                            "barcode_space", "replacements") if args.get(k) not in (None, "", [])}
         await self.store.add_output(mid, tid, uid, fname[:-4] + ".recipe.json", json.dumps(recipe, indent=1))                # lets "rebuild that book with these changes" work later
         words = len(text.split())
-        await self.store.add_event(uid, "output", f'Saved the book "{fname}": {pages} pages, {words:,} words, {len(data) // 1024} KB.', mission_id=mid, task_id=tid or None)
+        await self.store.add_event(uid, "output", f'Saved the book "{fname}": {pages} pages, {words:,} words, {len(data) // 1024} KB.', mission_id=mid, task_id=tid or "")
         return (('Spelling fixes applied: ' + '; '.join(fixed) + '. ' if fixed else '') + f'Saved "{fname}" to the outbox: {pages} pages (6 x 9 in), about {words:,} words, {len(data) // 1024} KB; front cover {"included" if cover else "NOT included"}, '
                 f'back cover {"picture included" if back else "picture NOT included"}'
                 f'{" with the tagline and description typeset on it" if back_text["tagline"] or back_text["blurb"] else " (no back-cover text given)"}; no pictures inside.'), None
