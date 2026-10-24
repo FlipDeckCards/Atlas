@@ -57,7 +57,7 @@ SETUP_STEPS = [
     ("workbench", "your PC (Rig)", "Run the Workbench helper on the computer that has your project. The Connections panel shows the command to copy.", ""),
 ]
 CHANGES_STATION = {"add_business", "rename_business", "remove_business", "rename_mission", "add_task", "edit_task", "retry_task",
-                   "attach_document", "pause_mission", "resume_mission", "answer_crew_question"}     # tools after which the Station must redraw
+                   "attach_document", "cancel_mission", "pause_mission", "resume_mission", "answer_crew_question"}     # tools after which the Station must redraw
 OWNER_FIXED_KEYS_HELIX = {"flipdeck", "marnyx", "deadzone"}   # the owner's rows that are not stored (see routes.OWNER_BUSINESSES)
 
 CREW_TOOLS: List[Dict[str, Any]] = [
@@ -102,7 +102,7 @@ CREW_TOOLS: List[Dict[str, Any]] = [
         "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
         "name": "remove_business",
-        "description": "Remove a business you added from the All businesses box. The FlipDeck, Marnyx and Deadzone rows cannot be removed.",
+        "description": "Remove a factory from the Station: a business you added, or a factory made by missions (it is removed by cancelling those missions; their files stay readable). The FlipDeck, Marnyx and Deadzone rows cannot be removed.",
         "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "The business name to remove."}}, "required": ["name"]}}},
     {"type": "function", "function": {
         "name": "add_task",
@@ -137,6 +137,10 @@ CREW_TOOLS: List[Dict[str, Any]] = [
         "description": "Read a file from any of the user's missions' outboxes, whatever the mission's status. Pass mission_id when several missions have the same file name. Long files: pass offset to continue.",
         "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "mission_id": {"type": "string"}, "offset": {"type": "integer"}}, "required": ["name"]}}},
     {"type": "function", "function": {
+        "name": "cancel_mission",
+        "description": "Cancel a mission for good (its unfinished tasks stop and its factory leaves the Station; its files stay readable). Only when the user asks to cancel or delete it.",
+        "parameters": {"type": "object", "properties": {"mission_id": {"type": "string"}}, "required": ["mission_id"]}}},
+    {"type": "function", "function": {
         "name": "pause_mission",
         "description": "Pause a mission (its agents stop starting new steps).",
         "parameters": {"type": "object", "properties": {"mission_id": {"type": "string"}}, "required": ["mission_id"]}}},
@@ -164,6 +168,35 @@ async def ctx_for(request) -> Optional[CrewCtx]:
 
 def _clip(v: Any, n: int) -> str:
     return " ".join(str(v if v is not None else "").split())[:n]
+
+
+def _norm(v: Any) -> str:
+    return " ".join(str(v or "").lower().split())
+
+
+async def _cancel(eng, user_id: str, mission_id: str) -> Dict[str, Any]:
+    """Cancel a mission whatever it is doing; a finished one is marked cancelled too, so its factory leaves the Station."""
+    m = await eng.cancel_mission(user_id, mission_id)
+    if m["status"] == "done":
+        await eng.store.update_mission(mission_id, status="cancelled")
+        await eng.store.add_event(user_id, "mission", "Mission removed from the Station (by Helix).", mission_id=mission_id)
+        m = await eng.store.get_mission(mission_id)
+    return m
+
+
+async def _remove_mission_factory(ctx: CrewCtx, name: str) -> str:
+    """A factory on the Station that no business owns is a mission's: it goes when its missions are cancelled. Says plainly when nothing matched."""
+    want = _norm(name)
+    live = [m for m in await ctx.engine.store.list_missions(ctx.user_id, 200) if m["status"] != "cancelled"]
+    hits = [m for m in live if _norm(m["title"] or m["goal"]) == want] or [m for m in live if len(want) >= 4 and want in _norm(m["title"] or m["goal"])]
+    titles = sorted({_norm(m["title"] or m["goal"]) for m in hits})
+    if not hits:
+        return f'Nothing was removed: there is no business or mission factory called "{name}" on the Station.'
+    if len(titles) > 1:
+        return "Nothing was removed: several factories match (" + "; ".join(titles[:5]) + "). Ask the user which one."
+    for m in hits:
+        await _cancel(ctx.engine, ctx.user_id, m["id"])
+    return f'Removed the "{hits[0]["title"] or name}" factory from the Station by cancelling its {len(hits)} mission(s). Their files stay readable.'
 
 
 async def status_text(ctx: CrewCtx) -> str:
@@ -316,13 +349,19 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
         if name == "remove_business":
             from openjarvis.server.crew import tenant
 
-            key = tenant.slug(_clip(args.get("name"), 40))
+            shown = _clip(args.get("name"), 80)
+            key = tenant.slug(shown)
             if key in OWNER_FIXED_KEYS_HELIX:
                 return "Not removed: the FlipDeck, Marnyx and Deadzone rows stay on the Station."
-            await tenant.remove_business(eng.store, ctx.user_id, key)
-            eng.drop_products_cache(ctx.user_id)
-            await eng.store.add_event(ctx.user_id, "business", f"Removed {_clip(args.get('name'), 40)} from the Station (by Helix).")
-            return f'Removed "{_clip(args.get("name"), 40)}" from the All businesses box.'
+            if any(b["key"] == key for b in await tenant.businesses(eng.store, ctx.user_id)):
+                await tenant.remove_business(eng.store, ctx.user_id, key)
+                eng.drop_products_cache(ctx.user_id)
+                await eng.store.add_event(ctx.user_id, "business", f"Removed {shown} from the Station (by Helix).")
+                return f'Removed "{shown}" from the All businesses box and the Station.'
+            return await _remove_mission_factory(ctx, shown)
+        if name == "cancel_mission":
+            m = await _cancel(eng, ctx.user_id, str(args.get("mission_id") or ""))
+            return f'Mission "{m["title"] or _clip(m["goal"], 60)}" is cancelled and its factory is off the Station. Its files stay readable.'
 
         if name == "answer_crew_question":
             q = await eng.store.get_question(str(args.get("question_id") or ""))

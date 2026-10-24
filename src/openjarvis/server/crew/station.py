@@ -174,8 +174,9 @@ STATION_PAGE = r"""<!DOCTYPE html>
   .ans .b.tool { padding:6px 9px; font-size:14px; line-height:1; }
   .ans .b.tool.rec { border-color:var(--red); color:var(--red); animation:blink 1s infinite; }
   @keyframes blink { 50% { opacity:0.45; } }
-  #img-bar { display:flex; gap:8px; align-items:center; margin-top:6px; font-size:10px; color:var(--text-dim); }
+  #img-bar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:6px; font-size:10px; color:var(--text-dim); }
   #img-bar[hidden] { display:none; }
+  #img-bar .chip { display:flex; gap:6px; align-items:center; border:1px solid var(--line, #1c3a4f); border-radius:2px; padding:2px 4px; }
   #img-bar img { width:34px; height:34px; object-fit:cover; border-radius:2px; }
   .cm img.th { max-width:140px; max-height:100px; display:block; margin-top:6px; border-radius:2px; }
   .cm .vn { font-size:10px; color:var(--orange); margin-top:4px; }
@@ -232,8 +233,8 @@ STATION_PAGE = r"""<!DOCTYPE html>
       <div class="lbl"><span>Helix</span><span class="act"><span id="wake">VOICE: TAP TO WAKE</span> · <button class="lib-f" id="voice-tog" title="Helix reads her replies aloud">🔊 ON</button></span></div>
       <div id="chat-media" hidden></div>
       <div id="chat-log"></div>
-      <div id="img-bar" hidden><img id="img-thumb" alt=""/><span id="img-name"></span><button class="xbtn" id="img-clear" title="Remove the image">✕</button></div>
-      <div class="ans"><button class="b tool" id="mic" title='Talk to Helix (or say "Hey Helix", then "send")'>🎙</button><label class="b tool" for="img-in" title="Attach an image, a Word (.docx) or a text document">📎</label><input id="img-in" type="file" accept="image/*,.docx,.txt,.md,.markdown,.csv,.tsv,.json,.log,.rtf" hidden/><input id="chat-in" name="helix-message" type="text" maxlength="8000" placeholder='Type, or say "Hey Helix"…' autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other"/><button class="b" id="chat-send">Send</button></div>
+      <div id="img-bar" hidden></div>
+      <div class="ans"><button class="b tool" id="mic" title='Talk to Helix (or say "Hey Helix", then "send")'>🎙</button><label class="b tool" for="img-in" title="Attach up to 5 images, Word (.docx) or text documents">📎</label><input id="img-in" type="file" multiple accept="image/*,.docx,.txt,.md,.markdown,.csv,.tsv,.json,.log,.rtf" hidden/><input id="chat-in" name="helix-message" type="text" maxlength="8000" placeholder='Type, or say "Hey Helix"…' autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other"/><button class="b" id="chat-send">Send</button></div>
     </div>
   </div>
   <div id="right" class="col"><div class="col-grip" id="right-grip" title="Drag to resize"></div><div id="links-box"></div><div id="side-body"></div></div>
@@ -450,6 +451,7 @@ async function refresh() {
   if (!r.data.enabled) { crewOff(r.data.detail || 'The crew is not switched on.'); return; }
   gate(null);
   S = r.data;
+  spinOnMissionChange(S.missions || []);                  // a mission started or finished: spin the ring
   document.getElementById('c-run').textContent = S.running;
   document.getElementById('c-spend').textContent = money(S.spend.today_usd) + (S.spend.daily_cap_usd == null ? ' · no cap' : ' of ' + money(S.spend.daily_cap_usd) + ' cap');
   setState(S.blocked ? 'HOLD: ' + String(S.blocked).toUpperCase() : 'CREW READY');
@@ -1305,6 +1307,38 @@ function factories() {                                                   // ever
   return prods().map(f => fillBay(Object.assign({}, f))).concat([coreBay()], newKeys().map(newBay));
 }
 
+// the victory spin: every factory and its tube swing around Helix a couple of times, then settle exactly where they were
+const SPIN = { on: false, t0: 0, dur: 3400, turns: 2, cur: 0 };
+function poseMods(extra) {
+  mods.forEach(m => {
+    const a = (m.a0 === undefined ? m.a : m.a0) + extra;
+    Object.assign(m, { a, ux: Math.cos(a), uy: Math.sin(a), cx: core.x + Math.cos(a) * m.D, cy: core.y + Math.sin(a) * m.D, rot: a + Math.PI / 2 });
+  });
+}
+function startSpin() {
+  if (SPIN.on || !mods.length) return;
+  try { if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return; } catch (e) {}
+  SPIN.on = true; SPIN.t0 = performance.now(); SPIN.cur = 0;
+}
+function stepSpin(t) {
+  if (!SPIN.on) return;
+  const p = (t - SPIN.t0) / SPIN.dur;
+  if (p >= 1) { SPIN.on = false; SPIN.cur = 0; }
+  else SPIN.cur = SPIN.turns * 2 * Math.PI * (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);   // slow start, fast middle, slow stop
+  poseMods(SPIN.cur);
+}
+let missionSeen = null;                                   // mission id -> last status; null until the first state arrives
+function spinOnMissionChange(missions) {
+  const now = new Map(missions.map(m => [m.id, m.status]));
+  if (missionSeen) {
+    for (const [id, st] of now) {
+      const before = missionSeen.get(id);
+      if ((before === undefined && (st === 'planning' || st === 'active')) || (before !== undefined && before !== 'done' && st === 'done')) { startSpin(); break; }
+    }
+  }
+  missionSeen = now;
+}
+
 function layout() {
   const pl = prods(), nk = newKeys();
   // the ring grows: the 8 fixed slots, then one more branch for every business past the 4th and every extra mission factory
@@ -1327,6 +1361,8 @@ function layout() {
     const a = -Math.PI / 2 + i * 2 * Math.PI / N;
     return Object.assign(m, { a, ux: Math.cos(a), uy: Math.sin(a), cx: core.x + Math.cos(a) * D, cy: core.y + Math.sin(a) * D, w: mw, h: mh, rot: a + Math.PI / 2, D });
   });
+  mods.forEach(m => { m.a0 = m.a; });
+  if (SPIN.on) poseMods(SPIN.cur);
   bays = mods.filter(m => !m.platform && !m.expansion);
   core.bay = coreBay();
 }
@@ -1557,6 +1593,7 @@ function frame(t) {
   const dt = Math.min(100, t - (lastT || t)); lastT = t; lastDraw = t;
   ctx.clearRect(0, 0, W, H);
   drawSky(t);
+  stepSpin(t);
   mods.forEach(m => drawSpoke(m, t));
   mods.forEach(m => drawModule(m, t, dt));
   drawCore(t);
@@ -1573,6 +1610,7 @@ function hit(x, y) {
 }
 cv.addEventListener('click', e => {
   const r = cv.getBoundingClientRect(), h = hit(e.clientX - r.left, e.clientY - r.top);
+  if (Math.hypot(e.clientX - r.left - core.x, e.clientY - r.top - core.y) <= core.r + 8) startSpin();      // click Helix: the whole ring spins around him
   if (h) {
     selected = h; renderSide(true);
     // on a phone the panel sits below the station and the chat: bring it into view
@@ -1588,7 +1626,7 @@ function chatMsg(role, text) {
   const d = mk('div', 'cm ' + (role === 'user' ? 'u' : 'a'));
   d.append(mk('div', 'tg', role === 'user' ? 'YOU' : (String(text).startsWith('CREW ·') ? 'CREW' : 'HELIX')), mk('div', null, text));
   const extra = LIVE.get(role + '|' + text);
-  if (extra && extra.img) { const im = mk('img', 'th'); im.src = extra.img; im.alt = 'attached image'; d.append(im); }
+  if (extra && extra.imgs) extra.imgs.forEach(u => { const im = mk('img', 'th'); im.src = u; im.alt = 'attached image'; d.append(im); });
   if (extra && extra.openId) { const b = mk('button', 'lib-f', 'Open'); b.style.marginTop = '6px'; b.onclick = () => openMedia(extra.openId); d.append(b); }
   return d;
 }
@@ -1621,23 +1659,33 @@ function briefCard(b) {
   return d;
 }
 
-// an image or a document (Word .docx, text) attached to a message: images are looked at, documents are read by Helix and passed to the crew
-let pendingImg = null;
-const DOC_EXT = /\.(docx|txt|md|markdown|csv|tsv|json|log|rtf)$/i, MAX_DOC_BYTES = 3 * 1024 * 1024;
-document.getElementById('img-in').addEventListener('change', () => {
-  const f = document.getElementById('img-in').files[0]; if (!f) return;
-  const isDoc = !String(f.type).startsWith('image/') && DOC_EXT.test(f.name);
-  const bad = !isDoc && !String(f.type).startsWith('image/') ? (/\.doc$/i.test(f.name) ? 'Old .doc files cannot be read. Save it as .docx or .txt and attach that.' : 'Attach an image, a Word (.docx) or a text document (.txt, .md, .csv, .json).')
-    : isDoc && f.size > MAX_DOC_BYTES ? 'That document is too large (limit 3 MB).' : '';
-  if (bad) { clearImg(); const log = document.getElementById('chat-log'); log.append(chatMsg('assistant', bad)); log.scrollTop = log.scrollHeight; return; }
-  const rd = new FileReader();
-  rd.onload = (e) => { pendingImg = { url: e.target.result, b64: String(e.target.result).split(',')[1], name: f.name, doc: isDoc };
-    const th = document.getElementById('img-thumb'); th.style.display = isDoc ? 'none' : ''; th.src = isDoc ? '' : pendingImg.url;
-    document.getElementById('img-name').textContent = (isDoc ? '📄 ' : '') + f.name.slice(0, 28); document.getElementById('img-bar').hidden = false; };
-  rd.readAsDataURL(f);
+// up to 5 images and documents (Word .docx, text) attached to a message: images are looked at, documents are read by Helix and passed to the crew
+let pending = [];
+const DOC_EXT = /\.(docx|txt|md|markdown|csv|tsv|json|log|rtf)$/i, MAX_ATTACH = 5, MAX_DOC_BYTES = 3 * 1024 * 1024, MAX_IMG_BYTES = 5 * 1024 * 1024, MAX_ALL_BYTES = 12 * 1024 * 1024;
+function attachNote(text) { const log = document.getElementById('chat-log'); log.append(chatMsg('assistant', text)); log.scrollTop = log.scrollHeight; }
+function paintAttach() {
+  const bar = document.getElementById('img-bar'); bar.textContent = ''; bar.hidden = !pending.length;
+  pending.forEach((p, i) => {
+    const c = mk('span', 'chip');
+    if (p.doc) c.append(mk('span', null, '📄')); else { const im = mk('img'); im.src = p.url; im.alt = ''; c.append(im); }
+    c.append(mk('span', null, p.name.slice(0, 24)));
+    const x = mk('button', 'xbtn', '✕'); x.title = 'Remove ' + p.name; x.onclick = () => { pending.splice(i, 1); paintAttach(); }; c.append(x); bar.append(c);
+  });
+}
+document.getElementById('img-in').addEventListener('change', async () => {
+  const inp = document.getElementById('img-in'), files = Array.from(inp.files || []); inp.value = '';
+  for (const f of files) {
+    const img = String(f.type).startsWith('image/'), doc = !img && DOC_EXT.test(f.name);
+    if (pending.length >= MAX_ATTACH) { attachNote('Up to ' + MAX_ATTACH + ' files at a time. Send this message first, then attach more.'); break; }
+    if (!img && !doc) { attachNote(/\.doc$/i.test(f.name) ? f.name + ': old .doc files cannot be read. Save it as .docx or .txt and attach that.' : f.name + ': attach images, Word (.docx) or text documents (.txt, .md, .csv, .json).'); continue; }
+    if (f.size > (doc ? MAX_DOC_BYTES : MAX_IMG_BYTES)) { attachNote(f.name + ' is too large (limit ' + (doc ? 3 : 5) + ' MB).'); continue; }
+    if (pending.reduce((n, p) => n + p.size, 0) + f.size > MAX_ALL_BYTES) { attachNote('Those files are too large together (limit 12 MB).'); continue; }
+    const url = await new Promise(res => { const rd = new FileReader(); rd.onload = e => res(String(e.target.result)); rd.onerror = () => res(''); rd.readAsDataURL(f); });
+    if (url) pending.push({ url, b64: url.split(',')[1], name: f.name, size: f.size, doc, mime: img ? f.type : '' });
+  }
+  paintAttach();
 });
-function clearImg() { pendingImg = null; document.getElementById('img-bar').hidden = true; document.getElementById('img-in').value = ''; }
-document.getElementById('img-clear').onclick = clearImg;
+function clearImg() { pending = []; paintAttach(); document.getElementById('img-in').value = ''; }
 
 // ── voice: "Hey Helix" wake word, the mic button, and Helix reading her replies aloud ──
 let voiceOn = true;
@@ -1785,7 +1833,7 @@ async function loadChat(force) {
 }
 async function sendChat() {
   const inp = document.getElementById('chat-in');
-  const text = inp.value.trim() || (pendingImg && pendingImg.doc ? 'Please read the attached document.' : '');
+  const text = inp.value.trim() || (pending.length ? 'Please look at the attached ' + (pending.length > 1 ? 'files.' : pending[0].doc ? 'document.' : 'image.') : '');
   if (!text || chatBusy) return;
   chatBusy = true; inp.value = '';
   const log = document.getElementById('chat-log');
@@ -1797,11 +1845,12 @@ async function sendChat() {
     else wait.lastChild.textContent = (r && typeof r.data.detail === 'string') ? r.data.detail : 'That could not be made right now.';
     chatBusy = false; return;
   }
-  const img = pendingImg; clearImg();
-  if (img && !img.doc) LIVE.set('user|' + text, { img: img.url });
-  log.append(chatMsg('user', img && img.doc ? text + '\n📄 ' + img.name : text)); const wait = chatMsg('assistant', '…'); log.append(wait); log.scrollTop = log.scrollHeight;
+  const files = pending; clearImg();
+  const shownText = text + files.filter(f => f.doc).map(f => '\n📄 ' + f.name).join('');
+  if (files.some(f => !f.doc)) LIVE.set('user|' + shownText, { imgs: files.filter(f => !f.doc).map(f => f.url) });
+  log.append(chatMsg('user', shownText)); const wait = chatMsg('assistant', '…'); log.append(wait); log.scrollTop = log.scrollHeight;
   const body = { message: text, client_date: new Date().toLocaleString('en-US', { timeZoneName: 'short' }) };
-  if (img && img.doc) { body.document = img.b64; body.document_name = img.name; } else if (img) body.image = img.b64;
+  if (files.length) body.attachments = files.map(f => ({ name: f.name, data: f.b64, mime: f.mime }));
   const r = await api('/api/chat', 'POST', body).catch(() => null);
   const reply = r ? (r.data.reply || r.data.detail || 'No answer.') : 'No connection.';
   wait.lastChild.textContent = typeof reply === 'string' ? reply : 'No answer.';

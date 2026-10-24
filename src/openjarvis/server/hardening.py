@@ -220,8 +220,10 @@ MAX_AUDIO_BYTES = (
     10 * 1024 * 1024
 )  # one voice recording upload (10 MB; Whisper itself allows 25 MB)
 MAX_TTS_CHARS = 1_500  # text sent to text-to-speech
+MAX_ATTACHMENTS = 5  # images and documents on one chat message
+MAX_ATTACH_TOTAL_BYTES = 12 * 1024 * 1024  # all of one message's attachments together, decoded
 MAX_BODY_BYTES = (
-    MAX_IMAGE_B64_CHARS + MAX_MESSAGE_CHARS + 4096
+    (MAX_ATTACH_TOTAL_BYTES * 4) // 3 + MAX_MESSAGE_CHARS + 16 * 1024
 )  # a chat request, by Content-Length
 MAX_UPLOAD_BODY_BYTES = MAX_AUDIO_BYTES + 64 * 1024  # a voice upload, by Content-Length
 CHAT_MAX_TOKENS = (

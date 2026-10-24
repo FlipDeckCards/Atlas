@@ -188,3 +188,70 @@ class TestChatRequestAndStation:
         page = station.__dict__.get("PAGE") or ""
         src = open(station.__file__).read()
         assert "pl.slice(4)" in src and "2 * Math.PI / N" in src          # businesses past the 4th get a branch; the ring is spaced by N
+
+
+class TestRemovingFactories:
+    def test_a_mission_factory_is_removed_by_cancelling_its_missions_and_never_falsely_claimed(self):
+        w = world(two_task_plan(), AGENTS)
+        a = run(start(w, goal="AI: The User Experience - Going from Defense to Offense"))
+        run(w.store.update_mission(a["id"], title="AI: The User Experience - Going from Defense to Offense"))
+        ctx = helix.CrewCtx(UID, w.engine)
+        assert "Nothing was removed" in run(helix.execute(ctx, "remove_business", {"name": "No Such Factory"}))
+        out = run(helix.execute(ctx, "remove_business", {"name": "AI: THE USER EXPERIENCE - GOING FROM DEFENSE TO OFFENSE"}))
+        assert out.startswith("Removed") and "cancelling its 1 mission" in out
+        assert run(w.store.get_mission(a["id"]))["status"] == "cancelled"           # a finished mission leaves the Station too
+        assert "plan.md" not in run(helix.execute(ctx, "list_outbox", {}))            # (nothing saved here: just no error)
+        assert "Nothing was removed" in run(helix.execute(ctx, "remove_business", {"name": "AI: The User Experience"}))
+
+    def test_a_business_is_removed_and_the_fixed_rows_stay(self):
+        from openjarvis.server.crew import tenant
+        w = world(two_task_plan(), AGENTS, owner=None)
+        ctx = helix.CrewCtx(UID, w.engine)
+        run(helix.execute(ctx, "add_business", {"name": "Books"}))
+        assert run(helix.execute(ctx, "remove_business", {"name": "Books"})).startswith('Removed "Books"')
+        assert run(tenant.businesses(w.store, UID)) == []
+        assert "stay" in run(helix.execute(ctx, "remove_business", {"name": "Marnyx"}))
+
+    def test_cancel_mission_tool(self):
+        w = world(two_task_plan(), AGENTS)
+        m = run(start(w))
+        ctx = helix.CrewCtx(UID, w.engine)
+        assert "cancelled" in run(helix.execute(ctx, "cancel_mission", {"mission_id": m["id"]}))
+        assert run(w.store.get_mission(m["id"]))["status"] == "cancelled"
+        assert "No such mission" in run(helix.execute(ctx, "cancel_mission", {"mission_id": "nope"}))
+
+
+from tests.server.test_atlas_hardening import _bearer, _env, client, model, store  # noqa: E402,F401  (the chat endpoint's own fixtures)
+
+
+class TestSeveralAttachments:
+    def post(self, client, atts, **extra):
+        return client.post("/api/chat", json=dict({"message": "look at these", "attachments": atts}, **extra), headers=_bearer())
+
+    def att(self, name, data=b"hello", mime=None):
+        return {"name": name, "data": base64.b64encode(data).decode(), "mime": mime}
+
+    def test_more_than_five_files_are_refused_before_any_model_call(self, client, model):
+        r = self.post(client, [self.att(f"n{i}.txt") for i in range(6)])
+        assert r.status_code == 400 and "up to 5" in r.json()["detail"].lower() and model.await_count == 0
+        r = self.post(client, [self.att(f"n{i}.txt") for i in range(5)], image="AAAA")           # the old single image counts too
+        assert r.status_code == 400 and model.await_count == 0
+
+    def test_a_bad_file_names_itself_and_nothing_is_sent_to_the_model(self, client, model):
+        r = self.post(client, [self.att("ok.txt"), self.att("virus.exe", b"MZ")])
+        assert r.status_code == 400 and r.json()["detail"].startswith("virus.exe:") and model.await_count == 0
+        r = self.post(client, [self.att("old.doc", b"x")])
+        assert r.status_code == 400 and ".docx" in r.json()["detail"]
+
+    def test_the_total_size_is_capped(self, client, model):
+        from openjarvis.server import hardening
+        big = "A" * (hardening.MAX_IMAGE_B64_CHARS - 8)
+        r = client.post("/api/chat", json={"message": "x", "attachments": [{"name": f"p{i}.png", "data": big, "mime": "image/png"} for i in range(5)]}, headers=_bearer())
+        assert r.status_code == 413 and model.await_count == 0
+
+
+class TestStationSpin:
+    def test_the_ring_spins_on_a_click_on_helix_and_when_a_mission_starts_or_finishes(self):
+        from openjarvis.server.crew.station import STATION_PAGE
+        for needle in ("function startSpin", "startSpin();      // click Helix", "spinOnMissionChange(S.missions", "stepSpin(t);", "turns: 2"):
+            assert needle in STATION_PAGE
