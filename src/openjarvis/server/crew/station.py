@@ -1181,7 +1181,7 @@ function factoryKey(m) {
   const biz = (S && S.businesses ? S.businesses : []).find(b => b.name && words.includes(String(b.name).toLowerCase()));
   if (biz) return biz.key;                                                       // work for a business lives in that business's factory
   if (/\betsy\b/i.test((m.title || '') + ' ' + (m.goal || ''))) return 'etsy';   // Etsy work lives in the Etsy factory
-  return 'new:' + String(m.title || m.goal || m.id).toLowerCase().slice(0, 40);
+  return 'aibussol';                                                             // no business owns this mission: the crew works it from the core, it gets no factory of its own
 }
 
 
