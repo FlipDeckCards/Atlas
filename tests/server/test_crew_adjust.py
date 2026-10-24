@@ -927,3 +927,9 @@ def test_old_chat_turns_are_clipped_but_recent_ones_stay_whole():
     long = "x" * 3000
     assert clip_old_turn(long, 2) == long
     assert len(clip_old_turn(long, 9)) < 800 and clip_old_turn("short", 9) == "short"
+
+
+def test_station_has_a_speech_speed_control_next_to_the_voice_switch():
+    from openjarvis.server.crew.station import STATION_PAGE
+
+    assert 'id="speed-tog"' in STATION_PAGE and "playbackRate = voiceSpeed" in STATION_PAGE and "aibussol_voice_speed" in STATION_PAGE
