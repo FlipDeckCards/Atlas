@@ -473,6 +473,10 @@ class Book:
                 self.after_para = False
             elif t == "list":
                 self.ensure()
+                rows = sum(len(break_lines(to_words(runs(it)), TEXT_W - 22, TEXT_W - 22, SIZE, 22, 22, True)) for it in b["items"])
+                whole = rows * LEAD + len(b["items"]) * 2 + 6
+                if len(b["items"]) <= 10 and whole <= (TOP_Y - BOT_Y) * 0.45 and self.room() < whole:
+                    self.new_page()                                                  # a short list is kept together, not split across two pages
                 self.cur.y -= 2
                 for it in b["items"]:
                     words = to_words(runs(it))
