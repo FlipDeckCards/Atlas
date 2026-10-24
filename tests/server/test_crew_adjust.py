@@ -188,3 +188,34 @@ class TestChatRequestAndStation:
         page = station.__dict__.get("PAGE") or ""
         src = open(station.__file__).read()
         assert "pl.slice(4)" in src and "2 * Math.PI / N" in src          # businesses past the 4th get a branch; the ring is spaced by N
+
+
+class TestRemovingFactories:
+    def test_a_mission_factory_is_removed_by_cancelling_its_missions_and_never_falsely_claimed(self):
+        w = world(two_task_plan(), AGENTS)
+        a = run(start(w, goal="AI: The User Experience - Going from Defense to Offense"))
+        run(w.store.update_mission(a["id"], title="AI: The User Experience - Going from Defense to Offense"))
+        ctx = helix.CrewCtx(UID, w.engine)
+        assert "Nothing was removed" in run(helix.execute(ctx, "remove_business", {"name": "No Such Factory"}))
+        out = run(helix.execute(ctx, "remove_business", {"name": "AI: THE USER EXPERIENCE - GOING FROM DEFENSE TO OFFENSE"}))
+        assert out.startswith("Removed") and "cancelling its 1 mission" in out
+        assert run(w.store.get_mission(a["id"]))["status"] == "cancelled"           # a finished mission leaves the Station too
+        assert "plan.md" not in run(helix.execute(ctx, "list_outbox", {}))            # (nothing saved here: just no error)
+        assert "Nothing was removed" in run(helix.execute(ctx, "remove_business", {"name": "AI: The User Experience"}))
+
+    def test_a_business_is_removed_and_the_fixed_rows_stay(self):
+        from openjarvis.server.crew import tenant
+        w = world(two_task_plan(), AGENTS, owner=None)
+        ctx = helix.CrewCtx(UID, w.engine)
+        run(helix.execute(ctx, "add_business", {"name": "Books"}))
+        assert run(helix.execute(ctx, "remove_business", {"name": "Books"})).startswith('Removed "Books"')
+        assert run(tenant.businesses(w.store, UID)) == []
+        assert "stay" in run(helix.execute(ctx, "remove_business", {"name": "Marnyx"}))
+
+    def test_cancel_mission_tool(self):
+        w = world(two_task_plan(), AGENTS)
+        m = run(start(w))
+        ctx = helix.CrewCtx(UID, w.engine)
+        assert "cancelled" in run(helix.execute(ctx, "cancel_mission", {"mission_id": m["id"]}))
+        assert run(w.store.get_mission(m["id"]))["status"] == "cancelled"
+        assert "No such mission" in run(helix.execute(ctx, "cancel_mission", {"mission_id": "nope"}))
