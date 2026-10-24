@@ -344,6 +344,9 @@ def tools_for(role: str) -> List[Dict[str, Any]]:
 
 
 def _calls_made(transcript: List[Dict[str, Any]], name: str) -> int:
+    """Calls to one tool since Michael last resumed, changed or retried the task, so a retry gets a fresh allowance."""
+    start = max((i for i, m in enumerate(transcript) if m.get("role") == "user" and str(m.get("content") or "").startswith("Michael ")), default=-1)
+    transcript = transcript[start + 1:]
     return sum(1 for m in transcript for c in (m.get("tool_calls") or []) if (c.get("function") or {}).get("name") == name)
 
 
