@@ -695,6 +695,16 @@ class TestMakeBookTool:
         assert text.index("Chapter One") < text.index("Chapter Two") and "diagram" not in text and "robot" not in text and "Hello world" in text
         assert raw.count(b"/DCTDecode") == 2
 
+    def test_a_rebuild_is_saved_under_a_new_version_name(self):
+        w, m, task = self.setup()
+        mission = run(w.store.get_mission(m["id"]))
+        args = {"title": "My Book", "files": ["part1.md"], "filename": "My Book"}
+        run(w.engine._tool(task, mission, "make_book", args))
+        out, _ = run(w.engine._tool(task, mission, "make_book", args))
+        assert 'Saved "My Book v2.pdf"' in out
+        names = [x["name"] for x in run(w.store.list_outputs(m["id"]))]
+        assert "My Book.pdf" in names and "My Book v2.pdf" in names
+
     def test_it_refuses_a_missing_file_or_cover_and_other_roles_do_not_get_it(self):
         w, m, task = self.setup()
         mission = run(w.store.get_mission(m["id"]))
