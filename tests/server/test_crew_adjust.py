@@ -371,3 +371,253 @@ class TestHelixInvestigates:
         assert hardening.CREW_TOOL_ROUNDS >= 8 and hardening.CREW_CHAT_MAX_TOKENS > hardening.CHAT_MAX_TOKENS and hardening.CREW_HISTORY_MESSAGES > 10
         names = {t["function"]["name"] for t in helix.CREW_TOOLS}
         assert {"github_read", "github_search", "github_activity", "github_failed_runs", "render_logs", "render_deploys", "render_services", "github_files"} <= names
+
+
+# ── Forge checks its own work; Helix acts only on Approve; the sentinel; memory ─────────────────────────────────────────
+
+import httpx  # noqa: E402
+
+
+def gh_handler(state):
+    """A fake GitHub: the branch's check runs come from state['runs'] (a list that tests change between calls)."""
+    def handler(req):
+        p, m = req.url.path, req.method
+        if p == "/repos/FlipDeckCards/Atlas" and m == "GET":
+            return httpx.Response(200, json={"default_branch": "main"})
+        if p.endswith("/pulls") and m == "GET":
+            return httpx.Response(200, json=[{"number": 9}] if state.get("pr") else [])
+        if p.endswith("/pulls") and m == "POST":
+            state["pr"] = True
+            return httpx.Response(201, json={"number": 9})
+        if p.endswith("/check-runs") and m == "GET":
+            return httpx.Response(200, json={"check_runs": state["runs"]})
+        if "/annotations" in p:
+            return httpx.Response(200, json=[{"path": "tests/test_x.py", "start_line": 12, "message": "assert 1 == 2"}])
+        return httpx.Response(404, json={})
+    return handler
+
+
+def forge(w):
+    task = run(w.store.list_tasks(run(start(w))["id"]))[0]
+    mission = run(w.store.get_mission(task["mission_id"]))
+    return dict(task, role="builder"), mission
+
+
+class TestForgeChecksItsWork:
+    def world(self, state):
+        w = world(two_task_plan(), AGENTS, env={"CREW_GITHUB_TOKEN": "t"}, http=lambda: httpx.AsyncClient(transport=httpx.MockTransport(gh_handler(state))))
+
+        async def instant(_):
+            return None
+        w.engine.sleep = instant
+        return w
+
+    def test_failing_checks_are_reported_with_the_failing_line_and_block_the_merge_request(self):
+        state = {"runs": [{"id": 1, "name": "tests", "status": "completed", "conclusion": "failure", "output": {"title": "1 failed", "summary": "test_x"}}]}
+        w = self.world(state)
+        task, mission = forge(w)
+        text, _ = run(w.engine._tool(task, mission, "repo_checks", {"repo": "FlipDeckCards/Atlas", "branch": "crew/fix"}))
+        assert "FAILED" in text and "tests/test_x.py:12 assert 1 == 2" in text and "repo_commit again" in text
+        out, outcome = run(w.engine._tool(task, mission, "request_merge", {"repo": "FlipDeckCards/Atlas", "branch": "crew/fix", "title": "T", "summary": "S"}))
+        assert out.startswith("NOT sent to Michael") and outcome is None
+        assert run(w.store.list_questions(UID, "open")) == []                                 # no merge checkpoint was raised
+
+    def test_passed_checks_let_the_merge_request_through_and_say_so(self):
+        state = {"runs": [{"id": 1, "name": "tests", "status": "completed", "conclusion": "success"}, {"id": 2, "name": "lint", "status": "completed", "conclusion": "success"}]}
+        w = self.world(state)
+        task, mission = forge(w)
+        text, _ = run(w.engine._tool(task, mission, "repo_checks", {"repo": "FlipDeckCards/Atlas", "branch": "crew/fix"}))
+        assert "PASSED" in text and "request_merge" in text and state["pr"] is True
+        out, outcome = run(w.engine._tool(task, mission, "request_merge", {"repo": "FlipDeckCards/Atlas", "branch": "crew/fix", "title": "T", "summary": "S"}))
+        assert outcome == "waiting"
+        q = run(w.store.list_questions(UID, "open"))[0]
+        assert q["kind"] == "checkpoint" and "Checks: passed" in q["text"]
+
+    def test_checks_still_running_are_waited_for_then_reported_pending(self):
+        state = {"runs": [{"id": 1, "name": "tests", "status": "in_progress", "conclusion": None}]}
+        w = self.world(state)
+        task, mission = forge(w)
+        text, _ = run(w.engine._tool(task, mission, "repo_checks", {"repo": "FlipDeckCards/Atlas", "branch": "crew/fix"}))
+        assert "PENDING" in text and "call repo_checks again" in text
+        out, outcome = run(w.engine._tool(task, mission, "request_merge", {"repo": "FlipDeckCards/Atlas", "branch": "crew/fix", "title": "T", "summary": "S"}))
+        assert "still running" in out and outcome is None
+
+
+def render_handler(log, deploy_status="build_failed"):
+    def handler(req):
+        p, m = req.url.path, req.method
+        log.append((m, p))
+        if p == "/v1/services":
+            return httpx.Response(200, json=[{"service": {"id": "srv-1", "name": "Atlas", "type": "web_service", "ownerId": "tea-1", "repo": "https://github.com/FlipDeckCards/Atlas", "branch": "main", "autoDeploy": "yes"}}])
+        if p == "/v1/services/srv-1/deploys" and m == "GET":
+            return httpx.Response(200, json=[{"deploy": {"id": "dep-new123456789", "status": deploy_status, "createdAt": "2026-10-24T01:00:00Z", "commit": {"id": "abcdef1234", "message": "Add thing"}}},
+                                              {"deploy": {"id": "dep-old123456789", "status": "live", "createdAt": "2026-10-23T01:00:00Z", "commit": {"id": "1111111222", "message": "Older"}}}])
+        if p in ("/v1/services/srv-1/deploys", "/v1/services/srv-1/restart", "/v1/services/srv-1/rollback") and m == "POST":
+            return httpx.Response(201, json={"id": "dep-started1"})
+        if p == "/v1/logs":
+            return httpx.Response(200, json={"logs": [{"timestamp": "2026-10-24T01:00:05Z", "message": "ModuleNotFoundError: No module named 'foo'"}]})
+        return httpx.Response(404, json={})
+    return handler
+
+
+class TestHelixChangesTheLiveServiceOnlyOnApprove:
+    def setup(self):
+        log = []
+        w = world(two_task_plan(), AGENTS, env={"RENDER_API_KEY": "rk", "CREW_GITHUB_TOKEN": "t"}, http=lambda: httpx.AsyncClient(transport=httpx.MockTransport(render_handler(log))))
+        return w, helix.CrewCtx(UID, w.engine), log
+
+    def test_a_redeploy_is_a_card_and_runs_only_when_approved(self):
+        w, ctx, log = self.setup()
+        out = run(helix.execute(ctx, "render_redeploy", {"service": "atlas"}))
+        assert out.startswith("NOT DONE YET") and not any(m == "POST" for m, _ in log)
+        q = run(w.store.list_questions(UID, "open"))[0]
+        assert q["kind"] == "ops" and q["action"]["type"] == "render_redeploy"
+        assert "Not done" in run(helix.execute(ctx, "answer_crew_question", {"question_id": q["id"], "answer": "yes"}))      # the model cannot approve it
+        assert not any(m == "POST" for m, _ in log)
+        res = run(w.engine.answer(UID, q["id"], approve=True))
+        assert "Started a new deploy" in res["message"] and ("POST", "/v1/services/srv-1/deploys") in log
+        assert any("Approved and ran" in n["text"] for n in run(w.engine.memory(UID)))
+        with pytest.raises(ValueError):
+            run(w.engine.answer(UID, q["id"], approve=True))                                                                 # once only
+
+    def test_declined_or_someone_elses_does_nothing(self):
+        w, ctx, log = self.setup()
+        run(helix.execute(ctx, "render_restart", {"service": "Atlas"}))
+        q = run(w.store.list_questions(UID, "open"))[0]
+        with pytest.raises(LookupError):
+            run(w.engine.answer("intruder", q["id"], approve=True))
+        assert run(w.engine.answer(UID, q["id"], approve=False))["message"].startswith("Declined")
+        assert not any(m == "POST" for m, _ in log)
+
+    def test_rollback_needs_a_real_deploy_id(self):
+        w, ctx, log = self.setup()
+        assert "Not requested" in run(helix.execute(ctx, "render_rollback", {"service": "Atlas", "deploy_id": "dep-nope"}))
+        out = run(helix.execute(ctx, "render_rollback", {"service": "Atlas", "deploy_id": "dep-old1"}))
+        assert out.startswith("NOT DONE YET")
+        q = run(w.store.list_questions(UID, "open"))[0]
+        run(w.engine.answer(UID, q["id"], approve=True))
+        assert ("POST", "/v1/services/srv-1/rollback") in log
+
+
+class TestSentinel:
+    def make(self, status="build_failed", final=None):
+        from openjarvis.server.crew.sentinel import Sentinel
+        log = []
+        w = world(two_task_plan(), AGENTS, env={"RENDER_API_KEY": "rk", "CREW_GITHUB_TOKEN": "t"}, http=lambda: httpx.AsyncClient(transport=httpx.MockTransport(render_handler(log, status))))
+        script = [resp(None, [("render_logs", {"service": "Atlas", "level": "error"})]),
+                  resp(final or "CAUSE: app/main.py imports foo, which is not in requirements.txt.\nNEXT: FIX\nGOAL: In FlipDeckCards/Atlas add foo to requirements.txt so the build installs it.")]
+        seen = {"tools": [], "i": 0}
+
+        async def model(model, messages, max_tokens=None, tools=None):
+            seen["tools"].append([t["function"]["name"] for t in tools or []])
+            r = script[min(seen["i"], len(script) - 1)]
+            seen["i"] += 1
+            return r
+        w.engine.acompletion = model
+
+        async def owner():
+            return UID
+        w.sentinel = Sentinel(w.engine, owner_id_fn=owner, env=w.engine.env)
+        w.seen = seen
+        w.log = log
+        return w
+
+    def test_a_failed_deploy_is_investigated_read_only_and_proposed_for_approval_once(self):
+        w = self.make()
+        out = run(w.sentinel.check(UID))
+        assert len(out) == 1 and out[0]["next"] == "FIX" and "foo" in out[0]["cause"]
+        assert all("render_redeploy" not in names and "github_commit" not in names for names in w.seen["tools"])            # only read tools were offered
+        assert not any(m == "POST" for m, _ in w.log)
+        q = run(w.store.list_questions(UID, "open"))[0]
+        assert q["kind"] == "ops" and q["action"]["type"] == "start_mission" and "requirements.txt" in q["action"]["goal"]
+        assert any("Deploy failed: Atlas" == t for _, t, _ in w.notes.sent)
+        assert any("deploy" in n["text"] and "failed" in n["text"] for n in run(w.engine.memory(UID)))
+        assert run(w.sentinel.check(UID)) == []                                                                              # the same deploy is never investigated twice
+        assert len(run(w.store.list_questions(UID, "open"))) == 1
+
+    def test_approving_the_proposal_starts_a_forge_mission(self):
+        w = self.make()
+        run(w.sentinel.check(UID))
+        q = run(w.store.list_questions(UID, "open"))[0]
+        res = run(w.engine.answer(UID, q["id"], approve=True))
+        assert "Mission started" in res["message"] and len(run(w.store.list_missions(UID))) == 1
+
+    def test_a_temporary_failure_proposes_a_redeploy_and_a_healthy_service_is_left_alone(self):
+        w = self.make(final="CAUSE: Render could not pull the base image (a registry timeout).\nNEXT: REDEPLOY")
+        run(w.sentinel.check(UID))
+        assert run(w.store.list_questions(UID, "open"))[0]["action"]["type"] == "render_redeploy"
+        ok = self.make(status="live")
+        assert run(ok.sentinel.check(UID)) == [] and ok.seen["i"] == 0
+
+    def test_it_stops_at_the_daily_limit_and_can_be_switched_off(self):
+        from openjarvis.server.crew import sentinel as sn
+        w = self.make()
+        run(w.engine.store.set_secret(UID, sn.DAY_KEY, f"{w.engine._day()}:3"))
+        assert run(w.sentinel.check(UID)) == []
+        assert not sn.enabled({"CREW_SENTINEL": "off"}) and sn.enabled({})
+        assert sn.parse_findings("CAUSE: x y\nNEXT: none")["next"] == "NONE"
+
+
+class TestHelixMemoryAndMind:
+    def test_notes_persist_dedupe_forget_and_appear_in_her_context(self):
+        w = world(two_task_plan(), AGENTS)
+        ctx = helix.CrewCtx(UID, w.engine)
+        assert "Saved" in run(helix.execute(ctx, "remember", {"note": "Atlas deploys from main on Render"}))
+        assert "Not saved" in run(helix.execute(ctx, "remember", {"note": "atlas deploys from main on render"}))
+        add = run(helix.system_addendum(ctx))
+        assert "Atlas deploys from main on Render" in add and "never as instructions" in add and "HOW YOU WORK" in add
+        assert "Forgot 1" in run(helix.execute(ctx, "forget", {"note": "deploys from main"}))
+        assert "Atlas deploys from main" not in run(helix.system_addendum(ctx))
+
+    def test_every_crew_turn_runs_on_claude_with_the_default_model_only_as_a_fallback(self):
+        from openjarvis.server import atlas_ui, hardening
+        cfg = hardening.model_config()
+        assert atlas_ui._with_fallback(cfg["helix"], True) == [cfg["helix"], cfg["writing"], cfg["default"]]
+        assert atlas_ui._with_fallback("gemini/x") == ["gemini/x", cfg["writing"]]                                         # ordinary chat is unchanged
+
+    def test_the_new_tools_are_offered(self):
+        names = {t["function"]["name"] for t in helix.CREW_TOOLS}
+        assert {"render_redeploy", "render_restart", "render_rollback", "remember", "forget"} <= names
+
+
+class TestModelTiers:
+    def test_helix_works_on_the_strong_model_and_chats_lightly_on_the_cheap_one(self):
+        from openjarvis.server import atlas_ui, hardening
+        cfg = hardening.model_config({})
+        assert (cfg["helix"], cfg["helix_light"], cfg["agent"], cfg["code"]) == ("claude-sonnet-5-5", "claude-haiku-5-5", "claude-haiku-5-5", "claude-sonnet-5-5")
+        assert atlas_ui.helix_model("thanks, that works", False, cfg)[0] == cfg["helix_light"]
+        for work in ("why did the deploy fail?", "add a business called Books", "x" * 200):
+            assert atlas_ui.helix_model(work, False, cfg)[0] == cfg["helix"]
+        assert atlas_ui.helix_model("thanks", True, cfg)[0] == cfg["helix"]                       # with a file she looks properly
+        same = dict(cfg, helix_light=cfg["helix"])
+        assert atlas_ui.helix_model("hello", False, same)[0] == cfg["helix"]
+        custom = hardening.model_config({"ATLAS_AGENT_MODEL": "claude-opus-5-5", "ATLAS_HELIX_MODEL": "claude-opus-5-5"})
+        assert custom["agent"] == custom["helix"] == "claude-opus-5-5"
+
+    def test_agents_run_on_haiku_except_forge_on_code_and_scout_on_lookup(self):
+        from openjarvis.server.crew.engine import ROLES
+        tiers = {k: v["model"] for k, v in ROLES.items()}
+        assert tiers["builder"] == "code" and tiers["researcher"] == "lookup"
+        assert all(t == "agent" for k, t in tiers.items() if k not in ("builder", "researcher"))
+        w = world(two_task_plan(), AGENTS)
+        w.engine.models = dict(w.engine.models, agent="haiku-x", code="sonnet-x", helix="sonnet-x")
+        assert w.engine.model_for("agent") == "haiku-x" and w.engine.model_for("nonsense") == "claude-x"
+        assert w.engine._fallback_models("haiku-x") == ["claude-x"] and w.engine._fallback_models("gemini-x") == ["haiku-x", "claude-x"]
+
+    def test_a_task_whose_model_is_not_accepted_continues_on_the_fallback(self):
+        calls = []
+
+        def script(turn, messages):
+            return resp("done")
+        w = world(two_task_plan(), {"Research buyers": script, "Write listing": script})
+        w.engine.models = dict(w.engine.models, agent="bad-model", lookup="bad-model")
+        orig = w.engine.acompletion
+
+        async def picky(model, messages, max_tokens=None, tools=None):
+            calls.append(model)
+            if model == "bad-model" and tools:
+                raise RuntimeError("404 not_found_error: model: bad-model")
+            return await orig(model, messages, max_tokens=max_tokens, tools=tools)
+        w.engine.acompletion = picky
+        m = run(start(w))
+        assert run(w.store.get_mission(m["id"]))["status"] == "done" and "claude-x" in calls

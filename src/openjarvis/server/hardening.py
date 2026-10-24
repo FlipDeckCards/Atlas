@@ -332,6 +332,12 @@ async def spend_blocked(
 DEFAULT_MODEL = "gpt-4o"
 DEFAULT_WRITING_MODEL = "claude-sonnet-4-5-20250929"
 DEFAULT_LOOKUP_MODEL = "gemini/gemini-2.5-flash"
+# the crew's tiers: Helix thinks on Sonnet (leading, planning, diagnosing), her light chat and most agents run on Haiku (cheap, high volume),
+# and Forge, who writes the code, on Sonnet. Each can be changed on Render: ATLAS_HELIX_MODEL, ATLAS_HELIX_LIGHT_MODEL, ATLAS_AGENT_MODEL, ATLAS_CODE_MODEL.
+DEFAULT_HELIX_MODEL = "claude-sonnet-5-5"
+DEFAULT_HELIX_LIGHT_MODEL = "claude-haiku-5-5"
+DEFAULT_AGENT_MODEL = "claude-haiku-5-5"
+DEFAULT_CODE_MODEL = "claude-sonnet-5-5"
 
 
 def model_config(env: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
@@ -343,6 +349,10 @@ def model_config(env: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
         "default": g("ATLAS_DEFAULT_MODEL", DEFAULT_MODEL),
         "writing": g("ATLAS_WRITING_MODEL", DEFAULT_WRITING_MODEL),
         "lookup": g("ATLAS_LOOKUP_MODEL", DEFAULT_LOOKUP_MODEL),
+        "helix": g("ATLAS_HELIX_MODEL", DEFAULT_HELIX_MODEL),
+        "helix_light": g("ATLAS_HELIX_LIGHT_MODEL", DEFAULT_HELIX_LIGHT_MODEL),
+        "agent": g("ATLAS_AGENT_MODEL", DEFAULT_AGENT_MODEL),
+        "code": g("ATLAS_CODE_MODEL", DEFAULT_CODE_MODEL),
     }
 
 

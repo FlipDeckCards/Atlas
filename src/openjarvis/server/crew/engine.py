@@ -57,40 +57,40 @@ ROLES: Dict[str, Dict[str, str]] = {
     "researcher": {"name": "Scout", "model": "lookup", "about": "Research and analysis with Gemini. Searches the live web with web_search (quick, free) and, for a deep sourced report, web_research (GPT Researcher) when it is connected. Cites the pages it used.",
                    "can": "Live web search (free), deep sourced reports (GPT Researcher), market and buyer research, competitors, pricing",
                    "cannot": "Log in to sites or post anything"},
-    "builder": {"name": "Forge", "model": "writing", "about": "Codes with Claude, straight in Michael's GitHub repos: reads the code, commits changes to its own crew/ branch, and asks Michael to approve merging into main (request_merge). It never writes to main itself.",
+    "builder": {"name": "Forge", "model": "code", "about": "Codes with Claude, straight in Michael's GitHub repos: reads the code, commits changes to its own crew/ branch, and asks Michael to approve merging into main (request_merge). It never writes to main itself.",
                 "can": "Read the product repos, write code, commit to a crew/ branch, request a merge you approve",
                 "cannot": "Write to main or deploy without your Approve, change GitHub workflows"},
-    "writer": {"name": "Quill", "model": "writing", "about": "Writes with Claude: product copy, listings, posts, emails, scripts, documents.",
+    "writer": {"name": "Quill", "model": "agent", "about": "Writes with Claude: product copy, listings, posts, emails, scripts, documents.",
                "can": "Product copy, Etsy listings, social posts, emails, scripts, docs",
                "cannot": "Post or send anything itself"},
-    "designer": {"name": "Prism", "model": "writing", "about": "Designs with Claude: brand direction, layouts, color and type, and real images with generate_image (saved to Michael's Aibussol media library).",
+    "designer": {"name": "Prism", "model": "agent", "about": "Designs with Claude: brand direction, layouts, color and type, and real images with generate_image (saved to Michael's Aibussol media library).",
                  "can": "Brand direction, layouts, color and type, generate product images (up to 4 per task)",
                  "cannot": "Publish images anywhere itself"},
-    "operator": {"name": "Relay", "model": "writing", "about": "The only role that can use connected platforms (Stripe, Etsy...). Risky actions become checkpoints for the owner.",
+    "operator": {"name": "Relay", "model": "agent", "about": "The only role that can use connected platforms (Stripe, Etsy...). Risky actions become checkpoints for the owner.",
                  "can": "Use connected platforms: Stripe products and payment links, Etsy listings with photos and download files, publishing",
                  "cannot": "Anything public, paid or permanent without your Approve"},
-    "workbench": {"name": "Rig", "model": "writing", "about": "Works on Michael's own computer through the Workbench helper: Claude Code in his real project folders with his Unity / Unreal editors, on his own Claude plan (no API cost). Builds, tests and fixes games (and anything that needs his machine) the way Deadzone Run was built. Rig's tasks wait until the PC is connected.",
+    "workbench": {"name": "Rig", "model": "agent", "about": "Works on Michael's own computer through the Workbench helper: Claude Code in his real project folders with his Unity / Unreal editors, on his own Claude plan (no API cost). Builds, tests and fixes games (and anything that needs his machine) the way Deadzone Run was built. Rig's tasks wait until the PC is connected.",
                   "can": "Build and test in your real projects on your PC: Unity, Unreal, Git, Claude Code (your plan, no API cost)",
                   "cannot": "Publish, upload to a store or push to main; it runs only while the Workbench helper is on"},
-    "marketer": {"name": "Spark", "model": "writing", "about": "Marketing with Claude: positioning, launch plans, campaigns, SEO, landing-page and ad copy, email sequences, pricing pages. Researches the market and competitors with web_search and makes campaign images with generate_image.",
+    "marketer": {"name": "Spark", "model": "agent", "about": "Marketing with Claude: positioning, launch plans, campaigns, SEO, landing-page and ad copy, email sequences, pricing pages. Researches the market and competitors with web_search and makes campaign images with generate_image.",
                  "can": "Positioning, launch and campaign plans, SEO, landing-page, ad and email copy, campaign images",
                  "cannot": "Spend on ads or publish anything itself"},
-    "social": {"name": "Echo", "model": "writing", "about": "Social media with Claude: content calendars, platform-ready posts (TikTok, Instagram, Facebook, X, YouTube Shorts), captions, hooks, hashtags and short-video scripts, plus post images with generate_image. Checks what is trending with web_search. Saves posts as files ready for Marnyx or the user to schedule.",
+    "social": {"name": "Echo", "model": "agent", "about": "Social media with Claude: content calendars, platform-ready posts (TikTok, Instagram, Facebook, X, YouTube Shorts), captions, hooks, hashtags and short-video scripts, plus post images with generate_image. Checks what is trending with web_search. Saves posts as files ready for Marnyx or the user to schedule.",
                "can": "Content calendars, posts and captions per platform, video scripts, trend checks, post images",
                "cannot": "Post to any account itself"},
-    "support": {"name": "Haven", "model": "writing", "about": "Customer support with Claude: FAQs, help-center articles, reply templates, refund and policy wording, onboarding emails, triage of customer issues. Reads recent Stripe payments (read only) to understand billing questions.",
+    "support": {"name": "Haven", "model": "agent", "about": "Customer support with Claude: FAQs, help-center articles, reply templates, refund and policy wording, onboarding emails, triage of customer issues. Reads recent Stripe payments (read only) to understand billing questions.",
                 "can": "FAQs, help articles, reply templates, policies, onboarding emails, billing lookups (read only)",
                 "cannot": "Email customers, refund or change anything"},
-    "analyst": {"name": "Sage", "model": "writing", "about": "Data analyst with Claude: reads the account's live business numbers with business_numbers (money in and out per business, MRR, subscribers, crew cost) and Stripe (read only), finds trends, sets KPIs, builds forecasts and reports with the math shown.",
+    "analyst": {"name": "Sage", "model": "agent", "about": "Data analyst with Claude: reads the account's live business numbers with business_numbers (money in and out per business, MRR, subscribers, crew cost) and Stripe (read only), finds trends, sets KPIs, builds forecasts and reports with the math shown.",
                 "can": "Live P&L per business, KPIs, trends, forecasts, dashboards as files, Stripe reads",
                 "cannot": "Change data, prices or anything else"},
-    "qa": {"name": "Probe", "model": "writing", "about": "QA tester with Claude: tests the live sites with check_site (status, speed, title, page text, broken pages), reads the code in the connected repos (read only), writes test plans, bug reports with steps to reproduce, and checks fixes. Games are play-tested by Rig on the PC; Probe writes their test plans.",
+    "qa": {"name": "Probe", "model": "agent", "about": "QA tester with Claude: tests the live sites with check_site (status, speed, title, page text, broken pages), reads the code in the connected repos (read only), writes test plans, bug reports with steps to reproduce, and checks fixes. Games are play-tested by Rig on the PC; Probe writes their test plans.",
            "can": "Test live sites, read code, test plans, bug reports with repro steps, release checklists",
            "cannot": "Change code (it reports; Forge fixes) or log in to accounts"},
-    "finance": {"name": "Tally", "model": "writing", "about": "Finance with Claude: bookkeeping summaries, budgets, cash flow, unit economics, pricing and margin math, subscription metrics and tax-prep checklists, from business_numbers and Stripe (read only). Not a licensed accountant: flags what needs one.",
+    "finance": {"name": "Tally", "model": "agent", "about": "Finance with Claude: bookkeeping summaries, budgets, cash flow, unit economics, pricing and margin math, subscription metrics and tax-prep checklists, from business_numbers and Stripe (read only). Not a licensed accountant: flags what needs one.",
                 "can": "P&L and cash-flow summaries, budgets, pricing and margin math, tax-prep checklists, Stripe balance reads",
                 "cannot": "Move money, file taxes or give licensed advice"},
-    "reviewer": {"name": "Lens", "model": "writing", "about": "Checks the crew's work before it reaches Michael: reads every deliverable, fact-checks with web_search, and sends a task back once with request_changes when it is wrong or incomplete. Saves a short review.",
+    "reviewer": {"name": "Lens", "model": "agent", "about": "Checks the crew's work before it reaches Michael: reads every deliverable, fact-checks with web_search, and sends a task back once with request_changes when it is wrong or incomplete. Saves a short review.",
                  "can": "Read every deliverable, fact-check on the web, send work back once for fixes, write the review",
                  "cannot": "Change the work itself or approve anything for you"},
 }
@@ -165,6 +165,10 @@ _REPO_TOOLS = [
                                                         "files": {"type": "array", "items": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}}},
                        "required": ["repo", "branch", "message", "files"]}}},
     {"type": "function", "function": {
+        "name": "repo_checks",
+        "description": "Run GitHub's automatic checks (tests, lint, build) on your crew/ branch and read the result: it opens the pull request if needed, waits up to about two minutes, and returns PASSED, FAILED (with the failing tests and lines) or PENDING (call it again). Call it after EVERY repo_commit; fix what fails, commit again and re-check. request_merge is refused while checks fail.",
+        "parameters": {"type": "object", "properties": {"repo": {"type": "string"}, "branch": {"type": "string"}}, "required": ["repo", "branch"]}}},
+    {"type": "function", "function": {
         "name": "request_merge",
         "description": "Ask Michael to approve merging your crew/ branch into main. It becomes a checkpoint; nothing merges until he taps Approve. Explain what changed and how it was checked.",
         "parameters": {"type": "object", "properties": {"repo": {"type": "string"}, "branch": {"type": "string"}, "title": {"type": "string"}, "summary": {"type": "string"}},
@@ -200,7 +204,7 @@ _REVIEW_TOOL = {"type": "function", "function": {
     "description": "Send one finished task back to its agent with concrete fixes (each task can be sent back once). You continue after the rework is done.",
     "parameters": {"type": "object", "properties": {"task_number": {"type": "integer"}, "notes": {"type": "string"}}, "required": ["task_number", "notes"]}}}
 
-LIMITS = {"web_search": 12, "generate_image": 16, "make_design_files": 10, "repo_commit": 10, "check_site": 20, "business_numbers": 3}
+LIMITS = {"repo_checks": 10, "web_search": 12, "generate_image": 16, "make_design_files": 10, "repo_commit": 10, "check_site": 20, "business_numbers": 3}
 SEARCHERS = ("researcher", "reviewer", "marketer", "social", "support", "analyst", "qa", "finance")
 IMAGERS = ("designer", "marketer", "social")
 READERS = ("support", "analyst", "finance")                # read-only platform access
@@ -213,7 +217,8 @@ AcompletionFn = Callable[..., Awaitable[Any]]
 def _provider_unavailable(exc: Exception) -> bool:
     """Out of quota, rate limited or down: worth retrying on another provider."""
     text = f"{type(exc).__name__} {exc}".lower()
-    return any(k in text for k in ("429", "503", "ratelimit", "rate limit", "quota", "resource_exhausted", "overloaded", "unavailable"))
+    return any(k in text for k in ("429", "503", "ratelimit", "rate limit", "quota", "resource_exhausted", "overloaded", "unavailable",
+                                   "not_found", "not found", "does not exist", "invalid model", "unknown model", "credit balance"))
 
 
 def explain_error(exc: BaseException) -> str:
@@ -426,6 +431,9 @@ class CrewEngine:
         self._ticks = 0
         self.products: Dict[str, Dict[str, Any]] = {}
         self._product_task: Optional[asyncio.Task] = None
+        self.sentinel = None                                # crew/sentinel.py, set by the app: watches the owner's deploys and investigates failures
+        self.sleep = asyncio.sleep                          # waiting between check polls (tests make it instant)
+        self._sentinel_task: Optional[asyncio.Task] = None
         self.herald = None                                  # crew/herald.py, set by the app: makes the briefs on schedule
         from openjarvis.server.crew.workbench import Presence
 
@@ -485,6 +493,14 @@ class CrewEngine:
                 await asyncio.wait_for(self._wake.wait(), timeout=self._sleep_for())
             except asyncio.TimeoutError:
                 pass
+
+    def model_for(self, tier: str) -> str:
+        """The model for a tier (helix, agent, code, writing, lookup, default); an unconfigured tier falls back to the writing model."""
+        return self.models.get(tier) or self.models["writing"]
+
+    def _fallback_models(self, model: str) -> List[str]:
+        """Where a task goes when its model is down, rate limited or not accepted: the cheap agent model, then the older writing model."""
+        return [m for m in dict.fromkeys([self.model_for("agent"), self.models["writing"]]) if m and m != model]
 
     def _day(self) -> str:
         return self.now().strftime("%Y-%m-%d")
@@ -609,6 +625,8 @@ class CrewEngine:
         self._ticks += 1
         if self.herald is not None and (self._herald_task is None or self._herald_task.done()):
             self._herald_task = asyncio.create_task(self.herald.maybe_run())
+        if self.sentinel is not None and (self._sentinel_task is None or self._sentinel_task.done()):
+            self._sentinel_task = asyncio.create_task(self.sentinel.maybe_run())
         if self.weekly is not None and self._ticks % 6 == 1 and (self._weekly_task is None or self._weekly_task.done()):
             self._weekly_task = asyncio.create_task(self.weekly.maybe_run())
         if self._ticks % 30 == 0:
@@ -827,7 +845,7 @@ class CrewEngine:
                     {"role": "user", "content": m["goal"] + await self._attached_for_planner(mission_id)}]
             cost, plan = 0.0, None
             for attempt in range(2):
-                resp = await self.acompletion(model=self.models["writing"], max_tokens=PLANNER_MAX_TOKENS, messages=msgs)
+                resp = await self.acompletion(model=self.model_for("helix"), max_tokens=PLANNER_MAX_TOKENS, messages=msgs)
                 cost += await self._charge(uid, mission_id, "", resp)
                 text = resp.choices[0].message.content or ""
                 plan = parse_plan(text, max_tasks(self.env))
@@ -1242,7 +1260,7 @@ class CrewEngine:
                 f"Mission: {m['title'] or ''}\nGoal: {m['goal']}\nSpent: ${m['spent_usd']:.2f} of ${m['budget_usd']:.2f}\n\nTasks and results:\n{facts}\n\n"
                 f"Approvals and platform actions:\n{approvals or '- none'}\n\nOutbox files: {files}"
             )
-            resp = await self.acompletion(model=self.models["writing"], max_tokens=1500,
+            resp = await self.acompletion(model=self.model_for("agent"), max_tokens=1500,
                                           messages=[{"role": "system", "content": self._for_person("You write short, factual reports for Michael.", envx)},
                                                     {"role": "user", "content": prompt}])
             await self._charge(uid, mid, "", resp)
@@ -1314,7 +1332,8 @@ class CrewEngine:
         if task["role"] == "builder":
             if gh.configured(envx) and gh.repos(envx):
                 s += ("\nRepos you may use: " + ", ".join(gh.repos(envx)) + ". Read the existing code before changing it, keep changes small and complete, "
-                      "commit to one crew/ branch per task with repo_commit, then call request_merge once and stop: Michael approves the merge. Atlas deploys "
+                      "commit to one crew/ branch per task with repo_commit, then ALWAYS call repo_checks and fix what fails (commit again, check again) until it says PASSED, "
+                      "then call request_merge once and stop: Michael approves the merge. Atlas deploys "
                       "on merge, so be careful there. If a change is not ready to merge, finish without request_merge and say why.")
             else:
                 s += "\nGitHub is not connected yet, so save code as files with save_output and say in your summary that GitHub needs connecting."
@@ -1335,7 +1354,7 @@ class CrewEngine:
         if not transcript:
             transcript.append({"role": "user", "content": await self._context(task, mission)})
             await self.store.add_event(uid, "task", f'{task["role"].title()} started "{task["title"]}".', mission_id=mid, task_id=tid)
-        model = self.models.get(ROLES.get(task["role"], ROLES["builder"])["model"], self.models["writing"])
+        model = self.model_for(ROLES.get(task["role"], ROLES["builder"])["model"])
         tools = tools_for(task["role"])
 
         for _ in range(ROUNDS_PER_RUN):
@@ -1354,10 +1373,11 @@ class CrewEngine:
                 resp = await self.acompletion(model=model, messages=call_msgs, tools=tools, max_tokens=AGENT_MAX_TOKENS)
             except Exception as exc:
                 # a provider out of quota or down (Gemini 429 / 503): finish the task on the writing model instead of failing it
-                if model == self.models["writing"] or not _provider_unavailable(exc):
+                backups = self._fallback_models(model)
+                if not backups or not _provider_unavailable(exc):
                     raise
-                logger.warning("crew: %s unavailable (%s); task %s continues on %s", model, type(exc).__name__, tid, self.models["writing"])
-                model = self.models["writing"]
+                logger.warning("crew: %s unavailable (%s); task %s continues on %s", model, type(exc).__name__, tid, backups[0])
+                model = backups[0]
                 resp = await self.acompletion(model=model, messages=call_msgs, tools=tools, max_tokens=AGENT_MAX_TOKENS)
             cost = await self._charge(uid, mid, tid, resp)
             msg = resp.choices[0].message
@@ -1586,7 +1606,7 @@ class CrewEngine:
             return await self._image(task, mission, args)
         if name == "make_design_files" and task["role"] == "designer":
             return await self._design(task, mission, args)
-        if name in ("repo_files", "repo_read", "repo_commit", "request_merge") and task["role"] == "builder":
+        if name in ("repo_files", "repo_read", "repo_commit", "repo_checks", "request_merge") and task["role"] == "builder":
             return await self._repo(task, mission, name, args)
         if name in ("repo_files", "repo_read") and task["role"] == "qa":
             return await self._repo(task, mission, name, args)
@@ -1826,7 +1846,7 @@ class CrewEngine:
         envx = task.get("_env", self.env)
         if not gh.configured(envx) or not gh.repos(envx):
             return "GitHub is not connected (" + gh.SETUP + "). Save code with save_output instead and say so in your summary.", None
-        hub = gh.GitHub(envx, self.client_factory)
+        hub = gh.GitHub(envx, self.client_factory, sleep=self.sleep)
         try:
             if name == "repo_files":
                 return await hub.list_files(_clip(args.get("repo"), 100), _clip(args.get("path"), 200), _clip(args.get("branch"), 80)), None
@@ -1838,6 +1858,12 @@ class CrewEngine:
                 await self.store.add_event(uid, "code", f"Forge committed {len(out['files'])} file(s) to {out['branch']} in {out['repo']}: {_clip(args.get('message'), 120)}",
                                            mission_id=mid, task_id=tid)
                 return f"Committed to {out['branch']} ({out['sha'][:7]}): {', '.join(out['files'])}. Compare: {out['url']}", None
+            if name == "repo_checks":
+                res = await hub.run_checks(_clip(args.get("repo"), 100), _clip(args.get("branch"), 80) or mission.get("title") or "work", mission.get("title") or "")
+                await self.store.add_event(uid, "code", f"Checks on {_clip(args.get('branch'), 60)}: {res['state']}", mission_id=mid, task_id=tid)
+                nxt = {"failed": " Fix the problems above, repo_commit again, then call repo_checks again.", "pending": " Still running: call repo_checks again.",
+                       "none": " No automatic checks ran for this branch; say so plainly in your request_merge summary.", "passed": " Now call request_merge."}[res["state"]]
+                return f"Checks on {_clip(args.get('branch'), 60)}: {res['state'].upper()}. {res['text']}{nxt}", None
             repo, branch = gh.check_repo(_clip(args.get("repo"), 100), envx), gh.crew_branch(_clip(args.get("branch"), 80))
         except gh.GitHubError as exc:
             return f"GitHub: {exc}", None
@@ -1845,8 +1871,17 @@ class CrewEngine:
             logger.exception("crew github call failed")
             return "GitHub could not be reached just now. Try again once, or finish and say so.", None
         title, summary = _clip(args.get("title"), 120) or branch, str(args.get("summary") or "").strip()[:3000]
+        try:
+            chk = await hub.checks(repo, branch)                      # a merge is never offered on a branch whose tests fail
+        except Exception:
+            chk = {"state": "none", "text": "(the checks could not be read)"}
+        if chk["state"] == "failed":
+            return f"NOT sent to Michael: the checks on {branch} are failing.\n{chk['text']}\nFix it, repo_commit, call repo_checks, and request_merge only when they pass.", None
+        if chk["state"] == "pending":
+            return f"NOT sent to Michael yet: the checks on {branch} are still running. Call repo_checks, wait for PASSED, then request_merge.", None
         live = " Atlas deploys on merge, so this goes live." if repo.lower().endswith("/atlas") else ""
-        what = f"Merge Forge's branch {branch} into main of {repo}: {title}.{live} Review it first: https://github.com/{repo}/compare/{branch}"
+        what = (f"Merge Forge's branch {branch} into main of {repo}: {title}.{live} Checks: "
+                + ("passed" if chk["state"] == "passed" else "none ran") + f". Review it first: https://github.com/{repo}/compare/{branch}")
         await self.store.add_question(mid, tid, uid, "checkpoint", what, ["Approve", "Decline"],
                                       {"platform": "github", "action": "merge", "args": {"repo": repo, "branch": branch, "title": title, "body": summary}})
         await self.store.add_event(uid, "checkpoint", f"Checkpoint for Michael: {what}", mission_id=mid, task_id=tid)
@@ -1921,6 +1956,8 @@ class CrewEngine:
             raise LookupError("No such question.")
         if q["status"] != "open":
             raise ValueError("That was already answered.")
+        if q["kind"] == "ops":                                # Helix's own actions (redeploy, restart, rollback, a fix mission) have no task
+            return await self._answer_ops(user_id, q, approve)
         task = await self.store.get_task(q["task_id"])
         if not task:
             raise LookupError("The task is gone.")
@@ -2009,6 +2046,74 @@ class CrewEngine:
             await self.store.update_task(tid, transcript=transcript)
         return {"ok": True, "message": result}
 
+    async def _answer_ops(self, user_id: str, q: Dict[str, Any], approve: Optional[bool]) -> Dict[str, Any]:
+        """The owner's Approve or Decline on something Helix proposed: the server runs it, never the model."""
+        from openjarvis.server.crew import devtools
+
+        if approve is None:
+            raise ValueError("Approve or decline it.")
+        if not await self.store.close_question(q["id"], "approved" if approve else "declined", ""):
+            raise ValueError("That was already answered.")
+        act = q["action"] or {}
+        if not approve:
+            await self.store.add_event(user_id, "ops", f"Declined: {q['text']}", mission_id=q.get("mission_id") or "")
+            await self.remember(user_id, f"Michael declined: {_clip(q['text'], 200)}")
+            return {"ok": True, "message": "Declined. Nothing was changed."}
+        envx = await self.env_for(user_id)
+        try:
+            kind = act.get("type")
+            if kind == "start_mission":
+                m = await self.start_mission(user_id, act.get("goal") or "", act.get("budget_usd"))
+                result = f'Mission started with a ${m["budget_usd"]:.2f} budget. Forge will fix it on a crew/ branch and ask you before merging.'
+            else:
+                rd = devtools.Render(envx, self.client_factory)
+                sid = str(act.get("service_id") or "")
+                if kind == "render_redeploy":
+                    result = await rd.redeploy(sid, bool(act.get("clear_cache")))
+                elif kind == "render_restart":
+                    result = await rd.restart(sid)
+                elif kind == "render_rollback":
+                    result = await rd.rollback(sid, str(act.get("deploy_id") or ""))
+                else:
+                    raise ValueError("Unknown action.")
+        except (devtools.DevError, ValueError) as exc:
+            result = f"It failed: {exc}"
+        except Exception:
+            logger.exception("ops action failed")
+            result = "It failed: the service could not be reached."
+        await self.store.add_event(user_id, "ops", f"Approved: {q['text']} -> {result}", mission_id=q.get("mission_id") or "")
+        await self.remember(user_id, f"Approved and ran: {_clip(q['text'], 160)} Result: {_clip(result, 120)}")
+        return {"ok": True, "message": result}
+
+    MEMORY_KEY = "helix_memory"
+
+    async def memory(self, user_id: str) -> List[Dict[str, Any]]:
+        try:
+            raw = await self.store.get_secret(user_id, self.MEMORY_KEY)
+            data = json.loads(raw) if raw else []
+        except Exception:
+            return []
+        return [n for n in data if isinstance(n, dict) and n.get("text")]
+
+    async def remember(self, user_id: str, text: str) -> Optional[Dict[str, Any]]:
+        """Keep a short note for Helix to carry into every later conversation (newest 60 kept)."""
+        text = _clip(text, 300)
+        if len(text) < 4:
+            return None
+        notes = await self.memory(user_id)
+        if any(n["text"].lower() == text.lower() for n in notes):
+            return None
+        note = {"id": f"n{int(self.now().timestamp())}{len(notes)}", "text": text, "at": self.now().strftime("%Y-%m-%d")}
+        await self.store.set_secret(user_id, self.MEMORY_KEY, json.dumps((notes + [note])[-60:]))
+        return note
+
+    async def forget(self, user_id: str, which: str) -> int:
+        which = _clip(which, 120).lower()
+        notes = await self.memory(user_id)
+        keep = [n for n in notes if n["id"].lower() != which and which not in n["text"].lower()]
+        await self.store.set_secret(user_id, self.MEMORY_KEY, json.dumps(keep))
+        return len(notes) - len(keep)
+
     # ── what the Station and Helix see ───────────────────────────────────────────────────────────
 
     async def state(self, user_id: str, missions_limit: int = 12) -> Dict[str, Any]:
@@ -2052,7 +2157,7 @@ class CrewEngine:
                            "status_text": ("making a brief" if hs["busy"] else ("next brief " + hs["next_label"] if hs["enabled"] else "schedule off")) +
                                           (" · last " + last["period"] + (" sent" if last["ok"] else " failed") if last else ""),
                            "herald": True})
-        roster.insert(0, {"role": "lead", "name": "Helix", "model": hardening.display_name(self.models.get("writing", "")),
+        roster.insert(0, {"role": "lead", "name": "Helix", "model": hardening.display_name(self.model_for("helix")),
                           "can": "Talks with you, plans each goal into tasks, assigns the crew, brings you their questions and approvals",
                           "cannot": "Approve checkpoints for you or spend past your limits", "working": len(self._plans), "waiting": 0, "done": 0})
         return {

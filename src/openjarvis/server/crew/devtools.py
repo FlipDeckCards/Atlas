@@ -197,3 +197,36 @@ class Render:
         lines = [f'{str(e.get("timestamp", ""))[11:19]} {redact(_clip(e.get("message"), 300))}' for e in reversed((body or {}).get("logs") or []) if str(e.get("message") or "").strip()]
         return (f'{svc["name"]} logs, last {minutes} min' + (f' matching "{text}"' if text else "") + (f", level {level}" if level else "") + ":\n" + "\n".join(lines)) if lines else \
             f'No matching log lines for {svc["name"]} in the last {minutes} minutes.'
+
+    # ── things that change the live service: only ever called after the owner's Approve tap ──
+
+    async def _post(self, c, path: str, body: Optional[Dict[str, Any]] = None) -> Any:
+        r = await c.post(RENDER_API + path, headers=self._h(), json=body or {})
+        if r.status_code in (401, 403):
+            raise DevError("Render refused the API key for this action.")
+        if r.status_code not in (200, 201, 202, 204):
+            raise DevError(f"Render answered {r.status_code}.")
+        try:
+            return r.json() if r.content else {}
+        except ValueError:
+            return {}
+
+    async def deploys_raw(self, service_id: str, limit: int = 3) -> List[Dict[str, Any]]:
+        async with self.cf() as c:
+            rows = await self._get(c, f"/services/{service_id}/deploys", {"limit": max(1, min(int(limit or 3), 10))})
+        return [row.get("deploy", row) for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+    async def redeploy(self, service_id: str, clear_cache: bool = False) -> str:
+        async with self.cf() as c:
+            d = await self._post(c, f"/services/{service_id}/deploys", {"clearCache": "clear" if clear_cache else "do_not_clear"})
+        return f'Started a new deploy ({str(d.get("id") or "")[:12] or "queued"}){" with a clean build cache" if clear_cache else ""}.'
+
+    async def restart(self, service_id: str) -> str:
+        async with self.cf() as c:
+            await self._post(c, f"/services/{service_id}/restart")
+        return "Restarted the service."
+
+    async def rollback(self, service_id: str, deploy_id: str) -> str:
+        async with self.cf() as c:
+            d = await self._post(c, f"/services/{service_id}/rollback", {"deployId": deploy_id})
+        return f'Rolling back to deploy {deploy_id[:12]} ({str(d.get("id") or "")[:12] or "started"}).'
