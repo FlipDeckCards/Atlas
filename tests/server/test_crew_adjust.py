@@ -899,3 +899,13 @@ def test_book_typesetter_cleans_markdown_and_placeholders():
     data, pages = pdfmod.make_book_pdf("A Book", "Me", md, None, None, {"tagline": "T", "blurb": "B " * 300, "author": "Me"})
     assert data.startswith(b"%PDF") and pages >= 4
     assert b"Media Library" not in data and b"*now*" not in data
+
+
+def test_tool_call_allowance_restarts_after_a_retry():
+    from openjarvis.server.crew.engine import _calls_made
+
+    call = {"role": "assistant", "tool_calls": [{"function": {"name": "make_book"}}]}
+    t = [call] * 6
+    assert _calls_made(t, "make_book") == 6
+    t += [{"role": "user", "content": "Michael asked for this task to be done again."}, call]
+    assert _calls_made(t, "make_book") == 1
