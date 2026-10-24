@@ -751,7 +751,7 @@ class TestStationArt:
 
     def test_the_station_uses_the_art_when_it_loads_and_keeps_its_drawings_otherwise(self):
         from openjarvis.server.crew.station import STATION_PAGE
-        for needle in ("const ART = ", "loadArt('helix-walk.png'", "if (ART.rocks.length)", "if (ART.satellite)", "if (ART.helix || ART.helixViews) onDeck.push"):
+        for needle in ("const ART = ", "loadArt('helix-walk.png'", "if (ART.rocks.length)", "if (ART.satellite)", "HELIX_ON_DECK && (ART.helix || ART.helixViews)"):
             assert needle in STATION_PAGE
 
 
@@ -816,7 +816,7 @@ class TestArtPipeline:
         from openjarvis.server.crew import routes
         from openjarvis.server.crew.station import STATION_PAGE
         assert "helix-views.png" in routes.ART_FILES
-        for needle in ("loadArt('helix-views.png'", "ART.helixViews", "a walk made in code from still pictures"):
+        for needle in ("if (HELIX_ON_DECK) loadArt('helix-views.png'", "ART.helixViews", "a walk made in code from still pictures"):
             assert needle in STATION_PAGE
 
 
@@ -882,3 +882,10 @@ class TestShippedArt:
         for k in range(4):
             assert sheet.crop((k * sheet.size[1], 0, (k + 1) * sheet.size[1], sheet.size[1])).getbbox()   # none of the four views is empty
         assert not any(f.lower().endswith(".png") for f in os.listdir(".")), "raw renders belong in assets/art, not the repo root"
+
+
+class TestHelixIsOffTheRing:
+    def test_helix_does_not_walk_the_deck_and_her_art_is_not_even_downloaded(self):
+        from openjarvis.server.crew.station import STATION_PAGE
+        assert "const HELIX_ON_DECK = false;" in STATION_PAGE
+        assert "if (HELIX_ON_DECK) loadArt('helix-views.png'" in STATION_PAGE and "if (HELIX_ON_DECK) loadArt('helix-walk.png'" in STATION_PAGE
