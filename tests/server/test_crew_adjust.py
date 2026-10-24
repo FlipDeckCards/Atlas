@@ -919,3 +919,11 @@ def test_tool_call_allowance_restarts_after_a_retry():
     assert _calls_made(t, "make_book") == 6
     t += [{"role": "user", "content": "Michael asked for this task to be done again."}, call]
     assert _calls_made(t, "make_book") == 1
+
+
+def test_old_chat_turns_are_clipped_but_recent_ones_stay_whole():
+    from openjarvis.server.atlas_ui import clip_old_turn
+
+    long = "x" * 3000
+    assert clip_old_turn(long, 2) == long
+    assert len(clip_old_turn(long, 9)) < 800 and clip_old_turn("short", 9) == "short"

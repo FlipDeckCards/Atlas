@@ -66,6 +66,12 @@ def helix_model(message: str, has_files: bool, cfg: Optional[dict] = None) -> tu
     return mid, hardening.display_name(mid), "cyan" if light else "orange"
 
 
+def clip_old_turn(content: str, age: int, recent: int = 4, old_chars: int = 700) -> str:
+    """Older turns of Helix's long chat are cut short before each model call (the last few stay whole): a long thread of long replies is what makes her slow."""
+    text = str(content or "")
+    return text if age <= recent or len(text) <= old_chars else text[:old_chars].rstrip() + " ..."
+
+
 def _with_fallback(model_id: str, crew: bool = False) -> list:
     """The routed model, then the writing model (Claude) when they differ: a provider out of quota (Gemini's free tier) must not stop Helix."""
     cfg = hardening.model_config()
@@ -1824,11 +1830,14 @@ async def chat(req: ChatRequest, request: Request):
     if crew_ctx is not None:
         system_text += await crew_helix.system_addendum(crew_ctx)
     messages = [{"role": "system", "content": system_text}]
-    for m in session["conversation_history"][-(hardening.CREW_HISTORY_MESSAGES if crew_ctx is not None else 10):]:
+    recent = session["conversation_history"][-(hardening.CREW_HISTORY_MESSAGES if crew_ctx is not None else 10):]
+    for i, m in enumerate(recent):
         if m["role"] in ("user", "assistant"):
             content = m["content"]
             if isinstance(content, list):
                 content = next((c.get("text","") for c in content if c.get("type")=="text"), "")
+            if crew_ctx is not None:
+                content = clip_old_turn(content, len(recent) - i)
             messages.append({"role": m["role"], "content": content})
 
     model_text = req.message
