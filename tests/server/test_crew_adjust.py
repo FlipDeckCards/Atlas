@@ -255,3 +255,9 @@ class TestStationSpin:
         from openjarvis.server.crew.station import STATION_PAGE
         for needle in ("function startSpin", "startSpin();      // click Helix", "spinOnMissionChange(S.missions", "stepMotion(t);", "const DRIFT", "turns: 2"):
             assert needle in STATION_PAGE
+
+
+class TestMissionsWithoutABusiness:
+    def test_a_mission_no_business_owns_gets_no_factory_of_its_own(self):
+        from openjarvis.server.crew.station import STATION_PAGE
+        assert "return 'aibussol';" in STATION_PAGE and "return 'new:' + String(m.title" not in STATION_PAGE
