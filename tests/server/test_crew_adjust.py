@@ -747,7 +747,7 @@ class TestStationArt:
     def test_art_is_served_only_from_the_allowed_names_and_a_missing_file_is_a_plain_404(self):
         from openjarvis.server.crew import routes
         assert {"asteroid1.png", "asteroid2.png", "asteroid3.png", "satellite.png", "helix-walk.png", "helix-views.png"} == routes.ART_FILES
-        assert run(routes.station_art("../../etc/passwd")).status_code == 404 and run(routes.station_art("satellite.png")).status_code == 404
+        assert run(routes.station_art("../../etc/passwd")).status_code == 404 and run(routes.station_art("helix-walk.png")).status_code == 404
 
     def test_the_station_uses_the_art_when_it_loads_and_keeps_its_drawings_otherwise(self):
         from openjarvis.server.crew.station import STATION_PAGE
@@ -865,3 +865,20 @@ class TestBackCoverIsTypesetNotDrawn:
         assert "no text" not in captured[1].lower()
         props = [t for t in eng_mod.tools_for("designer") if t["function"]["name"] == "make_book"][0]["function"]["parameters"]["properties"]
         assert {"back_tagline", "back_blurb", "barcode_space"} <= set(props)
+
+
+class TestShippedArt:
+    def test_michaels_art_is_in_place_small_and_served(self):
+        import os
+        from PIL import Image
+        from openjarvis.server.crew import routes
+        for name, max_kb in (("asteroid1.png", 120), ("asteroid2.png", 120), ("asteroid3.png", 120), ("satellite.png", 150), ("helix-views.png", 150)):
+            path = os.path.join(routes._ART_DIR, name)
+            assert os.path.isfile(path) and os.path.getsize(path) < max_kb * 1024, name
+            assert Image.open(path).mode == "RGBA"
+            assert run(routes.station_art(name)).status_code == 200
+        sheet = Image.open(os.path.join(routes._ART_DIR, "helix-views.png"))
+        assert sheet.size[0] == sheet.size[1] * 4                                                    # four square views: front, back, right, left
+        for k in range(4):
+            assert sheet.crop((k * sheet.size[1], 0, (k + 1) * sheet.size[1], sheet.size[1])).getbbox()   # none of the four views is empty
+        assert not any(f.lower().endswith(".png") for f in os.listdir(".")), "raw renders belong in assets/art, not the repo root"
