@@ -2003,11 +2003,7 @@ class CrewEngine:
                                            "barcode_space", "replacements") if args.get(k) not in (None, "", [])}
         await self.store.add_output(mid, tid, uid, fname[:-4] + ".recipe.json", json.dumps(recipe, indent=1))                # lets "rebuild that book with these changes" work later
         words = len(text.split())
-<<<<<<< HEAD
         await self.store.add_event(uid, "output", f'Saved the book "{fname}": {pages} pages, {words:,} words, {len(data) // 1024} KB.', mission_id=mid, task_id=tid or "")
-=======
-        await self.store.add_event(uid, "output", f'Saved the book "{fname}": {pages} pages, {words:,} words, {len(data) // 1024} KB.', mission_id=mid, task_id=tid or None)
->>>>>>> origin/main
         return (('Spelling fixes applied: ' + '; '.join(fixed) + '. ' if fixed else '') + f'Saved "{fname}" to the outbox: {pages} pages (6 x 9 in), about {words:,} words, {len(data) // 1024} KB; front cover {"included" if cover else "NOT included"}, '
                 f'back cover {"picture included" if back else "picture NOT included"}'
                 f'{" with the tagline and description typeset on it" if back_text["tagline"] or back_text["blurb"] else " (no back-cover text given)"}; no pictures inside.'), None
