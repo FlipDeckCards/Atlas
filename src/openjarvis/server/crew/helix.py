@@ -71,6 +71,10 @@ CREW_TOOLS: List[Dict[str, Any]] = [
         "description": "What the crew is doing: missions, tasks, open questions and checkpoints (with ids), spend.",
         "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
+        "name": "mission_details",
+        "description": "Why a mission is in its state, and everything in it: every task with its status and result or failure reason, the latest errors and warnings, the budget, and whether the crew is held back. Call it whenever the user asks why a mission is stalled, failed, paused or slow, or what a mission has done.",
+        "parameters": {"type": "object", "properties": {"mission_id": {"type": "string"}}, "required": ["mission_id"]}}},
+    {"type": "function", "function": {
         "name": "answer_crew_question",
         "description": "Pass the user's answer to an agent's open QUESTION (not a checkpoint or budget request; those need his tap on Approve/Decline).",
         "parameters": {"type": "object", "properties": {"question_id": {"type": "string"}, "answer": {"type": "string"}}, "required": ["question_id", "answer"]}}},
@@ -207,7 +211,8 @@ async def status_text(ctx: CrewCtx) -> str:
         lines.append(f'Mission {m["id"]} "{m["title"] or _clip(m["goal"], 60)}" [{m["status"]}] {done}/{len(m["tasks"])} tasks done, '
                      f'${m["spent_usd"]:.2f} of ${m["budget_usd"]:.2f}, {len(m["outputs"])} file(s)')
         for t in m["tasks"]:
-            lines.append(f'  - task {t["idx"] + 1}: {t["title"]} ({t["role"]}): {t["status"]}')
+            why = f' - {_clip(t["result"], 160)}' if t["status"] == "failed" and t["result"] else ""
+            lines.append(f'  - task {t["idx"] + 1}: {t["title"]} ({t["role"]}): {t["status"]}{why}')
     for q in st["questions"]:
         how = "the user can answer in chat" if q["kind"] == "question" else "needs Approve/Decline tap"
         lines.append(f'Open {q["kind"]} {q["id"]}: {q["text"]}' + (f' Options: {" / ".join(q["options"])}' if q["options"] and q["kind"] == "question" else "") + f" ({how})")
@@ -215,6 +220,35 @@ async def status_text(ctx: CrewCtx) -> str:
     lines.append(f'Crew spend today ${sp["today_usd"]:.2f}' + (" (no daily cap)" if sp["daily_cap_usd"] is None else f' of ${sp["daily_cap_usd"]:.2f}') + f'. Night Shift {"on" if st["settings"]["night_shift"] else "off"}'
                  f'{", crew paused" if st["settings"]["paused"] else ""}{", not starting work now: " + st["blocked"] if st["blocked"] else ""}.')
     return "\n".join(lines) if st["missions"] or st["questions"] else "No missions yet. " + lines[-1]
+
+
+async def mission_details(ctx: CrewCtx, mission_id: str) -> str:
+    eng = ctx.engine
+    m = await eng.store.get_mission(mission_id)
+    if not m or m["user_id"] != ctx.user_id:
+        return "Error: no such mission."
+    tasks = await eng.store.list_tasks(mission_id)
+    lines = [f'Mission {m["id"]} "{m["title"] or _clip(m["goal"], 60)}" is {m["status"].upper()}: ${m["spent_usd"]:.2f} spent of ${m["budget_usd"]:.2f}. Goal: {_clip(m["goal"], 240)}']
+    for t in tasks:
+        line = f'  task {t["idx"] + 1}: {t["title"]} ({t["role"]}) {t["status"]}, ran {t["runs"]} time(s), ${t["spent_usd"]:.2f}'
+        if t["depends_on"]:
+            line += " (needs task " + ", ".join(str(i + 1) for i in t["depends_on"]) + ")"
+        if t["result"]:
+            line += f' - {_clip(t["result"], 300)}'
+        lines.append(line)
+    problems = [e for e in await eng.store.list_events(ctx.user_id, mission_id, limit=40) if e["kind"] in ("error", "budget")][:6]
+    if problems:
+        lines.append("Latest problems:")
+        lines += [f'  - {_clip(e["text"], 260)}' for e in problems]
+    qs = [q for q in await eng.store.list_questions(ctx.user_id, "open") if q["mission_id"] == mission_id]
+    for q in qs:
+        lines.append(f'Waiting on the user: {q["kind"]} {q["id"]}: {_clip(q["text"], 200)}')
+    held = await eng.may_run(ctx.user_id)
+    if held:
+        lines.append(f"The whole crew is held back right now: {held}")
+    if m["status"] in ("stalled", "paused", "failed"):
+        lines.append("To continue it: resume_mission (failed tasks are tried again). Fix the cause first if a reason above names one (credits, keys, connections).")
+    return "\n".join(lines)
 
 
 async def system_addendum(ctx: CrewCtx) -> str:
@@ -225,7 +259,8 @@ async def system_addendum(ctx: CrewCtx) -> str:
         qs = []
     s = (" You lead the user's crew of agents. When he asks you to build, make or launch something bigger than one answer (a product, a business, "
          "a campaign, an app), call start_mission with his goal; the system asks him to confirm. Use crew_status when he asks what the crew is doing. "
-         "Never say a mission started unless a tool result says so. Checkpoints and budget requests are approved only by his tap on the buttons. "
+         "Never say a mission started unless a tool result says so. When he asks why a mission is stalled, failed, paused or stuck, call mission_details and "
+         "tell him the actual reason from it in plain words and what to do about it; never guess. Checkpoints and budget requests are approved only by his tap on the buttons. "
          "To put a business on the All businesses box, call add_business with the name he gave; never say it was added unless the tool result says so. "
          "A mission can be changed after it starts: add_task to give it more work, edit_task for a task not started yet, retry_task to redo one with a note, "
          "resume_mission to continue it; never say a change was made unless the tool result says so. You can read the files of every mission, whatever its "
@@ -258,6 +293,8 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
             return f"NOT STARTED YET. Waiting for the user's confirmation. Tell them the crew will plan and work this with a ${budget:.2f} budget, and ask them to reply 'yes'."
         if name == "crew_status":
             return await status_text(ctx)
+        if name == "mission_details":
+            return await mission_details(ctx, str(args.get("mission_id") or ""))
         if name == "add_business":
             from openjarvis.server.crew import tenant
 

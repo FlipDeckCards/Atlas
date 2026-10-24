@@ -268,3 +268,27 @@ class TestDeepSpace:
         from openjarvis.server.crew.station import STATION_PAGE
         for needle in ("function drawMilkyWay", "function spawnMeteor", "function drawMiniStation", "drawMeteors(t);", "drawMilkyWay(s, W, H);"):
             assert needle in STATION_PAGE
+
+
+class TestWhyAMissionStalled:
+    def test_errors_are_explained_in_plain_words(self):
+        from openjarvis.server.crew.engine import explain_error
+        credit = Exception('AnthropicError: {"error":{"message":"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing"}}')
+        assert "credit balance is too low" in explain_error(credit) and "console.anthropic.com" in explain_error(credit)
+        assert "rate limiting" in explain_error(Exception("429 Too Many Requests"))
+        assert "ValueError: odd" in explain_error(ValueError("odd"))
+
+    def test_a_task_that_keeps_erroring_says_why_and_helix_reports_it(self):
+        def boom(turn, messages):
+            raise RuntimeError("Your credit balance is too low to access the Anthropic API")
+        w = world(two_task_plan(), {"Research buyers": boom, "Write listing": [resp("w")]})
+        m = run(start(w))
+        for _ in range(6):
+            run(w.engine.run_until_idle())
+        m = run(w.store.get_mission(m["id"]))
+        assert m["status"] == "stalled"
+        ctx = helix.CrewCtx(UID, w.engine)
+        out = run(helix.execute(ctx, "mission_details", {"mission_id": m["id"]}))
+        assert "STALLED" in out and "credit balance is too low" in out and "resume_mission" in out
+        assert "credit balance is too low" in run(helix.status_text(ctx))
+        assert "no such mission" in run(helix.execute(helix.CrewCtx("other", w.engine), "mission_details", {"mission_id": m["id"]}))

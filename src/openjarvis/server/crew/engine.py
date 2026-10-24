@@ -216,6 +216,25 @@ def _provider_unavailable(exc: Exception) -> bool:
     return any(k in text for k in ("429", "503", "ratelimit", "rate limit", "quota", "resource_exhausted", "overloaded", "unavailable"))
 
 
+def explain_error(exc: BaseException) -> str:
+    """A model or network error in plain words, for the task, the ledger and Helix (the full traceback stays in the server log)."""
+    text = f"{type(exc).__name__}: {exc}"
+    low = text.lower()
+    if "credit balance is too low" in low or "insufficient_quota" in low or "billing" in low and "400" in low:
+        return "the Anthropic API credit balance is too low. Add credits (console.anthropic.com, Plans & Billing), then resume the mission."
+    if "invalid x-api-key" in low or "authentication" in low or "401" in low or "api key" in low and "invalid" in low:
+        return "the AI provider rejected the API key. Check the key in the server settings, then resume the mission."
+    if "429" in low or "rate limit" in low or "ratelimit" in low:
+        return "the AI provider is rate limiting requests. Wait a few minutes, then resume the mission."
+    if "overloaded" in low or "503" in low or "unavailable" in low:
+        return "the AI provider is overloaded or down right now. Try resuming in a few minutes."
+    if "context" in low and ("length" in low or "too long" in low or "window" in low) or "prompt is too long" in low:
+        return "the task grew too long for the model to read. Retry it with a note to work in smaller pieces."
+    if "timeout" in low or "timed out" in low or "connection" in low:
+        return "the connection to the AI provider timed out. Try resuming."
+    return _clip(text, 200)
+
+
 def pc_project(names: List[str], task: Dict[str, Any], mission: Dict[str, Any]) -> str:
     """Which folder on the PC Rig works in: the PC project the task (or else the mission goal) names, preferring 'in project X',
     then the first one mentioned; otherwise the mission's project. Factories and PC folders are separate: a game is in the Deadzone
@@ -838,10 +857,11 @@ class CrewEngine:
             await self.store.add_event(uid, "plan", f"Planned {len(plan['tasks'])} tasks: {lines}", mission_id=mission_id, cost_usd=cost)
             await self._notify(uid, f"Mission planned: {plan['title'] or _clip(m['goal'], 40)}",
                                f"{len(plan['tasks'])} tasks, ${m['budget_usd']:.2f} budget. The crew is starting. Watch it in the Station.")
-        except Exception:
+        except Exception as exc:
             logger.exception("planning failed for %s", mission_id)
-            await self.store.update_mission(mission_id, status="failed", summary="Planning failed (the model could not be reached).")
-            await self.store.add_event(uid, "error", "Planning failed: the model could not be reached.", mission_id=mission_id)
+            why = explain_error(exc)
+            await self.store.update_mission(mission_id, status="failed", summary=f"Planning failed: {why}")
+            await self.store.add_event(uid, "error", f"Planning failed: {why}", mission_id=mission_id)
         finally:
             self._plans.pop(mission_id, None)
 
@@ -1091,8 +1111,9 @@ class CrewEngine:
         failed = [t for t in tasks if t["status"] == "failed"]
         if failed and not live:
             await self.store.update_mission(mission_id, status="stalled")
-            await self.store.add_event(m["user_id"], "error", f"Mission stalled: {len(failed)} task(s) failed and nothing else can run.", mission_id=mission_id)
-            await self._notify(m["user_id"], "Mission stalled", f'"{m["title"] or _clip(m["goal"], 60)}": {failed[0]["title"]} failed. Open the Station to see why.')
+            why = _clip(next((t["result"] for t in failed if "repeated errors:" in (t["result"] or "")), failed[0]["result"]), 220)
+            await self.store.add_event(m["user_id"], "error", f"Mission stalled: {len(failed)} task(s) failed and nothing else can run. {why}".strip(), mission_id=mission_id)
+            await self._notify(m["user_id"], "Mission stalled", f'"{m["title"] or _clip(m["goal"], 60)}": {failed[0]["title"]} failed. {why or "Open the Station to see why."}')
         elif failed:
             # tasks that wait on a failed task can never start: mark them so the mission can settle
             failed_idx = {t["idx"] for t in failed}
@@ -1255,17 +1276,18 @@ class CrewEngine:
         except asyncio.CancelledError:
             await self.store.update_task(task["id"], status="queued")
             raise
-        except Exception:
+        except Exception as exc:
             logger.exception("crew task %s failed", task["id"])
+            why = explain_error(exc)
             t = await self.store.get_task(task["id"]) or task
             runs = t["runs"] + 1
             if runs >= MAX_RUNS:
-                await self.store.update_task(task["id"], status="failed", runs=runs, result="Stopped after repeated errors.")
-                await self.store.add_event(task["user_id"], "error", f'"{task["title"]}" stopped after repeated errors.', mission_id=task["mission_id"], task_id=task["id"])
+                await self.store.update_task(task["id"], status="failed", runs=runs, result=f"Stopped after repeated errors: {why}")
+                await self.store.add_event(task["user_id"], "error", f'"{task["title"]}" stopped after repeated errors: {why}', mission_id=task["mission_id"], task_id=task["id"])
                 await self._check_mission(task["mission_id"])
             else:
                 await self.store.update_task(task["id"], status="queued", runs=runs)
-                await self.store.add_event(task["user_id"], "error", f'"{task["title"]}" hit an error and will retry.', mission_id=task["mission_id"], task_id=task["id"])
+                await self.store.add_event(task["user_id"], "error", f'"{task["title"]}" hit an error ({_clip(why, 120)}) and will retry.', mission_id=task["mission_id"], task_id=task["id"])
 
     async def _context(self, task: Dict[str, Any], mission: Dict[str, Any]) -> str:
         siblings = await self.store.list_tasks(task["mission_id"])
