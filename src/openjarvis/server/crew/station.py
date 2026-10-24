@@ -1307,8 +1307,12 @@ function factories() {                                                   // ever
   return prods().map(f => fillBay(Object.assign({}, f))).concat([coreBay()], newKeys().map(newBay));
 }
 
-// the victory spin: every factory and its tube swing around Helix a couple of times, then settle exactly where they were
+// the ring turns slowly all the time, as if it floated in space; a click on Helix, a mission starting or one finishing speeds it up for
+// a couple of turns, then it eases back down to the slow turn (no jump: the extra turns are folded into the slow angle when they end)
+const DRIFT = { angle: 0, rate: 2 * Math.PI / 150, last: 0 };     // one slow turn in 150 seconds
 const SPIN = { on: false, t0: 0, dur: 3400, turns: 2, cur: 0 };
+let reducedMotion = false;
+try { reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
 function poseMods(extra) {
   mods.forEach(m => {
     const a = (m.a0 === undefined ? m.a : m.a0) + extra;
@@ -1316,16 +1320,18 @@ function poseMods(extra) {
   });
 }
 function startSpin() {
-  if (SPIN.on || !mods.length) return;
-  try { if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return; } catch (e) {}
+  if (SPIN.on || !mods.length || reducedMotion) return;
   SPIN.on = true; SPIN.t0 = performance.now(); SPIN.cur = 0;
 }
-function stepSpin(t) {
-  if (!SPIN.on) return;
-  const p = (t - SPIN.t0) / SPIN.dur;
-  if (p >= 1) { SPIN.on = false; SPIN.cur = 0; }
-  else SPIN.cur = SPIN.turns * 2 * Math.PI * (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);   // slow start, fast middle, slow stop
-  poseMods(SPIN.cur);
+function stepMotion(t) {
+  const dt = DRIFT.last ? Math.min(0.1, Math.max(0, (t - DRIFT.last) / 1000)) : 0; DRIFT.last = t;
+  if (!reducedMotion) DRIFT.angle = (DRIFT.angle + DRIFT.rate * dt) % (2 * Math.PI);
+  if (SPIN.on) {
+    const p = (t - SPIN.t0) / SPIN.dur;
+    if (p >= 1) { SPIN.on = false; SPIN.cur = 0; DRIFT.angle = (DRIFT.angle + SPIN.turns * 2 * Math.PI) % (2 * Math.PI); }
+    else SPIN.cur = SPIN.turns * 2 * Math.PI * (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);   // slow start, fast middle, slow stop
+  }
+  poseMods(DRIFT.angle + SPIN.cur);
 }
 let missionSeen = null;                                   // mission id -> last status; null until the first state arrives
 function spinOnMissionChange(missions) {
@@ -1362,7 +1368,7 @@ function layout() {
     return Object.assign(m, { a, ux: Math.cos(a), uy: Math.sin(a), cx: core.x + Math.cos(a) * D, cy: core.y + Math.sin(a) * D, w: mw, h: mh, rot: a + Math.PI / 2, D });
   });
   mods.forEach(m => { m.a0 = m.a; });
-  if (SPIN.on) poseMods(SPIN.cur);
+  poseMods(DRIFT.angle + SPIN.cur);
   bays = mods.filter(m => !m.platform && !m.expansion);
   core.bay = coreBay();
 }
@@ -1518,9 +1524,8 @@ function drawPlate(m, t) {
   ctx.font = '700 ' + fs + 'px Orbitron, monospace'; const name = fitText((m.isNew ? '◆ ' : '') + m.label, 190 * SC + 20), nw = ctx.measureText(name).width;
   ctx.font = fs2 + 'px Share Tech Mono, monospace'; const st = m.state || '', sw = ctx.measureText(st).width;
   const pw = Math.max(nw, sw) + 18 * SC + 6, ph = fs + fs2 + 12 * SC;
-  // the plate lies flat against the factory's outer end, centred on it, turned with the factory (never upside down)
+  // the plate lies flat against the factory's outer end, centred on it, turned with the factory so the name always faces Helix, whatever angle the ring has turned to
   ctx.save(); ctx.translate(m.cx, m.cy); ctx.rotate(m.rot); ctx.translate(0, -m.h / 2 - 5 * SC - ph / 2);
-  if (Math.cos(m.rot) < -0.01) ctx.rotate(Math.PI);
   const ox = 0, x = -pw / 2, y = -ph / 2;
   ctx.fillStyle = 'rgba(6,11,18,0.94)'; rr(x, y, pw, ph, 3); ctx.fill();
   ctx.strokeStyle = alpha(m.color, 0.55); ctx.lineWidth = 1; rr(x, y, pw, ph, 3); ctx.stroke();
@@ -1593,7 +1598,7 @@ function frame(t) {
   const dt = Math.min(100, t - (lastT || t)); lastT = t; lastDraw = t;
   ctx.clearRect(0, 0, W, H);
   drawSky(t);
-  stepSpin(t);
+  stepMotion(t);
   mods.forEach(m => drawSpoke(m, t));
   mods.forEach(m => drawModule(m, t, dt));
   drawCore(t);
