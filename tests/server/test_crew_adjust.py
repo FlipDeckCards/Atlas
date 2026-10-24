@@ -292,3 +292,11 @@ class TestWhyAMissionStalled:
         assert "STALLED" in out and "credit balance is too low" in out and "resume_mission" in out
         assert "credit balance is too low" in run(helix.status_text(ctx))
         assert "no such mission" in run(helix.execute(helix.CrewCtx("other", w.engine), "mission_details", {"mission_id": m["id"]}))
+
+
+class TestDeckAndAsteroids:
+    def test_one_walker_per_crew_member_wandering_and_asteroids_drift_by(self):
+        from openjarvis.server.crew.station import STATION_PAGE
+        for needle in ("function spawnRock", "drawRocks(t);", "coreRunning", "const lane = ring *", "* 1.35;"):
+            assert needle in STATION_PAGE
+        assert "core.bay.tasks.filter(k => k.status !== 'waiting')" not in STATION_PAGE      # no more one walker per task

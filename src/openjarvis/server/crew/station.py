@@ -1264,13 +1264,43 @@ function drawMeteors(t) {
     ctx.fillStyle = 'rgba(255,255,255,' + fade + ')'; ctx.beginPath(); ctx.arc(hx, hy, k.w * 0.9, 0, 6.29); ctx.fill();
   }
 }
+let rocks = [], nextRock = 0;
+function spawnRock(t) {                                                   // an occasional tumbling rock drifting through the far background
+  const d = Math.random();                                                // 0 = far (small, slow, dim), 1 = near (big, faster)
+  const side = Math.floor(Math.random() * 4), m = 60;
+  const sx = side === 0 ? -m : side === 1 ? W + m : Math.random() * W, sy = side === 2 ? -m : side === 3 ? H + m : Math.random() * H;
+  const tx = W * (0.1 + Math.random() * 0.8), ty = H * (0.1 + Math.random() * 0.8), dx = tx - sx, dy = ty - sy, n = Math.hypot(dx, dy) || 1;
+  const r = 7 + 26 * d, speed = 0.018 + 0.05 * d, pts = 9 + Math.floor(Math.random() * 4);
+  const shape = Array.from({ length: pts }, (_, i) => ({ a: i / pts * 6.2832, k: 0.72 + Math.random() * 0.4 }));
+  const craters = Array.from({ length: 3 }, () => ({ x: (Math.random() - 0.5) * r * 0.9, y: (Math.random() - 0.5) * r * 0.9, r: r * (0.1 + Math.random() * 0.14) }));
+  rocks.push({ t0: t, sx, sy, ux: dx / n, uy: dy / n, speed, r, spin: (Math.random() - 0.5) * 0.0012, rot0: Math.random() * 6.28, shape, craters, a: 0.45 + 0.5 * d, tint: Math.random() < 0.35 ? [128, 108, 92] : [112, 118, 128],
+               dur: (Math.hypot(W, H) * 1.15) / speed });
+  if (rocks.length > 3) rocks.shift();
+}
+function drawRocks(t) {
+  if (!reducedMotion && t > nextRock) { spawnRock(t); nextRock = t + 14000 + Math.random() * 26000; }
+  rocks = rocks.filter(k => t - k.t0 < k.dur);
+  for (const k of rocks) {
+    const e = t - k.t0, x = k.sx + k.ux * k.speed * e, y = k.sy + k.uy * k.speed * e;
+    if (x < -90 || x > W + 90 || y < -90 || y > H + 90) continue;
+    const [cr, cg, cb] = k.tint;
+    ctx.save(); ctx.translate(x, y); ctx.rotate(k.rot0 + k.spin * e); ctx.globalAlpha = k.a;
+    ctx.beginPath(); k.shape.forEach((v, i) => { const px = Math.cos(v.a) * k.r * v.k, py = Math.sin(v.a) * k.r * v.k; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }); ctx.closePath();
+    const g = ctx.createRadialGradient(-k.r * 0.4, -k.r * 0.4, k.r * 0.1, 0, 0, k.r * 1.2);      // lit from the upper left, like the sun
+    g.addColorStop(0, `rgb(${cr + 60},${cg + 55},${cb + 50})`); g.addColorStop(0.55, `rgb(${cr},${cg},${cb})`); g.addColorStop(1, `rgb(${cr * 0.3 | 0},${cg * 0.3 | 0},${cb * 0.3 | 0})`);
+    ctx.fillStyle = g; ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    k.craters.forEach(c => { ctx.beginPath(); ctx.arc(c.x, c.y, c.r, 0, 6.29); ctx.fill(); });
+    ctx.restore();
+  }
+}
 function drawMiniStation(t, dt) {                                         // far away and tiny: it only drifts and turns very slowly
   if (!mini) return;
   if (!reducedMotion) {
     mini.x += mini.vx * dt; mini.y += mini.vy * dt; mini.rot += 0.00006 * dt;
     if (mini.x > W + 60) { mini.x = -60; mini.y = H * (0.08 + Math.random() * 0.8); }
   }
-  const u = Math.max(0.55, Math.min(1.1, SC)) * 0.9;
+  const u = Math.max(0.55, Math.min(1.1, SC)) * 1.35;
   ctx.save(); ctx.translate(mini.x, mini.y); ctx.rotate(mini.rot); ctx.scale(u, u); ctx.globalAlpha = 0.8;
   ctx.shadowColor = 'rgba(90,170,255,0.5)'; ctx.shadowBlur = 8;
   ctx.fillStyle = '#7f93a8'; ctx.fillRect(-26, -2.2, 52, 4.4);              // truss
@@ -1300,6 +1330,7 @@ function drawSky(t) {
     ctx.fillRect(x, s.y, sz, sz);
   }
   drawMiniStation(t, dt);
+  drawRocks(t);
   drawMeteors(t);
 }
 
@@ -1652,14 +1683,25 @@ function drawCore(t) {
   ctx.restore();
   // crew on the deck: Aibussol's own work, then everyone with nothing to do, walking the ring
   const track = r - ring / 2, sc = Math.max(0.6, Math.min(0.95, SC * 0.85));
-  const onDeck = [];
-  if (core.bay) core.bay.tasks.filter(k => k.status !== 'waiting').forEach(tk => onDeck.push({ role: tk.role, status: tk.status }));
-  (S && S.roster ? S.roster : []).filter(a => a.role !== 'lead' && !a.working && !a.waiting).forEach(a => onDeck.push({ role: a.role, status: 'idle' }));
+  // one figure per crew member (the 14 agents, never one per task): working at the core if they have a running task here, else idle on the deck;
+  // an agent busy in a factory is in that factory
+  const onDeck = [], coreRunning = new Set(core.bay ? core.bay.tasks.filter(k => k.status === 'running').map(k => k.role) : []);
+  (S && S.roster ? S.roster : []).filter(a => a.role !== 'lead').forEach(a => {
+    if (coreRunning.has(a.role)) onDeck.push({ role: a.role, status: 'running' });
+    else if (!a.working && !a.waiting) onDeck.push({ role: a.role, status: 'idle' });
+  });
+  // each figure has its own pace and mind: it wanders around the deck, turns back, pauses, and drifts between the inner and outer lane
+  const hash = (str) => { let h = 7; for (let c = 0; c < str.length; c++) h = (h * 31 + str.charCodeAt(c)) % 100003; return h; };
   onDeck.forEach((a, i) => {
-    // everyone keeps walking the ring; small enough to stay on the track
-    const dir = i % 2 ? 1 : -1, ang = -Math.PI / 2 + i * (Math.PI * 2 / Math.max(onDeck.length, 1)) + t * 0.00007 * dir;
-    const face = dirOf(-Math.sin(ang) * dir, Math.cos(ang) * dir, 'front');
-    drawBot(x + Math.cos(ang) * track, y + Math.sin(ang) * track + 4 * sc, ROLE_COLORS[a.role] || '#00e5ff', a.status, t, i * 4.1, face, sc, true);
+    const h = hash(a.role), R = (k) => { const v = Math.sin(h * 12.9898 + k * 78.233) * 43758.5453; return v - Math.floor(v); };
+    const dir = R(1) < 0.5 ? -1 : 1, a0 = -Math.PI / 2 + i * (Math.PI * 2 / Math.max(onDeck.length, 1)) + R(2) * 0.5;
+    const v = 0.00002 + R(3) * 0.00009, A = 0.5 + R(4) * 1.4, w = 0.00018 + R(5) * 0.0005, ph = R(6) * 6.28;       // steady walk plus a back-and-forth swing
+    const lane = ring * (0.1 + R(7) * 0.2), w2 = 0.0002 + R(8) * 0.0006, ph2 = R(9) * 6.28;
+    const at = (tt) => { const ang = a0 + dir * (v * tt + A * Math.sin(w * tt + ph)), rr = track + lane * Math.sin(w2 * tt + ph2); return [x + Math.cos(ang) * rr, y + Math.sin(ang) * rr + 4 * sc]; };
+    const [px, py] = at(t), [qx, qy] = at(t + 40), step = Math.hypot(qx - px, qy - py) / 40;
+    const moving = step > 0.004;                                                                            // slowed to a stop at the turn-around points: stands still
+    const face = moving ? dirOf(qx - px, qy - py, 'front') : 'front';
+    drawBot(px, py, ROLE_COLORS[a.role] || '#00e5ff', a.status, t, i * 4.1, face, sc, moving);
   });
   // the open-items badge (no name plate: the portrait is Helix)
   ctx.textAlign = 'center';
