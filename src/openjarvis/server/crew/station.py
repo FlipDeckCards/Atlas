@@ -954,7 +954,7 @@ function outboxSec(m) {
   const s = mk('div', 'sec');
   const l = mk('div', 'lbl'); l.append(mk('span', null, 'Outbox'), mk('span', 'act', m.outputs.length + ' file(s)')); s.append(l);
   if (!m.outputs.length) { s.append(mk('div', 'dim', 'Finished files land here.')); return s; }
-  m.outputs.forEach(o => {
+  m.outputs.slice().reverse().sort((x, y) => String(y.created_at || '').localeCompare(String(x.created_at || ''))).forEach(o => {        // newest file on top
     const r = mk('div', 'row'); const b = mk('button', 'b', 'Download');
     b.onclick = async () => {
       const res = await fetch('/api/crew/outputs/' + o.id, { headers: { 'Authorization': 'Bearer ' + token() } });
