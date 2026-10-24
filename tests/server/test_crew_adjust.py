@@ -1186,3 +1186,10 @@ def test_the_brief_lists_what_is_waiting_on_michael_and_stays_basic():
     g = glance_lines({"total": {"revenue_today": 1.0, "cost_today": 2.0, "net_today": -1.0, "revenue_30d": 5.0, "cost_30d": 9.0, "net_30d": -4.0, "mrr": 4.99, "subscribers": 1}},
                      {}, {"users_total": 4, "active_24h": 1, "new_users_7d": 0}, {"running": 1, "queued": 4, "done_today": 3})
     assert len(g) == 5 and not any("unchecked" in x.lower() or "Sites" in x for x in g)
+
+
+def test_every_reply_has_a_listen_button_and_read_that_again_is_handled_in_the_page():
+    from openjarvis.server.crew.station import STATION_PAGE
+
+    assert "d.append(listenButton(text))" in STATION_PAGE and "function lastHelixText()" in STATION_PAGE
+    assert "re-?read" in STATION_PAGE and "speakReply(last, null, true)" in STATION_PAGE
