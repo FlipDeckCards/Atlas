@@ -15,7 +15,7 @@ from fastapi.responses import (
 )
 from pydantic import BaseModel, Field
 
-from openjarvis.server import admin_analytics, briefs, hardening
+from openjarvis.server import admin_analytics, briefs, documents, hardening
 from openjarvis.server.crew import helix as crew_helix
 from openjarvis.server.media import helix_tools
 from openjarvis.server.media import service as media_service
@@ -113,6 +113,8 @@ def _get_user_id(request: Request) -> str:
 class ChatRequest(BaseModel):
     message: str = Field(..., max_length=hardening.MAX_MESSAGE_CHARS)
     image: Optional[str] = Field(None, max_length=hardening.MAX_IMAGE_B64_CHARS)
+    document: Optional[str] = Field(None, max_length=documents.MAX_DOC_B64_CHARS)        # a Word or text file, base64
+    document_name: Optional[str] = Field(None, max_length=200)
     client_date: Optional[str] = Field(None, max_length=100)
 
 
@@ -697,8 +699,8 @@ async def index():
         </div>
         <div id="input-row">
           <button id="mic" title="Record">&#127897;</button>
-          <label id="upload-btn" for="img-input" title="Attach image">📎</label>
-          <input id="img-input" type="file" accept="image/*"/>
+          <label id="upload-btn" for="img-input" title="Attach an image, Word (.docx) or text document">📎</label>
+          <input id="img-input" type="file" accept="image/*,.docx,.txt,.md,.markdown,.csv,.tsv,.json,.log,.rtf"/>
           <input id="input" type="text" placeholder='Type, or say "Hey Helix"...' autocomplete="off"/>
           <button id="send">SEND</button>
         </div>
@@ -865,12 +867,14 @@ async def index():
     const clearImgBtn     = document.getElementById('clear-img');
     const uploadBtn       = document.getElementById('upload-btn');
 
-    let pendingImageB64 = null, pendingImageDataUrl = null;
+    let pendingImageB64 = null, pendingImageDataUrl = null, pendingDocB64 = null, pendingDocName = '';
+    const DOC_EXT = /\.(docx|txt|md|markdown|csv|tsv|json|log|rtf)$/i;
+    const MAX_DOC_BYTES = 3 * 1024 * 1024;
 
     function clearPendingImage() {
-      pendingImageB64 = null; pendingImageDataUrl = null;
+      pendingImageB64 = null; pendingImageDataUrl = null; pendingDocB64 = null; pendingDocName = '';
       imgPreviewBar.style.display = 'none';
-      imgPreviewThumb.src = ''; imgPreviewName.textContent = '';
+      imgPreviewThumb.style.display = ''; imgPreviewThumb.src = ''; imgPreviewName.textContent = '';
       uploadBtn.classList.remove('has-image');
       imgInput.value = '';
     }
@@ -878,12 +882,31 @@ async def index():
     imgInput.addEventListener('change', () => {
       const file = imgInput.files[0];
       if (!file) return;
+      const isDoc = !file.type.startsWith('image/') && DOC_EXT.test(file.name);
+      if (!file.type.startsWith('image/') && !isDoc) {
+        clearPendingImage();
+        addMsg('atlas', /\.doc$/i.test(file.name) ? 'Old .doc files cannot be read. Save it as .docx or .txt and attach that.'
+                                                    : 'Attach an image, a Word (.docx) or a text document (.txt, .md, .csv, .json).', null);
+        return;
+      }
+      if (isDoc && file.size > MAX_DOC_BYTES) {
+        clearPendingImage();
+        addMsg('atlas', 'That document is too large (limit 3 MB).', null);
+        return;
+      }
       const reader = new FileReader();
       reader.onload = (e) => {
-        pendingImageDataUrl = e.target.result;
-        pendingImageB64 = e.target.result.split(',')[1];
-        imgPreviewThumb.src = pendingImageDataUrl;
-        imgPreviewName.textContent = file.name.slice(0, 20);
+        if (isDoc) {
+          pendingImageB64 = null; pendingImageDataUrl = null;
+          pendingDocB64 = e.target.result.split(',')[1]; pendingDocName = file.name;
+          imgPreviewThumb.style.display = 'none';
+        } else {
+          pendingDocB64 = null; pendingDocName = '';
+          pendingImageDataUrl = e.target.result;
+          pendingImageB64 = e.target.result.split(',')[1];
+          imgPreviewThumb.style.display = ''; imgPreviewThumb.src = pendingImageDataUrl;
+        }
+        imgPreviewName.textContent = (isDoc ? '\ud83d\udcc4 ' : '') + file.name.slice(0, 28);
         imgPreviewBar.style.display = 'flex';
         uploadBtn.classList.add('has-image');
       };
@@ -1275,6 +1298,7 @@ async def index():
     // CHANGE 3: add client_date to the fetch body
     async function sendMessage(text) {
       if (!text) text = inputEl.value.trim();
+      if (!text && pendingDocB64) text = 'Please read the attached document.';
       if (!text) return;
       const mediaCmd = text.match(/^\/(image|sound)\s+([\s\S]+)/i);
       if (mediaCmd) { inputEl.value = ''; return sendMedia(mediaCmd[1].toLowerCase(), mediaCmd[2].trim()); }
@@ -1282,8 +1306,9 @@ async def index():
       sendBtn.disabled = true;
       const imageToSend  = pendingImageB64;
       const imageDataUrl = pendingImageDataUrl;
+      const docToSend = pendingDocB64, docName = pendingDocName;
       clearPendingImage();
-      addMsg('user', text, imageDataUrl);
+      addMsg('user', docToSend ? text + '\n\ud83d\udcc4 ' + docName : text, imageDataUrl);
       feedLog('You: ' + text.slice(0, 40) + (text.length > 40 ? '...' : ''));
       const thinking = addMsg('atlas', 'Processing...', null);
       thinking.querySelector('div:last-child').style.color = 'var(--text-dim)';
@@ -1294,6 +1319,7 @@ async def index():
           client_date: new Date().toLocaleString('en-US', { timeZoneName: 'short' })
         };
         if (imageToSend) body.image = imageToSend;
+        if (docToSend) { body.document = docToSend; body.document_name = docName; }
         const res  = await fetch('/api/chat', {
           method: 'POST',
           headers: jsonAuthHeader(),
@@ -1699,6 +1725,15 @@ async def chat(req: ChatRequest, request: Request):
         return JSONResponse({"detail": "Image too large (limit %d MB)" % (hardening.MAX_IMAGE_BYTES // (1024 * 1024)), "reply": "Image too large."}, status_code=413)
     store = request.app.state.session_store
 
+    # an attached Word/text document: its text goes to the model with this message, and is kept for a mission Helix starts
+    doc_name, doc_text = "", ""
+    if req.document:
+        doc_name = documents.clean_name(req.document_name or "document.txt")
+        try:
+            doc_text = documents.from_b64(doc_name, req.document)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc), "reply": str(exc)}, status_code=400)
+
     # Helix runs on the owner's AI keys: chat is for the owner and for accounts with an active subscription
     from openjarvis.server.crew import crew_access
 
@@ -1707,7 +1742,7 @@ async def chat(req: ChatRequest, request: Request):
                              "model_display": "HELIX", "model_color": "cyan", "ui_actions": []})
 
     # "read me the brief": answered from the brief feed, with no model call and no spend
-    brief_period = None if req.image or not briefs.owner_request(request) else briefs.wants_brief(req.message)
+    brief_period = None if req.image or doc_text or not briefs.owner_request(request) else briefs.wants_brief(req.message)
     if brief_period:
         try:
             found = await briefs.find_brief(briefs.store_for(request), brief_period)
@@ -1749,13 +1784,15 @@ async def chat(req: ChatRequest, request: Request):
             media_ctx = None
     # the crew (owner accounts, CREW_ENABLED): a yes to a read-back mission start is handled here, with no model call
     crew_ctx = await crew_helix.ctx_for(request)
-    if crew_ctx is not None and not req.image:
+    if crew_ctx is not None and doc_text:
+        crew_helix.remember_document(crew_ctx.user_id, doc_name, doc_text)
+    if crew_ctx is not None and not req.image and not doc_text:
         early = await crew_helix.pre_turn(crew_ctx, req.message)
         if early is not None:
             await store.append_message(user_id, CHANNEL, "user", req.message)
             await store.append_message(user_id, CHANNEL, "assistant", early["reply"])
             return JSONResponse({"reply": early["reply"], "ui_actions": early["ui"], "model_display": model_display, "model_color": model_color})
-    if media_ctx is not None and not req.image:
+    if media_ctx is not None and not req.image and not doc_text:
         early = await helix_tools.pre_turn(media_ctx, req.message)         # a yes to a read-back action, a cancel, a sound-effect request
         if early is not None:
             await store.append_message(user_id, CHANNEL, "user", req.message)
@@ -1773,13 +1810,19 @@ async def chat(req: ChatRequest, request: Request):
                 content = next((c.get("text","") for c in content if c.get("type")=="text"), "")
             messages.append({"role": m["role"], "content": content})
 
+    model_text = req.message
+    saved_text = req.message
+    if doc_text:
+        model_text += f'\n\n[Attached document: {doc_name}]\n{doc_text[:documents.CHAT_DOC_CHARS]}' + \
+            (f'\n[The document continues; {len(doc_text):,} characters in all. Agents can read all of it.]' if len(doc_text) > documents.CHAT_DOC_CHARS else "")
+        saved_text += f"\n[Attached document: {doc_name}]"
     if req.image:
         user_content = [
-            {"type": "text", "text": req.message},
+            {"type": "text", "text": model_text},
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{req.image}"}}
         ]
     else:
-        user_content = req.message
+        user_content = model_text
 
     messages.append({"role": "user", "content": user_content})
 
@@ -1789,7 +1832,11 @@ async def chat(req: ChatRequest, request: Request):
 
         crew_before = crew_helix.CREW_PENDING.get(user_id) if crew_ctx is not None else None
 
+        crew_changed = False
+
         async def _crew_exec(name, args):
+            nonlocal crew_changed
+            crew_changed = crew_changed or name in crew_helix.CHANGES_STATION
             return await crew_helix.execute(crew_ctx, name, args)
 
         out = None
@@ -1810,7 +1857,9 @@ async def chat(req: ChatRequest, request: Request):
             return JSONResponse({"reply": "The model could not answer right now. Please try again.", "model_display": model_display, "model_color": model_color})
         if crew_ctx is not None:
             out["reply"] = crew_helix.after_turn(crew_ctx, out["reply"], crew_before)
-        await store.append_message(user_id, CHANNEL, "user", req.message)
+            if crew_changed:                                    # the Station redraws: a new business gets its factory branch at once
+                out["ui"] = list(out["ui"]) + [{"type": "crew_refresh"}]
+        await store.append_message(user_id, CHANNEL, "user", saved_text)
         await store.append_message(user_id, CHANNEL, "assistant", out["reply"])
         return JSONResponse({"reply": out["reply"], "ui_actions": out["ui"], "model_display": model_display, "model_color": model_color})
 
@@ -1829,7 +1878,7 @@ async def chat(req: ChatRequest, request: Request):
         return JSONResponse({"reply": "The model could not answer right now. Please try again.", "model_display": model_display, "model_color": model_color})
     await store.add_spend(user_id, hardening.utc_day(), hardening.chat_cost_usd(response))
 
-    await store.append_message(user_id, CHANNEL, "user", req.message)
+    await store.append_message(user_id, CHANNEL, "user", saved_text)
     await store.append_message(user_id, CHANNEL, "assistant", reply)
 
     return JSONResponse({

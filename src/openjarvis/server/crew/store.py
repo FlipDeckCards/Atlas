@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS crew_secrets (
 """
 
 MISSION_FIELDS = {"title", "project", "status", "budget_usd", "summary"}
-TASK_FIELDS = {"status", "budget_usd", "result", "transcript", "runs", "claimed_at"}
+TASK_FIELDS = {"title", "brief", "status", "budget_usd", "result", "transcript", "runs", "claimed_at"}
 OPEN_TASK = ("queued", "running", "waiting")
 
 
@@ -348,6 +348,12 @@ class CrewStore:
             rows = await conn.fetch("SELECT * FROM crew_outputs WHERE mission_id = $1 ORDER BY created_at", mission_id)
         return [_output(dict(r)) for r in rows]
 
+    async def list_user_outputs(self, user_id: str, limit: int = 300) -> List[Dict[str, Any]]:
+        """Every file in this user's outboxes, across all their missions, newest first."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch("SELECT * FROM crew_outputs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2", user_id, limit)
+        return [_output(dict(r)) for r in rows]
+
     async def get_output(self, output_id: str) -> Optional[Dict[str, Any]]:
         async with self._pool.acquire() as conn:
             r = await conn.fetchrow("SELECT * FROM crew_outputs WHERE id = $1", output_id)
@@ -559,6 +565,9 @@ class MemoryCrewStore:
 
     async def list_outputs(self, mission_id):
         return [_output(r) for r in sorted((o for o in self.outputs.values() if o["mission_id"] == mission_id), key=lambda o: o["created_at"])]
+
+    async def list_user_outputs(self, user_id, limit=300):
+        return [_output(r) for r in sorted((o for o in self.outputs.values() if o["user_id"] == user_id), key=lambda o: o["created_at"], reverse=True)[:limit]]
 
     async def get_output(self, output_id):
         r = self.outputs.get(output_id)

@@ -47,6 +47,7 @@ MAX_RUNS = 4
 STALE_RUNNING_S = 15 * 60
 MAX_OUTPUT_CHARS = 200_000
 MAX_OUTPUTS_PER_MISSION = 60
+MAX_TASKS_PER_MISSION = 20
 PLANNER_MAX_TOKENS = 5000
 AGENT_MAX_TOKENS = 8000          # room to write a whole file in one save_output call (only tokens used are paid)
 _CUT_OFF_MSG = ("Error: your reply was cut off at the length limit, so this call was incomplete and nothing was saved. "
@@ -127,8 +128,14 @@ _SEARCH_TOOL = {"type": "function", "function": {
 
 _READ_OUTPUT_TOOL = {"type": "function", "function": {
     "name": "read_output",
-    "description": "Read a file another crew member saved to this mission's outbox (by its file name).",
-    "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}}}
+    "description": "Read a file from the outbox (by its file name): this mission's first, then any earlier mission's of Michael's, whatever that mission's status. If several missions have the name, pass mission_id (see list_outbox).",
+    "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "mission_id": {"type": "string"}, "offset": {"type": "integer", "description": "Start reading at this character, for a long file."}},
+                   "required": ["name"]}}}
+
+_LIST_OUTBOX_TOOL = {"type": "function", "function": {
+    "name": "list_outbox",
+    "description": "List the files in Michael's outboxes across ALL his missions (any status), with the mission each belongs to. Use it to find earlier work to read or build on.",
+    "parameters": {"type": "object", "properties": {}}}}
 
 _IMAGE_TOOL = {"type": "function", "function": {
     "name": "generate_image",
@@ -268,7 +275,7 @@ def house_rules(env=None) -> str:
 
 
 def tools_for(role: str) -> List[Dict[str, Any]]:
-    extra: List[Dict[str, Any]] = [_READ_OUTPUT_TOOL]
+    extra: List[Dict[str, Any]] = [_READ_OUTPUT_TOOL, _LIST_OUTBOX_TOOL]
     if role == "operator":
         extra.append(_CONNECTION_TOOL)
     if role == "researcher":
@@ -737,7 +744,8 @@ class CrewEngine:
         st = await conns.status(self.store, user_id, await self.env_for(user_id))
         return [st[k]["label"] for k in ("github", "stripe", "render") if not st[k]["connected"]]
 
-    async def start_mission(self, user_id: str, goal: str, budget: Any = None, *, background: bool = True) -> Dict[str, Any]:
+    async def start_mission(self, user_id: str, goal: str, budget: Any = None, *, background: bool = True,
+                            attachments: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
         goal = str(goal or "").strip()[:4000]
         if len(goal) < 8:
             raise ValueError("Describe the goal in a sentence or two.")
@@ -746,6 +754,8 @@ class CrewEngine:
             raise ValueError("Connect " + " and ".join(missing) + " first. Helix can walk you through it.")
         m = await self.store.create_mission(user_id, goal, self.clamp_budget(budget) if budget is not None else default_mission_budget(self.env))
         await self.store.add_event(user_id, "mission", f"New mission: {_clip(goal, 200)} (budget ${m['budget_usd']:.2f})", mission_id=m["id"])
+        if attachments:
+            await self.attach_documents(user_id, m["id"], attachments)
         if background:
             self._plans[m["id"]] = asyncio.create_task(self.plan(m["id"]))
         else:
@@ -795,7 +805,7 @@ class CrewEngine:
                                                                          + (", projects: " + ", ".join(pc.get("projects") or []) if pc.get("projects") else "")
                                                                          if pc.get("online") else "not connected right now (Rig tasks wait until it is)"))
             msgs = [{"role": "system", "content": self._for_person(self._planner_prompt(conn_text, envx), envx)},
-                    {"role": "user", "content": m["goal"]}]
+                    {"role": "user", "content": m["goal"] + await self._attached_for_planner(mission_id)}]
             cost, plan = 0.0, None
             for attempt in range(2):
                 resp = await self.acompletion(model=self.models["writing"], max_tokens=PLANNER_MAX_TOKENS, messages=msgs)
@@ -851,7 +861,7 @@ class CrewEngine:
     async def resume_mission(self, user_id: str, mission_id: str) -> Dict[str, Any]:
         self.poke()                                         # the loop goes back to quick ticks
         m = await self._owned_mission(user_id, mission_id)
-        if m["status"] in ("paused", "stalled"):
+        if m["status"] in ("paused", "stalled", "failed"):
             tasks = await self.store.list_tasks(mission_id)
             if not tasks:
                 await self.store.update_mission(mission_id, status="planning")
@@ -897,6 +907,158 @@ class CrewEngine:
         await self.store.update_mission(mission_id, budget_usd=b)
         await self.store.add_event(user_id, "budget", f"Mission budget set to ${b:.2f} by Michael.", mission_id=mission_id)
         return await self.store.get_mission(mission_id)
+
+    async def attach_documents(self, user_id: str, mission_id: str, docs: List[Dict[str, str]]) -> List[str]:
+        """Save documents Michael attached in chat into the mission's outbox (as attached-<name>), where every agent can read them
+        with read_output. Returns the outbox file names saved."""
+        from openjarvis.server import documents
+
+        await self._owned_mission(user_id, mission_id)
+        have = {o["name"].lower() for o in await self.store.list_outputs(mission_id)}
+        room = MAX_OUTPUTS_PER_MISSION - len(have)
+        saved: List[str] = []
+        for d in docs:
+            shown, fname = documents.outbox_name(d.get("name") or "")
+            if room <= 0 or fname.lower() in have or not str(d.get("text") or "").strip():
+                continue
+            await self.store.add_output(mission_id, "", user_id, fname, str(d["text"])[:MAX_OUTPUT_CHARS])
+            await self.store.add_event(user_id, "output", f'Attached "{shown}" from Michael as {fname}.', mission_id=mission_id)
+            have.add(fname.lower())
+            saved.append(fname)
+            room -= 1
+        return saved
+
+    async def _attached_for_planner(self, mission_id: str) -> str:
+        """The start of each document Michael attached, so the plan fits it. Agents read the whole file with read_output."""
+        text = ""
+        for o in await self.store.list_outputs(mission_id):
+            if o["name"].startswith("attached-"):
+                full = await self.store.get_output(o["id"])
+                body = (full or {}).get("content") or ""
+                text += f'\n\nMichael attached "{o["name"]}" ({len(body):,} characters; agents read it with read_output). It starts:\n{body[:3000]}'
+        return text
+
+    async def outbox_index(self, user_id: str) -> List[Dict[str, Any]]:
+        """Every outbox file of this user's missions, whatever each mission's status (active, paused, stalled, cancelled, done)."""
+        missions = {m["id"]: m for m in await self.store.list_missions(user_id, 200)}
+        return [dict(o, mission_title=(missions[o["mission_id"]]["title"] or _clip(missions[o["mission_id"]]["goal"], 60)),
+                     mission_status=missions[o["mission_id"]]["status"])
+                for o in await self.store.list_user_outputs(user_id) if o["mission_id"] in missions]
+
+    async def read_outbox(self, user_id: str, name: str, mission_id: str = "", offset: Any = 0, prefer_mission: str = "") -> str:
+        """Read one outbox file of this user's. With no mission_id the file is looked up in prefer_mission first, then in all
+        their missions; a name that exists in several is refused with the list, never guessed."""
+        want = _clip(name, 120).lower()
+        files = [o for o in await self.outbox_index(user_id) if o["name"].lower() == want]
+        if mission_id:
+            files = [o for o in files if o["mission_id"] == mission_id]
+        elif prefer_mission and any(o["mission_id"] == prefer_mission for o in files):
+            files = [o for o in files if o["mission_id"] == prefer_mission]
+        if not files:
+            return "No file by that name in any outbox." if not mission_id else "No file by that name in that mission's outbox."
+        if len(files) > 1:
+            return "Several missions have a file with that name; call again with mission_id: " + "; ".join(
+                f'{o["mission_id"]} ("{o["mission_title"]}", {o["mission_status"]})' for o in files[:8])
+        full = await self.store.get_output(files[0]["id"])
+        if not full or full["user_id"] != user_id:
+            return "No file by that name in any outbox."
+        body = full.get("content") or ""
+        try:
+            start = max(0, int(offset or 0))
+        except (TypeError, ValueError):
+            start = 0
+        part = body[start:start + 20000]
+        return part + (f"\n[cut: {len(body)} characters in all; call again with offset {start + 20000} for the rest]" if len(body) > start + 20000 else "")
+
+    async def _reopen(self, m: Dict[str, Any]) -> None:
+        """A finished, stalled or failed mission that gets new work goes back to active. A paused or cancelled one is left as it is."""
+        if m["status"] in ("done", "stalled", "failed"):
+            await self.store.update_mission(m["id"], status="active")
+
+    async def add_task(self, user_id: str, mission_id: str, title: str, role: str, brief: str,
+                       depends_on: Optional[List[Any]] = None) -> Dict[str, Any]:
+        """Add a task to a mission that already exists (task numbers are the 1-based numbers the crew list shows).
+        It is queued at once; a finished mission is reopened."""
+        m = await self._owned_mission(user_id, mission_id)
+        if m["status"] == "cancelled":
+            raise ValueError("That mission was cancelled. Start a new mission instead.")
+        if m["status"] == "planning":
+            raise ValueError("The mission is still being planned. Add tasks once the plan is ready.")
+        title, brief = _clip(title, 120), str(brief or "").strip()[:3000]
+        if not title or not brief:
+            raise ValueError("A task needs a title and a brief saying what to do.")
+        if role not in ROLES:
+            raise ValueError("Unknown agent role. Use one of: " + ", ".join(ROLES) + ".")
+        tasks = await self.store.list_tasks(mission_id)
+        if len(tasks) >= MAX_TASKS_PER_MISSION:
+            raise ValueError(f"A mission can have at most {MAX_TASKS_PER_MISSION} tasks.")
+        have = {t["idx"] for t in tasks}
+        deps: List[int] = []
+        for d in depends_on or []:
+            try:
+                n = int(d) - 1
+            except (TypeError, ValueError):
+                raise ValueError("Dependencies are task numbers from the mission's task list.")
+            if n not in have:
+                raise ValueError(f"There is no task number {int(d)} in this mission.")
+            if n not in deps:
+                deps.append(n)
+        unfinished = sum(1 for t in tasks if t["status"] in ("queued", "running", "waiting")) + 1
+        per = round(max(0.05, (m["budget_usd"] - m["spent_usd"]) / unfinished), 4)
+        idx = max(have) + 1 if have else 0
+        [created] = await self.store.create_tasks(mission_id, user_id, [{"idx": idx, "title": title, "role": role, "brief": brief,
+                                                                         "depends_on": deps, "budget_usd": per}])
+        await self._reopen(m)
+        await self.store.add_event(user_id, "plan", f'Added task {idx + 1}: {title} ({role}).', mission_id=mission_id)
+        self.poke()
+        return created
+
+    async def _task_by_number(self, user_id: str, mission_id: str, number: Any) -> Dict[str, Any]:
+        m = await self._owned_mission(user_id, mission_id)
+        try:
+            n = int(number) - 1
+        except (TypeError, ValueError):
+            raise ValueError("Give the task number from the mission's task list.")
+        for t in await self.store.list_tasks(mission_id):
+            if t["idx"] == n:
+                return dict(t, _mission=m)
+        raise LookupError(f"There is no task number {int(number)} in this mission.")
+
+    async def edit_task(self, user_id: str, mission_id: str, number: Any, *, title: str = "", brief: str = "") -> Dict[str, Any]:
+        """Change the title or instructions of a task that has not started. A task that already ran gets the change as a note
+        (see retry_task); one that is running or waiting for an answer is left alone."""
+        t = await self._task_by_number(user_id, mission_id, number)
+        if t["status"] != "queued" or t["transcript"]:
+            raise ValueError(f'"{t["title"]}" is {t["status"]}. Only a task that has not started can be edited; to redo a finished or failed one, retry it with a note.')
+        fields: Dict[str, Any] = {}
+        if _clip(title, 120):
+            fields["title"] = _clip(title, 120)
+        if str(brief or "").strip():
+            fields["brief"] = str(brief).strip()[:3000]
+        if not fields:
+            raise ValueError("Say what to change: a new title or new instructions.")
+        await self.store.update_task(t["id"], **fields)
+        await self.store.add_event(user_id, "plan", f'Edited task {t["idx"] + 1}: {fields.get("title", t["title"])}.', mission_id=mission_id, task_id=t["id"])
+        return await self.store.get_task(t["id"])
+
+    async def retry_task(self, user_id: str, mission_id: str, number: Any, note: str = "") -> Dict[str, Any]:
+        """Run a finished or failed task again, with Michael's note as extra instructions. Tasks that depend on it keep their results."""
+        t = await self._task_by_number(user_id, mission_id, number)
+        m = t["_mission"]
+        if m["status"] == "cancelled":
+            raise ValueError("That mission was cancelled. Start a new mission instead.")
+        if t["status"] not in ("done", "failed", "cancelled"):
+            raise ValueError(f'"{t["title"]}" is {t["status"]}. Only a finished or failed task can be retried.')
+        note = str(note or "").strip()[:2000]
+        transcript = list(t["transcript"]) if t["transcript"] else [{"role": "user", "content": await self._context(t, m)}]
+        transcript.append({"role": "user", "content": "Michael asked for this task to be done again." + (f" His note: {note}" if note else "")
+                           + " Continue from here, save the updated deliverables and finish."})
+        await self.store.update_task(t["id"], status="queued", runs=0, transcript=transcript)
+        await self._reopen(m)
+        await self.store.add_event(user_id, "plan", f'Retrying task {t["idx"] + 1}: {t["title"]}' + (f" ({_clip(note, 120)})" if note else "") + ".",
+                                   mission_id=mission_id, task_id=t["id"])
+        self.poke()
+        return await self.store.get_task(t["id"])
 
     async def _check_mission(self, mission_id: str) -> None:
         m = await self.store.get_mission(mission_id)
@@ -1122,6 +1284,7 @@ class CrewEngine:
              "Work only on your task. Save every deliverable with save_output (complete files, not outlines). Keep each save_output call to about "
              "4,000 words or less: a long book part is several files, one per chapter, never one huge file. If you truly need Michael's decision, "
              "use ask_michael with one concrete question and short options; do not ask for things you can decide sensibly yourself. "
+             "Files named attached-* in the outbox are documents Michael supplied: read them with read_output before you start. "
              "Never claim something was published, paid, uploaded or sent unless a tool result says so. When done, call finish with a short summary.\n"
              f"Michael's house rules:\n{house_rules(envx)}")
         if task["role"] == "operator":
@@ -1390,13 +1553,11 @@ class CrewEngine:
         if name in LIMITS and _calls_made(task.get("_transcript") or [], name) > LIMITS[name]:
             return f"Limit reached: at most {LIMITS[name]} {name} calls per task. Finish with what you have.", None
         if name == "read_output":
-            want = _clip(args.get("name"), 120).lower()
-            for o in await self.store.list_outputs(mid):
-                if o["name"].lower() == want:
-                    full = await self.store.get_output(o["id"])
-                    body = (full or {}).get("content") or ""
-                    return body[:20000] + ("\n[cut]" if len(body) > 20000 else ""), None
-            return "No file by that name in the outbox.", None
+            return await self.read_outbox(uid, args.get("name"), _clip(args.get("mission_id"), 80), args.get("offset"), prefer_mission=mid), None
+        if name == "list_outbox":
+            idx = await self.outbox_index(uid)
+            return ("\n".join(f'{o["name"]} ({o["size"]:,} chars) - mission {o["mission_id"]} "{o["mission_title"]}" [{o["mission_status"]}]' for o in idx[:80])
+                    or "No files in any outbox yet."), None
         if name == "web_search" and task["role"] in SEARCHERS:
             return await self._search(task, args)
         if name == "generate_image" and task["role"] in IMAGERS:

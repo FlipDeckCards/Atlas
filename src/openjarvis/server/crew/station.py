@@ -233,7 +233,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
       <div id="chat-media" hidden></div>
       <div id="chat-log"></div>
       <div id="img-bar" hidden><img id="img-thumb" alt=""/><span id="img-name"></span><button class="xbtn" id="img-clear" title="Remove the image">✕</button></div>
-      <div class="ans"><button class="b tool" id="mic" title='Talk to Helix (or say "Hey Helix", then "send")'>🎙</button><label class="b tool" for="img-in" title="Attach an image">📎</label><input id="img-in" type="file" accept="image/*" hidden/><input id="chat-in" name="helix-message" type="text" maxlength="8000" placeholder='Type, or say "Hey Helix"…' autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other"/><button class="b" id="chat-send">Send</button></div>
+      <div class="ans"><button class="b tool" id="mic" title='Talk to Helix (or say "Hey Helix", then "send")'>🎙</button><label class="b tool" for="img-in" title="Attach an image, a Word (.docx) or a text document">📎</label><input id="img-in" type="file" accept="image/*,.docx,.txt,.md,.markdown,.csv,.tsv,.json,.log,.rtf" hidden/><input id="chat-in" name="helix-message" type="text" maxlength="8000" placeholder='Type, or say "Hey Helix"…' autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other"/><button class="b" id="chat-send">Send</button></div>
     </div>
   </div>
   <div id="right" class="col"><div class="col-grip" id="right-grip" title="Drag to resize"></div><div id="links-box"></div><div id="side-body"></div></div>
@@ -1152,6 +1152,7 @@ const PLATFORMS = [
   { key: 'app_store', label: 'APP STORE', color: '#3fc8ff' },
 ];
 const RING = ['p0', 'stripe', 'p1', 'etsy', 'p2', 'google_play', 'new', 'app_store'];   // clockwise from the top
+const MAX_EXTRA_BRANCHES = 8;
 const WORKING = ['active', 'planning', 'paused', 'stalled'];
 
 function resize() {
@@ -1305,20 +1306,25 @@ function factories() {                                                   // ever
 }
 
 function layout() {
+  const pl = prods(), nk = newKeys();
+  // the ring grows: the 8 fixed slots, then one more branch for every business past the 4th and every extra mission factory
+  const extras = pl.slice(4).map(b => fillBay(Object.assign({}, b)))
+    .concat((pl[3] ? nk : nk.slice(1)).map(newBay)).slice(0, MAX_EXTRA_BRANCHES);
+  const N = RING.length + extras.length;
   SC = Math.max(0.34, Math.min(1.25, Math.min(W / 1060, H / 800)));
+  if (N > 8) SC *= Math.sin(Math.PI / N) / Math.sin(Math.PI / 8);             // more branches, smaller modules, so the ring keeps its size
   core = { x: W / 2, y: H / 2, r: 94 * SC };
   const mw = 184 * SC, mh = 116 * SC, gap = 46 * SC;
-  const D = Math.max(core.r + 52 * SC + mh / 2, (mw + gap) / (2 * Math.sin(Math.PI / 8)));
-  const pl = prods(), prod = {};
+  const D = Math.max(core.r + 52 * SC + mh / 2, (mw + gap) / (2 * Math.sin(Math.PI / N)));
+  const prod = {};
   const open = (i) => ({ key: 'open' + i, label: 'EXPANSION BAY', color: '#ff4fb8', expansion: true, tasks: [], missions: [], state: 'OPEN',
                          idleText: isOwner() ? 'NEXT BUSINESS' : 'TAP TO ADD A BUSINESS' });
   for (let i = 0; i < 3; i++) prod['p' + i] = pl[i] ? fillBay(Object.assign({}, pl[i])) : open(i);
   const plat = {}; PLATFORMS.forEach(p => { plat[p.key] = platformModule(p); });
-  const nk = newKeys();
   const fresh = pl[3] ? fillBay(Object.assign({}, pl[3])) : nk.length ? newBay(nk[0]) : open(3);
-  mods = RING.map((k, i) => {
-    const m = k === 'new' ? fresh : (prod[k] || plat[k]);
-    const a = -Math.PI / 2 + i * Math.PI / 4;
+  const slots = RING.map(k => k === 'new' ? fresh : (prod[k] || plat[k])).concat(extras);
+  mods = slots.map((m, i) => {
+    const a = -Math.PI / 2 + i * 2 * Math.PI / N;
     return Object.assign(m, { a, ux: Math.cos(a), uy: Math.sin(a), cx: core.x + Math.cos(a) * D, cy: core.y + Math.sin(a) * D, w: mw, h: mh, rot: a + Math.PI / 2, D });
   });
   bays = mods.filter(m => !m.platform && !m.expansion);
@@ -1615,13 +1621,19 @@ function briefCard(b) {
   return d;
 }
 
-// images attached to a message
+// an image or a document (Word .docx, text) attached to a message: images are looked at, documents are read by Helix and passed to the crew
 let pendingImg = null;
+const DOC_EXT = /\.(docx|txt|md|markdown|csv|tsv|json|log|rtf)$/i, MAX_DOC_BYTES = 3 * 1024 * 1024;
 document.getElementById('img-in').addEventListener('change', () => {
   const f = document.getElementById('img-in').files[0]; if (!f) return;
+  const isDoc = !String(f.type).startsWith('image/') && DOC_EXT.test(f.name);
+  const bad = !isDoc && !String(f.type).startsWith('image/') ? (/\.doc$/i.test(f.name) ? 'Old .doc files cannot be read. Save it as .docx or .txt and attach that.' : 'Attach an image, a Word (.docx) or a text document (.txt, .md, .csv, .json).')
+    : isDoc && f.size > MAX_DOC_BYTES ? 'That document is too large (limit 3 MB).' : '';
+  if (bad) { clearImg(); const log = document.getElementById('chat-log'); log.append(chatMsg('assistant', bad)); log.scrollTop = log.scrollHeight; return; }
   const rd = new FileReader();
-  rd.onload = (e) => { pendingImg = { url: e.target.result, b64: String(e.target.result).split(',')[1], name: f.name };
-    document.getElementById('img-thumb').src = pendingImg.url; document.getElementById('img-name').textContent = f.name.slice(0, 28); document.getElementById('img-bar').hidden = false; };
+  rd.onload = (e) => { pendingImg = { url: e.target.result, b64: String(e.target.result).split(',')[1], name: f.name, doc: isDoc };
+    const th = document.getElementById('img-thumb'); th.style.display = isDoc ? 'none' : ''; th.src = isDoc ? '' : pendingImg.url;
+    document.getElementById('img-name').textContent = (isDoc ? '📄 ' : '') + f.name.slice(0, 28); document.getElementById('img-bar').hidden = false; };
   rd.readAsDataURL(f);
 });
 function clearImg() { pendingImg = null; document.getElementById('img-bar').hidden = true; document.getElementById('img-in').value = ''; }
@@ -1772,7 +1784,8 @@ async function loadChat(force) {
   if (atBottom || force) log.scrollTop = log.scrollHeight;
 }
 async function sendChat() {
-  const inp = document.getElementById('chat-in'), text = inp.value.trim();
+  const inp = document.getElementById('chat-in');
+  const text = inp.value.trim() || (pendingImg && pendingImg.doc ? 'Please read the attached document.' : '');
   if (!text || chatBusy) return;
   chatBusy = true; inp.value = '';
   const log = document.getElementById('chat-log');
@@ -1785,10 +1798,10 @@ async function sendChat() {
     chatBusy = false; return;
   }
   const img = pendingImg; clearImg();
-  if (img) LIVE.set('user|' + text, { img: img.url });
-  log.append(chatMsg('user', text)); const wait = chatMsg('assistant', '…'); log.append(wait); log.scrollTop = log.scrollHeight;
+  if (img && !img.doc) LIVE.set('user|' + text, { img: img.url });
+  log.append(chatMsg('user', img && img.doc ? text + '\n📄 ' + img.name : text)); const wait = chatMsg('assistant', '…'); log.append(wait); log.scrollTop = log.scrollHeight;
   const body = { message: text, client_date: new Date().toLocaleString('en-US', { timeZoneName: 'short' }) };
-  if (img) body.image = img.b64;
+  if (img && img.doc) { body.document = img.b64; body.document_name = img.name; } else if (img) body.image = img.b64;
   const r = await api('/api/chat', 'POST', body).catch(() => null);
   const reply = r ? (r.data.reply || r.data.detail || 'No answer.') : 'No connection.';
   wait.lastChild.textContent = typeof reply === 'string' ? reply : 'No answer.';
