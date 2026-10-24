@@ -1078,11 +1078,13 @@ class CrewEngine:
         raise LookupError(f"There is no task number {int(number)} in this mission.")
 
     async def edit_task(self, user_id: str, mission_id: str, number: Any, *, title: str = "", brief: str = "") -> Dict[str, Any]:
-        """Change the title or instructions of a task that has not started. A task that already ran gets the change as a note
-        (see retry_task); one that is running or waiting for an answer is left alone."""
+        """Change the title or instructions of a task that is queued. One that already ran some steps (it has history) is told about the change
+        in its own conversation, so it follows the new instructions where they conflict with what it was doing. A task that is running or
+        waiting for an answer is left alone; a finished or failed one is retried with a note instead."""
         t = await self._task_by_number(user_id, mission_id, number)
-        if t["status"] != "queued" or t["transcript"]:
-            raise ValueError(f'"{t["title"]}" is {t["status"]}. Only a task that has not started can be edited; to redo a finished or failed one, retry it with a note.')
+        if t["status"] != "queued":
+            raise ValueError(f'"{t["title"]}" is {t["status"]}. Only a queued task can be edited (a running one has to finish or be paused, one waiting for an answer needs its answer, '
+                             'and a finished or failed one is retried with a note).')
         fields: Dict[str, Any] = {}
         if _clip(title, 120):
             fields["title"] = _clip(title, 120)
@@ -1090,6 +1092,10 @@ class CrewEngine:
             fields["brief"] = str(brief).strip()[:3000]
         if not fields:
             raise ValueError("Say what to change: a new title or new instructions.")
+        if t["transcript"]:                                   # it has already worked on this: tell it, in its own conversation, that the instructions changed
+            said = " ".join(x for x in (f'New title: {fields["title"]}.' if "title" in fields else "", f'New instructions: {fields["brief"]}' if "brief" in fields else "") if x)
+            fields["transcript"] = list(t["transcript"]) + [{"role": "user", "content": "Michael changed this task. " + said + " Follow this from now on; where it conflicts with anything "
+                                                             "you were told or did before, the new instructions win."}]
         await self.store.update_task(t["id"], **fields)
         await self.store.add_event(user_id, "plan", f'Edited task {t["idx"] + 1}: {fields.get("title", t["title"])}.', mission_id=mission_id, task_id=t["id"])
         return await self.store.get_task(t["id"])
