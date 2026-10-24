@@ -70,7 +70,7 @@ def classify_model(message: str, has_image: bool, models: Optional[dict] = None)
         "write", "essay", "explain", "analyze", "analyse", "review",
         "summarize", "summarise", "compare", "code", "debug", "refactor",
         "implement", "design", "pros and cons", "difference between",
-        "how does", "why does", "haiku", "poem", "sonnet", "verse", "rhyme", "story", "creative", "step by step", "rewrite", "edit"
+        "how does", "why does", "error", "deploy", "github", "stalled", "failed", "traceback", "exception", "broken", "bug", "logs", "haiku", "poem", "sonnet", "verse", "rhyme", "story", "creative", "step by step", "rewrite", "edit"
     ]
     gemini_signals = [
         "research", "find", "search", "latest", "current", "news",
@@ -1801,7 +1801,7 @@ async def chat(req: ChatRequest, request: Request):
     if crew_ctx is not None:
         system_text += await crew_helix.system_addendum(crew_ctx)
     messages = [{"role": "system", "content": system_text}]
-    for m in session["conversation_history"][-10:]:
+    for m in session["conversation_history"][-(hardening.CREW_HISTORY_MESSAGES if crew_ctx is not None else 10):]:
         if m["role"] in ("user", "assistant"):
             content = m["content"]
             if isinstance(content, list):
@@ -1842,7 +1842,9 @@ async def chat(req: ChatRequest, request: Request):
             try:
                 out = await helix_tools.run_model_with_tools(
                     media_ctx, messages, mid_, req.message,
-                    acompletion=litellm.acompletion, on_cost=_cost, max_tokens=hardening.CHAT_MAX_TOKENS,
+                    acompletion=litellm.acompletion, on_cost=_cost,
+                    max_tokens=hardening.CREW_CHAT_MAX_TOKENS if crew_ctx is not None else hardening.CHAT_MAX_TOKENS,
+                    max_rounds=hardening.CREW_TOOL_ROUNDS if crew_ctx is not None else helix_tools.MAX_TOOL_ROUNDS,
                     extra_tools=crew_helix.CREW_TOOLS if crew_ctx is not None else None,
                     extra_executor=_crew_exec if crew_ctx is not None else None,
                 )

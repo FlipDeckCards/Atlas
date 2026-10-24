@@ -14,7 +14,7 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-_MAX_HISTORY_TURNS = 20
+_MAX_HISTORY_TURNS = 40
 
 
 class SessionStore:

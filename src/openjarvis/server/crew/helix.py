@@ -71,6 +71,38 @@ CREW_TOOLS: List[Dict[str, Any]] = [
         "description": "What the crew is doing: missions, tasks, open questions and checkpoints (with ids), spend.",
         "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
+        "name": "github_files",
+        "description": "List the files in one of the user's GitHub repos (optionally a folder or branch). Read-only.",
+        "parameters": {"type": "object", "properties": {"repo": {"type": "string"}, "path": {"type": "string"}, "branch": {"type": "string"}}, "required": ["repo"]}}},
+    {"type": "function", "function": {
+        "name": "github_read",
+        "description": "Read a file from one of the user's GitHub repos (code, config, workflow files; secrets files are refused). Long files: pass start to continue. Read-only.",
+        "parameters": {"type": "object", "properties": {"repo": {"type": "string"}, "path": {"type": "string"}, "branch": {"type": "string"}, "start": {"type": "integer"}}, "required": ["repo", "path"]}}},
+    {"type": "function", "function": {
+        "name": "github_search",
+        "description": "Search the code of one of the user's repos for a word, function name or error text. Returns the files that mention it. Read-only.",
+        "parameters": {"type": "object", "properties": {"repo": {"type": "string"}, "query": {"type": "string"}}, "required": ["repo", "query"]}}},
+    {"type": "function", "function": {
+        "name": "github_activity",
+        "description": "Recent commits, open pull requests, and the CI result of the latest commit for one repo: what changed lately and whether it passes. Read-only.",
+        "parameters": {"type": "object", "properties": {"repo": {"type": "string"}, "branch": {"type": "string"}}, "required": ["repo"]}}},
+    {"type": "function", "function": {
+        "name": "github_failed_runs",
+        "description": "Recent failed GitHub Actions runs of a repo and the steps that failed. Read-only.",
+        "parameters": {"type": "object", "properties": {"repo": {"type": "string"}}, "required": ["repo"]}}},
+    {"type": "function", "function": {
+        "name": "render_services",
+        "description": "List the user's Render services (name, id, repo and branch, auto-deploy, address). Read-only.",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "render_deploys",
+        "description": "Recent deploys of a Render service (status, commit, when), newest first: did the last deploy go live or fail. Read-only.",
+        "parameters": {"type": "object", "properties": {"service": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["service"]}}},
+    {"type": "function", "function": {
+        "name": "render_logs",
+        "description": "Recent log lines of a Render service, oldest first. Pass text to search for (an error message, a path) and level (error, warning, info) to narrow, minutes to look back. Secrets are masked. Read-only.",
+        "parameters": {"type": "object", "properties": {"service": {"type": "string"}, "text": {"type": "string"}, "level": {"type": "string"}, "minutes": {"type": "integer"}}, "required": ["service"]}}},
+    {"type": "function", "function": {
         "name": "mission_details",
         "description": "Why a mission is in its state, and everything in it: every task with its status and result or failure reason, the latest errors and warnings, the budget, and whether the crew is held back. Call it whenever the user asks why a mission is stalled, failed, paused or slow, or what a mission has done.",
         "parameters": {"type": "object", "properties": {"mission_id": {"type": "string"}}, "required": ["mission_id"]}}},
@@ -251,6 +283,44 @@ async def mission_details(ctx: CrewCtx, mission_id: str) -> str:
     return "\n".join(lines)
 
 
+async def _dev(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
+    """Read-only looks at GitHub and Render with the user's own connections; anything wrong comes back as a plain sentence."""
+    from openjarvis.server.crew import devtools, github as gh
+
+    eng = ctx.engine
+    envx = await eng.env_for(ctx.user_id)
+    cf = eng.client_factory
+    try:
+        if name.startswith("github_"):
+            r = devtools.Reader(envx, cf)
+            repo = str(args.get("repo") or "")
+            if name == "github_files":
+                return await r.list_files(repo, str(args.get("path") or ""), str(args.get("branch") or ""))
+            if name == "github_read":
+                return await r.read(repo, str(args.get("path") or ""), str(args.get("branch") or ""), args.get("start") or 0)
+            if name == "github_search":
+                return await r.search(repo, str(args.get("query") or ""))
+            if name == "github_activity":
+                br = str(args.get("branch") or "")
+                return "Recent commits:\n" + await r.commits(repo, br) + "\n\nPull requests:\n" + await r.pulls(repo) + "\n\nCI on the latest commit:\n" + await r.ci(repo, br)
+            if name == "github_failed_runs":
+                return await r.failed_runs(repo)
+        else:
+            rd = devtools.Render(envx, cf)
+            if name == "render_services":
+                return await rd.services_text()
+            if name == "render_deploys":
+                return await rd.deploys(str(args.get("service") or ""), args.get("limit") or 5)
+            if name == "render_logs":
+                return await rd.logs(str(args.get("service") or ""), str(args.get("text") or ""), str(args.get("level") or ""), args.get("minutes") or 60)
+    except (gh.GitHubError, devtools.DevError) as exc:
+        return f"Could not look: {exc}"
+    except Exception:
+        logger.exception("dev tool %s failed", name)
+        return "Could not look right now."
+    return "Error: unsupported."
+
+
 async def system_addendum(ctx: CrewCtx) -> str:
     try:
         qs = await ctx.engine.store.list_questions(ctx.user_id, "open")
@@ -265,6 +335,12 @@ async def system_addendum(ctx: CrewCtx) -> str:
          "A mission can be changed after it starts: add_task to give it more work, edit_task for a task not started yet, retry_task to redo one with a note, "
          "resume_mission to continue it; never say a change was made unless the tool result says so. You can read the files of every mission, whatever its "
          "status, with list_outbox and read_outbox_file. "
+         "You can investigate his code and servers yourself, read-only: github_files, github_read, github_search, github_activity, github_failed_runs, render_services, "
+         "render_deploys and render_logs. When he reports a problem or asks why something failed, do not guess and do not ask him to paste logs: look. Start with "
+         "render_deploys and render_logs (level error), or github_activity / github_failed_runs for CI, then read the code that the error names, and keep going "
+         "until you can state the root cause in plain words with the file and line of the cause. Never say you looked at something unless a tool result shows it. "
+         "To fix it, call start_mission with a goal that names the repo, the exact cause and the change wanted; Forge commits to a crew/ branch and the merge waits "
+         "for his Approve tap. After a merge, check render_deploys to confirm the deploy went live and report it. "
          "When someone asks to set up or connect things, call next_setup_step and walk them through one step at a time; never ask for a key or password in chat.")
     docs = recent_documents(ctx.user_id)
     if docs:
@@ -293,6 +369,8 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
             return f"NOT STARTED YET. Waiting for the user's confirmation. Tell them the crew will plan and work this with a ${budget:.2f} budget, and ask them to reply 'yes'."
         if name == "crew_status":
             return await status_text(ctx)
+        if name.startswith(("github_", "render_")):
+            return await _dev(ctx, name, args)
         if name == "mission_details":
             return await mission_details(ctx, str(args.get("mission_id") or ""))
         if name == "add_business":

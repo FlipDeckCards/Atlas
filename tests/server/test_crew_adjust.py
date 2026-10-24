@@ -300,3 +300,74 @@ class TestDeckAndAsteroids:
         for needle in ("function spawnRock", "drawRocks(t);", "coreRunning", "const lane = ring *", "* 1.35;"):
             assert needle in STATION_PAGE
         assert "core.bay.tasks.filter(k => k.status !== 'waiting')" not in STATION_PAGE      # no more one walker per task
+
+
+class TestHelixInvestigates:
+    """Helix reads GitHub and Render herself (read-only) to find out what broke."""
+
+    def dev(self, handler, env=None):
+        import httpx
+        w = world(two_task_plan(), AGENTS, env=dict({"CREW_GITHUB_TOKEN": "t", "RENDER_API_KEY": "rk"}, **(env or {})),
+                  http=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+        return w, helix.CrewCtx(UID, w.engine)
+
+    def test_why_did_the_deploy_fail_deploys_then_the_error_in_the_logs_with_secrets_masked(self):
+        import httpx
+        seen = []
+
+        def handler(req):
+            seen.append(str(req.url))
+            if req.url.path == "/v1/services":
+                return httpx.Response(200, json=[{"service": {"id": "srv-1", "name": "Atlas", "type": "web_service", "ownerId": "tea-1", "repo": "https://github.com/FlipDeckCards/Atlas", "branch": "main", "autoDeploy": "yes"}}])
+            if req.url.path == "/v1/services/srv-1/deploys":
+                return httpx.Response(200, json=[{"deploy": {"id": "d1", "status": "build_failed", "createdAt": "2026-10-24T01:00:00Z", "commit": {"id": "abcdef123", "message": "Add thing"}}}])
+            if req.url.path == "/v1/logs":
+                return httpx.Response(200, json={"logs": [{"timestamp": "2026-10-24T01:00:05Z", "message": "ModuleNotFoundError: No module named 'foo' key=sk-ant-abcdefghijklmnop"},
+                                                          {"timestamp": "2026-10-24T01:00:04Z", "message": "Traceback (most recent call last):"}]})
+            return httpx.Response(404, json={})
+        w, ctx = self.dev(handler)
+        assert "Atlas (srv-1)" in run(helix.execute(ctx, "render_services", {}))
+        assert "build_failed: Add thing (abcdef1)" in run(helix.execute(ctx, "render_deploys", {"service": "atlas"}))
+        out = run(helix.execute(ctx, "render_logs", {"service": "Atlas", "level": "error"}))
+        assert out.index("Traceback") < out.index("ModuleNotFoundError")                  # oldest first, so a traceback reads in order
+        assert "sk-ant-***" in out and "abcdefghijklmnop" not in out
+        assert any("ownerId=tea-1" in u and "level=error" in u for u in seen)
+
+    def test_github_reads_are_limited_to_allowed_repos_and_never_return_secrets(self):
+        import base64
+        import httpx
+
+        def handler(req):
+            p = req.url.path
+            if p == "/repos/FlipDeckCards/Atlas/contents/app.py":
+                return httpx.Response(200, json={"content": base64.b64encode(b"KEY = 'ghp_abcdefghijklmnop12345'\nprint(1)").decode()})
+            if p == "/repos/FlipDeckCards/Atlas/commits/main/check-runs":
+                return httpx.Response(200, json={"check_runs": [{"name": "tests", "conclusion": "failure", "output": {"title": "2 failed", "summary": "test_x failed"}}, {"name": "lint", "conclusion": "success"}]})
+            if p == "/repos/FlipDeckCards/Atlas":
+                return httpx.Response(200, json={"default_branch": "main"})
+            if p.endswith("/commits"):
+                return httpx.Response(200, json=[{"sha": "1234567890", "commit": {"message": "Fix it", "author": {"date": "2026-10-24T01:00:00Z"}}}])
+            if p.endswith("/pulls"):
+                return httpx.Response(200, json=[{"number": 7, "state": "open", "title": "A change", "head": {"ref": "crew/x"}}])
+            return httpx.Response(404, json={})
+        w, ctx = self.dev(handler)
+        text = run(helix.execute(ctx, "github_read", {"repo": "FlipDeckCards/Atlas", "path": "app.py"}))
+        assert "print(1)" in text and "ghp_***" in text and "abcdefghijklmnop" not in text
+        assert "secrets file" in run(helix.execute(ctx, "github_read", {"repo": "FlipDeckCards/Atlas", "path": "config/.env.production"}))
+        assert "not one the crew may use" in run(helix.execute(ctx, "github_read", {"repo": "someone/else", "path": "a.py"}))
+        act = run(helix.execute(ctx, "github_activity", {"repo": "FlipDeckCards/Atlas"}))
+        assert "1234567 " in act and "#7 [open] A change" in act and "tests: failure - 2 failed: test_x failed" in act and "lint: success" in act
+
+    def test_not_connected_says_how_to_connect_and_nothing_is_called(self):
+        import httpx
+        calls = []
+        w, ctx = self.dev(lambda r: calls.append(r) or httpx.Response(200, json=[]), env={"RENDER_API_KEY": "", "CREW_GITHUB_TOKEN": ""})
+        assert "not connected" in run(helix.execute(ctx, "render_services", {})).lower()
+        assert "not connected" in run(helix.execute(ctx, "github_files", {"repo": "FlipDeckCards/Atlas"})).lower()
+        assert calls == []
+
+    def test_crew_turns_get_room_to_investigate(self):
+        from openjarvis.server import hardening
+        assert hardening.CREW_TOOL_ROUNDS >= 8 and hardening.CREW_CHAT_MAX_TOKENS > hardening.CHAT_MAX_TOKENS and hardening.CREW_HISTORY_MESSAGES > 10
+        names = {t["function"]["name"] for t in helix.CREW_TOOLS}
+        assert {"github_read", "github_search", "github_activity", "github_failed_runs", "render_logs", "render_deploys", "render_services", "github_files"} <= names
