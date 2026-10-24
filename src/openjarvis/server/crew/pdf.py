@@ -136,21 +136,37 @@ def prepare_image(data: bytes, w_pt: float, h_pt: float, dpi: int = 220, quality
 
 def back_cover_ops(w: float, h: float, m: float, tagline: str, blurb: str, author: str, barcode_space: bool) -> str:
     """Page-content operators that typeset a back cover over the picture: a dark panel for legibility, the tagline, the blurb, the author, and a white
-    box where the printer's barcode goes. Real text in a real font: image generators cannot spell, so the words are never part of the picture."""
+    box where the printer's barcode goes. Real text in a real font: image generators cannot spell, so the words are never part of the picture.
+    The type shrinks (and, if it must, the description loses its last paragraphs) so nothing ever runs into the barcode box or off the page."""
     inner = w - 2 * m
-    lines: List[Tuple[str, float, bool]] = []                                  # (text, size, bold)
-    if tagline.strip():
-        lines += [(ln, 18, True) for ln in _wrap(_clean(tagline.strip()), 18, inner, True)] + [("", 10, False)]
-    for para in re.split(r"\n\s*\n", blurb.strip()):
-        if para.strip():
-            lines += [(ln, 11.5, False) for ln in _wrap(_clean(" ".join(para.split())), 11.5, inner)] + [("", 6, False)]
-    if author.strip():
-        lines += [("", 8, False), (_clean(author.strip()), 12, True)]
     box_h = 72 if barcode_space else 0
     floor = m + box_h + (22 if barcode_space else 0)
+    avail = (h - m - 20) - floor
+    paras = [" ".join(p.split()) for p in re.split(r"\n\s*\n", blurb.strip()) if p.strip()]
     pitch = lambda size: size * 1.38
-    need = sum(pitch(sz) for _t, sz, _b in lines)
-    top = min(h - m - 30, floor + need)
+
+    def build(scale: float, ps: List[str]):
+        lines: List[Tuple[str, float, bool]] = []
+        if tagline.strip():
+            lines += [(ln, 18 * scale, True) for ln in _wrap(_clean(tagline.strip()), 18 * scale, inner, True)] + [("", 10 * scale, False)]
+        for para in ps:
+            lines += [(ln, 11.5 * scale, False) for ln in _wrap(_clean(para), 11.5 * scale, inner)] + [("", 6 * scale, False)]
+        if author.strip():
+            lines += [("", 8 * scale, False), (_clean(author.strip()), 12 * scale, True)]
+        return lines, sum(pitch(sz) for _t, sz, _b in lines)
+
+    lines, need = [], 0.0
+    for scale in (1.0, 0.93, 0.86, 0.8, 0.74, 0.68):
+        lines, need = build(scale, paras)
+        if need <= avail:
+            break
+    while need > avail and len(paras) > 1:                                    # still too long at the smallest size: the last paragraph goes
+        paras = paras[:-1]
+        lines, need = build(0.68, paras)
+    while need > avail and paras and len(paras[0].split()) > 12:              # one very long paragraph: shorten it at a word
+        paras[0] = " ".join(paras[0].split()[:-8]).rstrip(",;:") + "..."
+        lines, need = build(0.68, paras)
+    top = floor + need
     ops = []
     if lines:
         ops.append(f"q /GS1 gs 0.02 0.04 0.09 rg {m - 14:g} {floor - 16:g} {inner + 28:g} {top - floor + 30:g} re f Q")        # translucent panel
@@ -232,13 +248,10 @@ BOOK_W, BOOK_H, BOOK_M = 432, 648, 54                    # 6 x 9 inch trade pape
 
 
 def make_book_pdf(title: str, author: str, body: str, cover: "bytes | None" = None, back_cover: "bytes | None" = None,
-                  back_text: "dict | None" = None) -> Tuple[bytes, int]:
-    """A 6 x 9 inch book: the front cover as page one, a title page, the manuscript (every '# ' chapter on a new page, no pictures inside),
-    and the back cover as the last page. cover and back_cover are image files of any size or type; they are cropped to the page and compressed.
-    back_text {tagline, blurb, author, barcode_space} is typeset over the back cover in real type (the picture should have no words in it).
-    -> (pdf bytes, number of pages)"""
-    front = prepare_image(cover, BOOK_W, BOOK_H) if cover else None
-    back = prepare_image(back_cover, BOOK_W, BOOK_H) if back_cover else None
-    pages = layout(title, body, BOOK_W, BOOK_H, BOOK_M, author=author, chapter_breaks=True, body_size=11)
-    has_back = bool(back or back_text)
-    return _build(pages, BOOK_W, BOOK_H, BOOK_M, front, back, back_text), len(pages) + (1 if front else 0) + (1 if has_back else 0)
+                  back_text: "dict | None" = None, subtitle: str = "", publisher: str = "") -> Tuple[bytes, int]:
+    """A 6 x 9 inch paperback: front cover, title page, copyright page, a real contents list, the manuscript typeset as a book (see typeset.py), and
+    the back cover as the last page, with its words set in real type (back_text {tagline, blurb, author, barcode_space}).
+    cover and back_cover are image files of any size or type; they are cropped to the page and compressed. -> (pdf bytes, number of pages)"""
+    from openjarvis.server.crew import typeset
+
+    return typeset.make_book(title, author, body, cover, back_cover, back_text, subtitle=subtitle, publisher=publisher)

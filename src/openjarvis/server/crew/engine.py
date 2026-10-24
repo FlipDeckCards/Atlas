@@ -147,6 +147,7 @@ _BOOK_TOOL = {"type": "function", "function": {
     "parameters": {"type": "object", "properties": {"title": {"type": "string"}, "author": {"type": "string"}, "filename": {"type": "string"},
                                                     "files": {"type": "array", "items": {"type": "string"}, "description": "Outbox file names in reading order."},
                                                     "cover_item": {"type": "string"}, "back_cover_item": {"type": "string"},
+                                                    "subtitle": {"type": "string"}, "publisher": {"type": "string"},
                                                     "back_tagline": {"type": "string", "description": "One line for the top of the back cover."},
                                                     "back_blurb": {"type": "string", "description": "The back-cover description (2-4 short paragraphs). It is typeset in real type over the picture; never ask the image to contain words."},
                                                     "barcode_space": {"type": "boolean", "description": "Leave a white box for the printer's barcode (default true)."}},
@@ -1866,7 +1867,7 @@ class CrewEngine:
         try:
             back_text = {"tagline": _clip(args.get("back_tagline"), 160), "blurb": str(args.get("back_blurb") or "").strip()[:1400], "author": author,
                          "barcode_space": args.get("barcode_space") is not False}
-            data, pages = await asyncio.to_thread(pdfmod.make_book_pdf, title, author, text, cover, back, back_text)
+            data, pages = await asyncio.to_thread(pdfmod.make_book_pdf, title, author, text, cover, back, back_text, _clip(args.get("subtitle"), 160), _clip(args.get("publisher"), 80))
         except Exception as exc:
             logger.exception("make_book failed")
             return f"The book could not be built: {_clip(exc, 160)}", None

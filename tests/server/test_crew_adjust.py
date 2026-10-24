@@ -889,3 +889,13 @@ class TestHelixIsOffTheRing:
         from openjarvis.server.crew.station import STATION_PAGE
         assert "const HELIX_ON_DECK = false;" in STATION_PAGE
         assert "if (HELIX_ON_DECK) loadArt('helix-views.png'" in STATION_PAGE and "if (HELIX_ON_DECK) loadArt('helix-walk.png'" in STATION_PAGE
+
+
+def test_book_typesetter_cleans_markdown_and_placeholders():
+    from openjarvis.server.crew import pdf as pdfmod
+
+    md = ("# Part 1: Defense\n\n## From Fear\n\n## Chapter 1: The Fork\n\nThis was *now* and **bold**.\n\n"
+          "*(See the Diagram - Media Library Item: d667663d-0913-4da8-ab5c-37bdf1dd1bc1)*\n\n- one\n- two\n")
+    data, pages = pdfmod.make_book_pdf("A Book", "Me", md, None, None, {"tagline": "T", "blurb": "B " * 300, "author": "Me"})
+    assert data.startswith(b"%PDF") and pages >= 4
+    assert b"Media Library" not in data and b"*now*" not in data
