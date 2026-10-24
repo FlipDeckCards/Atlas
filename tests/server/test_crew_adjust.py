@@ -1063,3 +1063,14 @@ def test_a_short_list_is_not_split_across_pages():
     book.run(typeset.block_split(filler + "## Heading\n\n" + items + "\n"))
     where = [i for i, pg in enumerate(book.pages) for op in pg.ops if op[0] == "bullet"]
     assert len(where) == 6 and len(set(where)) == 1
+
+
+class TestBookReplacements:
+    def test_make_book_applies_exact_text_fixes_and_reports_the_counts(self):
+        t = TestMakeBookTool()
+        w, m, task = t.setup()
+        run(w.store.add_output(m["id"], "", UID, "part3.md", "# Chapter Three\n\nThe Pulsia Experiment began. Pulsia grew."))
+        mission = run(w.store.get_mission(m["id"]))
+        out, _ = run(w.engine._tool(task, mission, "make_book", {"title": "B", "files": ["part3.md"], "filename": "fixed",
+                                                               "replacements": [{"find": "Pulsia", "replace": "Polsia"}]}))
+        assert '"Pulsia" -> "Polsia": 2' in out and 'Saved "fixed.pdf"' in out

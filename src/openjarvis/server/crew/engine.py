@@ -150,7 +150,9 @@ _BOOK_TOOL = {"type": "function", "function": {
                                                     "subtitle": {"type": "string"}, "publisher": {"type": "string"},
                                                     "back_tagline": {"type": "string", "description": "One line for the top of the back cover."},
                                                     "back_blurb": {"type": "string", "description": "The back-cover description (2-4 short paragraphs). It is typeset in real type over the picture; never ask the image to contain words."},
-                                                    "barcode_space": {"type": "boolean", "description": "Leave a white box for the printer's barcode (default true)."}},
+                                                    "barcode_space": {"type": "boolean", "description": "Leave a white box for the printer's barcode (default true)."},
+                                                    "replacements": {"type": "array", "items": {"type": "object", "properties": {"find": {"type": "string"}, "replace": {"type": "string"}}},
+                                                                     "description": "Exact text fixes applied to the whole manuscript while building (up to 20), e.g. a misspelled name: {find:'Pulsia', replace:'Polsia'}. The result reports how many were changed; use this instead of rewriting files."}},
                    "required": ["title", "files"]}}}
 
 _IMAGE_TOOL = {"type": "function", "function": {
@@ -1938,6 +1940,13 @@ class CrewEngine:
         text = "\n\n".join(parts)
         text = re.sub(r"(?m)^\s*!\[[^\]]*\]\([^)]*\)\s*$", "", text)                                      # no pictures inside the book
         text = re.sub(r"(?im)^\s*\[?\s*(image|graphic|figure|illustration)\b[^\n]{0,160}\]?\s*$", "", text)       # nor placeholders for them
+        fixed = []
+        for r in (args.get("replacements") if isinstance(args.get("replacements"), list) else [])[:20]:
+            if isinstance(r, dict) and 1 <= len(str(r.get("find") or "")) <= 80:
+                find, put = str(r["find"]), str(r.get("replace") or "")[:80]
+                n = text.count(find)
+                text = text.replace(find, put)
+                fixed.append(f'"{find}" -> "{put}": {n}')
         fetch = self._media_fetcher(uid)
         cover = back = None
         try:
@@ -1967,7 +1976,7 @@ class CrewEngine:
         await self.store.add_output(mid, tid, uid, fname, "base64:" + b64)
         words = len(text.split())
         await self.store.add_event(uid, "output", f'Saved the book "{fname}": {pages} pages, {words:,} words, {len(data) // 1024} KB.', mission_id=mid, task_id=tid)
-        return (f'Saved "{fname}" to the outbox: {pages} pages (6 x 9 in), about {words:,} words, {len(data) // 1024} KB; front cover {"included" if cover else "NOT included"}, '
+        return (('Spelling fixes applied: ' + '; '.join(fixed) + '. ' if fixed else '') + f'Saved "{fname}" to the outbox: {pages} pages (6 x 9 in), about {words:,} words, {len(data) // 1024} KB; front cover {"included" if cover else "NOT included"}, '
                 f'back cover {"picture included" if back else "picture NOT included"}'
                 f'{" with the tagline and description typeset on it" if back_text["tagline"] or back_text["blurb"] else " (no back-cover text given)"}; no pictures inside.'), None
 
