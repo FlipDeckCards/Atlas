@@ -1896,6 +1896,11 @@ document.getElementById('speed-tog').onclick = () => {
   applySpeed(_curAudio); paintSpeed();                         // takes effect on what she is saying right now
 };
 paintSpeed();
+let _voiceNote = false;
+function voiceNote(text) {                                      // a voice problem is shown for a few seconds instead of failing silently
+  _voiceNote = true; wakeLabel(text, 'busy');
+  setTimeout(() => { _voiceNote = false; wakeLabel(wakeOn ? 'SAY "HEY HELIX"' : 'VOICE: TAP TO WAKE', wakeOn ? 'on' : ''); }, 6000);
+}
 function wakeLabel(text, cls) { const w = document.getElementById('wake'); w.textContent = text; w.className = cls || ''; }
 let _audioUnlocked = false;
 function unlockAudio() { if (_audioUnlocked) return; _audioUnlocked = true; try { const c = new (window.AudioContext || window.webkitAudioContext)(); c.resume().then(() => c.close()).catch(() => {}); } catch (e) {} }
@@ -2001,8 +2006,9 @@ async function startRec() {
         const d = await res.json().catch(() => ({}));
         const clean = String(d.text || '').trim().replace(/^(hey\s+helix|hey\s+helics|hey\s+helic|a\s+helix)[,.]?\s*/i, '').replace(/[,.]?\s*send\.?\s*$/i, '').trim();
         if (clean) { document.getElementById('chat-in').value = clean; await sendChat(); }
-      } catch (e) {}
-      wakeLabel(wakeOn ? 'SAY "HEY HELIX"' : 'VOICE: TAP TO WAKE', wakeOn ? 'on' : '');
+        else voiceNote(res.ok ? "I DIDN'T CATCH THAT, TRY AGAIN" : 'VOICE ERROR: ' + String(d.detail || res.status).slice(0, 90));
+      } catch (e) { voiceNote('VOICE ERROR: COULD NOT REACH THE SERVER'); }
+      if (!_voiceNote) wakeLabel(wakeOn ? 'SAY "HEY HELIX"' : 'VOICE: TAP TO WAKE', wakeOn ? 'on' : '');
     };
     recorder.start(); isRec = true;
     document.getElementById('mic').classList.add('rec'); wakeLabel('RECORDING · SAY "SEND" OR TAP 🎙', 'rec');
