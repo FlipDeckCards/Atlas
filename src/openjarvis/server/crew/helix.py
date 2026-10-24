@@ -5,7 +5,9 @@ Tools offered to the chat model (owner accounts only, crew enabled):
                       an explicit yes (the same rule as Helix's paid media tools)
   crew_status         what the crew is doing, what it is waiting for, what it has spent
   answer_crew_question  passes Michael's answer to an agent's plain question
-  pause_mission / resume_mission
+  pause_mission / resume_mission / add_task / edit_task / retry_task: change a mission that already exists (no new spend beyond its budget)
+  list_outbox / read_outbox_file: read the files of ANY of his missions, whatever its status
+  Documents he attaches in chat are kept for 30 minutes and go to a mission he starts (or one he names) as attached-* files.
 Checkpoints (publish, charge, anything irreversible) and budget requests are NOT answered through the model: Michael approves or
 declines them with the buttons in the chat card or the Station, so a model can never approve its own action.
 """
@@ -13,6 +15,7 @@ declines them with the buttons in the chat card or the Station, so a model can n
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -22,19 +25,46 @@ from openjarvis.server.media.helix_tools import PendingActions, is_explicit_yes
 logger = logging.getLogger(__name__)
 
 CREW_PENDING = PendingActions()
+DOCS_TTL_S = 30 * 60
+MAX_DOCS_KEPT = 5
+RECENT_DOCS: Dict[str, List[Dict[str, Any]]] = {}      # user id -> documents attached in chat, not yet given to a mission
+
+
+def remember_document(user_id: str, name: str, text: str) -> None:
+    now = time.monotonic()
+    docs = [d for d in RECENT_DOCS.get(user_id, []) if now - d["at"] < DOCS_TTL_S and d["name"] != name]
+    docs.append({"name": name, "text": text, "at": now})
+    RECENT_DOCS[user_id] = docs[-MAX_DOCS_KEPT:]
+
+
+def recent_documents(user_id: str) -> List[Dict[str, Any]]:
+    now = time.monotonic()
+    docs = [d for d in RECENT_DOCS.get(user_id, []) if now - d["at"] < DOCS_TTL_S]
+    if docs:
+        RECENT_DOCS[user_id] = docs
+    else:
+        RECENT_DOCS.pop(user_id, None)
+    return docs
+
+
+def _numbers(v: Any) -> List[int]:
+    return [v] if isinstance(v, (int, str)) and not isinstance(v, bool) else [x for x in (v or []) if isinstance(x, (int, str))]
+
 SETUP_STEPS = [
     ("github", "GitHub", "Create a GitHub token that can read and write the repos the crew should use. Paste it into the GitHub box in the Connections panel on the Station.", "https://github.com/settings/tokens"),
     ("render", "Render hosting", "In Render, open Account Settings, go to API Keys, and create a key. Paste it into the Render box in the Connections panel.", "https://dashboard.render.com"),
     ("stripe", "Stripe", "In Stripe, open Developers, then API keys, and copy your secret key. Paste it into the Stripe box in the Connections panel.", "https://dashboard.stripe.com/apikeys"),
     ("workbench", "your PC (Rig)", "Run the Workbench helper on the computer that has your project. The Connections panel shows the command to copy.", ""),
 ]
+CHANGES_STATION = {"add_business", "rename_business", "remove_business", "rename_mission", "add_task", "edit_task", "retry_task",
+                   "attach_document", "pause_mission", "resume_mission", "answer_crew_question"}     # tools after which the Station must redraw
 OWNER_FIXED_KEYS_HELIX = {"flipdeck", "marnyx", "deadzone"}   # the owner's rows that are not stored (see routes.OWNER_BUSINESSES)
 
 CREW_TOOLS: List[Dict[str, Any]] = [
     {"type": "function", "function": {
         "name": "start_mission",
         "description": "Start a crew mission: Helix plans the goal into tasks and agents (Claude, Gemini) work them in parallel. Costs money, so the system asks the user to confirm first.",
-        "parameters": {"type": "object", "properties": {"goal": {"type": "string", "description": "The whole goal in the user's words, with any details he gave."},
+        "parameters": {"type": "object", "properties": {"goal": {"type": "string", "description": "The whole goal in the user's words, with any details he gave. Documents he attached in chat go to the mission automatically."},
                                                         "budget_usd": {"type": "number", "description": "Only if the user named a budget."}}, "required": ["goal"]}}},
     {"type": "function", "function": {
         "name": "crew_status",
@@ -46,7 +76,7 @@ CREW_TOOLS: List[Dict[str, Any]] = [
         "parameters": {"type": "object", "properties": {"question_id": {"type": "string"}, "answer": {"type": "string"}}, "required": ["question_id", "answer"]}}},
     {"type": "function", "function": {
         "name": "add_business",
-        "description": "Add a business to the All businesses box on the Station (its name, and optionally its website and a color). Nothing is spent and nothing is published; the user can remove it.",
+        "description": "Add a business to the All businesses box on the Station (its name, and optionally its website and a color); it also gets its own factory branch around the center of the Station. Nothing is spent and nothing is published; the user can remove it.",
         "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "The business name, as the user said it."},
                                                         "url": {"type": "string", "description": "Its website, if given."},
                                                         "color": {"type": "string", "description": "A hex color like #00e5ff, if given."}}, "required": ["name"]}}},
@@ -75,12 +105,44 @@ CREW_TOOLS: List[Dict[str, Any]] = [
         "description": "Remove a business you added from the All businesses box. The FlipDeck, Marnyx and Deadzone rows cannot be removed.",
         "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "The business name to remove."}}, "required": ["name"]}}},
     {"type": "function", "function": {
+        "name": "add_task",
+        "description": "Add a task to a mission that already exists (running, paused, stalled or finished) so an agent does more work on it. Use the mission id and task numbers from crew_status. A finished mission is reopened.",
+        "parameters": {"type": "object", "properties": {
+            "mission_id": {"type": "string"}, "title": {"type": "string"},
+            "role": {"type": "string", "description": "Agent role, e.g. researcher, builder, writer, designer, marketer, analyst, qa, reviewer, operator."},
+            "brief": {"type": "string", "description": "What the agent should do, in detail."},
+            "depends_on": {"type": "array", "items": {"type": "integer"}, "description": "Task numbers that must finish first."}},
+            "required": ["mission_id", "title", "role", "brief"]}}},
+    {"type": "function", "function": {
+        "name": "edit_task",
+        "description": "Change the title or instructions of a task that has not started yet (status queued).",
+        "parameters": {"type": "object", "properties": {"mission_id": {"type": "string"}, "task_number": {"type": "integer"},
+                                                        "title": {"type": "string"}, "brief": {"type": "string"}}, "required": ["mission_id", "task_number"]}}},
+    {"type": "function", "function": {
+        "name": "retry_task",
+        "description": "Run a finished or failed task again, with the user's note as extra instructions. Reopens the mission if it was finished or stalled.",
+        "parameters": {"type": "object", "properties": {"mission_id": {"type": "string"}, "task_number": {"type": "integer"}, "note": {"type": "string"}},
+                       "required": ["mission_id", "task_number"]}}},
+    {"type": "function", "function": {
+        "name": "attach_document",
+        "description": "Give a document the user attached in chat to an existing mission (any status), so its agents can read it. Documents attached with a new mission are included automatically.",
+        "parameters": {"type": "object", "properties": {"mission_id": {"type": "string"}, "name": {"type": "string", "description": "The document's file name; omit for all recent attachments."}},
+                       "required": ["mission_id"]}}},
+    {"type": "function", "function": {
+        "name": "list_outbox",
+        "description": "List the files in the user's outboxes across ALL missions, whatever their status (active, paused, stalled, cancelled, done), with the mission each belongs to.",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "read_outbox_file",
+        "description": "Read a file from any of the user's missions' outboxes, whatever the mission's status. Pass mission_id when several missions have the same file name. Long files: pass offset to continue.",
+        "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "mission_id": {"type": "string"}, "offset": {"type": "integer"}}, "required": ["name"]}}},
+    {"type": "function", "function": {
         "name": "pause_mission",
         "description": "Pause a mission (its agents stop starting new steps).",
         "parameters": {"type": "object", "properties": {"mission_id": {"type": "string"}}, "required": ["mission_id"]}}},
     {"type": "function", "function": {
         "name": "resume_mission",
-        "description": "Resume a paused or stalled mission.",
+        "description": "Continue a paused, stalled or failed mission (failed tasks are tried again).",
         "parameters": {"type": "object", "properties": {"mission_id": {"type": "string"}}, "required": ["mission_id"]}}},
 ]
 
@@ -112,8 +174,7 @@ async def status_text(ctx: CrewCtx) -> str:
         lines.append(f'Mission {m["id"]} "{m["title"] or _clip(m["goal"], 60)}" [{m["status"]}] {done}/{len(m["tasks"])} tasks done, '
                      f'${m["spent_usd"]:.2f} of ${m["budget_usd"]:.2f}, {len(m["outputs"])} file(s)')
         for t in m["tasks"]:
-            if t["status"] in ("running", "waiting", "failed"):
-                lines.append(f'  - {t["title"]} ({t["role"]}): {t["status"]}')
+            lines.append(f'  - task {t["idx"] + 1}: {t["title"]} ({t["role"]}): {t["status"]}')
     for q in st["questions"]:
         how = "the user can answer in chat" if q["kind"] == "question" else "needs Approve/Decline tap"
         lines.append(f'Open {q["kind"]} {q["id"]}: {q["text"]}' + (f' Options: {" / ".join(q["options"])}' if q["options"] and q["kind"] == "question" else "") + f" ({how})")
@@ -133,7 +194,14 @@ async def system_addendum(ctx: CrewCtx) -> str:
          "a campaign, an app), call start_mission with his goal; the system asks him to confirm. Use crew_status when he asks what the crew is doing. "
          "Never say a mission started unless a tool result says so. Checkpoints and budget requests are approved only by his tap on the buttons. "
          "To put a business on the All businesses box, call add_business with the name he gave; never say it was added unless the tool result says so. "
+         "A mission can be changed after it starts: add_task to give it more work, edit_task for a task not started yet, retry_task to redo one with a note, "
+         "resume_mission to continue it; never say a change was made unless the tool result says so. You can read the files of every mission, whatever its "
+         "status, with list_outbox and read_outbox_file. "
          "When someone asks to set up or connect things, call next_setup_step and walk them through one step at a time; never ask for a key or password in chat.")
+    docs = recent_documents(ctx.user_id)
+    if docs:
+        s += (" The user attached these documents in chat: " + ", ".join(d["name"] for d in docs) + ". A mission you start with start_mission gets them automatically; "
+              "attach_document gives them to an existing mission.")
     if qs:
         s += " Open crew items: " + " | ".join(f'{q["kind"]} {q["id"]}: {_clip(q["text"], 160)}' for q in qs[:5])
         s += ". If his message answers an open question, call answer_crew_question with that id."
@@ -151,7 +219,9 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
             if missing:
                 return "NOT STARTED: connect " + " and ".join(missing) + " first. Walk the user through it; do not start the mission."
             budget = eng.clamp_budget(args.get("budget_usd")) if args.get("budget_usd") is not None else eng.clamp_budget(None)
-            CREW_PENDING.create(ctx.user_id, "start_mission", {"goal": goal, "budget_usd": budget}, budget, f'start a crew mission: "{_clip(goal, 140)}"')
+            docs = recent_documents(ctx.user_id)
+            CREW_PENDING.create(ctx.user_id, "start_mission", {"goal": goal, "budget_usd": budget, "documents": [dict(d) for d in docs]}, budget,
+                                f'start a crew mission: "{_clip(goal, 140)}"' + (f' with {len(docs)} attached document(s)' if docs else ""))
             return f"NOT STARTED YET. Waiting for the user's confirmation. Tell them the crew will plan and work this with a ${budget:.2f} budget, and ask them to reply 'yes'."
         if name == "crew_status":
             return await status_text(ctx)
@@ -262,6 +332,32 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
                 return "Not done: checkpoints and budget requests need the user's tap on Approve or Decline in the chat card or the Station."
             out = await eng.answer(ctx.user_id, q["id"], answer=str(args.get("answer") or ""))
             return out["message"]
+        if name == "add_task":
+            t = await eng.add_task(ctx.user_id, str(args.get("mission_id") or ""), args.get("title"), str(args.get("role") or "").strip().lower(),
+                                   args.get("brief"), _numbers(args.get("depends_on")))
+            m = await eng.store.get_mission(t["mission_id"])
+            return (f'Added task {t["idx"] + 1} "{t["title"]}" ({t["role"]}) to the mission; it is queued. '
+                    + ("The mission is paused, so it starts when the mission is resumed." if m["status"] == "paused" else f'The mission is {m["status"]}.'))
+        if name == "edit_task":
+            t = await eng.edit_task(ctx.user_id, str(args.get("mission_id") or ""), args.get("task_number"), title=args.get("title") or "", brief=args.get("brief") or "")
+            return f'Task {t["idx"] + 1} updated: "{t["title"]}".'
+        if name == "retry_task":
+            t = await eng.retry_task(ctx.user_id, str(args.get("mission_id") or ""), args.get("task_number"), args.get("note") or "")
+            return f'Task {t["idx"] + 1} "{t["title"]}" is queued to run again.'
+        if name == "attach_document":
+            docs = recent_documents(ctx.user_id)
+            want = str(args.get("name") or "").strip().lower()
+            pick = [d for d in docs if not want or d["name"].lower() == want]
+            if not pick:
+                return "No such attached document. Ask the user to attach it again."
+            saved = await eng.attach_documents(ctx.user_id, str(args.get("mission_id") or ""), pick)
+            return ("Attached to the mission: " + ", ".join(saved) + ". Its agents read it with read_output.") if saved else "Already attached to that mission (or its outbox is full)."
+        if name == "list_outbox":
+            idx = await eng.outbox_index(ctx.user_id)
+            return "\n".join(f'{o["name"]} ({o["size"]:,} chars) - mission {o["mission_id"]} "{o["mission_title"]}" [{o["mission_status"]}]' for o in idx[:60]) \
+                or "No files in any outbox yet."
+        if name == "read_outbox_file":
+            return await eng.read_outbox(ctx.user_id, args.get("name"), _clip(args.get("mission_id"), 80), args.get("offset"))
         if name in ("pause_mission", "resume_mission"):
             fn = eng.pause_mission if name == "pause_mission" else eng.resume_mission
             m = await fn(ctx.user_id, str(args.get("mission_id") or ""))
@@ -286,7 +382,8 @@ async def pre_turn(ctx: CrewCtx, message: str) -> Optional[Dict[str, Any]]:
         return None
     MEDIA_PENDING.clear(ctx.user_id)              # one yes confirms one thing
     try:
-        m = await ctx.engine.start_mission(ctx.user_id, p.args["goal"], p.args["budget_usd"])
+        m = await ctx.engine.start_mission(ctx.user_id, p.args["goal"], p.args["budget_usd"], attachments=p.args.get("documents") or None)
+        RECENT_DOCS.pop(ctx.user_id, None)
     except ValueError as exc:
         return {"reply": f"I couldn't start it: {exc}", "ui": []}
     return {"reply": f'Mission started with a ${m["budget_usd"]:.2f} budget. The crew is planning it now; I will post progress, questions and approvals '
