@@ -753,3 +753,25 @@ class TestStationArt:
         from openjarvis.server.crew.station import STATION_PAGE
         for needle in ("const ART = ", "loadArt('helix-walk.png'", "if (ART.rocks.length)", "if (ART.satellite)", "if (ART.helix) onDeck.push"):
             assert needle in STATION_PAGE
+
+
+class TestEditingATaskThatAlreadyStarted:
+    def test_a_queued_task_with_history_is_edited_and_told_in_its_own_conversation(self):
+        w = world(two_task_plan(), AGENTS)
+        m = run(start(w))
+        ctx = helix.CrewCtx(UID, w.engine)
+        run(helix.execute(ctx, "add_task", {"mission_id": m["id"], "title": "Make PDF with graphics", "role": "designer", "brief": "Build the PDF with 7 graphics inside."}))
+        t = run(w.store.list_tasks(m["id"]))[-1]
+        run(w.store.update_task(t["id"], transcript=[{"role": "user", "content": "Mission: ... Your task: make the PDF with graphics"}]))
+        out = run(helix.execute(ctx, "edit_task", {"mission_id": m["id"], "task_number": t["idx"] + 1, "title": "Make the text-only PDF", "brief": "Use make_book; no pictures inside."}))
+        assert "updated" in out
+        t2 = run(w.store.get_task(t["id"]))
+        assert t2["title"] == "Make the text-only PDF" and t2["brief"] == "Use make_book; no pictures inside."
+        note = t2["transcript"][-1]["content"]
+        assert t2["status"] == "queued" and "Michael changed this task" in note and "no pictures inside" in note and "the new instructions win" in note
+        run(w.store.update_task(t["id"], status="waiting"))
+        assert "Only a queued task can be edited" in run(helix.execute(ctx, "edit_task", {"mission_id": m["id"], "task_number": t["idx"] + 1, "brief": "x y z"}))
+
+    def test_the_owner_is_not_told_to_expect_a_budget_card(self):
+        w = world(two_task_plan(), AGENTS)
+        assert "top up their own budget" in run(helix.system_addendum(helix.CrewCtx(UID, w.engine)))

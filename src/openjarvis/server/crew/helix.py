@@ -451,6 +451,9 @@ async def system_addendum(ctx: CrewCtx) -> str:
          "for his Approve tap. After a merge, check render_deploys to confirm the deploy went live and report it. "
          "When someone asks to set up or connect things, call next_setup_step and walk them through one step at a time; never ask for a key or password in chat.")
     s += OPERATING + await memory_text(ctx)
+    if await ctx.engine.is_owner(ctx.user_id):
+        s += (" His missions top up their own budget automatically, up to the per-mission maximum, so a long job does not stop for a budget card: do not tell him to expect one. "
+              "If a mission has a hard budget stop, mission_details says so.")
     imgs = recent_images(ctx.user_id)
     if imgs:
         s += (" Pictures he attached are saved in his media library: " + ", ".join(f'{i["name"]} = item {i["item_id"]}' for i in imgs)
