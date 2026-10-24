@@ -118,3 +118,23 @@ class TestSecurityHeaders:
         assert "access-control-allow-origin" in resp.headers
         # Security headers should NOT be present on preflight
         assert "X-Frame-Options" not in resp.headers
+
+
+def test_chat_posts_report_how_long_they_took():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    app = FastAPI()
+
+    @app.post("/api/chat")
+    async def chat():
+        return {"ok": True}
+
+    @app.post("/api/other")
+    async def other():
+        return {"ok": True}
+
+    app.add_middleware(create_security_middleware())
+    c = TestClient(app)
+    assert c.post("/api/chat").headers["Server-Timing"].startswith("total;dur=")
+    assert "Server-Timing" not in c.post("/api/other").headers
