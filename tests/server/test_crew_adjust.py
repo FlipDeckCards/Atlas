@@ -1045,3 +1045,14 @@ class TestColonAndShift:
         assert out.getpixel((200, 200)) == (70, 170, 200)                                       # the stem is now 30px to the right
         bg = out.getpixel((166, 200))
         assert max(abs(a - b) for a, b in zip(bg, (12, 28, 70))) < 12                          # and where it was there is only background
+
+
+def test_a_short_list_is_not_split_across_pages():
+    from openjarvis.server.crew import typeset
+
+    filler = ("Some words about the book. " * 14 + "\n\n") * 11
+    items = "\n".join(f"- bullet number {i}" for i in range(6))
+    book = typeset.Book("T")
+    book.run(typeset.block_split(filler + "## Heading\n\n" + items + "\n"))
+    where = [i for i, pg in enumerate(book.pages) for op in pg.ops if op[0] == "bullet"]
+    assert len(where) == 6 and len(set(where)) == 1
