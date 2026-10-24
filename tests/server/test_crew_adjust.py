@@ -687,7 +687,7 @@ class TestMakeBookTool:
         w, m, task = self.setup()
         mission = run(w.store.get_mission(m["id"]))
         out, _ = run(w.engine._tool(task, mission, "make_book", {"title": "My Book", "author": "Michael", "files": ["part1.md", "part2.md"], "cover_item": "c1", "back_cover_item": "b1", "filename": "My Book"}))
-        assert 'Saved "My Book.pdf"' in out and "front cover included" in out and "back cover included" in out and "no pictures inside" in out
+        assert 'Saved "My Book.pdf"' in out and "front cover included" in out and "back cover picture included" in out and "no pictures inside" in out
         o = [x for x in run(w.store.list_outputs(m["id"])) if x["name"] == "My Book.pdf"][0]
         raw = base64.b64decode(run(w.store.get_output(o["id"]))["content"][7:])
         r = pypdf.PdfReader(io.BytesIO(raw))
@@ -746,12 +746,12 @@ class TestHelixKeepsAttachedPictures:
 class TestStationArt:
     def test_art_is_served_only_from_the_allowed_names_and_a_missing_file_is_a_plain_404(self):
         from openjarvis.server.crew import routes
-        assert {"asteroid1.png", "asteroid2.png", "asteroid3.png", "satellite.png", "helix-walk.png"} == routes.ART_FILES
+        assert {"asteroid1.png", "asteroid2.png", "asteroid3.png", "satellite.png", "helix-walk.png", "helix-views.png"} == routes.ART_FILES
         assert run(routes.station_art("../../etc/passwd")).status_code == 404 and run(routes.station_art("satellite.png")).status_code == 404
 
     def test_the_station_uses_the_art_when_it_loads_and_keeps_its_drawings_otherwise(self):
         from openjarvis.server.crew.station import STATION_PAGE
-        for needle in ("const ART = ", "loadArt('helix-walk.png'", "if (ART.rocks.length)", "if (ART.satellite)", "if (ART.helix) onDeck.push"):
+        for needle in ("const ART = ", "loadArt('helix-walk.png'", "if (ART.rocks.length)", "if (ART.satellite)", "if (ART.helix || ART.helixViews) onDeck.push"):
             assert needle in STATION_PAGE
 
 
@@ -782,3 +782,86 @@ class TestStationNeverGoesBlankWhileDragging:
         from openjarvis.server.crew.station import STATION_PAGE
         assert "function paint(t)" in STATION_PAGE and "resize();                                              // resizing the canvas clears it" in STATION_PAGE
         assert "paint(performance.now());" in STATION_PAGE and "requestAnimationFrame(() => { queued = false; last = key; resize(); })" not in STATION_PAGE
+
+
+class TestArtPipeline:
+    def test_the_packer_trims_shrinks_and_builds_a_four_view_helix_sheet(self, tmp_path):
+        import importlib.util
+        from PIL import Image
+        spec = importlib.util.spec_from_file_location("make_station_art", "tools/art/make_station_art.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        src, out = tmp_path / "r", tmp_path / "o"
+        src.mkdir()
+
+        def render(name, size, box, color):
+            im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+            im.paste(Image.new("RGBA", (box[2] - box[0], box[3] - box[1]), color), box[:2])
+            im.save(src / f"{name}.png")
+        for n in ("asteroid1", "asteroid2", "asteroid3"):
+            render(n, 512, (40, 40, 440, 440), (150, 140, 130, 255))
+        render("satellite", 512, (100, 200, 400, 300), (80, 90, 200, 255))
+        for t, c in (("ny", (255, 0, 0, 255)), ("py", (0, 255, 0, 255)), ("px", (0, 0, 255, 255)), ("nx", (255, 255, 0, 255))):
+            render(f"helix_{t}", 256, (90, 20, 170, 240), c)
+        import sys
+        sys.argv = ["x", str(src), "--out", str(out), "--right", "px"]
+        mod.main()
+        assert Image.open(out / "asteroid1.png").size[0] <= 220 and Image.open(out / "satellite.png").size[0] <= 300
+        sheet = Image.open(out / "helix-views.png")
+        assert sheet.size == (mod.CELL * 4, mod.CELL)
+        cell = lambda k: sheet.crop((k * mod.CELL, 0, (k + 1) * mod.CELL, mod.CELL)).getpixel((mod.CELL // 2, mod.CELL - 20))
+        assert cell(0)[:3] == (255, 0, 0) and cell(1)[:3] == (0, 255, 0) and cell(2)[:3] == (0, 0, 255) and cell(3)[:3] == (255, 255, 0)     # front, back, right, left
+
+    def test_the_station_serves_and_draws_the_four_view_helix(self):
+        from openjarvis.server.crew import routes
+        from openjarvis.server.crew.station import STATION_PAGE
+        assert "helix-views.png" in routes.ART_FILES
+        for needle in ("loadArt('helix-views.png'", "ART.helixViews", "a walk made in code from still pictures"):
+            assert needle in STATION_PAGE
+
+
+class TestBackCoverIsTypesetNotDrawn:
+    def test_the_back_cover_words_are_real_text_over_artwork_with_a_barcode_box(self):
+        import io
+        import pypdf
+        from openjarvis.server.crew import pdf
+        bt = {"tagline": "Stop defending your interface.", "blurb": "First paragraph of the blurb.\n\nSecond paragraph here.", "author": "Michael Dano", "barcode_space": True}
+        data, n = pdf.make_book_pdf("T", "Michael Dano", "# A\n\nbody", _png((8, 20, 46)), _png((8, 20, 46), (1024, 1536)), bt)
+        r = pypdf.PdfReader(io.BytesIO(data))
+        last = r.pages[-1].extract_text()
+        assert n == len(r.pages) and "Stop defending your interface." in last and "Second paragraph here." in last and "Michael Dano" in last
+        assert "/XObject" in str(r.pages[-1].get("/Resources")) and "/ExtGState" in str(r.pages[-1].get("/Resources"))
+        no_box, _ = pdf.make_book_pdf("T", "", "# A\n\nbody", None, _png((8, 20, 46)), {"tagline": "x", "blurb": "y", "author": "", "barcode_space": False})
+        assert len(no_box) < len(data)
+        text_only, _ = pdf.make_book_pdf("T", "A", "# A\n\nbody", None, None, {"tagline": "Only words", "blurb": "", "author": "", "barcode_space": False})
+        assert "Only words" in pypdf.PdfReader(io.BytesIO(text_only)).pages[-1].extract_text()                    # no picture: a plain dark page with the words
+
+    def test_cover_image_prompts_are_told_to_contain_no_words_and_the_tool_takes_the_words(self):
+        w = world(two_task_plan(), AGENTS)
+        captured = []
+
+        async def fake_generate(ctx, kind, prompt="", **kw):
+            captured.append(prompt)
+            raise eng_mod_media_stop()
+        from openjarvis.server.media import service as media
+
+        class Stop(Exception):
+            pass
+
+        def eng_mod_media_stop():
+            return media.MediaServiceError(400, "stop", "stopped for the test")
+        w.engine.media_ctx_fn = lambda uid: SimpleNamespace()
+        orig = media.generate_and_save
+        media.generate_and_save = fake_generate
+        try:
+            m = run(start(w))
+            task = dict(run(w.store.list_tasks(m["id"]))[0], role="designer")
+            mission = run(w.store.get_mission(m["id"]))
+            run(w.engine._tool(task, mission, "generate_image", {"prompt": "A back cover for the book AI: The User Experience, navy with a cyan spiral"}))
+            run(w.engine._tool(task, mission, "generate_image", {"prompt": "A cute fox sitting in a field of flowers"}))
+        finally:
+            media.generate_and_save = orig
+        assert "no text, no letters, no words" in captured[0].lower() and "barcode" in captured[0].lower()
+        assert "no text" not in captured[1].lower()
+        props = [t for t in eng_mod.tools_for("designer") if t["function"]["name"] == "make_book"][0]["function"]["parameters"]["properties"]
+        assert {"back_tagline", "back_blurb", "barcode_space"} <= set(props)
