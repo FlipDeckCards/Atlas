@@ -1012,3 +1012,36 @@ class TestImageTouchUps:
 
 def test_helix_is_told_to_offer_a_forge_fix_when_a_tool_is_missing():
     assert "WHEN YOU CANNOT DO SOMETHING" in helix.OPERATING and "Forge" in helix.OPERATING and "Approve" in helix.OPERATING
+
+
+class TestColonAndShift:
+    def _line(self):
+        import io
+        from PIL import Image, ImageDraw
+        im = Image.new("RGB", (1000, 1500), (12, 28, 70))
+        d = ImageDraw.Draw(im)
+        d.rectangle([60, 180, 72, 225], fill=(70, 170, 200))                         # the "I" stem, 13px thick
+        d.rectangle([160, 180, 172, 225], fill=(70, 170, 200))                       # the first stem of the next word
+        b = io.BytesIO()
+        im.save(b, "PNG")
+        return b.getvalue()
+
+    def test_colon_draws_two_round_dots_as_thick_as_the_strokes(self):
+        import io
+        from PIL import Image
+        from openjarvis.server.crew import imageedit
+        out = Image.open(io.BytesIO(imageedit.edit(self._line(), [{"op": "colon", "x": 0.115, "top": 0.12, "bottom": 0.15}]))).convert("RGB")
+        col = [y for y in range(170, 235) if out.getpixel((115, y)) == (70, 170, 200)]
+        assert col                                                                              # lettering-coloured dots exist
+        lit = [out.getpixel((115, y))[1] > 120 for y in range(171, 235)]
+        runs = sum(1 for i, v in enumerate(lit) if v and (i == 0 or not lit[i - 1]))
+        assert runs == 2                                                                        # two separate dots
+
+    def test_shift_moves_lettering_sideways_and_leaves_clean_background(self):
+        import io
+        from PIL import Image
+        from openjarvis.server.crew import imageedit
+        out = Image.open(io.BytesIO(imageedit.edit(self._line(), [{"op": "shift", "x0": 0.15, "y0": 0.11, "x1": 0.2, "y1": 0.17, "dx": 0.03}]))).convert("RGB")
+        assert out.getpixel((200, 200)) == (70, 170, 200)                                       # the stem is now 30px to the right
+        bg = out.getpixel((166, 200))
+        assert max(abs(a - b) for a, b in zip(bg, (12, 28, 70))) < 12                          # and where it was there is only background

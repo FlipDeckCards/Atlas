@@ -12,7 +12,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 MAX_SIDE = 4000
 MAX_OPS = 12
@@ -120,20 +120,34 @@ def _sample_ink(img: Image.Image, cx: int, cy: int, half_w: int, half_h: int) ->
     return tuple(int(v) for v in (np.median(arr[mask], axis=0) if mask.any() else (255, 255, 255)))
 
 
+def _dilate(mask: np.ndarray, size: int = 5) -> np.ndarray:
+    img = Image.fromarray((mask * 255).astype("uint8")).filter(ImageFilter.MaxFilter(size))
+    return np.asarray(img) > 127
+
+
 def _erase(img: Image.Image, x0: float, y0: float, x1: float, y1: float) -> None:
+    """Remove the lettering inside a box: each lettering pixel takes the colour of the background on the same row, so the artwork around it is kept."""
     w, h = img.size
     a, b, c, d = int(x0 * w), int(y0 * h), max(int(x0 * w) + 2, int(x1 * w)), max(int(y0 * h) + 2, int(y1 * h))
-    arr = np.asarray(img, dtype=float)
-    pad = max(2, int((c - a) * 0.03))
-    left = np.median(arr[b:d, max(0, a - pad - 4):max(1, a - pad)], axis=1) if a - pad > 0 else None
-    right = np.median(arr[b:d, min(w - 1, c + pad):min(w, c + pad + 4)], axis=1) if c + pad < w else None
-    if left is None and right is None:
-        left = right = np.median(arr[b:d], axis=(0, 1))[None, :].repeat(d - b, 0)
-    left = right if left is None else left
-    right = left if right is None else right
-    t = np.linspace(0, 1, c - a)[None, :, None]
-    fill = left[:, None, :] * (1 - t) + right[:, None, :] * t                  # smooth blend of what is on either side, row by row
-    arr[b:d, a:c] = fill
+    arr = np.asarray(img, dtype=float).copy()
+    box = arr[b:d, a:c]
+    ink = _dilate(_ink(box))
+    if not ink.any():
+        return
+    pad = max(8, int((c - a) * 0.15))
+    ctx_lo, ctx_hi = max(0, a - pad), min(w, c + pad)
+    ctx = arr[b:d, ctx_lo:ctx_hi]
+    ctx_ink = np.zeros(ctx.shape[:2], bool)
+    ctx_ink[:, a - ctx_lo:c - ctx_lo] = ink
+    for r in range(d - b):
+        keep = ~ctx_ink[r] & ~_dilate(_ink(ctx[r:r + 1]), 5)[0] if ctx.shape[1] else ~ctx_ink[r]
+        if keep.sum() < 4:
+            keep = ~ctx_ink[r]
+        if keep.any():
+            bg = np.median(ctx[r][keep], axis=0)
+            row = box[r]
+            row[ink[r]] = bg
+    arr[b:d, a:c] = box
     img.paste(Image.fromarray(arr.clip(0, 255).astype("uint8")))
 
 
@@ -158,6 +172,54 @@ def _text(img: Image.Image, op: Dict[str, Any], orig: Image.Image) -> None:
         x += gw + track
 
 
+def _stem(img: Image.Image, cx: int, top: int, bot: int, span: int) -> float:
+    """How thick the strokes of the lettering are near cx: the typical length of a bright run along the middle rows of the line."""
+    box = np.asarray(img.crop((max(0, cx - span), top, min(img.width, cx + span), bot)), dtype=float)
+    mask = _ink(box)
+    lengths = []
+    for row in mask[len(mask) // 4: len(mask) * 3 // 4]:
+        lengths += [b - a for a, b in _runs(row)]
+    lengths = [n for n in lengths if n >= 2]
+    return float(np.median(lengths)) if lengths else max(2.0, (bot - top) * 0.14)
+
+
+def _colon(img: Image.Image, op: Dict[str, Any], orig: Image.Image) -> None:
+    """Two round dots as thick as the lettering's strokes: x is the centre, top and bottom are the line's capital height (from inspect_image)."""
+    w, h = img.size
+    cx = _frac(op.get("x"), 0.5) * w
+    top, bot = _frac(op.get("top")) * h, _frac(op.get("bottom")) * h
+    if bot - top < 6:
+        raise ValueError("a colon needs top and bottom: the line's y range from inspect_image")
+    d = max(3.0, float(op.get("dot") or 0) * h) if op.get("dot") else _stem(orig, int(cx), int(top), int(bot), int(w * 0.12)) * 1.25
+    color = _color(op.get("color")) or _sample_ink(orig, int(cx), int((top + bot) / 2), int(w * 0.2), int((bot - top) * 0.8))
+    k = 4                                                                      # draw large, shrink: smooth round dots
+    pad = int(d) + 4
+    x0, y0 = int(cx - pad), int(top - pad)
+    size = (pad * 2, int(bot - top) + pad * 2)
+    layer = Image.new("L", (size[0] * k, size[1] * k), 0)
+    dr = ImageDraw.Draw(layer)
+    for yc in (bot - d / 2, bot - (bot - top) * 0.66):                           # one dot on the baseline, one higher up
+        cxl, cyl = (cx - x0) * k, (yc - y0) * k
+        dr.ellipse([cxl - d * k / 2, cyl - d * k / 2, cxl + d * k / 2, cyl + d * k / 2], fill=255)
+    mask = layer.resize(size, Image.LANCZOS)
+    img.paste(Image.new("RGB", size, color), (x0, y0), mask)
+
+
+def _shift(img: Image.Image, op: Dict[str, Any]) -> None:
+    """Slide the lettering inside a box sideways (dx is a fraction of the width, negative = left), to open a gap for a new mark."""
+    w, h = img.size
+    a, b = int(_frac(op.get("x0")) * w), int(_frac(op.get("y0")) * h)
+    c, d = max(a + 2, int(_frac(op.get("x1")) * w)), max(b + 2, int(_frac(op.get("y1")) * h))
+    dx = int(float(op.get("dx") or 0) * w)
+    if not dx:
+        return
+    patch = img.crop((a, b, c, d))
+    mask = Image.fromarray((_ink(np.asarray(patch, dtype=float)) * 255).astype("uint8"))
+    mask = mask.filter(ImageFilter.MaxFilter(3)).filter(ImageFilter.GaussianBlur(0.8))
+    _erase(img, a / w, b / h, c / w, d / h)
+    img.paste(patch, (a + dx, b), mask)
+
+
 def edit(data: bytes, ops: Any) -> bytes:
     if not isinstance(ops, list) or not ops:
         raise ValueError("give a list of edits")
@@ -169,10 +231,14 @@ def edit(data: bytes, ops: Any) -> bytes:
         kind = str(op.get("op") or "").lower()
         if kind == "text":
             _text(img, op, orig)
+        elif kind == "colon":
+            _colon(img, op, orig)
+        elif kind == "shift":
+            _shift(img, op)
         elif kind == "erase":
             _erase(img, _frac(op.get("x0")), _frac(op.get("y0")), _frac(op.get("x1")), _frac(op.get("y1")))
         else:
-            raise ValueError('an edit is {"op": "text", ...} or {"op": "erase", ...}')
+            raise ValueError('an edit is {"op": "text"|"colon"|"shift"|"erase", ...}')
     buf = io.BytesIO()
     img.save(buf, "PNG")
     return buf.getvalue()
@@ -182,5 +248,7 @@ def summary(ops: Any) -> str:
     parts = []
     for op in (ops or [])[:MAX_OPS]:
         if isinstance(op, dict):
-            parts.append(f'text "{op.get("text")}" at ({op.get("x")}, {op.get("y")})' if str(op.get("op")).lower() == "text" else "erased a patch")
+            kind = str(op.get("op")).lower()
+            parts.append(f'text "{op.get("text")}" at ({op.get("x")}, {op.get("y")})' if kind == "text" else
+                         f"colon at x {op.get('x')}" if kind == "colon" else f"shifted lettering by {op.get('dx')}" if kind == "shift" else "erased a patch")
     return "; ".join(parts)

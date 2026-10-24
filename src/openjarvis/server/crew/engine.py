@@ -169,7 +169,9 @@ _EDIT_IMAGE_TOOL = {"type": "function", "function": {
     "description": "Touch up a picture in the media library and save the result as a NEW library item (the original is untouched). edits is a list of "
                    '{"op":"text","text":":","x":0.17,"y":0.14,"size":0.033,"tracking":0,"color":"#46aac8"} (x,y = the centre of the text as fractions of the width and height; size = capital-letter '
                    'height as a fraction of the picture height; tracking = extra letter spacing as a fraction of size; colour is matched to nearby lettering if left out) and '
-                   '{"op":"erase","x0":0.3,"y0":0.9,"x1":0.7,"y1":0.94} (blends the patch away into its surroundings). Use inspect_image first to get the exact positions.',
+                   '{"op":"colon","x":0.2,"top":0.12,"bottom":0.155} (two round dots as thick as the lettering; top and bottom are the line\'s y range from inspect_image; use this for a colon, not a text edit), '
+                   '{"op":"shift","x0":0.15,"y0":0.11,"x1":0.98,"y1":0.17,"dx":0.014} (slides the lettering in a box sideways by a fraction of the width, to open room for a mark; move the left part left and the right part right to keep a centred line centred) and '
+                   '{"op":"erase","x0":0.3,"y0":0.9,"x1":0.7,"y1":0.94} (removes the lettering in the box, keeping the artwork). Use inspect_image first to get the exact positions.',
     "parameters": {"type": "object", "properties": {"media_item_id": {"type": "string"}, "title": {"type": "string"}, "edits": {"type": "array", "items": {"type": "object"}}},
                    "required": ["media_item_id", "edits"]}}}
 
