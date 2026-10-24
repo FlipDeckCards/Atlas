@@ -94,7 +94,7 @@ SETUP_STEPS = [
     ("workbench", "your PC (Rig)", "Run the Workbench helper on the computer that has your project. The Connections panel shows the command to copy.", ""),
 ]
 CHANGES_STATION = {"add_business", "rename_business", "remove_business", "rename_mission", "add_task", "edit_task", "retry_task",
-                   "attach_document", "attach_image", "cancel_mission", "render_redeploy", "render_restart", "render_rollback", "pause_mission", "resume_mission", "answer_crew_question"}     # tools after which the Station must redraw
+                   "attach_document", "attach_image", "build_book", "cancel_mission", "render_redeploy", "render_restart", "render_rollback", "pause_mission", "resume_mission", "answer_crew_question"}     # tools after which the Station must redraw
 OWNER_FIXED_KEYS_HELIX = {"flipdeck", "marnyx", "deadzone"}   # the owner's rows that are not stored (see routes.OWNER_BUSINESSES)
 
 CREW_TOOLS: List[Dict[str, Any]] = [
@@ -233,6 +233,17 @@ CREW_TOOLS: List[Dict[str, Any]] = [
         "name": "edit_image",
         "description": "Touch up a library picture and save the result as a NEW item (the original stays). edits: a list of {\"op\":\"text\",\"text\":\":\",\"x\":0.17,\"y\":0.14,\"size\":0.033,\"tracking\":0} (x,y = centre as fractions; size = capital height as a fraction of the picture height; the colour matches nearby lettering) {\"op\":\"colon\",\"x\":0.2,\"top\":0.12,\"bottom\":0.155} (two round dots as thick as the lettering; top/bottom are the line's y range from inspect_image; use this for a colon), {\"op\":\"shift\",\"x0\":0.15,\"y0\":0.11,\"x1\":0.98,\"y1\":0.17,\"dx\":0.014} (slides lettering sideways to open room: move the left part left and the right part right to keep a centred line centred) or {\"op\":\"erase\",\"x0\":0.3,\"y0\":0.9,\"x1\":0.7,\"y1\":0.94} (removes the lettering in the box, keeps the artwork). To add a word to a centred line, erase the line and write the whole new line centred.",
         "parameters": {"type": "object", "properties": {"media_item_id": {"type": "string"}, "title": {"type": "string"}, "edits": {"type": "array", "items": {"type": "object"}}}, "required": ["media_item_id", "edits"]}}},
+    {"type": "function", "function": {
+        "name": "build_book",
+        "description": "Build or REBUILD a book PDF yourself, right now, with no agents and no tasks (use this instead of starting tasks). Rebuild an earlier book with changes: give base = the earlier PDF's name and only the things to change "
+                       "(cover_item = a new cover from the media library, replacements = exact text fixes like [{find:'Pulsia',replace:'Polsia'}], author, subtitle...). A build saves a .recipe.json beside the PDF so the next rebuild only needs the changes. "
+                       "A first build needs title, files (outbox file names in reading order; the newest copy of each is used), author, cover_item, back_cover_item, back_tagline, back_blurb, subtitle, publisher. Saved as the next version name.",
+        "parameters": {"type": "object", "properties": {"mission_id": {"type": "string"}, "base": {"type": "string", "description": "The earlier PDF's file name, to rebuild it with changes."},
+                                                        "title": {"type": "string"}, "author": {"type": "string"}, "subtitle": {"type": "string"}, "publisher": {"type": "string"},
+                                                        "files": {"type": "array", "items": {"type": "string"}}, "cover_item": {"type": "string"}, "back_cover_item": {"type": "string"},
+                                                        "back_tagline": {"type": "string"}, "back_blurb": {"type": "string"}, "filename": {"type": "string"},
+                                                        "replacements": {"type": "array", "items": {"type": "object", "properties": {"find": {"type": "string"}, "replace": {"type": "string"}}}}},
+                       "required": ["mission_id"]}}},
     {"type": "function", "function": {
         "name": "list_outbox",
         "description": "List the files in the user's outboxes across ALL missions, whatever their status (active, paused, stalled, cancelled, done), with the mission each belongs to.",
@@ -455,7 +466,7 @@ async def system_addendum(ctx: CrewCtx) -> str:
          "To put a business on the All businesses box, call add_business with the name he gave; never say it was added unless the tool result says so. "
          "A mission can be changed after it starts: add_task to give it more work, edit_task for a task not started yet, retry_task to redo one with a note, "
          "resume_mission to continue it; never say a change was made unless the tool result says so. You can read the files of every mission, whatever its "
-         "status, with list_outbox and read_outbox_file. You can fix lettering in a picture of his yourself: inspect_image finds the words and the gaps between them, "
+         "status, with list_outbox and read_outbox_file. To make or remake a book PDF call build_book yourself (never start tasks for that): to change a finished book, give base (its PDF name) and only the changes. You can fix lettering in a picture of his yourself: inspect_image finds the words and the gaps between them, "
          "edit_image adds text or erases a patch and saves a NEW library item (a book cover missing a colon, a name to add); check the result with inspect_image, then use the "
          "new item id. "
          "You can investigate his code and servers yourself, read-only: github_files, github_read, github_search, github_activity, github_failed_runs, render_services, "
@@ -662,6 +673,9 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
                                            f'Michael attached the picture "{i["name"]}"' + (f" ({use})" if use else "") + f". It is saved in his media library as item {i['item_id']}. "
                                            "Use that item id wherever an image item is needed (for a book: cover_item).\n")
             return "Attached to the mission: " + ", ".join(f'{i["name"]} (item {i["item_id"]})' for i in pick) + ". Its agents will see a note in the outbox."
+        if name == "build_book":
+            keep = ("base", "title", "author", "subtitle", "publisher", "files", "cover_item", "back_cover_item", "back_tagline", "back_blurb", "filename", "replacements")
+            return await eng.build_book(ctx.user_id, str(args.get("mission_id") or ""), {k: args[k] for k in keep if k in args})
         if name == "inspect_image":
             return await eng.inspect_image_item(ctx.user_id, str(args.get("media_item_id") or "").strip()[:80], args.get("y0"), args.get("y1"))
         if name == "edit_image":

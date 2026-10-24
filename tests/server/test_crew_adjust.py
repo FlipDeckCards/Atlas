@@ -1074,3 +1074,31 @@ class TestBookReplacements:
         out, _ = run(w.engine._tool(task, mission, "make_book", {"title": "B", "files": ["part3.md"], "filename": "fixed",
                                                                "replacements": [{"find": "Pulsia", "replace": "Polsia"}]}))
         assert '"Pulsia" -> "Polsia": 2' in out and 'Saved "fixed.pdf"' in out
+
+
+class TestHelixBuildsBooks:
+    def test_a_rebuild_starts_from_the_saved_settings_and_applies_only_the_changes(self):
+        import base64
+        import io
+        import pypdf
+        t = TestMakeBookTool()
+        w, m, task = t.setup()
+        run(w.store.add_output(m["id"], "", UID, "part3.md", "# Chapter Three\n\nThe Pulsia Experiment began."))
+        ctx = helix.CrewCtx(UID, w.engine)
+        first = run(helix.execute(ctx, "build_book", {"mission_id": m["id"], "title": "My Book", "author": "Michael Dano", "files": ["part1.md", "part3.md"],
+                                                       "cover_item": "c1", "filename": "My Book"}))
+        assert 'Saved "My Book.pdf"' in first
+        names = [o["name"] for o in run(w.store.list_outputs(m["id"]))]
+        assert "My Book.recipe.json" in names
+        out = run(helix.execute(ctx, "build_book", {"mission_id": m["id"], "base": "My Book.pdf", "replacements": [{"find": "Pulsia", "replace": "Polsia"}], "cover_item": "c2"}))
+        assert 'Saved "My Book v2.pdf"' in out and '"Pulsia" -> "Polsia": 1' in out
+        o = [x for x in run(w.store.list_outputs(m["id"])) if x["name"] == "My Book v2.pdf"][0]
+        raw = base64.b64decode(run(w.store.get_output(o["id"]))["content"][7:])
+        text = " ".join(p.extract_text() for p in pypdf.PdfReader(io.BytesIO(raw)).pages)
+        assert "Polsia" in text and "Pulsia" not in text and "Michael Dano" in text
+
+    def test_a_rebuild_of_a_book_with_no_saved_settings_says_what_to_give(self):
+        t = TestMakeBookTool()
+        w, m, task = t.setup()
+        out = run(helix.execute(helix.CrewCtx(UID, w.engine), "build_book", {"mission_id": m["id"], "base": "Old.pdf"}))
+        assert out.startswith("Error: no saved settings")

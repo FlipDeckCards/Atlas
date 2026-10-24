@@ -1913,6 +1913,31 @@ class CrewEngine:
         return (note + "Use inspect_image on the NEW item to check the lettering landed where you wanted; the original is unchanged. "
                 "Use the new item id wherever the picture is needed (for a book: cover_item).")
 
+    async def build_book(self, user_id: str, mission_id: str, args: Dict[str, Any]) -> str:
+        """Helix builds or REBUILDS a book herself, with no task and no agent: a rebuild starts from the settings saved beside an earlier PDF
+        (its .recipe.json) and applies only the changes given (a new cover, text fixes, a new author...)."""
+        mission = await self._owned_mission(user_id, mission_id)
+        args = dict(args or {})
+        base = _clip(args.pop("base", ""), 140)
+        if base:
+            stem = base[:-4] if base.lower().endswith(".pdf") else base[:-12] if base.lower().endswith(".recipe.json") else base
+            hit = [o for o in await self.store.list_outputs(mission_id) if o["name"].lower() == (stem + ".recipe.json").lower()]
+            if not hit:
+                return (f'Error: no saved settings for "{base}" (books built before this feature have none). Call build_book again with title, files, cover_item, '
+                        'back_cover_item, back_tagline, back_blurb, author, subtitle and publisher.')
+            try:
+                recipe = json.loads((await self.store.get_output(hit[-1]["id"]))["content"])
+            except (ValueError, TypeError, KeyError):
+                return f'Error: the saved settings for "{base}" could not be read.'
+            fixes = list(recipe.get("replacements") or []) + [r for r in (args.get("replacements") or []) if isinstance(r, dict)]
+            recipe.update({k: v for k, v in args.items() if v not in (None, "", [])})
+            if fixes:
+                recipe["replacements"] = fixes
+            args = recipe
+        task = {"user_id": user_id, "mission_id": mission_id, "id": "", "role": "designer"}
+        out, _ = await self._book(task, mission, args)
+        return out
+
     async def _book(self, task: Dict[str, Any], mission: Dict[str, Any], args: Dict[str, Any]):
         import base64
 
@@ -1974,8 +1999,11 @@ class CrewEngine:
             v += 1
             fname = f"{stem} v{v}.pdf"
         await self.store.add_output(mid, tid, uid, fname, "base64:" + b64)
+        recipe = {k: args.get(k) for k in ("title", "author", "subtitle", "publisher", "files", "cover_item", "back_cover_item", "back_tagline", "back_blurb",
+                                           "barcode_space", "replacements") if args.get(k) not in (None, "", [])}
+        await self.store.add_output(mid, tid, uid, fname[:-4] + ".recipe.json", json.dumps(recipe, indent=1))                # lets "rebuild that book with these changes" work later
         words = len(text.split())
-        await self.store.add_event(uid, "output", f'Saved the book "{fname}": {pages} pages, {words:,} words, {len(data) // 1024} KB.', mission_id=mid, task_id=tid)
+        await self.store.add_event(uid, "output", f'Saved the book "{fname}": {pages} pages, {words:,} words, {len(data) // 1024} KB.', mission_id=mid, task_id=tid or None)
         return (('Spelling fixes applied: ' + '; '.join(fixed) + '. ' if fixed else '') + f'Saved "{fname}" to the outbox: {pages} pages (6 x 9 in), about {words:,} words, {len(data) // 1024} KB; front cover {"included" if cover else "NOT included"}, '
                 f'back cover {"picture included" if back else "picture NOT included"}'
                 f'{" with the tagline and description typeset on it" if back_text["tagline"] or back_text["blurb"] else " (no back-cover text given)"}; no pictures inside.'), None
