@@ -1879,6 +1879,11 @@ class CrewEngine:
             return "The book is too large to keep (over 10 MB). Use a smaller cover image or fewer pages.", None
         fname = (re.sub(r"[^A-Za-z0-9._ -]", "_", _clip(args.get("filename"), 80) or title).strip(" ._") or "book")
         fname = fname if fname.lower().endswith(".pdf") else fname + ".pdf"
+        have = {o["name"].lower() for o in await self.store.list_outputs(mid)}
+        stem, v = fname[:-4], 1
+        while fname.lower() in have:                                                  # a rebuild gets its own name: Book v2.pdf, v3, ...
+            v += 1
+            fname = f"{stem} v{v}.pdf"
         await self.store.add_output(mid, tid, uid, fname, "base64:" + b64)
         words = len(text.split())
         await self.store.add_event(uid, "output", f'Saved the book "{fname}": {pages} pages, {words:,} words, {len(data) // 1024} KB.', mission_id=mid, task_id=tid)
