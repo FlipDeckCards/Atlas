@@ -219,3 +219,32 @@ class TestRemovingFactories:
         assert "cancelled" in run(helix.execute(ctx, "cancel_mission", {"mission_id": m["id"]}))
         assert run(w.store.get_mission(m["id"]))["status"] == "cancelled"
         assert "No such mission" in run(helix.execute(ctx, "cancel_mission", {"mission_id": "nope"}))
+
+
+from tests.server.test_atlas_hardening import _bearer, _env, client, model, store  # noqa: E402,F401  (the chat endpoint's own fixtures)
+
+
+class TestSeveralAttachments:
+    def post(self, client, atts, **extra):
+        return client.post("/api/chat", json=dict({"message": "look at these", "attachments": atts}, **extra), headers=_bearer())
+
+    def att(self, name, data=b"hello", mime=None):
+        return {"name": name, "data": base64.b64encode(data).decode(), "mime": mime}
+
+    def test_more_than_five_files_are_refused_before_any_model_call(self, client, model):
+        r = self.post(client, [self.att(f"n{i}.txt") for i in range(6)])
+        assert r.status_code == 400 and "up to 5" in r.json()["detail"].lower() and model.await_count == 0
+        r = self.post(client, [self.att(f"n{i}.txt") for i in range(5)], image="AAAA")           # the old single image counts too
+        assert r.status_code == 400 and model.await_count == 0
+
+    def test_a_bad_file_names_itself_and_nothing_is_sent_to_the_model(self, client, model):
+        r = self.post(client, [self.att("ok.txt"), self.att("virus.exe", b"MZ")])
+        assert r.status_code == 400 and r.json()["detail"].startswith("virus.exe:") and model.await_count == 0
+        r = self.post(client, [self.att("old.doc", b"x")])
+        assert r.status_code == 400 and ".docx" in r.json()["detail"]
+
+    def test_the_total_size_is_capped(self, client, model):
+        from openjarvis.server import hardening
+        big = "A" * (hardening.MAX_IMAGE_B64_CHARS - 8)
+        r = client.post("/api/chat", json={"message": "x", "attachments": [{"name": f"p{i}.png", "data": big, "mime": "image/png"} for i in range(5)]}, headers=_bearer())
+        assert r.status_code == 413 and model.await_count == 0

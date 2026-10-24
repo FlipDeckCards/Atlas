@@ -2,7 +2,7 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 import httpx
 import litellm
@@ -110,11 +110,18 @@ def _get_user_id(request: Request) -> str:
 
 
 # CHANGE 2: add client_date field
+class Attachment(BaseModel):
+    name: str = Field("", max_length=200)
+    data: str = Field(..., max_length=hardening.MAX_IMAGE_B64_CHARS)        # base64
+    mime: Optional[str] = Field(None, max_length=100)
+
+
 class ChatRequest(BaseModel):
     message: str = Field(..., max_length=hardening.MAX_MESSAGE_CHARS)
     image: Optional[str] = Field(None, max_length=hardening.MAX_IMAGE_B64_CHARS)
     document: Optional[str] = Field(None, max_length=documents.MAX_DOC_B64_CHARS)        # a Word or text file, base64
     document_name: Optional[str] = Field(None, max_length=200)
+    attachments: List[Attachment] = Field(default_factory=list)                          # up to MAX_ATTACHMENTS images and documents
     client_date: Optional[str] = Field(None, max_length=100)
 
 
@@ -692,15 +699,11 @@ async def index():
       </div>
       <div id="messages"></div>
       <div id="input-area">
-        <div id="img-preview-bar">
-          <img id="img-preview-thumb" src="" alt="preview"/>
-          <span id="img-preview-name"></span>
-          <span class="clear-img" id="clear-img" title="Remove image">✕</span>
-        </div>
+        <div id="img-preview-bar"></div>
         <div id="input-row">
           <button id="mic" title="Record">&#127897;</button>
-          <label id="upload-btn" for="img-input" title="Attach an image, Word (.docx) or text document">📎</label>
-          <input id="img-input" type="file" accept="image/*,.docx,.txt,.md,.markdown,.csv,.tsv,.json,.log,.rtf"/>
+          <label id="upload-btn" for="img-input" title="Attach up to 5 images, Word (.docx) or text documents">📎</label>
+          <input id="img-input" type="file" multiple accept="image/*,.docx,.txt,.md,.markdown,.csv,.tsv,.json,.log,.rtf"/>
           <input id="input" type="text" placeholder='Type, or say "Hey Helix"...' autocomplete="off"/>
           <button id="send">SEND</button>
         </div>
@@ -862,58 +865,43 @@ async def index():
     const voiceStat       = document.getElementById('voice-status');
     const imgInput        = document.getElementById('img-input');
     const imgPreviewBar   = document.getElementById('img-preview-bar');
-    const imgPreviewThumb = document.getElementById('img-preview-thumb');
-    const imgPreviewName  = document.getElementById('img-preview-name');
-    const clearImgBtn     = document.getElementById('clear-img');
     const uploadBtn       = document.getElementById('upload-btn');
 
-    let pendingImageB64 = null, pendingImageDataUrl = null, pendingDocB64 = null, pendingDocName = '';
+    // up to 5 images and documents on one message
+    let pending = [];
     const DOC_EXT = /\.(docx|txt|md|markdown|csv|tsv|json|log|rtf)$/i;
-    const MAX_DOC_BYTES = 3 * 1024 * 1024;
+    const MAX_ATTACH = 5, MAX_DOC_BYTES = 3 * 1024 * 1024, MAX_IMG_BYTES = 5 * 1024 * 1024, MAX_ALL_BYTES = 12 * 1024 * 1024;
 
-    function clearPendingImage() {
-      pendingImageB64 = null; pendingImageDataUrl = null; pendingDocB64 = null; pendingDocName = '';
-      imgPreviewBar.style.display = 'none';
-      imgPreviewThumb.style.display = ''; imgPreviewThumb.src = ''; imgPreviewName.textContent = '';
-      uploadBtn.classList.remove('has-image');
-      imgInput.value = '';
+    function paintAttach() {
+      imgPreviewBar.textContent = '';
+      imgPreviewBar.style.display = pending.length ? 'flex' : 'none';
+      imgPreviewBar.style.flexWrap = 'wrap'; imgPreviewBar.style.gap = '8px';
+      uploadBtn.classList.toggle('has-image', pending.length > 0);
+      pending.forEach((p, i) => {
+        const chip = document.createElement('span');
+        chip.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:11px;';
+        if (p.doc) { chip.append('\ud83d\udcc4 '); } else { const im = document.createElement('img'); im.src = p.url; im.alt = ''; im.style.cssText = 'width:32px;height:32px;object-fit:cover;'; chip.append(im); }
+        chip.append(p.name.slice(0, 24));
+        const x = document.createElement('span'); x.className = 'clear-img'; x.textContent = '\u2715'; x.title = 'Remove ' + p.name;
+        x.onclick = () => { pending.splice(i, 1); paintAttach(); };
+        chip.append(x); imgPreviewBar.append(chip);
+      });
     }
+    function clearPendingImage() { pending = []; paintAttach(); imgInput.value = ''; }
 
-    imgInput.addEventListener('change', () => {
-      const file = imgInput.files[0];
-      if (!file) return;
-      const isDoc = !file.type.startsWith('image/') && DOC_EXT.test(file.name);
-      if (!file.type.startsWith('image/') && !isDoc) {
-        clearPendingImage();
-        addMsg('atlas', /\.doc$/i.test(file.name) ? 'Old .doc files cannot be read. Save it as .docx or .txt and attach that.'
-                                                    : 'Attach an image, a Word (.docx) or a text document (.txt, .md, .csv, .json).', null);
-        return;
+    imgInput.addEventListener('change', async () => {
+      const files = Array.from(imgInput.files || []); imgInput.value = '';
+      for (const file of files) {
+        const img = file.type.startsWith('image/'), doc = !img && DOC_EXT.test(file.name);
+        if (pending.length >= MAX_ATTACH) { addMsg('atlas', 'Up to ' + MAX_ATTACH + ' files at a time. Send this message first, then attach more.', null); break; }
+        if (!img && !doc) { addMsg('atlas', /\.doc$/i.test(file.name) ? file.name + ': old .doc files cannot be read. Save it as .docx or .txt and attach that.' : file.name + ': attach images, Word (.docx) or text documents (.txt, .md, .csv, .json).', null); continue; }
+        if (file.size > (doc ? MAX_DOC_BYTES : MAX_IMG_BYTES)) { addMsg('atlas', file.name + ' is too large (limit ' + (doc ? 3 : 5) + ' MB).', null); continue; }
+        if (pending.reduce((n, p) => n + p.size, 0) + file.size > MAX_ALL_BYTES) { addMsg('atlas', 'Those files are too large together (limit 12 MB).', null); continue; }
+        const url = await new Promise(res => { const rd = new FileReader(); rd.onload = e => res(String(e.target.result)); rd.onerror = () => res(''); rd.readAsDataURL(file); });
+        if (url) pending.push({ url, b64: url.split(',')[1], name: file.name, size: file.size, doc, mime: img ? file.type : '' });
       }
-      if (isDoc && file.size > MAX_DOC_BYTES) {
-        clearPendingImage();
-        addMsg('atlas', 'That document is too large (limit 3 MB).', null);
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        if (isDoc) {
-          pendingImageB64 = null; pendingImageDataUrl = null;
-          pendingDocB64 = e.target.result.split(',')[1]; pendingDocName = file.name;
-          imgPreviewThumb.style.display = 'none';
-        } else {
-          pendingDocB64 = null; pendingDocName = '';
-          pendingImageDataUrl = e.target.result;
-          pendingImageB64 = e.target.result.split(',')[1];
-          imgPreviewThumb.style.display = ''; imgPreviewThumb.src = pendingImageDataUrl;
-        }
-        imgPreviewName.textContent = (isDoc ? '\ud83d\udcc4 ' : '') + file.name.slice(0, 28);
-        imgPreviewBar.style.display = 'flex';
-        uploadBtn.classList.add('has-image');
-      };
-      reader.readAsDataURL(file);
+      paintAttach();
     });
-
-    clearImgBtn.addEventListener('click', clearPendingImage);
 
     function setTalking(on) {
       window._helixTalking = on;
@@ -1298,17 +1286,15 @@ async def index():
     // CHANGE 3: add client_date to the fetch body
     async function sendMessage(text) {
       if (!text) text = inputEl.value.trim();
-      if (!text && pendingDocB64) text = 'Please read the attached document.';
+      if (!text && pending.length) text = 'Please look at the attached ' + (pending.length > 1 ? 'files.' : pending[0].doc ? 'document.' : 'image.');
       if (!text) return;
       const mediaCmd = text.match(/^\/(image|sound)\s+([\s\S]+)/i);
       if (mediaCmd) { inputEl.value = ''; return sendMedia(mediaCmd[1].toLowerCase(), mediaCmd[2].trim()); }
       inputEl.value = '';
       sendBtn.disabled = true;
-      const imageToSend  = pendingImageB64;
-      const imageDataUrl = pendingImageDataUrl;
-      const docToSend = pendingDocB64, docName = pendingDocName;
+      const filesToSend = pending;
       clearPendingImage();
-      addMsg('user', docToSend ? text + '\n\ud83d\udcc4 ' + docName : text, imageDataUrl);
+      addMsg('user', text + filesToSend.filter(f => f.doc).map(f => '\n\ud83d\udcc4 ' + f.name).join(''), (filesToSend.find(f => !f.doc) || {}).url || null);
       feedLog('You: ' + text.slice(0, 40) + (text.length > 40 ? '...' : ''));
       const thinking = addMsg('atlas', 'Processing...', null);
       thinking.querySelector('div:last-child').style.color = 'var(--text-dim)';
@@ -1318,8 +1304,7 @@ async def index():
           message: text,
           client_date: new Date().toLocaleString('en-US', { timeZoneName: 'short' })
         };
-        if (imageToSend) body.image = imageToSend;
-        if (docToSend) { body.document = docToSend; body.document_name = docName; }
+        if (filesToSend.length) body.attachments = filesToSend.map(f => ({ name: f.name, data: f.b64, mime: f.mime }));
         const res  = await fetch('/api/chat', {
           method: 'POST',
           headers: jsonAuthHeader(),
@@ -1725,14 +1710,26 @@ async def chat(req: ChatRequest, request: Request):
         return JSONResponse({"detail": "Image too large (limit %d MB)" % (hardening.MAX_IMAGE_BYTES // (1024 * 1024)), "reply": "Image too large."}, status_code=413)
     store = request.app.state.session_store
 
-    # an attached Word/text document: its text goes to the model with this message, and is kept for a mission Helix starts
-    doc_name, doc_text = "", ""
-    if req.document:
-        doc_name = documents.clean_name(req.document_name or "document.txt")
+    # attachments (up to 5 images and Word/text documents): images go to the model as pictures, documents as text, and the
+    # documents are kept for a mission Helix starts
+    images, docs = [], []                                   # [(base64, mime)], [(file name, text)]
+    if req.image:
+        images.append((req.image, "image/jpeg"))
+    items = ([(req.document_name or "document.txt", req.document, None)] if req.document else []) + [(a.name, a.data, a.mime) for a in req.attachments]
+    if len(items) + len(images) > hardening.MAX_ATTACHMENTS:
+        return JSONResponse({"detail": "Attach up to %d files at a time." % hardening.MAX_ATTACHMENTS, "reply": "Attach up to %d files at a time." % hardening.MAX_ATTACHMENTS}, status_code=400)
+    if (sum(len(d) for _, d, _ in items) + sum(len(i) for i, _ in images)) * 3 // 4 > hardening.MAX_ATTACH_TOTAL_BYTES:
+        return JSONResponse({"detail": "Those files are too large together (limit %d MB)." % (hardening.MAX_ATTACH_TOTAL_BYTES // (1024 * 1024)), "reply": "Those files are too large together."}, status_code=413)
+    for raw_name, data, mime in items:
+        name = documents.clean_name(raw_name or "document.txt")
+        if (mime or "").startswith("image/") or (not mime and re.search(r"\.(png|jpe?g|gif|webp)$", name, re.I)):
+            images.append((data, mime or "image/jpeg"))
+            continue
         try:
-            doc_text = documents.from_b64(doc_name, req.document)
+            docs.append((name, documents.from_b64(name, data)))
         except ValueError as exc:
-            return JSONResponse({"detail": str(exc), "reply": str(exc)}, status_code=400)
+            return JSONResponse({"detail": "%s: %s" % (name, exc), "reply": "%s: %s" % (name, exc)}, status_code=400)
+    has_files = bool(images or docs)
 
     # Helix runs on the owner's AI keys: chat is for the owner and for accounts with an active subscription
     from openjarvis.server.crew import crew_access
@@ -1742,7 +1739,7 @@ async def chat(req: ChatRequest, request: Request):
                              "model_display": "HELIX", "model_color": "cyan", "ui_actions": []})
 
     # "read me the brief": answered from the brief feed, with no model call and no spend
-    brief_period = None if req.image or doc_text or not briefs.owner_request(request) else briefs.wants_brief(req.message)
+    brief_period = None if has_files or not briefs.owner_request(request) else briefs.wants_brief(req.message)
     if brief_period:
         try:
             found = await briefs.find_brief(briefs.store_for(request), brief_period)
@@ -1761,7 +1758,7 @@ async def chat(req: ChatRequest, request: Request):
         return _spend_error(blocked)
     session = await store.get_or_create(user_id, CHANNEL)
 
-    model_id, model_display, model_color = classify_model(req.message, bool(req.image))
+    model_id, model_display, model_color = classify_model(req.message, bool(images))
 
     # a follow-up about the brief ("what's pending?" right after it was read) gets the full brief as context
     brief_ctx = ""
@@ -1784,15 +1781,16 @@ async def chat(req: ChatRequest, request: Request):
             media_ctx = None
     # the crew (owner accounts, CREW_ENABLED): a yes to a read-back mission start is handled here, with no model call
     crew_ctx = await crew_helix.ctx_for(request)
-    if crew_ctx is not None and doc_text:
-        crew_helix.remember_document(crew_ctx.user_id, doc_name, doc_text)
-    if crew_ctx is not None and not req.image and not doc_text:
+    if crew_ctx is not None:
+        for doc_name, doc_text in docs:
+            crew_helix.remember_document(crew_ctx.user_id, doc_name, doc_text)
+    if crew_ctx is not None and not has_files:
         early = await crew_helix.pre_turn(crew_ctx, req.message)
         if early is not None:
             await store.append_message(user_id, CHANNEL, "user", req.message)
             await store.append_message(user_id, CHANNEL, "assistant", early["reply"])
             return JSONResponse({"reply": early["reply"], "ui_actions": early["ui"], "model_display": model_display, "model_color": model_color})
-    if media_ctx is not None and not req.image and not doc_text:
+    if media_ctx is not None and not has_files:
         early = await helix_tools.pre_turn(media_ctx, req.message)         # a yes to a read-back action, a cancel, a sound-effect request
         if early is not None:
             await store.append_message(user_id, CHANNEL, "user", req.message)
@@ -1812,15 +1810,15 @@ async def chat(req: ChatRequest, request: Request):
 
     model_text = req.message
     saved_text = req.message
-    if doc_text:
-        model_text += f'\n\n[Attached document: {doc_name}]\n{doc_text[:documents.CHAT_DOC_CHARS]}' + \
-            (f'\n[The document continues; {len(doc_text):,} characters in all. Agents can read all of it.]' if len(doc_text) > documents.CHAT_DOC_CHARS else "")
+    per_doc = documents.CHAT_DOC_CHARS // max(1, len(docs))
+    for doc_name, doc_text in docs:
+        model_text += f'\n\n[Attached document: {doc_name}]\n{doc_text[:per_doc]}' + \
+            (f'\n[The document continues; {len(doc_text):,} characters in all. Agents can read all of it.]' if len(doc_text) > per_doc else "")
         saved_text += f"\n[Attached document: {doc_name}]"
-    if req.image:
-        user_content = [
-            {"type": "text", "text": model_text},
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{req.image}"}}
-        ]
+    if images:
+        saved_text += "".join("\n[Attached image]" for _ in images)
+        user_content = [{"type": "text", "text": model_text}] + [
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}} for b64, mime in images]
     else:
         user_content = model_text
 
