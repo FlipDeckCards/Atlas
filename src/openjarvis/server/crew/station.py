@@ -451,6 +451,7 @@ async function refresh() {
   if (!r.data.enabled) { crewOff(r.data.detail || 'The crew is not switched on.'); return; }
   gate(null);
   S = r.data;
+  spinOnMissionChange(S.missions || []);                  // a mission started or finished: spin the ring
   document.getElementById('c-run').textContent = S.running;
   document.getElementById('c-spend').textContent = money(S.spend.today_usd) + (S.spend.daily_cap_usd == null ? ' · no cap' : ' of ' + money(S.spend.daily_cap_usd) + ' cap');
   setState(S.blocked ? 'HOLD: ' + String(S.blocked).toUpperCase() : 'CREW READY');
@@ -1306,6 +1307,38 @@ function factories() {                                                   // ever
   return prods().map(f => fillBay(Object.assign({}, f))).concat([coreBay()], newKeys().map(newBay));
 }
 
+// the victory spin: every factory and its tube swing around Helix a couple of times, then settle exactly where they were
+const SPIN = { on: false, t0: 0, dur: 3400, turns: 2, cur: 0 };
+function poseMods(extra) {
+  mods.forEach(m => {
+    const a = (m.a0 === undefined ? m.a : m.a0) + extra;
+    Object.assign(m, { a, ux: Math.cos(a), uy: Math.sin(a), cx: core.x + Math.cos(a) * m.D, cy: core.y + Math.sin(a) * m.D, rot: a + Math.PI / 2 });
+  });
+}
+function startSpin() {
+  if (SPIN.on || !mods.length) return;
+  try { if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return; } catch (e) {}
+  SPIN.on = true; SPIN.t0 = performance.now(); SPIN.cur = 0;
+}
+function stepSpin(t) {
+  if (!SPIN.on) return;
+  const p = (t - SPIN.t0) / SPIN.dur;
+  if (p >= 1) { SPIN.on = false; SPIN.cur = 0; }
+  else SPIN.cur = SPIN.turns * 2 * Math.PI * (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);   // slow start, fast middle, slow stop
+  poseMods(SPIN.cur);
+}
+let missionSeen = null;                                   // mission id -> last status; null until the first state arrives
+function spinOnMissionChange(missions) {
+  const now = new Map(missions.map(m => [m.id, m.status]));
+  if (missionSeen) {
+    for (const [id, st] of now) {
+      const before = missionSeen.get(id);
+      if ((before === undefined && (st === 'planning' || st === 'active')) || (before !== undefined && before !== 'done' && st === 'done')) { startSpin(); break; }
+    }
+  }
+  missionSeen = now;
+}
+
 function layout() {
   const pl = prods(), nk = newKeys();
   // the ring grows: the 8 fixed slots, then one more branch for every business past the 4th and every extra mission factory
@@ -1328,6 +1361,8 @@ function layout() {
     const a = -Math.PI / 2 + i * 2 * Math.PI / N;
     return Object.assign(m, { a, ux: Math.cos(a), uy: Math.sin(a), cx: core.x + Math.cos(a) * D, cy: core.y + Math.sin(a) * D, w: mw, h: mh, rot: a + Math.PI / 2, D });
   });
+  mods.forEach(m => { m.a0 = m.a; });
+  if (SPIN.on) poseMods(SPIN.cur);
   bays = mods.filter(m => !m.platform && !m.expansion);
   core.bay = coreBay();
 }
@@ -1558,6 +1593,7 @@ function frame(t) {
   const dt = Math.min(100, t - (lastT || t)); lastT = t; lastDraw = t;
   ctx.clearRect(0, 0, W, H);
   drawSky(t);
+  stepSpin(t);
   mods.forEach(m => drawSpoke(m, t));
   mods.forEach(m => drawModule(m, t, dt));
   drawCore(t);
@@ -1574,6 +1610,7 @@ function hit(x, y) {
 }
 cv.addEventListener('click', e => {
   const r = cv.getBoundingClientRect(), h = hit(e.clientX - r.left, e.clientY - r.top);
+  if (Math.hypot(e.clientX - r.left - core.x, e.clientY - r.top - core.y) <= core.r + 8) startSpin();      // click Helix: the whole ring spins around him
   if (h) {
     selected = h; renderSide(true);
     // on a phone the panel sits below the station and the chat: bring it into view

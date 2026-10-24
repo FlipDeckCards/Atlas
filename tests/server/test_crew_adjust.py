@@ -248,3 +248,10 @@ class TestSeveralAttachments:
         big = "A" * (hardening.MAX_IMAGE_B64_CHARS - 8)
         r = client.post("/api/chat", json={"message": "x", "attachments": [{"name": f"p{i}.png", "data": big, "mime": "image/png"} for i in range(5)]}, headers=_bearer())
         assert r.status_code == 413 and model.await_count == 0
+
+
+class TestStationSpin:
+    def test_the_ring_spins_on_a_click_on_helix_and_when_a_mission_starts_or_finishes(self):
+        from openjarvis.server.crew.station import STATION_PAGE
+        for needle in ("function startSpin", "startSpin();      // click Helix", "spinOnMissionChange(S.missions", "stepSpin(t);", "turns: 2"):
+            assert needle in STATION_PAGE
