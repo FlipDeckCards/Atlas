@@ -150,7 +150,7 @@ _BOOK_TOOL = {"type": "function", "function": {
                                                     "subtitle": {"type": "string"}, "publisher": {"type": "string"},
                                                     "back_tagline": {"type": "string", "description": "One line for the top of the back cover."},
                                                     "back_blurb": {"type": "string", "description": "The back-cover description (2-4 short paragraphs). It is typeset in real type over the picture; never ask the image to contain words."},
-                                                    "barcode_space": {"type": "boolean", "description": "Leave a white box for the printer's barcode (default true)."},
+                                                    "barcode_space": {"type": "boolean", "description": "Leave a white box for the printer's barcode (default false: no box; set true only if the printer asks for one)."},
                                                     "replacements": {"type": "array", "items": {"type": "object", "properties": {"find": {"type": "string"}, "replace": {"type": "string"}}},
                                                                      "description": "Exact text fixes applied to the whole manuscript while building (up to 20), e.g. a misspelled name: {find:'Pulsia', replace:'Polsia'}. The result reports how many were changed; use this instead of rewriting files."}},
                    "required": ["title", "files"]}}}
@@ -1983,7 +1983,7 @@ class CrewEngine:
             return f"Error: {exc}", None
         try:
             back_text = {"tagline": _clip(args.get("back_tagline"), 160), "blurb": str(args.get("back_blurb") or "").strip()[:1400], "author": author,
-                         "barcode_space": args.get("barcode_space") is not False}
+                         "barcode_space": args.get("barcode_space") is True}
             data, pages = await asyncio.to_thread(pdfmod.make_book_pdf, title, author, text, cover, back, back_text, _clip(args.get("subtitle"), 160), _clip(args.get("publisher"), 80))
         except Exception as exc:
             logger.exception("make_book failed")
