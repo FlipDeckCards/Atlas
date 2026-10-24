@@ -1745,9 +1745,12 @@ function drawCore(t) {
     const moving = step > 0.0012;                                                                            // slowed to a stop at the turn-around points: stands still
     const face = moving ? dirOf(qx - px, qy - py, 'front') : 'front';
     if (a.role === 'lead' && !ART.helix && ART.helixViews) {
-      const d = BOT_DIRS[face] != null ? BOT_DIRS[face] : 0, cell = ART.helixViews.naturalHeight, ph = t * 0.008 + i, Hh = 46;
+      const d = BOT_DIRS[face] != null ? BOT_DIRS[face] : 0, cell = ART.helixViews.naturalHeight, ph = t * 0.008 + i, Hh = 62;
       const bob = moving ? Math.abs(Math.sin(ph)) * 2.4 : Math.sin(t * 0.002 + i) * 0.6, lean = moving ? Math.sin(ph) * 0.07 : 0;       // a walk made in code from still pictures
       ctx.save(); ctx.imageSmoothingQuality = 'high'; ctx.translate(px, py + 10.5); ctx.rotate(lean);
+      const aura = ctx.createRadialGradient(0, -Hh * 0.5, 2, 0, -Hh * 0.5, Hh * 0.75);                  // she is the lead: a soft glow so she stands out on the dark deck
+      aura.addColorStop(0, 'rgba(0,229,255,0.38)'); aura.addColorStop(1, 'rgba(0,229,255,0)');
+      ctx.fillStyle = aura; ctx.fillRect(-Hh, -Hh * 1.4 - bob, Hh * 2, Hh * 1.8);
       ctx.drawImage(ART.helixViews, d * cell, 0, cell, cell, -Hh / 2, -Hh * 0.95 - bob, Hh, Hh); ctx.restore();
       return;
     }
