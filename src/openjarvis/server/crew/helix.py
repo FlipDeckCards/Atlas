@@ -226,6 +226,14 @@ CREW_TOOLS: List[Dict[str, Any]] = [
         "description": "Give a picture the user attached in chat (a book cover, a logo) to an existing mission: it writes a note in the mission's outbox with the picture's media library item id, so the agents can use it (for example as the front cover in make_book). Pictures attached with a new mission are included automatically.",
         "parameters": {"type": "object", "properties": {"mission_id": {"type": "string"}, "name": {"type": "string", "description": "The picture's file name; omit for all recent pictures."}, "use": {"type": "string", "description": "What it is for, e.g. front cover."}}, "required": ["mission_id"]}}},
     {"type": "function", "function": {
+        "name": "inspect_image",
+        "description": "Find the lettering in a picture in the media library (a book cover, a logo): returns where each line and word sits (fractions of the width and height), the colour, and the centres of the gaps between words. Use it before edit_image, and again on the result to check it.",
+        "parameters": {"type": "object", "properties": {"media_item_id": {"type": "string"}, "y0": {"type": "number", "description": "Top of the band to look in, 0 to 1."}, "y1": {"type": "number", "description": "Bottom of the band, 0 to 1."}}, "required": ["media_item_id"]}}},
+    {"type": "function", "function": {
+        "name": "edit_image",
+        "description": "Touch up a library picture and save the result as a NEW item (the original stays). edits: a list of {\"op\":\"text\",\"text\":\":\",\"x\":0.17,\"y\":0.14,\"size\":0.033,\"tracking\":0} (x,y = centre as fractions; size = capital height as a fraction of the picture height; the colour matches nearby lettering) or {\"op\":\"erase\",\"x0\":0.3,\"y0\":0.9,\"x1\":0.7,\"y1\":0.94}. To add a word to a centred line, erase the line's span from inspect_image and write the whole new line centred.",
+        "parameters": {"type": "object", "properties": {"media_item_id": {"type": "string"}, "title": {"type": "string"}, "edits": {"type": "array", "items": {"type": "object"}}}, "required": ["media_item_id", "edits"]}}},
+    {"type": "function", "function": {
         "name": "list_outbox",
         "description": "List the files in the user's outboxes across ALL missions, whatever their status (active, paused, stalled, cancelled, done), with the mission each belongs to.",
         "parameters": {"type": "object", "properties": {}}}},
@@ -442,7 +450,9 @@ async def system_addendum(ctx: CrewCtx) -> str:
          "To put a business on the All businesses box, call add_business with the name he gave; never say it was added unless the tool result says so. "
          "A mission can be changed after it starts: add_task to give it more work, edit_task for a task not started yet, retry_task to redo one with a note, "
          "resume_mission to continue it; never say a change was made unless the tool result says so. You can read the files of every mission, whatever its "
-         "status, with list_outbox and read_outbox_file. "
+         "status, with list_outbox and read_outbox_file. You can fix lettering in a picture of his yourself: inspect_image finds the words and the gaps between them, "
+         "edit_image adds text or erases a patch and saves a NEW library item (a book cover missing a colon, a name to add); check the result with inspect_image, then use the "
+         "new item id. "
          "You can investigate his code and servers yourself, read-only: github_files, github_read, github_search, github_activity, github_failed_runs, render_services, "
          "render_deploys and render_logs. When he reports a problem or asks why something failed, do not guess and do not ask him to paste logs: look. Start with "
          "render_deploys and render_logs (level error), or github_activity / github_failed_runs for CI, then read the code that the error names, and keep going "
@@ -647,6 +657,10 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
                                            f'Michael attached the picture "{i["name"]}"' + (f" ({use})" if use else "") + f". It is saved in his media library as item {i['item_id']}. "
                                            "Use that item id wherever an image item is needed (for a book: cover_item).\n")
             return "Attached to the mission: " + ", ".join(f'{i["name"]} (item {i["item_id"]})' for i in pick) + ". Its agents will see a note in the outbox."
+        if name == "inspect_image":
+            return await eng.inspect_image_item(ctx.user_id, str(args.get("media_item_id") or "").strip()[:80], args.get("y0"), args.get("y1"))
+        if name == "edit_image":
+            return await eng.edit_image_item(ctx.user_id, str(args.get("media_item_id") or "").strip()[:80], args.get("edits"), _clip(args.get("title"), 80))
         if name == "list_outbox":
             idx = await eng.outbox_index(ctx.user_id)
             return "\n".join(f'{o["name"]} ({o["size"]:,} chars) - mission {o["mission_id"]} "{o["mission_title"]}" [{o["mission_status"]}]' for o in idx[:60]) \

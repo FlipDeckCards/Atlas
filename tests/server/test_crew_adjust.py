@@ -959,3 +959,52 @@ def test_typesetter_never_sets_a_line_wider_than_the_page():
     words = to_words(runs("Where they saw a threat to job security, I saw a tool to create the freedom I had been chasing for years."))
     for justify in (True, False):
         assert all(ln.width <= TEXT_W + 0.01 for ln in break_lines(words, TEXT_W, TEXT_W, 11, justify=justify))
+
+
+class TestImageTouchUps:
+    def _cover(self):
+        import io
+        from PIL import Image, ImageDraw
+        im = Image.new("RGB", (1000, 1500), (12, 28, 70))
+        d = ImageDraw.Draw(im)
+        for x0, x1 in ((70, 137), (198, 343), (412, 609)):                          # three "words" of bright lettering
+            d.rectangle([x0, 180, x1, 225], fill=(70, 170, 200))
+        b = io.BytesIO()
+        im.save(b, "PNG")
+        return b.getvalue()
+
+    def test_inspect_finds_the_words_and_the_gaps_between_them(self):
+        from openjarvis.server.crew import imageedit
+        out = imageedit.inspect(self._cover(), 0.05, 0.25)
+        assert "Words" not in out and "centre 0.1" in out and "0.168" in out and "#46aac8" in out
+
+    def test_edit_adds_a_matching_colour_mark_in_the_gap_and_leaves_the_rest(self):
+        import io
+        from PIL import Image
+        from openjarvis.server.crew import imageedit
+        data = self._cover()
+        out = Image.open(io.BytesIO(imageedit.edit(data, [{"op": "text", "text": ":", "x": 0.168, "y": 0.135, "size": 0.03}]))).convert("RGB")
+        before = Image.open(io.BytesIO(data)).convert("RGB")
+        gap = [(x, y) for x in range(150, 190) for y in range(170, 235) if out.getpixel((x, y)) != before.getpixel((x, y))]
+        assert gap and any(out.getpixel(p) == (70, 170, 200) for p in gap)
+        assert out.getpixel((100, 200)) == before.getpixel((100, 200)) and out.getpixel((500, 900)) == before.getpixel((500, 900))
+
+    def test_erase_blends_a_patch_away_and_bad_edits_are_refused(self):
+        import io
+        from PIL import Image
+        from openjarvis.server.crew import imageedit
+        out = Image.open(io.BytesIO(imageedit.edit(self._cover(), [{"op": "erase", "x0": 0.19, "y0": 0.11, "x1": 0.36, "y1": 0.16}]))).convert("RGB")
+        assert max(abs(a - b) for a, b in zip(out.getpixel((270, 202)), (12, 28, 70))) < 40
+        for bad in (None, [], [{"op": "dance"}], [{"op": "text"}]):
+            with pytest.raises(ValueError):
+                imageedit.edit(self._cover(), bad)
+
+    def test_the_crew_and_helix_both_have_the_tools(self):
+        names = {t["function"]["name"] for t in helix.CREW_TOOLS}
+        assert {"inspect_image", "edit_image"} <= names
+        assert {"inspect_image", "edit_image"} <= {t["function"]["name"] for t in eng_mod.tools_for("designer")} if hasattr(eng_mod, "tools_for") else True
+
+    def test_without_a_media_library_the_edit_says_so(self):
+        w = world(two_task_plan(), AGENTS)
+        out = run(w.engine.edit_image_item(UID, "item1", [{"op": "text", "text": ":"}]))
+        assert out.startswith("Error:")

@@ -158,6 +158,21 @@ _IMAGE_TOOL = {"type": "function", "function": {
     "description": "Generate one image from a detailed description (500 characters at most) and save it to Michael's Aibussol media library. Costs a few cents; at most 10 per task.",
     "parameters": {"type": "object", "properties": {"prompt": {"type": "string"}}, "required": ["prompt"]}}}
 
+_INSPECT_IMAGE_TOOL = {"type": "function", "function": {
+    "name": "inspect_image",
+    "description": "Find the lettering in a picture in Michael's media library, in a band between two heights (fractions 0 to 1 from the top): returns each line's position, colour, "
+                   "and its words' x ranges and the centres of the gaps between them, so edit_image can put a mark exactly right (for example a colon after the first word of a title).",
+    "parameters": {"type": "object", "properties": {"media_item_id": {"type": "string"}, "y0": {"type": "number"}, "y1": {"type": "number"}}, "required": ["media_item_id"]}}}
+
+_EDIT_IMAGE_TOOL = {"type": "function", "function": {
+    "name": "edit_image",
+    "description": "Touch up a picture in the media library and save the result as a NEW library item (the original is untouched). edits is a list of "
+                   '{"op":"text","text":":","x":0.17,"y":0.14,"size":0.033,"tracking":0,"color":"#46aac8"} (x,y = the centre of the text as fractions of the width and height; size = capital-letter '
+                   'height as a fraction of the picture height; tracking = extra letter spacing as a fraction of size; colour is matched to nearby lettering if left out) and '
+                   '{"op":"erase","x0":0.3,"y0":0.9,"x1":0.7,"y1":0.94} (blends the patch away into its surroundings). Use inspect_image first to get the exact positions.',
+    "parameters": {"type": "object", "properties": {"media_item_id": {"type": "string"}, "title": {"type": "string"}, "edits": {"type": "array", "items": {"type": "object"}}},
+                   "required": ["media_item_id", "edits"]}}}
+
 _DESIGN_TOOL = {"type": "function", "function": {
     "name": "make_design_files",
     "description": "Turn one of your generate_image artworks (a dark design on a plain background) into a finished design pack: color PNG and JPG, "
@@ -220,7 +235,7 @@ _REVIEW_TOOL = {"type": "function", "function": {
     "description": "Send one finished task back to its agent with concrete fixes (each task can be sent back once). You continue after the rework is done.",
     "parameters": {"type": "object", "properties": {"task_number": {"type": "integer"}, "notes": {"type": "string"}}, "required": ["task_number", "notes"]}}}
 
-LIMITS = {"make_book": 6, "repo_checks": 10, "web_search": 12, "generate_image": 16, "make_design_files": 10, "repo_commit": 10, "check_site": 20, "business_numbers": 3}
+LIMITS = {"make_book": 6, "edit_image": 8, "inspect_image": 12, "repo_checks": 10, "web_search": 12, "generate_image": 16, "make_design_files": 10, "repo_commit": 10, "check_site": 20, "business_numbers": 3}
 SEARCHERS = ("researcher", "reviewer", "marketer", "social", "support", "analyst", "qa", "finance")
 IMAGERS = ("designer", "marketer", "social")
 READERS = ("support", "analyst", "finance")                # read-only platform access
@@ -321,7 +336,7 @@ def tools_for(role: str) -> List[Dict[str, Any]]:
     if role == "researcher":
         extra += [_SEARCH_TOOL, _RESEARCH_TOOL]
     if role in IMAGERS:
-        extra.append(_IMAGE_TOOL)
+        extra += [_IMAGE_TOOL, _INSPECT_IMAGE_TOOL, _EDIT_IMAGE_TOOL]
     if role == "designer":
         extra.append(_DESIGN_TOOL)
     if role in ("designer", "writer"):
@@ -1643,6 +1658,12 @@ class CrewEngine:
             return await self._search(task, args)
         if name == "generate_image" and task["role"] in IMAGERS:
             return await self._image(task, mission, args)
+        if name in ("inspect_image", "edit_image") and task["role"] in IMAGERS:
+            args = args or {}
+            if name == "inspect_image":
+                return await self.inspect_image_item(task["user_id"], _clip(args.get("media_item_id"), 80), args.get("y0"), args.get("y1")), None
+            return await self.edit_image_item(task["user_id"], _clip(args.get("media_item_id"), 80), args.get("edits"), _clip(args.get("title"), 80),
+                                              mission_id=task["mission_id"], task_id=task["id"]), None
         if name == "make_book" and task["role"] in ("designer", "writer"):
             return await self._book(task, mission, args)
         if name == "make_design_files" and task["role"] == "designer":
@@ -1833,6 +1854,58 @@ class CrewEngine:
                                     f"# {item.title}\n\nSaved to your Aibussol media library (item {item.id}).\n\nPrompt: {prompt}\n")
         await self.store.add_event(uid, "output", f'Prism made an image: "{item.title}" (in your media library).', mission_id=mid, task_id=tid, cost_usd=est)
         return f'Saved the image "{item.title}" to Michael\'s media library (item {item.id}); a note is in the outbox.', None
+
+    async def inspect_image_item(self, uid: str, item_id: str, y0: Any = 0, y1: Any = 1) -> str:
+        """Where the lettering is in one of this user's library pictures (see imageedit.inspect)."""
+        import asyncio
+
+        from openjarvis.server.crew import imageedit
+
+        if not item_id:
+            return "Error: give the media_item_id of the picture."
+        try:
+            data, _mime = await self._media_fetcher(uid)(item_id)
+            return await asyncio.to_thread(imageedit.inspect, data, y0 if y0 is not None else 0, y1 if y1 is not None else 1)
+        except (conns.ConnectionError_, ValueError) as exc:
+            return f"Error: {exc}"
+        except Exception:
+            logger.exception("inspect_image failed")
+            return "Error: the picture could not be read just now."
+
+    async def edit_image_item(self, uid: str, item_id: str, edits: Any, title: str = "", mission_id: str = "", task_id: str = "") -> str:
+        """Apply text/erase touch-ups to one of this user's library pictures and save the result as a new item."""
+        import asyncio
+
+        from openjarvis.server.crew import imageedit
+        from openjarvis.server.media import service as media
+
+        if not item_id:
+            return "Error: give the media_item_id of the picture."
+        ctx = None
+        try:
+            ctx = self.media_ctx_fn(uid) if self.media_ctx_fn else None
+        except Exception:
+            logger.exception("crew media context failed")
+        if ctx is None:
+            return "Error: the media library is not set up on the server, so the picture cannot be saved."
+        try:
+            data, _mime = await self._media_fetcher(uid)(item_id)
+            out = await asyncio.to_thread(imageedit.edit, data, edits)
+        except (conns.ConnectionError_, ValueError) as exc:
+            return f"Error: {exc}"
+        except Exception:
+            logger.exception("edit_image failed")
+            return "Error: the picture could not be edited just now."
+        try:
+            item = await media.save_item(ctx, kind="image", data=out, mime="image/png", title=title or "Edited picture", prompt=None, provider="aibussol-edit")
+        except media.MediaServiceError as exc:
+            return f"Error: the edited picture could not be saved: {exc.detail}"
+        note = f"Edited picture saved to the media library as item {item.id} (from item {item_id}): {imageedit.summary(edits)}.\n"
+        if mission_id:
+            await self.store.add_output(mission_id, task_id, uid, f"edited-image-{item.id[:8]}.md", note)
+            await self.store.add_event(uid, "output", f'Edited a picture: "{item.title}" (new item in your media library).', mission_id=mission_id, task_id=task_id or None)
+        return (note + "Use inspect_image on the NEW item to check the lettering landed where you wanted; the original is unchanged. "
+                "Use the new item id wherever the picture is needed (for a book: cover_item).")
 
     async def _book(self, task: Dict[str, Any], mission: Dict[str, Any], args: Dict[str, Any]):
         import base64
