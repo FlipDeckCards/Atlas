@@ -112,6 +112,16 @@ class TestAdjustingAMission:
         run(w.engine.run_until_idle())
         assert run(w.store.list_tasks(m["id"]))[-1]["status"] == "done"
 
+    def test_resume_reopens_a_done_mission_that_still_has_a_queued_task(self):
+        w = world(two_task_plan(), AGENTS)
+        m = run(start(w))
+        run(w.engine.run_until_idle())
+        t = run(w.store.list_tasks(m["id"]))[0]
+        run(w.store.update_task(t["id"], status="queued"))
+        run(w.store.update_mission(m["id"], status="done"))
+        run(helix.execute(helix.CrewCtx(UID, w.engine), "resume_mission", {"mission_id": m["id"]}))
+        assert run(w.store.get_mission(m["id"]))["status"] == "active"
+
     def test_edit_only_a_task_that_has_not_started_and_retry_reruns_with_a_note(self):
         w = world(two_task_plan(), AGENTS)
         m = run(start(w))
@@ -933,3 +943,4 @@ def test_station_has_a_speech_speed_control_next_to_the_voice_switch():
     from openjarvis.server.crew.station import STATION_PAGE
 
     assert 'id="speed-tog"' in STATION_PAGE and "playbackRate = voiceSpeed" in STATION_PAGE and "aibussol_voice_speed" in STATION_PAGE
+

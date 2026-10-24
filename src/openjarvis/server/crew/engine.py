@@ -937,6 +937,9 @@ class CrewEngine:
                 if retried:
                     await self.store.add_event(user_id, "mission", f"Retrying {retried} failed task(s).", mission_id=mission_id)
             await self.store.add_event(user_id, "mission", "Mission resumed.", mission_id=mission_id)
+        elif m["status"] == "done" and any(t["status"] in ("queued", "waiting") for t in await self.store.list_tasks(mission_id)):
+            await self._reopen(m)                           # a finished mission with queued work is picked up again
+            await self.store.add_event(user_id, "mission", "Mission reopened for its queued tasks.", mission_id=mission_id)
         return await self.store.get_mission(mission_id)
 
     async def cancel_mission(self, user_id: str, mission_id: str) -> Dict[str, Any]:
