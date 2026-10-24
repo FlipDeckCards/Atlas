@@ -621,3 +621,10 @@ class TestModelTiers:
         w.engine.acompletion = picky
         m = run(start(w))
         assert run(w.store.get_mission(m["id"]))["status"] == "done" and "claude-x" in calls
+
+
+class TestStationLayoutAndSkyStayPut:
+    def test_the_canvas_is_redrawn_at_its_real_size_and_the_scale_follows_the_window(self):
+        from openjarvis.server.crew.station import STATION_PAGE
+        for needle in ("new ResizeObserver", "function designSize", "dw / 1060", "function srand", "mini ? Object.assign(mini"):
+            assert needle in STATION_PAGE

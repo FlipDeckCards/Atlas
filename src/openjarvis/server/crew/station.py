@@ -1157,10 +1157,20 @@ const RING = ['p0', 'stripe', 'p1', 'etsy', 'p2', 'google_play', 'new', 'app_sto
 const MAX_EXTRA_BRANCHES = 8;
 const WORKING = ['active', 'planning', 'paused', 'stalled'];
 
+// The size the station has when it first loads with the columns and the chat at their default sizes: the window minus the two 210px columns, the
+// 48px top bar and the chat box. Dragging a column or the chat changes the window onto the station, but not the size of the station itself.
+const DEFAULT_COL = 210, TOP_BAR = 48, DEFAULT_CHAT = 225;
+function designSize() {
+  try { if (window.matchMedia('(max-width: 820px)').matches) return [W, H]; } catch (e) {}
+  return [Math.max(520, window.innerWidth - 2 * DEFAULT_COL), Math.max(380, window.innerHeight - TOP_BAR - DEFAULT_CHAT)];
+}
+let _seed = 20261024;
+function srand() { _seed = (_seed * 1664525 + 1013904223) % 4294967296; return _seed / 4294967296; }      // the same sky every time the canvas is resized
 function resize() {
+  _seed = 20261024;
   const r = cv.getBoundingClientRect(); DPR = Math.min(window.devicePixelRatio || 1, 2);
   W = r.width; H = r.height; cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR); ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  stars = Array.from({ length: Math.round(W * H / 2200) }, () => ({ x: Math.random() * W, y: Math.random() * H, z: Math.random(), p: Math.random() * 6.28 }));
+  stars = Array.from({ length: Math.round(W * H / 2200) }, () => ({ x: srand() * W, y: srand() * H, z: srand(), p: srand() * 6.28 }));
   sky = document.createElement('canvas'); sky.width = Math.max(1, Math.round(W)); sky.height = Math.max(1, Math.round(H));
   const s = sky.getContext('2d');
   s.fillStyle = '#04050a'; s.fillRect(0, 0, W, H);
@@ -1169,10 +1179,20 @@ function resize() {
     g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)'); s.fillStyle = g; s.fillRect(0, 0, W, H);
   }
   drawMilkyWay(s, W, H);
-  mini = { x: W * 0.13, y: H * 0.2, vx: 0.0055, vy: 0.0012, rot: 0.35 };
+  mini = mini ? Object.assign(mini, { x: Math.min(mini.x, W + 40), y: Math.min(mini.y, H) }) : { x: W * 0.13, y: H * 0.2, vx: 0.0055, vy: 0.0012, rot: 0.35 };
   layout();
 }
 window.addEventListener('resize', resize);
+// dragging a column or the chat changes the stage's box: redraw the canvas at its real size (it was being stretched, which squished the ring)
+(function () {
+  const stage = document.getElementById('stage'); if (!stage || !window.ResizeObserver) return;
+  let last = '', queued = false;
+  new ResizeObserver(() => {
+    const r = stage.getBoundingClientRect(), key = Math.round(r.width) + 'x' + Math.round(r.height);
+    if (key === last || queued) return;
+    queued = true; requestAnimationFrame(() => { queued = false; last = key; resize(); });
+  }).observe(stage);
+})();
 
 const PLATFORM_KEY = { etsy: 'etsy', stripe: 'stripe', googleplay: 'google_play', playstore: 'google_play', appstore: 'app_store', ios: 'app_store' };
 function factoryKey(m) {
@@ -1233,11 +1253,11 @@ function drawMilkyWay(c, w, h) {
   glow(L * 0.5, L * 0.07, 'rgba(255,225,190,A)', 0.24);                  // warm bright core
   c.save(); c.translate(0, L * 0.015); glow(L * 0.7, L * 0.02, 'rgba(3,4,10,A)', 0.55); c.restore();   // the dark dust lane
   for (let i = 0; i < 520; i++) {                                         // thousands of faint suns, thickest on the band's middle
-    const u = (Math.random() * 2 - 1), v = (Math.random() + Math.random() + Math.random() - 1.5) / 1.5;
-    const x = u * L * (0.2 + 0.8 * Math.random()), y = v * L * 0.12 * (1 - Math.abs(u) * 0.6);
-    const a = (0.1 + Math.random() * 0.5) * (1 - Math.abs(u) * 0.7);
-    c.fillStyle = Math.random() < 0.2 ? 'rgba(255,214,170,' + a + ')' : 'rgba(205,225,255,' + a + ')';
-    c.fillRect(x, y, Math.random() < 0.1 ? 1.6 : 0.9, Math.random() < 0.1 ? 1.6 : 0.9);
+    const u = (srand() * 2 - 1), v = (srand() + srand() + srand() - 1.5) / 1.5;
+    const x = u * L * (0.2 + 0.8 * srand()), y = v * L * 0.12 * (1 - Math.abs(u) * 0.6);
+    const a = (0.1 + srand() * 0.5) * (1 - Math.abs(u) * 0.7);
+    c.fillStyle = srand() < 0.2 ? 'rgba(255,214,170,' + a + ')' : 'rgba(205,225,255,' + a + ')';
+    c.fillRect(x, y, srand() < 0.1 ? 1.6 : 0.9, srand() < 0.1 ? 1.6 : 0.9);
   }
   c.restore();
 }
@@ -1459,7 +1479,9 @@ function layout() {
   const extras = pl.slice(4).map(b => fillBay(Object.assign({}, b)))
     .concat((pl[3] ? nk : nk.slice(1)).map(newBay)).slice(0, MAX_EXTRA_BRANCHES);
   const N = RING.length + extras.length;
-  SC = Math.max(0.34, Math.min(1.25, Math.min(W / 1060, H / 800)));
+  const [dw, dh] = designSize();                          // the ring's scale follows the browser window, never the panels you dragged
+  // the optimal scale for this window, shrunk evenly (never stretched) only when the station's box is really too small to hold it
+  SC = Math.max(0.34, Math.min(1.25, Math.min(dw / 1060, dh / 800), Math.min(W / 1060, H / 800)));
   if (N > 8) SC *= Math.sin(Math.PI / N) / Math.sin(Math.PI / 8);             // more branches, smaller modules, so the ring keeps its size
   core = { x: W / 2, y: H / 2, r: 94 * SC };
   const mw = 184 * SC, mh = 116 * SC, gap = 46 * SC;
