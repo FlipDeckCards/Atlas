@@ -1203,12 +1203,12 @@ class TestSocialAutomation:
         t = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=1)
         return [{"body": f"Post {i}", "hashtags": "#a", "platforms": ["instagram"], "scheduled_at": (t + _dt.timedelta(hours=i)).isoformat()} for i in range(n)]
 
-    def test_the_defaults_are_a_held_week_and_six_posts_a_day(self):
+    def test_the_defaults_are_a_held_week_and_five_posts_a_day(self):
         from openjarvis.server.crew import weekly
 
-        assert weekly.social_mode({}) == "auto_pause" and weekly.per_day({}) == 6 and weekly.hold_hours({}) == 6.0
+        assert weekly.social_mode({}) == "auto_pause" and weekly.per_day({}) == 5 and weekly.hold_hours({}) == 6.0
         assert weekly.social_mode({"CREW_SOCIAL_MODE": "approve"}) == "approve" and weekly.auto_at({"CREW_SOCIAL_MODE": "approve"}) == ""
-        assert weekly.auto_at({}) != "" and "6 posts a day" in weekly.GOAL.format(week="x", per_day=6, hold="y") and "TWO marnyx.schedule_week" in weekly.GOAL
+        assert weekly.auto_at({}) != "" and "5 posts a day" in weekly.GOAL.format(week="x", per_day=5, hold="y") and "TWO marnyx.schedule_week" in weekly.GOAL
 
     def test_helix_schedule_posts_holds_the_week_and_a_due_hold_schedules_it(self):
         import datetime as _dt

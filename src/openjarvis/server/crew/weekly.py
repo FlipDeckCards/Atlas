@@ -45,9 +45,9 @@ def hold_hours(env=None) -> float:
 
 def per_day(env=None) -> int:
     try:
-        return min(8, max(1, int((os.environ if env is None else env).get("CREW_SOCIAL_PER_DAY") or 6)))
+        return min(8, max(1, int((os.environ if env is None else env).get("CREW_SOCIAL_PER_DAY") or 5)))
     except (TypeError, ValueError):
-        return 6
+        return 5
 
 
 def auto_at(env=None, now=None) -> str:
