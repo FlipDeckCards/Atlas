@@ -95,6 +95,20 @@ async def helix_portrait():
     return FileResponse(_HELIX_PORTRAIT, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
 
 
+_ART_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "art")
+ART_FILES = {"asteroid1.png", "asteroid2.png", "asteroid3.png", "satellite.png", "helix-walk.png"}      # Michael's own artwork for the Station's sky and deck
+
+
+@router.get("/crew/art/{name}")
+async def station_art(name: str):
+    """The artwork the Station draws when it exists (asteroids, the satellite, Helix walking). A missing file is a plain 404 and the Station
+    draws its built-in version instead."""
+    path = os.path.join(_ART_DIR, name)
+    if name not in ART_FILES or not os.path.isfile(path):
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=3600"})
+
+
 _BOTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "bots.png")
 
 
@@ -574,8 +588,23 @@ async def crew_output(output_id: str, request: Request):
     o = await engine.store.get_output(output_id)
     if not o or o["user_id"] != uid:
         return JSONResponse({"detail": "Not found."}, status_code=404)
+    return output_response(o)
+
+
+def output_response(o: Dict[str, Any]) -> Response:
+    """The file as a download. A binary file (a book PDF) is kept as 'base64:' text in the outbox and sent back as the real file."""
     safe = "".join(c if c.isalnum() or c in "._- " else "_" for c in o["name"]) or "output.txt"
-    return Response(o["content"], media_type="text/plain; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{safe}"'})
+    head = {"Content-Disposition": f'attachment; filename="{safe}"'}
+    if str(o["content"]).startswith("base64:"):
+        import base64
+        import binascii
+
+        try:
+            raw = base64.b64decode(o["content"][7:])
+        except (binascii.Error, ValueError):
+            return JSONResponse({"detail": "That file is damaged."}, status_code=500)
+        return Response(raw, media_type="application/pdf" if safe.lower().endswith(".pdf") else "application/octet-stream", headers=head)
+    return Response(o["content"], media_type="text/plain; charset=utf-8", headers=head)
 
 
 @router.post("/api/crew/settings")

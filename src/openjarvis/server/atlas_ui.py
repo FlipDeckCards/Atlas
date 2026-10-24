@@ -1733,7 +1733,7 @@ async def chat(req: ChatRequest, request: Request):
     # documents are kept for a mission Helix starts
     images, docs = [], []                                   # [(base64, mime)], [(file name, text)]
     if req.image:
-        images.append((req.image, "image/jpeg"))
+        images.append((req.image, "image/jpeg", "image"))
     items = ([(req.document_name or "document.txt", req.document, None)] if req.document else []) + [(a.name, a.data, a.mime) for a in req.attachments]
     if len(items) + len(images) > hardening.MAX_ATTACHMENTS:
         return JSONResponse({"detail": "Attach up to %d files at a time." % hardening.MAX_ATTACHMENTS, "reply": "Attach up to %d files at a time." % hardening.MAX_ATTACHMENTS}, status_code=400)
@@ -1742,7 +1742,7 @@ async def chat(req: ChatRequest, request: Request):
     for raw_name, data, mime in items:
         name = documents.clean_name(raw_name or "document.txt")
         if (mime or "").startswith("image/") or (not mime and re.search(r"\.(png|jpe?g|gif|webp)$", name, re.I)):
-            images.append((data, mime or "image/jpeg"))
+            images.append((data, mime or "image/jpeg", name))
             continue
         try:
             docs.append((name, documents.from_b64(name, data)))
@@ -1805,6 +1805,8 @@ async def chat(req: ChatRequest, request: Request):
     if crew_ctx is not None:
         for doc_name, doc_text in docs:
             crew_helix.remember_document(crew_ctx.user_id, doc_name, doc_text)
+        if images:                                                  # keep the pictures (a book cover) in his media library so the crew can use them
+            await crew_helix.keep_images(crew_ctx, media_ctx, [(n, b, m) for b, m, n in images])
     if crew_ctx is not None and not has_files:
         early = await crew_helix.pre_turn(crew_ctx, req.message)
         if early is not None:
@@ -1839,7 +1841,7 @@ async def chat(req: ChatRequest, request: Request):
     if images:
         saved_text += "".join("\n[Attached image]" for _ in images)
         user_content = [{"type": "text", "text": model_text}] + [
-            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}} for b64, mime in images]
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}} for b64, mime, _n in images]
     else:
         user_content = model_text
 

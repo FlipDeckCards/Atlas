@@ -1138,6 +1138,12 @@ const BOT_DIRS = { front: 0, back: 1, right: 2, left: 3 };
 function dirOf(dx, dy, prev) { if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return prev || 'front'; return Math.abs(dx) >= Math.abs(dy) * 0.8 ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'front' : 'back'); }
 const botSheet = new Image(); let botReady = false;
 botSheet.onload = () => { botReady = true; }; botSheet.src = '/crew/bots.png?v=' + BOT_VER;
+// Michael's own artwork, used when the file exists (a 404 leaves the built-in drawing): asteroids, the satellite, and Helix walking the deck
+const ART = { rocks: [], satellite: null, helix: null };
+function loadArt(name, done) { const im = new Image(); im.onload = () => done(im); im.onerror = () => {}; im.src = '/crew/art/' + name; }
+['asteroid1.png', 'asteroid2.png', 'asteroid3.png'].forEach(n => loadArt(n, im => ART.rocks.push(im)));
+loadArt('satellite.png', im => { ART.satellite = im; });
+loadArt('helix-walk.png', im => { ART.helix = im; });           // the same sheet layout as bots.png, one row: standing, then 4 walk frames each for front, back, right, left
 // the businesses on this Station: the owner's products, or a subscriber's own (from the server)
 function prods() {
   return (S && S.businesses ? S.businesses : []).map(b => ({ key: b.key, label: String(b.name).toUpperCase(), color: b.color || '#ff4fb8', url: b.url || '' }));
@@ -1293,7 +1299,7 @@ function spawnRock(t) {                                                   // an 
   const r = 7 + 26 * d, speed = 0.018 + 0.05 * d, pts = 9 + Math.floor(Math.random() * 4);
   const shape = Array.from({ length: pts }, (_, i) => ({ a: i / pts * 6.2832, k: 0.72 + Math.random() * 0.4 }));
   const craters = Array.from({ length: 3 }, () => ({ x: (Math.random() - 0.5) * r * 0.9, y: (Math.random() - 0.5) * r * 0.9, r: r * (0.1 + Math.random() * 0.14) }));
-  rocks.push({ t0: t, sx, sy, ux: dx / n, uy: dy / n, speed, r, spin: (Math.random() - 0.5) * 0.0012, rot0: Math.random() * 6.28, shape, craters, a: 0.45 + 0.5 * d, tint: Math.random() < 0.35 ? [128, 108, 92] : [112, 118, 128],
+  rocks.push({ pick: Math.floor(Math.random() * 1000), t0: t, sx, sy, ux: dx / n, uy: dy / n, speed, r, spin: (Math.random() - 0.5) * 0.0012, rot0: Math.random() * 6.28, shape, craters, a: 0.45 + 0.5 * d, tint: Math.random() < 0.35 ? [128, 108, 92] : [112, 118, 128],
                dur: (Math.hypot(W, H) * 1.15) / speed });
   if (rocks.length > 3) rocks.shift();
 }
@@ -1304,6 +1310,11 @@ function drawRocks(t) {
     const e = t - k.t0, x = k.sx + k.ux * k.speed * e, y = k.sy + k.uy * k.speed * e;
     if (x < -90 || x > W + 90 || y < -90 || y > H + 90) continue;
     const [cr, cg, cb] = k.tint;
+    if (ART.rocks.length) {                                                // Michael's asteroid art, tumbling
+      const im = ART.rocks[k.pick % ART.rocks.length], d = k.r * 2.4;
+      ctx.save(); ctx.translate(x, y); ctx.rotate(k.rot0 + k.spin * e); ctx.globalAlpha = k.a; ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(im, -d / 2, -d * (im.naturalHeight / im.naturalWidth) / 2, d, d * (im.naturalHeight / im.naturalWidth)); ctx.restore(); continue;
+    }
     ctx.save(); ctx.translate(x, y); ctx.rotate(k.rot0 + k.spin * e); ctx.globalAlpha = k.a;
     ctx.beginPath(); k.shape.forEach((v, i) => { const px = Math.cos(v.a) * k.r * v.k, py = Math.sin(v.a) * k.r * v.k; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }); ctx.closePath();
     const g = ctx.createRadialGradient(-k.r * 0.4, -k.r * 0.4, k.r * 0.1, 0, 0, k.r * 1.2);      // lit from the upper left, like the sun
@@ -1321,6 +1332,12 @@ function drawMiniStation(t, dt) {                                         // far
     if (mini.x > W + 60) { mini.x = -60; mini.y = H * (0.08 + Math.random() * 0.8); }
   }
   const u = Math.max(0.55, Math.min(1.1, SC)) * 1.35;
+  if (ART.satellite) {                                                    // Michael's satellite art, drifting and turning slowly
+    const d = 96 * u, im = ART.satellite;
+    ctx.save(); ctx.translate(mini.x, mini.y); ctx.rotate(mini.rot); ctx.globalAlpha = 0.95; ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(im, -d / 2, -d * (im.naturalHeight / im.naturalWidth) / 2, d, d * (im.naturalHeight / im.naturalWidth)); ctx.restore();
+    return;
+  }
   ctx.save(); ctx.translate(mini.x, mini.y); ctx.rotate(mini.rot); ctx.scale(u, u); ctx.globalAlpha = 0.8;
   ctx.shadowColor = 'rgba(90,170,255,0.5)'; ctx.shadowBlur = 8;
   ctx.fillStyle = '#7f93a8'; ctx.fillRect(-26, -2.2, 52, 4.4);              // truss
@@ -1714,6 +1731,7 @@ function drawCore(t) {
   });
   // each figure has its own pace and mind: it wanders around the deck, turns back, pauses, and drifts between the inner and outer lane
   const hash = (str) => { let h = 7; for (let c = 0; c < str.length; c++) h = (h * 31 + str.charCodeAt(c)) % 100003; return h; };
+  if (ART.helix) onDeck.push({ role: 'lead', status: 'idle' });                                           // Helix herself, walking among her crew
   onDeck.forEach((a, i) => {
     const h = hash(a.role), R = (k) => { const v = Math.sin(h * 12.9898 + k * 78.233) * 43758.5453; return v - Math.floor(v); };
     const dir = R(1) < 0.5 ? -1 : 1, a0 = -Math.PI / 2 + i * (Math.PI * 2 / Math.max(onDeck.length, 1)) + R(2) * 0.5;
@@ -1723,6 +1741,12 @@ function drawCore(t) {
     const [px, py] = at(t), [qx, qy] = at(t + 40), step = Math.hypot(qx - px, qy - py) / 40;
     const moving = step > 0.0012;                                                                            // slowed to a stop at the turn-around points: stands still
     const face = moving ? dirOf(qx - px, qy - py, 'front') : 'front';
+    if (a.role === 'lead' && ART.helix) {
+      const d = BOT_DIRS[face] != null ? BOT_DIRS[face] : 0, col = moving ? 1 + d * 4 + Math.floor(t * 0.006 + i) % 4 : 0, Hh = 44;
+      ctx.save(); ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(ART.helix, col * BOT_CELL, 0, BOT_CELL, BOT_CELL, px - Hh / 2, py + 10.5 - Hh * 0.873, Hh, Hh); ctx.restore();
+      return;
+    }
     drawBot(px, py, ROLE_COLORS[a.role] || '#00e5ff', a.status, t, i * 4.1, face, sc, moving);
   });
   // the open-items badge (no name plate: the portrait is Helix)

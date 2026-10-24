@@ -5,11 +5,13 @@ from __future__ import annotations
 import base64
 import io
 import zipfile
+from types import SimpleNamespace
 
 import pytest
 
 from openjarvis.server import documents
 from openjarvis.server.crew import helix
+from openjarvis.server.crew import engine as eng_mod
 from tests.server.test_crew import UID, resp, run, start, two_task_plan, world
 
 AGENTS = {"Research buyers": [resp("r")], "Write listing": [resp("w")], "Extra research": [resp("e")]}
@@ -627,4 +629,127 @@ class TestStationLayoutAndSkyStayPut:
     def test_the_canvas_is_redrawn_at_its_real_size_and_the_scale_follows_the_window(self):
         from openjarvis.server.crew.station import STATION_PAGE
         for needle in ("new ResizeObserver", "function designSize", "dw / 1060", "function srand", "mini ? Object.assign(mini"):
+            assert needle in STATION_PAGE
+
+
+# ── the book: a real PDF with the covers, no pictures inside, kept pictures, correct downloads ───────────────────────────
+
+def _png(color, size=(900, 1300)):
+    import io
+    from PIL import Image
+    b = io.BytesIO()
+    Image.new("RGB", size, color).save(b, "PNG")
+    return b.getvalue()
+
+
+class TestBookPdf:
+    def test_a_6x9_book_has_the_front_cover_first_the_back_cover_last_and_chapters_on_new_pages(self):
+        import io
+        import pypdf
+        from openjarvis.server.crew import pdf
+        body = "# One\n\n" + ("Words about design. " * 60 + "\n\n") * 6 + "# Two\n\nMore words here.\n"
+        data, n = pdf.make_book_pdf("AI: The User Experience", "Michael Dano", body, _png((200, 30, 30)), _png((30, 30, 200), (2000, 2000)))
+        r = pypdf.PdfReader(io.BytesIO(data))
+        assert len(r.pages) == n and [round(float(x)) for x in r.pages[0].mediabox[2:]] == [432, 648]
+        assert "/XObject" in str(r.pages[0].get("/Resources")) and "/XObject" in str(r.pages[-1].get("/Resources"))      # covers are full-page pictures
+        assert "AI: The User Experience" in r.pages[1].extract_text() and "Michael Dano" in r.pages[1].extract_text()
+        texts = [p.extract_text() for p in r.pages]
+        assert any(t.startswith("One") for t in texts) and any(t.startswith("Two") for t in texts)                       # each chapter opens a page
+        assert len(data) < 400_000                                                                                         # big covers are compressed
+        plain, _ = pdf.make_book_pdf("T", "", "# A\n\ntext")
+        assert b"/DCTDecode" not in plain                                                                                   # no covers, no pictures
+
+    def test_the_existing_guide_maker_is_unchanged(self):
+        from openjarvis.server.crew import pdf
+        data = pdf.make_pdf("Planner", "# Week\n\n- one\n\n" + "word " * 100)
+        assert data.startswith(b"%PDF") and b"/DCTDecode" not in data
+
+
+class TestMakeBookTool:
+    def setup(self):
+        w = world(two_task_plan(), AGENTS)
+        m = run(start(w))
+        run(w.store.add_output(m["id"], "", UID, "part1.md", "# Chapter One\n\nHello world.\n\n![diagram](x.png)\n\n[Image: a graphic of a robot]\n\nMore text."))
+        run(w.store.add_output(m["id"], "", UID, "part2.md", "# Chapter Two\n\nSecond part."))
+
+        async def fetch(item_id):
+            if item_id == "gone":
+                raise eng_mod.conns.ConnectionError_("Could not read media item gone.")
+            return _png((10, 120, 40)), "image/png"
+        w.engine._media_fetcher = lambda uid: fetch
+        task = dict(run(w.store.list_tasks(m["id"]))[1], role="designer")
+        return w, m, task
+
+    def test_it_compiles_the_parts_in_order_with_both_covers_and_no_inside_pictures(self):
+        import base64
+        import io
+        import pypdf
+        w, m, task = self.setup()
+        mission = run(w.store.get_mission(m["id"]))
+        out, _ = run(w.engine._tool(task, mission, "make_book", {"title": "My Book", "author": "Michael", "files": ["part1.md", "part2.md"], "cover_item": "c1", "back_cover_item": "b1", "filename": "My Book"}))
+        assert 'Saved "My Book.pdf"' in out and "front cover included" in out and "back cover included" in out and "no pictures inside" in out
+        o = [x for x in run(w.store.list_outputs(m["id"])) if x["name"] == "My Book.pdf"][0]
+        raw = base64.b64decode(run(w.store.get_output(o["id"]))["content"][7:])
+        r = pypdf.PdfReader(io.BytesIO(raw))
+        text = " ".join(p.extract_text() for p in r.pages)
+        assert text.index("Chapter One") < text.index("Chapter Two") and "diagram" not in text and "robot" not in text and "Hello world" in text
+        assert raw.count(b"/DCTDecode") == 2
+
+    def test_it_refuses_a_missing_file_or_cover_and_other_roles_do_not_get_it(self):
+        w, m, task = self.setup()
+        mission = run(w.store.get_mission(m["id"]))
+        assert "no outbox file called" in run(w.engine._tool(task, mission, "make_book", {"title": "B", "files": ["nope.md"]}))[0]
+        assert "Could not read media item gone" in run(w.engine._tool(task, mission, "make_book", {"title": "B", "files": ["part1.md"], "cover_item": "gone"}))[0]
+        assert "no tool named" in run(w.engine._tool(dict(task, role="analyst"), mission, "make_book", {"title": "B", "files": ["part1.md"]}))[0]
+        assert "make_book" in [t["function"]["name"] for t in eng_mod.tools_for("designer")] and "make_book" in [t["function"]["name"] for t in eng_mod.tools_for("writer")]
+
+    def test_a_pdf_downloads_as_a_real_pdf_and_agents_are_told_it_is_binary(self):
+        import base64
+        from openjarvis.server.crew.routes import output_response
+        raw = b"%PDF-1.4\n\xe2\xe3\xcf\xd3 binary"
+        r = output_response({"name": "Book.pdf", "content": "base64:" + base64.b64encode(raw).decode()})
+        assert r.body == raw and r.media_type == "application/pdf"
+        assert output_response({"name": "a.md", "content": "# hi"}).media_type.startswith("text/plain")
+        w, m, task = self.setup()
+        run(w.store.add_output(m["id"], "", UID, "b.pdf", "base64:" + base64.b64encode(raw).decode()))
+        assert "binary file" in run(w.engine.read_outbox(UID, "b.pdf"))
+
+
+class TestHelixKeepsAttachedPictures:
+    def test_pictures_are_saved_offered_to_a_new_mission_and_attachable_to_an_existing_one(self, monkeypatch):
+        from openjarvis.server.media import service as media
+        saved = []
+
+        async def fake_save(ctx, **kw):
+            saved.append(kw)
+            return SimpleNamespace(id=f"item{len(saved)}")
+        monkeypatch.setattr(media, "save_item", fake_save)
+        helix.RECENT_IMAGES.clear()
+        helix.RECENT_DOCS.clear()
+        w = world(two_task_plan(), AGENTS)
+        ctx = helix.CrewCtx(UID, w.engine)
+        import base64
+        out = run(helix.keep_images(ctx, object(), [("cover.png", base64.b64encode(_png((1, 2, 3))).decode(), "image/png")]))
+        assert out[0]["item_id"] == "item1" and saved[0]["title"] == "Attached: cover.png" and saved[0]["kind"] == "image"
+        assert run(helix.keep_images(ctx, None, [("x.png", "AA==", "image/png")])) == []                                  # media off: nothing kept
+        assert "cover.png = item item1" in run(helix.system_addendum(ctx))
+        run(helix.execute(ctx, "start_mission", {"goal": "Make the book print ready with my cover"}))
+        assert "cover.png = item item1" in helix.CREW_PENDING.get(UID).args["goal"]
+        m = run(start(w))
+        res = run(helix.execute(ctx, "attach_image", {"mission_id": m["id"], "use": "front cover"}))
+        assert "item item1" in res
+        note = [o for o in run(w.store.list_outputs(m["id"])) if o["name"].startswith("attached-image-")][0]
+        assert "item item1" in run(w.store.get_output(note["id"]))["content"] and "cover_item" in run(w.store.get_output(note["id"]))["content"]
+        assert "no recently attached" in run(helix.execute(helix.CrewCtx("other", w.engine), "attach_image", {"mission_id": m["id"]}))
+
+
+class TestStationArt:
+    def test_art_is_served_only_from_the_allowed_names_and_a_missing_file_is_a_plain_404(self):
+        from openjarvis.server.crew import routes
+        assert {"asteroid1.png", "asteroid2.png", "asteroid3.png", "satellite.png", "helix-walk.png"} == routes.ART_FILES
+        assert run(routes.station_art("../../etc/passwd")).status_code == 404 and run(routes.station_art("satellite.png")).status_code == 404
+
+    def test_the_station_uses_the_art_when_it_loads_and_keeps_its_drawings_otherwise(self):
+        from openjarvis.server.crew.station import STATION_PAGE
+        for needle in ("const ART = ", "loadArt('helix-walk.png'", "if (ART.rocks.length)", "if (ART.satellite)", "if (ART.helix) onDeck.push"):
             assert needle in STATION_PAGE

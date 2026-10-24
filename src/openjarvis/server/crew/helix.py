@@ -15,6 +15,7 @@ declines them with the buttons in the chat card or the Station, so a model can n
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -47,6 +48,42 @@ def recent_documents(user_id: str) -> List[Dict[str, Any]]:
     return docs
 
 
+RECENT_IMAGES: Dict[str, List[Dict[str, Any]]] = {}     # user id -> images attached in chat, saved to the media library (name, item id)
+MAX_IMAGES_KEPT = 8
+
+
+def recent_images(user_id: str) -> List[Dict[str, Any]]:
+    now = time.monotonic()
+    imgs = [i for i in RECENT_IMAGES.get(user_id, []) if now - i["at"] < DOCS_TTL_S * 4]
+    if imgs:
+        RECENT_IMAGES[user_id] = imgs
+    else:
+        RECENT_IMAGES.pop(user_id, None)
+    return imgs
+
+
+async def keep_images(ctx: "CrewCtx", media_ctx: Any, items: List[Any]) -> List[Dict[str, Any]]:
+    """Save the pictures he attached to his media library (so a cover is not lost once the message is read) and remember their item ids
+    for a while. items: [(name, base64, mime)]. A picture that cannot be saved is skipped; media being off keeps nothing."""
+    import base64
+
+    if media_ctx is None:
+        return []
+    from openjarvis.server.media import service as media
+
+    saved = []
+    for name, b64, mime in items[:5]:
+        try:
+            item = await media.save_item(media_ctx, kind="image", data=base64.b64decode(b64), mime=mime or "image/jpeg", title=f"Attached: {name}", prompt=None, provider="upload")
+        except Exception:
+            logger.warning("could not keep the attached image %s", name)
+            continue
+        saved.append({"name": name, "item_id": item.id, "at": time.monotonic()})
+    if saved:
+        RECENT_IMAGES[ctx.user_id] = (recent_images(ctx.user_id) + saved)[-MAX_IMAGES_KEPT:]
+    return saved
+
+
 def _numbers(v: Any) -> List[int]:
     return [v] if isinstance(v, (int, str)) and not isinstance(v, bool) else [x for x in (v or []) if isinstance(x, (int, str))]
 
@@ -57,7 +94,7 @@ SETUP_STEPS = [
     ("workbench", "your PC (Rig)", "Run the Workbench helper on the computer that has your project. The Connections panel shows the command to copy.", ""),
 ]
 CHANGES_STATION = {"add_business", "rename_business", "remove_business", "rename_mission", "add_task", "edit_task", "retry_task",
-                   "attach_document", "cancel_mission", "render_redeploy", "render_restart", "render_rollback", "pause_mission", "resume_mission", "answer_crew_question"}     # tools after which the Station must redraw
+                   "attach_document", "attach_image", "cancel_mission", "render_redeploy", "render_restart", "render_rollback", "pause_mission", "resume_mission", "answer_crew_question"}     # tools after which the Station must redraw
 OWNER_FIXED_KEYS_HELIX = {"flipdeck", "marnyx", "deadzone"}   # the owner's rows that are not stored (see routes.OWNER_BUSINESSES)
 
 CREW_TOOLS: List[Dict[str, Any]] = [
@@ -184,6 +221,10 @@ CREW_TOOLS: List[Dict[str, Any]] = [
         "description": "Give a document the user attached in chat to an existing mission (any status), so its agents can read it. Documents attached with a new mission are included automatically.",
         "parameters": {"type": "object", "properties": {"mission_id": {"type": "string"}, "name": {"type": "string", "description": "The document's file name; omit for all recent attachments."}},
                        "required": ["mission_id"]}}},
+    {"type": "function", "function": {
+        "name": "attach_image",
+        "description": "Give a picture the user attached in chat (a book cover, a logo) to an existing mission: it writes a note in the mission's outbox with the picture's media library item id, so the agents can use it (for example as the front cover in make_book). Pictures attached with a new mission are included automatically.",
+        "parameters": {"type": "object", "properties": {"mission_id": {"type": "string"}, "name": {"type": "string", "description": "The picture's file name; omit for all recent pictures."}, "use": {"type": "string", "description": "What it is for, e.g. front cover."}}, "required": ["mission_id"]}}},
     {"type": "function", "function": {
         "name": "list_outbox",
         "description": "List the files in the user's outboxes across ALL missions, whatever their status (active, paused, stalled, cancelled, done), with the mission each belongs to.",
@@ -410,6 +451,10 @@ async def system_addendum(ctx: CrewCtx) -> str:
          "for his Approve tap. After a merge, check render_deploys to confirm the deploy went live and report it. "
          "When someone asks to set up or connect things, call next_setup_step and walk them through one step at a time; never ask for a key or password in chat.")
     s += OPERATING + await memory_text(ctx)
+    imgs = recent_images(ctx.user_id)
+    if imgs:
+        s += (" Pictures he attached are saved in his media library: " + ", ".join(f'{i["name"]} = item {i["item_id"]}' for i in imgs)
+              + ". A mission you start gets them automatically; attach_image gives them to an existing mission.")
     docs = recent_documents(ctx.user_id)
     if docs:
         s += (" The user attached these documents in chat: " + ", ".join(d["name"] for d in docs) + ". A mission you start with start_mission gets them automatically; "
@@ -432,6 +477,9 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
                 return "NOT STARTED: connect " + " and ".join(missing) + " first. Walk the user through it; do not start the mission."
             budget = eng.clamp_budget(args.get("budget_usd")) if args.get("budget_usd") is not None else eng.clamp_budget(None)
             docs = recent_documents(ctx.user_id)
+            imgs = recent_images(ctx.user_id)
+            if imgs:
+                goal += "\n\nPictures he attached (media library item ids): " + "; ".join(f'{i["name"]} = item {i["item_id"]}' for i in imgs)
             CREW_PENDING.create(ctx.user_id, "start_mission", {"goal": goal, "budget_usd": budget, "documents": [dict(d) for d in docs]}, budget,
                                 f'start a crew mission: "{_clip(goal, 140)}"' + (f' with {len(docs)} attached document(s)' if docs else ""))
             return f"NOT STARTED YET. Waiting for the user's confirmation. Tell them the crew will plan and work this with a ${budget:.2f} budget, and ask them to reply 'yes'."
@@ -582,6 +630,20 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
                 return "No such attached document. Ask the user to attach it again."
             saved = await eng.attach_documents(ctx.user_id, str(args.get("mission_id") or ""), pick)
             return ("Attached to the mission: " + ", ".join(saved) + ". Its agents read it with read_output.") if saved else "Already attached to that mission (or its outbox is full)."
+        if name == "attach_image":
+            imgs = recent_images(ctx.user_id)
+            want = str(args.get("name") or "").strip().lower()
+            pick = [i for i in imgs if not want or i["name"].lower() == want]
+            if not pick:
+                return "I have no recently attached picture by that name (or the media library is off). Ask the user to attach it again."
+            m = await eng._owned_mission(ctx.user_id, str(args.get("mission_id") or ""))
+            use = _clip(args.get("use"), 80)
+            for i in pick:
+                safe = re.sub(r"[^A-Za-z0-9._-]", "_", i["name"])[:50]
+                await eng.store.add_output(m["id"], "", ctx.user_id, f"attached-image-{safe}.md",
+                                           f'Michael attached the picture "{i["name"]}"' + (f" ({use})" if use else "") + f". It is saved in his media library as item {i['item_id']}. "
+                                           "Use that item id wherever an image item is needed (for a book: cover_item).\n")
+            return "Attached to the mission: " + ", ".join(f'{i["name"]} (item {i["item_id"]})' for i in pick) + ". Its agents will see a note in the outbox."
         if name == "list_outbox":
             idx = await eng.outbox_index(ctx.user_id)
             return "\n".join(f'{o["name"]} ({o["size"]:,} chars) - mission {o["mission_id"]} "{o["mission_title"]}" [{o["mission_status"]}]' for o in idx[:60]) \
