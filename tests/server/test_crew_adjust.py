@@ -165,6 +165,13 @@ class TestReadingAnyMissionsOutbox:
         assert "offset 20000" in long
         assert run(helix.execute(ctx, "read_outbox_file", {"name": "only-b.md", "offset": 20000})).startswith("x")
 
+    def test_several_copies_in_one_mission_read_as_the_newest(self):
+        w, a, b = self.make()
+        run(w.store.add_output(a["id"], "", UID, "plan.md", "alpha plan v2"))
+        ctx = helix.CrewCtx(UID, w.engine)
+        assert run(helix.execute(ctx, "read_outbox_file", {"name": "plan.md", "mission_id": a["id"]})) == "alpha plan v2"
+        assert "Several missions" in run(helix.execute(ctx, "read_outbox_file", {"name": "plan.md"}))
+
     def test_other_users_files_stay_private(self):
         w, a, b = self.make()
         other = helix.CrewCtx("someone-else", w.engine)

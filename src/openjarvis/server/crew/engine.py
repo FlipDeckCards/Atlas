@@ -1035,6 +1035,8 @@ class CrewEngine:
             files = [o for o in files if o["mission_id"] == prefer_mission]
         if not files:
             return "No file by that name in any outbox." if not mission_id else "No file by that name in that mission's outbox."
+        if len({o["mission_id"] for o in files}) == 1:
+            files = files[:1]                                                         # several saved copies in one mission: the newest one (the index is newest first)
         if len(files) > 1:
             return "Several missions have a file with that name; call again with mission_id: " + "; ".join(
                 f'{o["mission_id"]} ("{o["mission_title"]}", {o["mission_status"]})' for o in files[:8])
