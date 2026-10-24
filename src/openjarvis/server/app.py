@@ -352,6 +352,9 @@ def create_app(
             notifier.url_for = crew_push_url
             engine.herald = Herald(engine, getattr(app.state, "brief_store", None) or BriefStore(pool), pool=pool, notifier=notifier)
             engine.pool = pool
+            from openjarvis.server.crew.sentinel import Sentinel
+
+            engine.sentinel = Sentinel(engine, owner_id_fn=engine.herald.owner_id)       # Helix watches the owner's deploys and investigates failures
             from openjarvis.server.crew.weekly import WeeklySocial
 
             engine.weekly = WeeklySocial(engine, engine.herald)

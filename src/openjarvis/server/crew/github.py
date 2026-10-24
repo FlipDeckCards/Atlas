@@ -11,6 +11,7 @@ Optional:         CREW_GITHUB_REPOS="owner/repo,owner/repo" (defaults to Michael
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import re
 from typing import Any, Callable, Dict, List, Mapping, Optional
@@ -80,9 +81,10 @@ ClientFactory = Callable[[], httpx.AsyncClient]
 
 
 class GitHub:
-    def __init__(self, env=None, client_factory: Optional[ClientFactory] = None) -> None:
+    def __init__(self, env=None, client_factory: Optional[ClientFactory] = None, sleep=None) -> None:
         self.env = env
         self.cf = client_factory or (lambda: httpx.AsyncClient(timeout=30))
+        self.sleep = sleep or asyncio.sleep
 
     def _h(self) -> Dict[str, str]:
         t = token(self.env)
@@ -161,19 +163,67 @@ class GitHub:
         return {"repo": repo, "branch": branch, "base": base, "sha": commit["sha"], "files": [e["path"] for e in entries],
                 "url": f"https://github.com/{repo}/compare/{base}...{branch}"}
 
+    async def _ensure_pr(self, c, repo: str, branch: str, base: str, title: str, body: str = "") -> Dict[str, Any]:
+        owner = repo.split("/")[0]
+        prs = await self._call(c, "GET", f"/repos/{repo}/pulls", params={"head": f"{owner}:{branch}", "state": "open"})
+        if prs:
+            return prs[0]
+        return await self._call(c, "POST", f"/repos/{repo}/pulls",
+                                json={"title": " ".join(str(title or branch).split())[:120], "head": branch, "base": base,
+                                      "body": (body or "")[:4000] + "\n\nOpened by Aibussol's crew; merged on Michael's Approve."})
+
+    async def checks(self, repo: str, branch: str) -> Dict[str, Any]:
+        """GitHub's automatic checks (tests, lint, build) on the branch's latest commit.
+        -> {state: none | pending | passed | failed, text}. 'none' also covers a repo or an answer with no checks at all."""
+        repo, branch = check_repo(repo, self.env), crew_branch(branch)
+        async with self.cf() as c:
+            body = await self._call(c, "GET", f"/repos/{repo}/commits/{branch}/check-runs", params={"per_page": 50}, ok=(200, 404, 422))
+            runs = body.get("check_runs") if isinstance(body, dict) else None
+            if not runs:
+                return {"state": "none", "text": "No automatic checks have reported on this branch."}
+            bad_words = ("failure", "cancelled", "timed_out", "action_required", "startup_failure")
+            pending = [r for r in runs if r.get("status") != "completed"]
+            failed = [r for r in runs if r.get("conclusion") in bad_words]
+            lines = []
+            for r in failed[:6]:
+                line = f'FAILED {r.get("name")}: {" ".join(str((r.get("output") or {}).get("title") or "").split())[:100]} {" ".join(str((r.get("output") or {}).get("summary") or "").split())[:300]}'.strip()
+                notes = []
+                try:
+                    ann = await self._call(c, "GET", f"/repos/{repo}/check-runs/{r.get('id')}/annotations", ok=(200, 403, 404))
+                    notes = [f'{a.get("path")}:{a.get("start_line")} {" ".join(str(a.get("message") or "").split())[:200]}' for a in (ann if isinstance(ann, list) else [])[:8]]
+                except Exception:
+                    notes = []
+                lines.append(line + ("".join("\n  - " + n for n in notes)))
+        passed = [r for r in runs if r.get("conclusion") in ("success", "neutral", "skipped")]
+        if failed:
+            return {"state": "failed", "text": f"{len(failed)} of {len(runs)} check(s) failed:\n" + "\n".join(lines)}
+        if pending:
+            return {"state": "pending", "text": f"{len(pending)} of {len(runs)} check(s) still running: " + ", ".join(str(r.get("name")) for r in pending[:6])}
+        return {"state": "passed", "text": f"All {len(passed)} check(s) passed: " + ", ".join(str(r.get("name")) for r in passed[:8])}
+
+    async def run_checks(self, repo: str, branch: str, title: str = "", wait_s: int = 110, step_s: int = 10) -> Dict[str, Any]:
+        """Open the pull request for the branch (that is what starts the tests), then wait for the checks to finish. A run that has not
+        reported yet is waited for a little; 'pending' comes back if the time runs out, and Forge simply calls again."""
+        repo, branch = check_repo(repo, self.env), crew_branch(branch)
+        async with self.cf() as c:
+            base = await self.default_branch(c, repo)
+            pr = await self._ensure_pr(c, repo, branch, base, title or branch)
+        waited, res = 0, {"state": "none", "text": ""}
+        while True:
+            res = await self.checks(repo, branch)
+            if res["state"] in ("passed", "failed") or waited >= wait_s or (res["state"] == "none" and waited >= 30):
+                break
+            await self.sleep(step_s)
+            waited += step_s
+        res["pr"] = pr.get("number")
+        return res
+
     async def merge_branch(self, repo: str, branch: str, title: str, body: str = "") -> str:
         """Open (or reuse) a pull request from the crew branch and merge it. Runs only after Michael's Approve."""
         repo, branch = check_repo(repo, self.env), crew_branch(branch)
-        owner = repo.split("/")[0]
         async with self.cf() as c:
             base = await self.default_branch(c, repo)
-            prs = await self._call(c, "GET", f"/repos/{repo}/pulls", params={"head": f"{owner}:{branch}", "state": "open"})
-            if prs:
-                pr = prs[0]
-            else:
-                pr = await self._call(c, "POST", f"/repos/{repo}/pulls",
-                                      json={"title": " ".join(str(title or branch).split())[:120], "head": branch, "base": base,
-                                            "body": (body or "")[:4000] + "\n\nOpened by Aibussol's crew; merged on Michael's Approve."})
+            pr = await self._ensure_pr(c, repo, branch, base, title, body)
             m = await self._call(c, "PUT", f"/repos/{repo}/pulls/{pr['number']}/merge", json={"merge_method": "squash"}, ok=(200,))
         if not m.get("merged"):
             raise GitHubError(f"GitHub did not merge pull request #{pr['number']}: {m.get('message') or 'unknown reason'}.")

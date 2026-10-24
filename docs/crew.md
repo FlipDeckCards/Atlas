@@ -18,6 +18,12 @@ Nothing here is deployed until you deploy it on Render. The crew is **off** unti
 | `CREW_QUIET_HOURS` | LA hours with no new work unless Night Shift is on | `22-6` |
 | `CREW_NOTIFY_URL` | optional phone push: an ntfy.sh topic URL, e.g. `https://ntfy.sh/aibussol-<long-random-word>` (install the free ntfy app and subscribe to the same topic) | |
 | `PUBLIC_BASE_URL` | used for the push notification's link | `https://aibussol.com` |
+| `ATLAS_HELIX_MODEL` | the model Helix thinks on for real work (leading, planning, diagnosing) | `claude-sonnet-5-5` |
+| `ATLAS_HELIX_LIGHT_MODEL` | Helix's model for short everyday chat (set equal to the one above to turn the split off) | `claude-haiku-5-5` |
+| `ATLAS_AGENT_MODEL` | the model most agents run on (Scout stays on `ATLAS_LOOKUP_MODEL`) | `claude-haiku-5-5` |
+| `ATLAS_CODE_MODEL` | the model Forge writes code on | `claude-sonnet-5-5` |
+| `CREW_SENTINEL` | `off` stops Helix from watching Render deploys and investigating failed ones | `on` |
+| `CREW_SENTINEL_MINUTES` / `CREW_SENTINEL_PER_DAY` | how often she looks (default 10) / most investigations a day (default 3) | |
 
 Then deploy manually. On start the server creates its tables (`crew_*`, add-only) and starts the engine inside the web service.
 
@@ -131,3 +137,12 @@ A subscriber (an active Aibussol subscription) gets the same Station with every 
 
 Signed-out visitors to aibussol.com see what Aibussol does, the crew, tools, safety, pricing (live from Stripe via the public
 `/crew/plan.json`) and a sign-in / sign-up box. Signed-in users go straight to their Station.
+
+
+## Helix as the lead engineer
+
+* **Looks for herself (read-only):** `github_files/read/search/activity/failed_runs`, `render_services/deploys/logs`. Repos are limited to `CREW_GITHUB_REPOS`, secrets files are refused and keys, tokens and passwords are masked in anything she reads.
+* **Changes the live service only on your tap:** `render_redeploy/restart/rollback` and a Forge fix each become an Approve card in the Helix inbox (kind `ops`); the server runs it, never the model.
+* **Forge checks its own work:** after each commit `repo_checks` opens the pull request, waits for GitHub's tests and lint, and returns the failing lines. `request_merge` is refused while checks fail, and the merge card says whether they passed.
+* **Sentinel:** every few minutes Helix looks at the newest deploy of each Render service. A failed one is investigated and she posts the cause with a proposal (fix / redeploy / needs you) as a chat message, a phone push and an Approve card.
+* **Memory:** `remember` and `forget` keep short notes (newest 60) that she carries into every conversation.

@@ -710,7 +710,7 @@ function inboxSec(missionId) {
   if (!qs.length) { s.append(mk('div', 'dim', missionId ? 'Nothing from this mission needs you.' : 'Nothing needs you. Questions, approvals and budget requests from the crew land here and in Helix chat.')); return s; }
   if (!_qSeeded) { S.questions.forEach(q => SPOKEN_Q.add(q.id)); _qSeeded = true; }   // existing cards are not read out again on load
   qs.forEach(q => {
-    if (q.kind === 'checkpoint' && !SPOKEN_Q.has(q.id)) {
+    if ((q.kind === 'checkpoint' || q.kind === 'ops') && !SPOKEN_Q.has(q.id)) {
       SPOKEN_Q.add(q.id); pendingVoice = { id: q.id, until: Date.now() + 120000 };
       speakReply('Approval needed. ' + q.text + '. Say approve to confirm, or decline.', null, false);
     }
@@ -724,7 +724,7 @@ function questionCard(q) {
   const isQ = q.kind === 'question';
   const c = mk('div', 'card' + (isQ ? ' q' : ''));
   c.setAttribute('data-qid', q.id);
-  c.append(mk('div', 'k', (q.kind === 'checkpoint' ? 'Approval needed' : q.kind === 'budget' ? 'Budget request' : 'Question') + (m ? ' · ' + (m.title || 'mission') : '')));
+  c.append(mk('div', 'k', (q.kind === 'checkpoint' || q.kind === 'ops' ? 'Approval needed' : q.kind === 'budget' ? 'Budget request' : 'Question') + (m ? ' · ' + (m.title || 'mission') : '')));
   c.append(mk('div', 't', q.text));
   const msg = mk('div', 'msg');
   const send = async (body, btns) => {

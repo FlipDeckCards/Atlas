@@ -50,9 +50,28 @@ Before you say what you can or cannot do, check the tools you actually have. Nev
 Talk like a capable person who works with Michael, not like a machine. Use natural, conversational sentences and contractions. Lead with the answer, then the detail. Keep replies short unless Michael asks for depth. Your replies are often read out loud, so avoid bullet lists, headers, markdown symbols, and long strings of numbers unless he asks for them. Skip filler openers like "Certainly!" or "Great question". Be warm and direct, and say so plainly when you don't know something."""
 
 
-def _with_fallback(model_id: str) -> list:
+# words that mean real work: Helix thinks on the stronger model for these; short everyday chat without them runs on the light one
+_WORK_WORDS = ("mission", "error", "deploy", "github", "render", "log", "stall", "fail", "fix", "bug", "code", "build", "plan", "why", "how ", "diagnos", "investigat",
+               "check", "find", "look", "write", "create", "add ", "remove", "rename", "change", "update", "explain", "analy", "compar", "report", "budget", "approv",
+               "redeploy", "rollback", "restart", "connect", "set up", "setup", "business", "factory", "product", "price", "stripe", "etsy", "marnyx", "flipdeck",
+               "deadzone", "document", "file", "task", "agent", "crew", "design", "research", "remember", "forget", "start", "stop", "cancel", "pause", "resume", "retry")
+
+
+def helix_model(message: str, has_files: bool, cfg: Optional[dict] = None) -> tuple:
+    """Helix's own model: the strong one for work, the light one for short everyday chat. -> (model id, display name, color)."""
+    cfg = cfg or hardening.model_config()
+    msg = str(message or "").lower()
+    light = (not has_files) and len(msg) <= 140 and not any(w in msg for w in _WORK_WORDS) and cfg.get("helix_light")
+    mid = cfg["helix_light"] if light else cfg["helix"]
+    return mid, hardening.display_name(mid), "cyan" if light else "orange"
+
+
+def _with_fallback(model_id: str, crew: bool = False) -> list:
     """The routed model, then the writing model (Claude) when they differ: a provider out of quota (Gemini's free tier) must not stop Helix."""
-    writing = hardening.model_config().get("writing")
+    cfg = hardening.model_config()
+    writing = cfg.get("writing")
+    if crew:                                      # Helix leading the crew: her chosen Claude model, then the older writing model, then the default model
+        return list(dict.fromkeys(m for m in [model_id, writing, cfg.get("default")] if m))
     return [model_id] + ([writing] if writing and writing != model_id else [])
 
 
@@ -1214,7 +1233,7 @@ async def index():
     function addCrewCard(q, missions) {
       const m = (missions || []).find(x => x.id === q.mission_id);
       const wrap = mk('div', 'msg atlas crew-card');
-      const kind = q.kind === 'checkpoint' ? 'APPROVAL NEEDED' : (q.kind === 'budget' ? 'BUDGET REQUEST' : 'QUESTION');
+      const kind = q.kind === 'checkpoint' || q.kind === 'ops' ? 'APPROVAL NEEDED' : (q.kind === 'budget' ? 'BUDGET REQUEST' : 'QUESTION');
       wrap.appendChild(mk('div', 'msg-tag', 'CREW \u00b7 ' + kind + (m ? ' \u00b7 ' + (m.title || 'mission') : '')));
       wrap.appendChild(mk('div', null, q.text));
       const row = mk('div', 'crew-row'); const note = mk('span', 'v-meta');
@@ -1781,6 +1800,8 @@ async def chat(req: ChatRequest, request: Request):
             media_ctx = None
     # the crew (owner accounts, CREW_ENABLED): a yes to a read-back mission start is handled here, with no model call
     crew_ctx = await crew_helix.ctx_for(request)
+    if crew_ctx is not None:                      # Helix leading the crew thinks on Claude: the stronger model for work, the light one for short chat
+        model_id, model_display, model_color = helix_model(req.message, has_files)
     if crew_ctx is not None:
         for doc_name, doc_text in docs:
             crew_helix.remember_document(crew_ctx.user_id, doc_name, doc_text)
@@ -1838,7 +1859,7 @@ async def chat(req: ChatRequest, request: Request):
             return await crew_helix.execute(crew_ctx, name, args)
 
         out = None
-        for mid_ in _with_fallback(model_id):
+        for mid_ in _with_fallback(model_id, crew_ctx is not None):
             try:
                 out = await helix_tools.run_model_with_tools(
                     media_ctx, messages, mid_, req.message,
@@ -1864,7 +1885,7 @@ async def chat(req: ChatRequest, request: Request):
         return JSONResponse({"reply": out["reply"], "ui_actions": out["ui"], "model_display": model_display, "model_color": model_color})
 
     response = None
-    for mid_ in _with_fallback(model_id):
+    for mid_ in _with_fallback(model_id, crew_ctx is not None):
         try:
             response = await litellm.acompletion(model=mid_, messages=messages, max_tokens=hardening.CHAT_MAX_TOKENS)
             reply = response.choices[0].message.content
