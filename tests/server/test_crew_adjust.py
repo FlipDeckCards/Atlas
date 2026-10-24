@@ -1110,3 +1110,15 @@ def test_helix_can_turn_the_barcode_box_off_and_it_is_off_by_default():
     import inspect
     from openjarvis.server.crew import engine as eng
     assert 'args.get("barcode_space") is True' in inspect.getsource(eng.CrewEngine._book)
+
+
+def test_a_failed_voice_transcription_is_shown_not_swallowed():
+    from openjarvis.server.crew.station import STATION_PAGE
+
+    assert "function voiceNote(" in STATION_PAGE and "I DIDN'T CATCH THAT" in STATION_PAGE and "'VOICE ERROR: '" in STATION_PAGE
+
+
+def test_the_wake_word_says_when_the_browsers_speech_service_is_unavailable():
+    from openjarvis.server.crew.station import STATION_PAGE
+
+    assert "WAKE WORD OFFLINE (" in STATION_PAGE and "'network'" in STATION_PAGE

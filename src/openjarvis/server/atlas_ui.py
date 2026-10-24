@@ -238,6 +238,13 @@ async def transcribe(request: Request, audio: UploadFile = File(...)):
             files={"file": (audio.filename or "audio.webm", audio_bytes, audio.content_type or "audio/webm")},
             data={"model": "whisper-1"}
         )
+        if getattr(res, "status_code", 200) != 200:                      # a refused or out-of-credit key used to come back as 200 with empty text: silent
+            logger.error("speech-to-text refused: %s %s", res.status_code, res.text[:300])
+            try:
+                why = (res.json().get("error") or {}).get("message") or res.text[:200]
+            except ValueError:
+                why = res.text[:200]
+            return JSONResponse({"detail": "Speech-to-text failed (%s): %s" % (res.status_code, why)}, status_code=502)
         return JSONResponse({"text": res.json().get("text", "")})
 
 
