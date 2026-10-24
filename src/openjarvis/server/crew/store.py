@@ -303,6 +303,11 @@ class CrewStore:
             rows = await conn.fetch("SELECT * FROM crew_questions WHERE user_id = $1 AND status = $2 ORDER BY created_at LIMIT $3", user_id, status, limit)
         return [_question(dict(r)) for r in rows]
 
+    async def open_questions_all(self, limit: int = 200) -> List[Dict[str, Any]]:
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch("SELECT * FROM crew_questions WHERE status = 'open' ORDER BY created_at LIMIT $1", limit)
+        return [_question(dict(r)) for r in rows]
+
     async def close_question(self, question_id: str, status: str, answer: str) -> Optional[Dict[str, Any]]:
         """open -> status, once. Returns None when the question was already closed (a double tap does nothing twice)."""
         async with self._pool.acquire() as conn:
@@ -522,6 +527,9 @@ class MemoryCrewStore:
              "answer": "", "created_at": self._tick(), "answered_at": None}
         self.questions[r["id"]] = r
         return _question(r)
+
+    async def open_questions_all(self, limit=200):
+        return [_question(r) for r in sorted((q for q in self.questions.values() if q["status"] == "open"), key=lambda q: q["created_at"])[:limit]]
 
     async def get_question(self, question_id):
         r = self.questions.get(question_id)

@@ -194,6 +194,18 @@ CREW_TOOLS: List[Dict[str, Any]] = [
         "description": "Read from a connected platform through its official API (READ actions only; nothing is changed). For example platform etsy, action get_sales with days 30 gives orders and revenue; etsy get_shop; stripe recent_payments or get_balance.",
         "parameters": {"type": "object", "properties": {"platform": {"type": "string"}, "action": {"type": "string"}, "days": {"type": "integer"}}, "required": ["platform", "action"]}}},
     {"type": "function", "function": {
+        "name": "schedule_posts",
+        "description": "Schedule social posts for ONE brand through Marnyx (the connected socials). First call read_platform platform marnyx action list_accounts to get the exact brand name and which platforms it has. "
+                       "You write the posts yourself, here. Up to 28 per call (call again for more). This puts a held approval in the inbox: by default it schedules itself after a hold unless the user declines, "
+                       "or waits for his Approve tap; say which it did. Nothing is posted until then.",
+        "parameters": {"type": "object", "properties": {"business": {"type": "string"},
+                                                        "posts": {"type": "array", "items": {"type": "object", "properties": {
+                                                            "body": {"type": "string"}, "hashtags": {"type": "string"},
+                                                            "platforms": {"type": "array", "items": {"type": "string"}, "description": "instagram, facebook, x, tiktok: only ones the brand has connected"},
+                                                            "scheduled_at": {"type": "string", "description": "ISO time with offset, at least 10 minutes from now, e.g. 2026-10-27T09:00:00-07:00"}},
+                                                            "required": ["body", "platforms", "scheduled_at"]}}},
+                       "required": ["business", "posts"]}}},
+    {"type": "function", "function": {
         "name": "check_connections",
         "description": "Check the connections a user needs before missions can run (GitHub, Stripe, Render, their PC for Rig) and say what to connect next.",
         "parameters": {"type": "object", "properties": {}}}},
@@ -586,6 +598,25 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
             rows = [f'{i.get("name")} ({i.get("status") or "listed"}{", " + i["price"] if i.get("price") else ""})' for i in items[:15]]
             more = f" and {len(items) - 15} more" if len(items) > 15 else ""
             return (f'{want}: ' + ("; ".join(rows) + more if rows else "nothing listed yet") + ". " + (res.get("note") or "")).strip()
+        if name == "schedule_posts":
+            from openjarvis.server.crew import connections as conns_mod, weekly
+
+            envx = await eng.env_for(ctx.user_id)
+            if not conns_mod.marnyx_key(envx):
+                return "Marnyx is not connected. In the Station's Connections panel, connect Marnyx first (Marnyx Settings, Connected apps, Create key)."
+            params = {"business": _clip(args.get("business"), 60), "posts": args.get("posts")}
+            try:
+                conns_mod._week(params)                                                     # the same checks the crew's posts get
+                text = conns_mod.describe_action("marnyx", "schedule_week", params)
+            except conns_mod.ConnectionError_ as exc:
+                return f"Not scheduled: {exc}"
+            at = weekly.auto_at(envx, eng.now())
+            hold = f" It schedules itself in {weekly.hold_hours(envx):g} hours unless you decline it." if at else ""
+            act = {"type": "marnyx_schedule", "business": params["business"], "posts": params["posts"]}
+            if at:
+                act["auto_at"] = at
+            await eng.store.add_question("", "", ctx.user_id, "ops", text + hold, ["Approve", "Decline"], act)
+            return ("NOT POSTED YET. I put this on the Helix inbox: " + text + hold + " Tell the user which it is (held then automatic, or waiting for his Approve tap).")
         if name == "read_platform":
             from openjarvis.server.crew import connections as conns_mod
 

@@ -1193,3 +1193,56 @@ def test_every_reply_has_a_listen_button_and_read_that_again_is_handled_in_the_p
 
     assert "d.append(listenButton(text))" in STATION_PAGE and "function lastHelixText()" in STATION_PAGE
     assert "re-?read" in STATION_PAGE and "speakReply(last, null, true)" in STATION_PAGE
+
+
+class TestSocialAutomation:
+    ENV = {"MARNYX_API_KEY": "mk", "MARNYX_URL": "https://marnyx.example"}
+
+    def _posts(self, n=2):
+        import datetime as _dt
+        t = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=1)
+        return [{"body": f"Post {i}", "hashtags": "#a", "platforms": ["instagram"], "scheduled_at": (t + _dt.timedelta(hours=i)).isoformat()} for i in range(n)]
+
+    def test_the_defaults_are_a_held_week_and_five_posts_a_day(self):
+        from openjarvis.server.crew import weekly
+
+        assert weekly.social_mode({}) == "auto_pause" and weekly.per_day({}) == 5 and weekly.hold_hours({}) == 6.0
+        assert weekly.social_mode({"CREW_SOCIAL_MODE": "approve"}) == "approve" and weekly.auto_at({"CREW_SOCIAL_MODE": "approve"}) == ""
+        assert weekly.auto_at({}) != "" and "5 posts a day" in weekly.GOAL.format(week="x", per_day=5, hold="y") and "TWO marnyx.schedule_week" in weekly.GOAL
+
+    def test_helix_schedule_posts_holds_the_week_and_a_due_hold_schedules_it(self):
+        import datetime as _dt
+        w = world(two_task_plan(), AGENTS)
+        w.engine.env = dict(w.engine.env or {}, **self.ENV)
+        ran = {}
+
+        async def fake_run(platform, action, args, **kw):
+            ran["call"] = (platform, action, args["business"], len(args["posts"]))
+            return "Marnyx accepted 2 of 2 post(s)"
+        from openjarvis.server.crew import connections as conns
+        orig = conns.run
+        conns.run = fake_run
+        try:
+            ctx = helix.CrewCtx(UID, w.engine)
+            out = run(helix.execute(ctx, "schedule_posts", {"business": "FlipDeck", "posts": self._posts()}))
+            assert out.startswith("NOT POSTED YET") and "6 hours" in out
+            q = run(w.store.list_questions(UID, "open"))[-1]
+            assert q["kind"] == "ops" and q["action"]["type"] == "marnyx_schedule" and q["action"]["auto_at"]
+            assert run(w.engine._auto_approve_due()) == 0 and "call" not in ran                       # the hold has not passed
+            q["action"]["auto_at"] = (w.engine.now() - _dt.timedelta(minutes=1)).isoformat()
+            w.store.questions[q["id"]]["action"] = __import__("json").dumps(q["action"])
+            assert run(w.engine._auto_approve_due()) == 1 and ran["call"] == ("marnyx", "schedule_week", "FlipDeck", 2)
+            assert run(w.store.get_question(q["id"]))["status"] == "approved"
+        finally:
+            conns.run = orig
+
+    def test_a_declined_hold_never_runs_and_bad_posts_are_refused(self):
+        w = world(two_task_plan(), AGENTS)
+        w.engine.env = dict(w.engine.env or {}, **self.ENV)
+        ctx = helix.CrewCtx(UID, w.engine)
+        bad = run(helix.execute(ctx, "schedule_posts", {"business": "FlipDeck", "posts": [{"body": "x", "platforms": ["myspace"], "scheduled_at": "2030-01-01T09:00:00-07:00"}]}))
+        assert bad.startswith("Not scheduled")
+        run(helix.execute(ctx, "schedule_posts", {"business": "FlipDeck", "posts": self._posts(1)}))
+        q = run(w.store.list_questions(UID, "open"))[-1]
+        run(w.engine.answer(UID, q["id"], approve=False))
+        assert run(w.engine._auto_approve_due()) == 0
