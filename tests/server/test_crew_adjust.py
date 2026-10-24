@@ -1122,3 +1122,48 @@ def test_the_wake_word_says_when_the_browsers_speech_service_is_unavailable():
     from openjarvis.server.crew.station import STATION_PAGE
 
     assert "WAKE WORD OFFLINE (" in STATION_PAGE and "'network'" in STATION_PAGE
+
+
+class TestEtsySales:
+    def _env(self, http_replies, status=200):
+        import time as _t
+        import httpx
+        from openjarvis.server.crew import connections as conns
+        from tests.server.test_crew import FakeHttp, MemoryCrewStore
+
+        class Http(FakeHttp):
+            async def get(self, url, **kw):
+                self.requests.append(("GET", url, kw))
+                return httpx.Response(status, json=self.replies.get(("GET", url), {"results": []}))
+        store = MemoryCrewStore()
+
+        async def prep():
+            for k, v in (("etsy_shop_id", "77"), ("etsy_access", "tok"), ("etsy_refresh", "r"), ("etsy_expires", str(int(_t.time()) + 3600))):
+                await store.set_secret(UID, k, v)
+        run(prep())
+        env = {"ETSY_API_KEY": "k", "ETSY_SHARED_SECRET": "s", "ETSY_REDIRECT_URI": "https://x/cb"}
+        return conns, store, Http(http_replies), env
+
+    def test_sales_are_summed_from_paid_receipts_and_the_permission_is_requested(self):
+        import time as _t
+        conns0 = __import__("openjarvis.server.crew.connections", fromlist=["x"])
+        assert "transactions_r" in conns0.ETSY_SCOPES
+        now = int(_t.time())
+        rec = lambda amt, ts, paid=True: {"was_paid": paid, "create_timestamp": ts, "grand_total": {"amount": amt, "divisor": 100, "currency_code": "USD"}, "subtotal": {"amount": amt - 100, "divisor": 100}}
+        conns, store, http, env = self._env({("GET", f"{conns0.ETSY_API}/shops/77/receipts"): {"results": [rec(1500, now - 3600), rec(2500, now - 7200), rec(999, now - 9000, paid=False)]}})
+        out = run(conns.run("etsy", "get_sales", {"days": 30}, store=store, user_id=UID, env=env, client_factory=http))
+        assert "2 paid order(s)" in out and "40.00 USD" in out and "fees" in out
+
+    def test_a_missing_permission_tells_the_owner_to_reconnect(self):
+        conns, store, http, env = self._env({}, status=403)
+        try:
+            run(conns.run("etsy", "get_sales", {}, store=store, user_id=UID, env=env, client_factory=http))
+            raise AssertionError("should explain the permission")
+        except conns.ConnectionError_ as exc:
+            assert "Connect it again" in str(exc)
+
+    def test_helix_reads_sales_but_nothing_that_changes_anything(self):
+        w = world(two_task_plan(), AGENTS)
+        ctx = helix.CrewCtx(UID, w.engine)
+        out = run(helix.execute(ctx, "read_platform", {"platform": "etsy", "action": "publish_listings"}))
+        assert out.startswith("I can only read") and "etsy.get_sales" in out
