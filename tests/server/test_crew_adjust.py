@@ -944,3 +944,18 @@ def test_station_has_a_speech_speed_control_next_to_the_voice_switch():
 
     assert 'id="speed-tog"' in STATION_PAGE and "playbackRate = voiceSpeed" in STATION_PAGE and "aibussol_voice_speed" in STATION_PAGE
 
+
+
+def test_typesetter_drops_rules_beside_headings_and_keeps_scene_breaks():
+    from openjarvis.server.crew.typeset import block_split
+
+    kinds = [b["t"] for b in block_split("# Part 1: A\n\n---\n\n## Chapter 1: B\n\ntext one\n\n---\n\ntext two\n\n---\n\n## Chapter 2: C\n\nmore\n\n---\n")]
+    assert kinds == ["h", "h", "p", "hr", "p", "h", "p"]
+
+
+def test_typesetter_never_sets_a_line_wider_than_the_page():
+    from openjarvis.server.crew.typeset import TEXT_W, break_lines, runs, to_words
+
+    words = to_words(runs("Where they saw a threat to job security, I saw a tool to create the freedom I had been chasing for years."))
+    for justify in (True, False):
+        assert all(ln.width <= TEXT_W + 0.01 for ln in break_lines(words, TEXT_W, TEXT_W, 11, justify=justify))
