@@ -242,6 +242,7 @@ CREW_TOOLS: List[Dict[str, Any]] = [
                                                         "title": {"type": "string"}, "author": {"type": "string"}, "subtitle": {"type": "string"}, "publisher": {"type": "string"},
                                                         "files": {"type": "array", "items": {"type": "string"}}, "cover_item": {"type": "string"}, "back_cover_item": {"type": "string"},
                                                         "back_tagline": {"type": "string"}, "back_blurb": {"type": "string"}, "filename": {"type": "string"},
+                                                        "barcode_space": {"type": "boolean", "description": "A white box on the back cover for a printer's barcode. Default false (no box)."},
                                                         "replacements": {"type": "array", "items": {"type": "object", "properties": {"find": {"type": "string"}, "replace": {"type": "string"}}}}},
                        "required": ["mission_id"]}}},
     {"type": "function", "function": {
@@ -674,7 +675,7 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
                                            "Use that item id wherever an image item is needed (for a book: cover_item).\n")
             return "Attached to the mission: " + ", ".join(f'{i["name"]} (item {i["item_id"]})' for i in pick) + ". Its agents will see a note in the outbox."
         if name == "build_book":
-            keep = ("base", "title", "author", "subtitle", "publisher", "files", "cover_item", "back_cover_item", "back_tagline", "back_blurb", "filename", "replacements")
+            keep = ("base", "title", "author", "subtitle", "publisher", "files", "cover_item", "back_cover_item", "back_tagline", "back_blurb", "filename", "barcode_space", "replacements")
             return await eng.build_book(ctx.user_id, str(args.get("mission_id") or ""), {k: args[k] for k in keep if k in args})
         if name == "inspect_image":
             return await eng.inspect_image_item(ctx.user_id, str(args.get("media_item_id") or "").strip()[:80], args.get("y0"), args.get("y1"))

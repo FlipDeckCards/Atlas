@@ -1102,3 +1102,11 @@ class TestHelixBuildsBooks:
         w, m, task = t.setup()
         out = run(helix.execute(helix.CrewCtx(UID, w.engine), "build_book", {"mission_id": m["id"], "base": "Old.pdf"}))
         assert out.startswith("Error: no saved settings")
+
+
+def test_helix_can_turn_the_barcode_box_off_and_it_is_off_by_default():
+    props = [t for t in helix.CREW_TOOLS if t["function"]["name"] == "build_book"][0]["function"]["parameters"]["properties"]
+    assert "barcode_space" in props
+    import inspect
+    from openjarvis.server.crew import engine as eng
+    assert 'args.get("barcode_space") is True' in inspect.getsource(eng.CrewEngine._book)
