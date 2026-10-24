@@ -1139,12 +1139,13 @@ function dirOf(dx, dy, prev) { if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) r
 const botSheet = new Image(); let botReady = false;
 botSheet.onload = () => { botReady = true; }; botSheet.src = '/crew/bots.png?v=' + BOT_VER;
 // Michael's own artwork, used when the file exists (a 404 leaves the built-in drawing): asteroids, the satellite, and Helix walking the deck
+const HELIX_ON_DECK = false;                                    // Helix does not walk the ring (it did not look right); her art stays in assets/art for another use
 const ART = { rocks: [], satellite: null, helix: null, helixViews: null };
 function loadArt(name, done) { const im = new Image(); im.onload = () => done(im); im.onerror = () => {}; im.src = '/crew/art/' + name; }
 ['asteroid1.png', 'asteroid2.png', 'asteroid3.png'].forEach(n => loadArt(n, im => ART.rocks.push(im)));
 loadArt('satellite.png', im => { ART.satellite = im; });
-loadArt('helix-walk.png', im => { ART.helix = im; });
-loadArt('helix-views.png', im => { ART.helixViews = im; });     // four square pictures in a row: front, back, facing right, facing left; her walk is animated in code           // the same sheet layout as bots.png, one row: standing, then 4 walk frames each for front, back, right, left
+if (HELIX_ON_DECK) loadArt('helix-walk.png', im => { ART.helix = im; });
+if (HELIX_ON_DECK) loadArt('helix-views.png', im => { ART.helixViews = im; });     // four square pictures in a row: front, back, facing right, facing left; her walk is animated in code           // the same sheet layout as bots.png, one row: standing, then 4 walk frames each for front, back, right, left
 // the businesses on this Station: the owner's products, or a subscriber's own (from the server)
 function prods() {
   return (S && S.businesses ? S.businesses : []).map(b => ({ key: b.key, label: String(b.name).toUpperCase(), color: b.color || '#ff4fb8', url: b.url || '' }));
@@ -1734,7 +1735,7 @@ function drawCore(t) {
   });
   // each figure has its own pace and mind: it wanders around the deck, turns back, pauses, and drifts between the inner and outer lane
   const hash = (str) => { let h = 7; for (let c = 0; c < str.length; c++) h = (h * 31 + str.charCodeAt(c)) % 100003; return h; };
-  if (ART.helix || ART.helixViews) onDeck.push({ role: 'lead', status: 'idle' });                                           // Helix herself, walking among her crew
+  if (HELIX_ON_DECK && (ART.helix || ART.helixViews)) onDeck.push({ role: 'lead', status: 'idle' });                                           // Helix herself, walking among her crew
   onDeck.forEach((a, i) => {
     const h = hash(a.role), R = (k) => { const v = Math.sin(h * 12.9898 + k * 78.233) * 43758.5453; return v - Math.floor(v); };
     const dir = R(1) < 0.5 ? -1 : 1, a0 = -Math.PI / 2 + i * (Math.PI * 2 / Math.max(onDeck.length, 1)) + R(2) * 0.5;
