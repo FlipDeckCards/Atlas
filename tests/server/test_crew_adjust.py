@@ -775,3 +775,10 @@ class TestEditingATaskThatAlreadyStarted:
     def test_the_owner_is_not_told_to_expect_a_budget_card(self):
         w = world(two_task_plan(), AGENTS)
         assert "top up their own budget" in run(helix.system_addendum(helix.CrewCtx(UID, w.engine)))
+
+
+class TestStationNeverGoesBlankWhileDragging:
+    def test_the_picture_is_painted_again_in_the_same_step_the_canvas_is_resized(self):
+        from openjarvis.server.crew.station import STATION_PAGE
+        assert "function paint(t)" in STATION_PAGE and "resize();                                              // resizing the canvas clears it" in STATION_PAGE
+        assert "paint(performance.now());" in STATION_PAGE and "requestAnimationFrame(() => { queued = false; last = key; resize(); })" not in STATION_PAGE

@@ -1192,11 +1192,13 @@ window.addEventListener('resize', resize);
 // dragging a column or the chat changes the stage's box: redraw the canvas at its real size (it was being stretched, which squished the ring)
 (function () {
   const stage = document.getElementById('stage'); if (!stage || !window.ResizeObserver) return;
-  let last = '', queued = false;
+  let last = '';
   new ResizeObserver(() => {
     const r = stage.getBoundingClientRect(), key = Math.round(r.width) + 'x' + Math.round(r.height);
-    if (key === last || queued) return;
-    queued = true; requestAnimationFrame(() => { queued = false; last = key; resize(); });
+    if (key === last) return;
+    last = key;
+    resize();                                              // resizing the canvas clears it, so the picture is painted again in the same step:
+    paint(performance.now());                              // the browser never gets to show an empty station while you drag
   }).observe(stage);
 })();
 
@@ -1760,6 +1762,9 @@ function drawCore(t) {
 function frame(t) {
   requestAnimationFrame(frame);
   if (document.hidden || t - lastDraw < 33) return;
+  paint(t);
+}
+function paint(t) {                                       // one whole picture of the station, never a partial one
   const dt = Math.min(100, t - (lastT || t)); lastT = t; lastDraw = t;
   ctx.clearRect(0, 0, W, H);
   drawSky(t);
