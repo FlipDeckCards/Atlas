@@ -1815,7 +1815,27 @@ function chatMsg(role, text) {
   const extra = LIVE.get(role + '|' + text);
   if (extra && extra.imgs) extra.imgs.forEach(u => { const im = mk('img', 'th'); im.src = u; im.alt = 'attached image'; d.append(im); });
   if (extra && extra.openId) { const b = mk('button', 'lib-f', 'Open'); b.style.marginTop = '6px'; b.onclick = () => openMedia(extra.openId); d.append(b); }
+  if (role !== 'user' && String(text).length > 2 && text !== '…') d.append(listenButton(text));       // every reply of hers can be read aloud again
   return d;
+}
+let _listenBtn = null;
+function listenButton(text) {
+  const row = mk('div'); row.style.marginTop = '6px';
+  const b = mk('button', 'lib-f', '🔊 Listen');
+  b.onclick = () => {
+    if (_listenBtn === b && _curAudio) { stopSpeech(); b.textContent = '🔊 Listen'; _listenBtn = null; return; }          // a second tap stops it
+    if (_listenBtn && _listenBtn !== b) _listenBtn.textContent = '🔊 Listen';
+    _listenBtn = b; b.textContent = '⏹ Stop';
+    speakReply(String(text), row, true).finally(() => {
+      const t = setInterval(() => { if (_listenBtn !== b) { clearInterval(t); } else if (!_curAudio) { clearInterval(t); b.textContent = '🔊 Listen'; _listenBtn = null; } }, 500);     // back to Listen when she finishes
+    });
+  };
+  row.append(b);
+  return row;
+}
+function lastHelixText() {
+  const msgs = [...document.querySelectorAll('#chat-log .cm.a')].filter(x => x.firstChild && x.firstChild.textContent === 'HELIX' && x.children[1]);
+  return msgs.length ? msgs[msgs.length - 1].children[1].textContent : '';
 }
 // briefs from the feed show in the chat with a Listen button (what Herald and the old brief tasks post)
 const BRIEFS = [];
@@ -1826,7 +1846,8 @@ async function checkBriefs() {
   const r = await api('/api/briefs/latest').catch(() => null);
   if (!r || !r.ok) return;
   const fresh = (r.data.items || []).filter(b => !seenBriefs().includes(b.id)).reverse();
-  fresh.forEach(b => { BRIEFS.push(b); markBriefSeen(b.id); });
+  fresh.forEach(b => markBriefSeen(b.id));
+  fresh.slice(-2).forEach(b => BRIEFS.push(b));                          // a long backlog (a new browser has seen none) shows only the 2 newest, not all of them
   if (fresh.length) loadChat(true);
 }
 function briefCard(b) {
@@ -2039,14 +2060,19 @@ async function loadChat(force) {
   const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
   log.textContent = '';
   if (!msgs.length && !BRIEFS.length) log.append(mk('div', 'dim', 'Talk to Helix here, type or say "Hey Helix". Say "build me…" to start a mission.'));
+  BRIEFS.slice(-2).forEach(b => log.append(briefCard(b)));                // new briefs sit above the conversation (the 2 newest), so the latest replies are what you see at the bottom
   msgs.forEach(m => log.append(chatMsg(m.role, m.content)));
-  BRIEFS.forEach(b => log.append(briefCard(b)));
   if (atBottom || force) log.scrollTop = log.scrollHeight;
 }
 async function sendChat() {
   const inp = document.getElementById('chat-in');
   const text = inp.value.trim() || (pending.length ? 'Please look at the attached ' + (pending.length > 1 ? 'files.' : pending[0].doc ? 'document.' : 'image.') : '');
   if (!text || chatBusy) return;
+  if (/^(?:hey helix[,.]?\s*)?(?:please\s+)?(?:re-?read|read (?:that|it|the last (?:message|reply|one)|(?:that|it) (?:again|back))|say (?:that|it) again|repeat (?:that|it|the last (?:message|reply|one)))\b/i.test(text)) {
+    const last = lastHelixText();                                                      // "read that again": spoken from the chat itself, no model call
+    inp.value = '';
+    if (last) { speakReply(last, null, true); return; }
+  }
   chatBusy = true; inp.value = '';
   const log = document.getElementById('chat-log');
   const media = text.match(/^\/(image|sound)\s+([\s\S]+)/i);           // "/image a red fox", "/sound hello there"

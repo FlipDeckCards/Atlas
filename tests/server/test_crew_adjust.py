@@ -1122,3 +1122,74 @@ def test_the_wake_word_says_when_the_browsers_speech_service_is_unavailable():
     from openjarvis.server.crew.station import STATION_PAGE
 
     assert "WAKE WORD OFFLINE (" in STATION_PAGE and "'network'" in STATION_PAGE
+
+
+class TestEtsySales:
+    def _env(self, http_replies, status=200):
+        import time as _t
+        import httpx
+        from openjarvis.server.crew import connections as conns
+        from tests.server.test_crew import FakeHttp, MemoryCrewStore
+
+        class Http(FakeHttp):
+            async def get(self, url, **kw):
+                self.requests.append(("GET", url, kw))
+                return httpx.Response(status, json=self.replies.get(("GET", url), {"results": []}))
+        store = MemoryCrewStore()
+
+        async def prep():
+            for k, v in (("etsy_shop_id", "77"), ("etsy_access", "tok"), ("etsy_refresh", "r"), ("etsy_expires", str(int(_t.time()) + 3600))):
+                await store.set_secret(UID, k, v)
+        run(prep())
+        env = {"ETSY_API_KEY": "k", "ETSY_SHARED_SECRET": "s", "ETSY_REDIRECT_URI": "https://x/cb"}
+        return conns, store, Http(http_replies), env
+
+    def test_sales_are_summed_from_paid_receipts_and_the_permission_is_requested(self):
+        import time as _t
+        conns0 = __import__("openjarvis.server.crew.connections", fromlist=["x"])
+        assert "transactions_r" in conns0.ETSY_SCOPES
+        now = int(_t.time())
+        rec = lambda amt, ts, paid=True: {"was_paid": paid, "create_timestamp": ts, "grand_total": {"amount": amt, "divisor": 100, "currency_code": "USD"}, "subtotal": {"amount": amt - 100, "divisor": 100}}
+        conns, store, http, env = self._env({("GET", f"{conns0.ETSY_API}/shops/77/receipts"): {"results": [rec(1500, now - 3600), rec(2500, now - 7200), rec(999, now - 9000, paid=False)]}})
+        out = run(conns.run("etsy", "get_sales", {"days": 30}, store=store, user_id=UID, env=env, client_factory=http))
+        assert "2 paid order(s)" in out and "40.00 USD" in out and "fees" in out
+
+    def test_a_missing_permission_tells_the_owner_to_reconnect(self):
+        conns, store, http, env = self._env({}, status=403)
+        try:
+            run(conns.run("etsy", "get_sales", {}, store=store, user_id=UID, env=env, client_factory=http))
+            raise AssertionError("should explain the permission")
+        except conns.ConnectionError_ as exc:
+            assert "Connect it again" in str(exc)
+
+    def test_helix_reads_sales_but_nothing_that_changes_anything(self):
+        w = world(two_task_plan(), AGENTS)
+        ctx = helix.CrewCtx(UID, w.engine)
+        out = run(helix.execute(ctx, "read_platform", {"platform": "etsy", "action": "publish_listings"}))
+        assert out.startswith("I can only read") and "etsy.get_sales" in out
+
+
+def test_briefs_sit_above_the_conversation_and_a_backlog_shows_only_two():
+    from openjarvis.server.crew.station import STATION_PAGE
+
+    assert STATION_PAGE.index("BRIEFS.slice(-2).forEach(b => log.append(briefCard(b)))") < STATION_PAGE.index("msgs.forEach(m => log.append(chatMsg(m.role, m.content)))")
+    assert "fresh.slice(-2).forEach(b => BRIEFS.push(b))" in STATION_PAGE
+
+
+def test_the_brief_lists_what_is_waiting_on_michael_and_stays_basic():
+    from openjarvis.server.crew.herald import glance_lines, pending_lines
+
+    qs = [{"text": "Merge   Forge's branch crew/x into main of FlipDeckCards/Atlas: " + "very long " * 30}] + [{"text": f"Item {i}"} for i in range(6)]
+    lines = pending_lines(qs, {})
+    assert len(lines) == 6 and lines[0].startswith("- Merge Forge's branch") and len(lines[0]) <= 114 and lines[-1].startswith("- ...and 2 more")
+    assert pending_lines([], {}) == ["- Nothing is waiting on you."]
+    g = glance_lines({"total": {"revenue_today": 1.0, "cost_today": 2.0, "net_today": -1.0, "revenue_30d": 5.0, "cost_30d": 9.0, "net_30d": -4.0, "mrr": 4.99, "subscribers": 1}},
+                     {}, {"users_total": 4, "active_24h": 1, "new_users_7d": 0}, {"running": 1, "queued": 4, "done_today": 3})
+    assert len(g) == 5 and not any("unchecked" in x.lower() or "Sites" in x for x in g)
+
+
+def test_every_reply_has_a_listen_button_and_read_that_again_is_handled_in_the_page():
+    from openjarvis.server.crew.station import STATION_PAGE
+
+    assert "d.append(listenButton(text))" in STATION_PAGE and "function lastHelixText()" in STATION_PAGE
+    assert "re-?read" in STATION_PAGE and "speakReply(last, null, true)" in STATION_PAGE

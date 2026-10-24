@@ -190,6 +190,10 @@ CREW_TOOLS: List[Dict[str, Any]] = [
         "description": "List what a factory has for sale or live: its products and listings. Name a factory: etsy, stripe, google_play, app_store, or a business on the All businesses box.",
         "parameters": {"type": "object", "properties": {"factory": {"type": "string"}}, "required": ["factory"]}}},
     {"type": "function", "function": {
+        "name": "read_platform",
+        "description": "Read from a connected platform through its official API (READ actions only; nothing is changed). For example platform etsy, action get_sales with days 30 gives orders and revenue; etsy get_shop; stripe recent_payments or get_balance.",
+        "parameters": {"type": "object", "properties": {"platform": {"type": "string"}, "action": {"type": "string"}, "days": {"type": "integer"}}, "required": ["platform", "action"]}}},
+    {"type": "function", "function": {
         "name": "check_connections",
         "description": "Check the connections a user needs before missions can run (GitHub, Stripe, Render, their PC for Rig) and say what to connect next.",
         "parameters": {"type": "object", "properties": {}}}},
@@ -582,6 +586,17 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
             rows = [f'{i.get("name")} ({i.get("status") or "listed"}{", " + i["price"] if i.get("price") else ""})' for i in items[:15]]
             more = f" and {len(items) - 15} more" if len(items) > 15 else ""
             return (f'{want}: ' + ("; ".join(rows) + more if rows else "nothing listed yet") + ". " + (res.get("note") or "")).strip()
+        if name == "read_platform":
+            from openjarvis.server.crew import connections as conns_mod
+
+            plat, act = _clip(args.get("platform"), 30).lower().replace(" ", "_"), _clip(args.get("action"), 40)
+            if conns_mod.risk_of(plat, act) != "read":
+                return "I can only read from a platform here. Reads available: " + "; ".join(f"{p}.{a}" for p, d in conns_mod.ACTIONS.items() for a, v in d.items() if v["risk"] == "read") + "."
+            try:
+                return await conns_mod.run(plat, act, {k: args[k] for k in ("days",) if k in args}, store=eng.store, user_id=ctx.user_id, mission_id="",
+                                           env=await eng.env_for(ctx.user_id), client_factory=eng.client_factory or conns_mod._default_client)
+            except conns_mod.ConnectionError_ as exc:
+                return f"Could not read it: {exc}"
         if name == "check_connections":
             from openjarvis.server.crew import connections as conns
 

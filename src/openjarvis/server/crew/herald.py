@@ -53,13 +53,15 @@ NUMBER_WORDS = {"users_total": "total users", "paying_now": "paying now", "new_u
                 "failed_7d": "posts failed in 7 days"}
 
 
+SHORT_WORDS = {"users_total": "users", "paying_now": "paying", "new_users_24h": "new today", "visitors_24h": "visitors today"}
+
+
 async def product_numbers(env) -> List[str]:
     out = []
     for name, (var, sql) in PRODUCT_SQL.items():
         dsn = (env.get(var) or "").strip()
         if not dsn:
-            out.append(brief_content.unchecked_line(f"{name} user numbers", f"{var} is not set"))
-            continue
+            continue                                                  # a product with no database connection is left out of the brief, not listed as unchecked
         try:
             import asyncio
 
@@ -71,10 +73,10 @@ async def product_numbers(env) -> List[str]:
                 row = await asyncio.wait_for(conn.fetchrow(sql), timeout=20)
             finally:
                 await conn.close()
-            out.append(f"- {name}: " + ", ".join(f"{int(row[k] or 0)} {NUMBER_WORDS.get(k, k)}" for k in row.keys()) + ".")
+            keep = [k for k in ("users_total", "paying_now", "new_users_24h", "visitors_24h") if k in row.keys()]
+            out.append(f"- {name}: " + ", ".join(f"{int(row[k] or 0)} {SHORT_WORDS[k]}" for k in keep) + ".")
         except Exception as exc:
             logger.warning("herald: %s numbers failed: %s", name, type(exc).__name__)
-            out.append(brief_content.unchecked_line(f"{name} user numbers", "the database could not be read"))
     return out
 
 
@@ -100,37 +102,28 @@ def next_slot(now: dt.datetime) -> dt.datetime:
 
 def glance_lines(fin: Optional[Dict[str, Any]], products: Dict[str, Any], stats: Optional[Dict[str, Any]], crew: Dict[str, int],
                  names: Optional[Dict[str, str]] = None, owner: bool = True) -> List[str]:
+    """The brief's numbers, kept basic: money, subscribers, Aibussol's users, and the crew's counts. No site checks, no per-product lists, no 'unchecked' lines."""
     out: List[str] = []
-    NAMES = dict(globals()["NAMES"], **(names or {}))
     if fin:
         t = fin["total"]
         out.append(f"- Money today: in {_money(t['revenue_today'])}, out {_money(t['cost_today'])}, net {_money(t['net_today'])}.")
-        out.append(f"- Last 30 days: in {_money(t['revenue_30d'])}, out {_money(t['cost_30d'])}, net {_money(t['net_30d'])}. "
-                   f"MRR {_money(t['mrr'])} from {t['subscribers']} subscriber(s).")
-        rows = sorted(fin["factories"].items(), key=lambda kv: -(kv[1]["revenue_30d"] + kv[1]["cost_30d"]))
-        for k, r in rows:
-            if r["revenue_30d"] or r["cost_30d"] or r["mrr"]:
-                out.append(f"- {NAMES.get(k, k.removeprefix('new:'))}: today in {_money(r['revenue_today'])} / out {_money(r['cost_today'])}; "
-                           f"30 days net {_money(r['net_30d'])}; MRR {_money(r['mrr'])}.")
-        if not fin.get("stripe_ok"):
-            out.append("- Stripe: unchecked (" + "; ".join(n for n in fin.get("notes", []) if "Stripe" in n)[:120] + ").")
-    else:
-        out.append(brief_content.unchecked_line("Money per business", "could not be read"))
-    if products:
-        down = [NAMES.get(k, k) for k, p in products.items() if not p.get("live")]
-        up = [NAMES.get(k, k) for k, p in products.items() if p.get("live")]
-        out.append("- Sites: " + (", ".join(up) + " live" if up else "none live") + ("; DOWN: " + ", ".join(down) if down else "") + ".")
-    else:
-        out.append(brief_content.unchecked_line("Product sites", "not checked yet"))
-    if not owner:
-        pass
-    elif stats:
-        out.append(f"- Aibussol: {stats.get('users_total', 0)} users, {stats.get('active_24h', 0)} active in 24 hours, "
-                   f"{stats.get('new_users_7d', 0)} new this week, {stats.get('subscribers_active', 0)} subscriber(s).")
-    else:
-        out.append(brief_content.unchecked_line("Aibussol users", "could not be read"))
-    out.append(f"- Crew: {crew.get('running', 0)} task(s) running, {crew.get('waiting', 0)} waiting on you, "
-               f"{crew.get('done_today', 0)} finished today.")
+        out.append(f"- Last 30 days: in {_money(t['revenue_30d'])}, out {_money(t['cost_30d'])}, net {_money(t['net_30d'])}.")
+        out.append(f"- Subscriptions: MRR {_money(t['mrr'])} from {t['subscribers']} subscriber(s).")
+    if owner and stats:
+        out.append(f"- Aibussol: {stats.get('users_total', 0)} users, {stats.get('active_24h', 0)} active today, {stats.get('new_users_7d', 0)} new this week.")
+    out.append(f"- Crew: {crew.get('running', 0)} running, {crew.get('queued', 0)} queued, {crew.get('done_today', 0)} finished today.")
+    return out
+
+
+def pending_lines(questions: List[Dict[str, Any]], crew: Dict[str, int]) -> List[str]:
+    """What is waiting on Michael: each open approval or question on its own line (the first 5), then a count of the rest."""
+    out: List[str] = []
+    for q in questions[:5]:
+        out.append("- " + " ".join(str(q.get("text") or "").split())[:110])
+    if len(questions) > 5:
+        out.append(f"- ...and {len(questions) - 5} more in the Helix inbox.")
+    if not out:
+        out.append("- Nothing is waiting on you.")
     return out
 
 
@@ -198,7 +191,7 @@ class Herald:
         return await self.run(p)
 
     async def _crew_counts(self, uid: str) -> Dict[str, int]:
-        out = {"running": 0, "waiting": 0, "done_today": 0}
+        out = {"running": 0, "waiting": 0, "queued": 0, "done_today": 0}
         try:
             start = brief_content.la_time(self.now()).replace(hour=0, minute=0, second=0, microsecond=0)
             for m in await self.engine.store.list_missions(uid, 50):
@@ -207,6 +200,8 @@ class Herald:
                         out["running"] += 1
                     elif t["status"] == "waiting":
                         out["waiting"] += 1
+                    elif t["status"] == "queued" and m["status"] == "active":
+                        out["queued"] += 1
                     elif t["status"] == "done" and t.get("updated_at") and dt.datetime.fromisoformat(str(t["updated_at"])) >= start:
                         out["done_today"] += 1
         except Exception:
@@ -253,25 +248,27 @@ class Herald:
             env = dict(os.environ) if self.env is None else dict(self.env)
             if not env.get("STRIPE_READ_KEY") and env.get("STRIPE_SECRET_KEY"):
                 env["STRIPE_READ_KEY"] = env["STRIPE_SECRET_KEY"]
-            base = await self.make_brief(period, n, env)
             fin = await self._finance(uid) if uid else None
-            glance = glance_lines(fin, dict(getattr(self.engine, "products", {}) or {}), await self._stats(), await self._crew_counts(uid) if uid else {})
+            crew = await self._crew_counts(uid) if uid else {}
+            glance = glance_lines(fin, {}, await self._stats(), crew)
             try:
                 glance += await self.numbers_fn(env)
             except Exception:
                 logger.exception("herald: product numbers failed")
-            act = base["body_markdown"].split("## Act on first", 1)[-1].strip().splitlines()[0] if "## Act on first" in base["body_markdown"] else ""
-            body = base["body_markdown"]
-            head, _, rest = body.partition("\n\n")
-            body = head + "\n\n## At a glance\n" + "\n".join(glance) + "\n\n" + rest
+            try:
+                questions = await self.engine.store.list_questions(uid, "open") if uid else []
+            except Exception:
+                questions = []
+            pend = pending_lines(questions, crew)
+            greeting = {"morning": "Good morning", "afternoon": "Good afternoon", "evening": "Good evening"}[period]
+            body = f"{greeting}, Michael.\n\n## Numbers\n" + "\n".join(glance) + "\n\n## Waiting on you\n" + "\n".join(pend)
+            base = {"product": "FlipDeck and Marnyx", "period": period}
+            act = pend[0].lstrip("- ")
+            spoken = (glance[0].lstrip("- ") + " " + (f"{len(questions)} thing(s) are waiting on you." if questions else "Nothing is waiting on you.")).replace("Money today:", "Money today,")
+            base["spoken_summary"] = spoken
             from openjarvis.server.briefs import clean_for_storage
 
-            prev = None
-            try:
-                prev_row = await self.store.latest_for_product(base["product"]) if hasattr(self.store, "latest_for_product") else None
-                prev = prev_row["body"] if prev_row else None
-            except Exception:
-                prev = None
+            prev = None                                                   # a basic brief repeats its numbers on purpose: nothing is dropped as 'already reported'
             body, spoken = clean_for_storage(body[:20_000], base["spoken_summary"], prev)
             saved = await self.store.insert(base["product"], period, body, spoken)
             title = f"{PERIOD_NAMES[period]} brief"

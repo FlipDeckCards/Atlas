@@ -38,7 +38,7 @@ STRIPE_API = "https://api.stripe.com/v1"
 ETSY_API = "https://openapi.etsy.com/v3/application"
 ETSY_TOKEN_URL = "https://api.etsy.com/v3/public/oauth/token"
 ETSY_CONNECT_URL = "https://www.etsy.com/oauth/connect"
-ETSY_SCOPES = "listings_r listings_w shops_r"
+ETSY_SCOPES = "listings_r listings_w shops_r transactions_r"
 
 ACTIONS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "stripe": {
@@ -58,6 +58,8 @@ ACTIONS: Dict[str, Dict[str, Dict[str, Any]]] = {
     },
     "etsy": {
         "get_shop": {"risk": "read", "about": "Read the connected Etsy shop's name and listing counts.", "args": {}},
+        "get_sales": {"risk": "read", "about": "Read the shop's orders and revenue over the last N days (needs Etsy's sales permission: reconnect Etsy once after it was added).",
+                      "args": {"days": "integer, 1 to 90 (default 30)"}},
         "create_draft_listing": {"risk": "draft", "about": "Create a DRAFT Etsy listing (not visible to buyers, no listing fee until the owner activates it).",
                                  "args": {"title": "text", "description": "text", "price_usd": "number", "quantity": "integer",
                                           "taxonomy_id": "integer (Etsy category id)", "who_made": "i_did | someone_else | collective",
@@ -650,6 +652,42 @@ async def etsy_shop_id(store, user_id: str, env, c) -> str:
     return shop_id
 
 
+def _money(m: Any) -> float:
+    try:
+        return int(m.get("amount")) / max(1, int(m.get("divisor") or 100))
+    except (AttributeError, TypeError, ValueError):
+        return 0.0
+
+
+async def _etsy_sales(c: httpx.AsyncClient, shop_id: str, h: Dict[str, str], args: Dict[str, Any]) -> str:
+    """Orders and revenue over the last N days from the shop's receipts. Etsy's own fees are not in this number."""
+    try:
+        days = max(1, min(int(args.get("days") or 30), 90))
+    except (TypeError, ValueError):
+        days = 30
+    since = int(time.time()) - days * 86400
+    rows: List[Dict[str, Any]] = []
+    for page in range(5):                                                       # up to 500 orders
+        r = await c.get(f"{ETSY_API}/shops/{shop_id}/receipts", headers=h, params={"min_created": since, "limit": 100, "offset": page * 100})
+        if r.status_code in (401, 403):
+            raise ConnectionError_("Etsy has not allowed reading orders yet. In the Station, Disconnect Etsy and Connect it again, and approve the sales (transactions) permission.")
+        body = _ok(r, "Etsy")
+        batch = body.get("results") or []
+        rows += batch
+        if len(batch) < 100:
+            break
+    paid = [x for x in rows if x.get("was_paid", True)]
+    if not paid:
+        return f"Etsy: no paid orders in the last {days} days."
+    cur = ((paid[0].get("grand_total") or {}).get("currency_code")) or "USD"
+    gross = sum(_money(x.get("grand_total")) for x in paid)
+    items = sum(_money(x.get("subtotal")) for x in paid)
+    recent = sorted(paid, key=lambda x: x.get("create_timestamp") or 0, reverse=True)[:5]
+    lines = [f'{time.strftime("%b %d", time.gmtime(x.get("create_timestamp") or 0))}: {_money(x.get("grand_total")):.2f} {cur}' for x in recent]
+    return (f"Etsy, last {days} days: {len(paid)} paid order(s), {gross:.2f} {cur} total paid by buyers ({items:.2f} for the items). "
+            "Etsy's fees and payment costs are not taken out of these numbers. Latest orders: " + "; ".join(lines) + ".")
+
+
 async def _etsy(action: str, args: Dict[str, Any], *, store, user_id: str, env, cf: ClientFactory, mission_id: str = "", media_fetch=None) -> str:
     async with cf() as c:
         shop_id = await etsy_shop_id(store, user_id, env, c)
@@ -658,6 +696,8 @@ async def _etsy(action: str, args: Dict[str, Any], *, store, user_id: str, env, 
         if action == "get_shop":
             b = _ok(await c.get(f"{ETSY_API}/shops/{shop_id}", headers=h), "Etsy")
             return f'Etsy shop "{b.get("shop_name")}": {b.get("listing_active_count", 0)} active listings, {b.get("digital_listing_count", 0)} digital.'
+        if action == "get_sales":
+            return await _etsy_sales(c, shop_id, h, args)
         if action == "create_draft_listing":
             title = _clip(args.get("title"), 140)
             if not title:

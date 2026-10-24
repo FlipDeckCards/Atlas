@@ -809,7 +809,9 @@ class TestHerald:
         assert out["ok"] and out["period"] == "morning"
         assert run(h.maybe_run()) is None                                        # the same slot is never made twice
         body = bs.rows[0]["body"]
-        assert "## At a glance" in body and "in $12.00, out $1.00, net $11.00" in body and "DOWN: Deadzone" in body and "212 users" in body and "32 total users" in body
+        assert "## Numbers" in body and "in $12.00, out $1.00, net $11.00" in body and "212 users" in body and "32 total users" in body
+        assert "## Waiting on you" in body and "Nothing is waiting on you." in body
+        assert "DOWN" not in body and "unchecked" not in body and "Render deploy" not in body                 # basic: numbers and pending items only
         assert notes.sent and notes.sent[0][1] == "Morning brief" and "Money today" in notes.sent[0][2]
 
     def test_nothing_outside_the_slots_but_send_now_works(self):
