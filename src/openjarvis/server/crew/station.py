@@ -313,7 +313,7 @@ const TOKEN_KEY = 'aibussol_token';
 const token = () => localStorage.getItem(TOKEN_KEY) || '';
 const PROJECT_COLORS = { flipdeck:'#ff6d00', marnyx:'#b06cff', deadzone:'#ff3344', aibussol:'#00e5ff', 'new':'#ff4fb8' };
 const ROLE_COLORS = { lead:'#00e5ff', researcher:'#5ad1ff', builder:'#4dffc3', writer:'#ffc14d', designer:'#ff7ad9', operator:'#ff6d00', reviewer:'#c8ff4d', briefer:'#eef3ff', workbench:'#a970ff',
-  marketer:'#ff3d6e', social:'#ffe600', support:'#6b8cff', analyst:'#00c2a8', qa:'#ff9a3d', finance:'#2bd96b' };
+  marketer:'#ff3d6e', social:'#ffe600', support:'#6b8cff', analyst:'#00c2a8', qa:'#ff9a3d', finance:'#2bd96b', weather:'#7fc8ff' };
 const STATUS_COLORS = { queued:'#2a5060', running:'#00e5ff', waiting:'#ff6d00', done:'#00ff88', failed:'#ff3344', cancelled:'#2a3a44' };
 let S = null, selected = 'hub', lastDraw = 0, pollTimer = null;
 
@@ -364,6 +364,7 @@ const LAND_CREW = [
   ['analyst', 'Sage', 'Analyst', 'Your numbers, KPIs, trends and forecasts'],
   ['qa', 'Probe', 'QA', 'Tests your live sites and writes bug reports'],
   ['finance', 'Tally', 'Finance', 'Budgets, cash flow, pricing and margin math'],
+  ['weather', 'Gale', 'Weather', 'The forecast for any place, in plain words'],
 ];
 let landed = false;
 async function landing() {
@@ -1143,9 +1144,9 @@ const bots = new Map();
 const helixImg = new Image(); let helixReady = false;
 helixImg.onload = () => { helixReady = true; }; helixImg.src = '/crew/helix.jpg';
 // the crew: Michael's robot model, rendered per role (front, facing right, facing left) into one sheet: crew/assets/bots.png
-const BOT_VER = 'b7705b0c';   // changes whenever bots.png changes, so browsers never mix an old sheet with new code
+const BOT_VER = '614c365d';   // changes whenever bots.png changes, so browsers never mix an old sheet with new code
 const BOT_ROWS = ['lead', 'researcher', 'builder', 'writer', 'designer', 'operator', 'reviewer', 'briefer', 'workbench',
-                  'marketer', 'social', 'support', 'analyst', 'qa', 'finance'], BOT_CELL = 64;
+                  'marketer', 'social', 'support', 'analyst', 'qa', 'finance', 'weather'], BOT_CELL = 64;
 // sheet columns: 0 standing (front), then 4 walk frames each for front, back, right, left
 const BOT_DIRS = { front: 0, back: 1, right: 2, left: 3 };
 function dirOf(dx, dy, prev) { if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return prev || 'front'; return Math.abs(dx) >= Math.abs(dy) * 0.8 ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'front' : 'back'); }

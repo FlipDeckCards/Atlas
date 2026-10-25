@@ -616,8 +616,8 @@ class TestModelTiers:
     def test_agents_run_on_haiku_except_forge_on_code_and_scout_on_lookup(self):
         from openjarvis.server.crew.engine import ROLES
         tiers = {k: v["model"] for k, v in ROLES.items()}
-        assert tiers["builder"] == "code" and tiers["researcher"] == "lookup"
-        assert all(t == "agent" for k, t in tiers.items() if k not in ("builder", "researcher"))
+        assert tiers["builder"] == "code" and tiers["researcher"] == "lookup" and tiers["weather"] == "lookup"
+        assert all(t == "agent" for k, t in tiers.items() if k not in ("builder", "researcher", "weather"))
         w = world(two_task_plan(), AGENTS)
         w.engine.models = dict(w.engine.models, agent="haiku-x", code="sonnet-x", helix="sonnet-x")
         assert w.engine.model_for("agent") == "haiku-x" and w.engine.model_for("nonsense") == "claude-x"
