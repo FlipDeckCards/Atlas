@@ -90,6 +90,9 @@ ROLES: Dict[str, Dict[str, str]] = {
     "finance": {"name": "Tally", "model": "agent", "about": "Finance with Claude: bookkeeping summaries, budgets, cash flow, unit economics, pricing and margin math, subscription metrics and tax-prep checklists, from business_numbers and Stripe (read only). Not a licensed accountant: flags what needs one.",
                 "can": "P&L and cash-flow summaries, budgets, pricing and margin math, tax-prep checklists, Stripe balance reads",
                 "cannot": "Move money, file taxes or give licensed advice"},
+    "weather": {"name": "Gale", "model": "lookup", "about": "Weather: reads the current conditions and a short forecast for any place with get_weather (free Open-Meteo data, no key), and writes it up plainly: what to wear, whether an outdoor plan, a shoot or a launch event is a good idea. Reads only.",
+                "can": "Current weather and a 1 to 7 day forecast for any place, plain-language advice for outdoor plans",
+                "cannot": "Post, send or change anything; it only reads the forecast"},
     "reviewer": {"name": "Lens", "model": "agent", "about": "Checks the crew's work before it reaches Michael: reads every deliverable, fact-checks with web_search, and sends a task back once with request_changes when it is wrong or incomplete. Saves a short review.",
                  "can": "Read every deliverable, fact-check on the web, send work back once for fixes, write the review",
                  "cannot": "Change the work itself or approve anything for you"},
@@ -220,6 +223,12 @@ _SITE_TOOL = {"type": "function", "function": {
     "description": "Test one page of this account's own live sites: HTTP status, load time, page title, size and the start of its text. Only the account's own sites (https).",
     "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}}}
 
+_WEATHER_TOOL = {"type": "function", "function": {
+    "name": "get_weather",
+    "description": "The current weather and a short forecast for a place (free Open-Meteo data). Use a city, optionally with state or country, e.g. 'Los Angeles, CA' or 'Paris, France'.",
+    "parameters": {"type": "object", "properties": {"place": {"type": "string"}, "days": {"type": "integer", "description": "1 to 7, default 3"},
+                                                    "metric": {"type": "boolean", "description": "Celsius and km/h instead of Fahrenheit and mph"}}, "required": ["place"]}}}
+
 _READ_CONNECTION_TOOL = {"type": "function", "function": {
     "name": "use_connection",
     "description": "READ from a connected platform through its official API (read actions only, for example stripe.recent_payments, stripe.get_balance, stripe.list_products, etsy.get_shop).",
@@ -239,7 +248,7 @@ _REVIEW_TOOL = {"type": "function", "function": {
     "description": "Send one finished task back to its agent with concrete fixes (each task can be sent back once). You continue after the rework is done.",
     "parameters": {"type": "object", "properties": {"task_number": {"type": "integer"}, "notes": {"type": "string"}}, "required": ["task_number", "notes"]}}}
 
-LIMITS = {"make_book": 6, "edit_image": 8, "inspect_image": 12, "repo_checks": 10, "web_search": 12, "generate_image": 16, "make_design_files": 10, "repo_commit": 10, "check_site": 20, "business_numbers": 3}
+LIMITS = {"make_book": 6, "edit_image": 8, "inspect_image": 12, "repo_checks": 10, "web_search": 12, "generate_image": 16, "make_design_files": 10, "repo_commit": 10, "check_site": 20, "business_numbers": 3, "get_weather": 8}
 SEARCHERS = ("researcher", "reviewer", "marketer", "social", "support", "analyst", "qa", "finance")
 IMAGERS = ("designer", "marketer", "social")
 READERS = ("support", "analyst", "finance")                # read-only platform access
@@ -357,6 +366,8 @@ def tools_for(role: str) -> List[Dict[str, Any]]:
         extra.append(_MARNYX_TOOL)
     if role in ("analyst", "finance"):
         extra.append(_NUMBERS_TOOL)
+    if role == "weather":
+        extra.append(_WEATHER_TOOL)
     if role == "qa":
         extra += [_SITE_TOOL] + [t for t in _REPO_TOOLS if t["function"]["name"] in ("repo_files", "repo_read")]
     return _BASE_TOOLS + extra
@@ -1710,6 +1721,13 @@ class CrewEngine:
             return await self._repo(task, mission, name, args)
         if name == "check_site" and task["role"] == "qa":
             return await self._check_site(task, args), None
+        if name == "get_weather" and task["role"] == "weather":
+            from openjarvis.server.crew import weather
+
+            try:
+                return await weather.forecast(args.get("place"), args.get("days") or 3, self.client_factory, bool(args.get("metric"))), None
+            except weather.WeatherError as exc:
+                return str(exc), None
         if name == "business_numbers" and task["role"] in ("analyst", "finance"):
             return await self._numbers(task), None
         if name == "use_connection" and task["role"] in READERS + PUBLISHERS:
