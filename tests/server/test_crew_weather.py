@@ -189,10 +189,10 @@ def test_3d_view_has_big_dome_panels_coloured_rim_lights_and_the_crew_on_helixs_
     from pathlib import Path
 
     js = (Path(__file__).resolve().parents[2] / "src" / "openjarvis" / "server" / "crew" / "assets" / "station3d.js").read_text()
-    assert "IcosahedronGeometry(1, 1)" in js and "IcosahedronGeometry(1, 3)" not in js           # a handful of big hexagon panels, not a mesh of piping
+    assert "IcosahedronGeometry" not in js and "InstancedMesh(new THREE.CylinderGeometry(1, 1, 1, 6)" not in js   # a plain clear glass dome: no frame, no hexagons, no piping
     assert "function updateRim(t)" in js and "setColorAt(i" in js and "0xffe9b8" not in js          # the rim lights are coloured and animated, not all yellow
     assert "function syncCrew()" in js and "getRoster" in js                                          # the idle crew walk Helix's own ring
-    assert "v: 0.0000055 + (i % 5) * 0.000002" in js                                                   # the walkway crew move slowly
+    assert "userData.v = 0.0000055 + (i % 5) * 0.000002" in js                                                   # the walkway crew move slowly
 
 
 def test_3d_walkways_are_wide_with_clean_junction_pads_and_helixs_model_loads_when_present():
@@ -210,3 +210,18 @@ def test_3d_walkways_are_wide_with_clean_junction_pads_and_helixs_model_loads_wh
     three = c.get("/crew/three.min.js")
     assert three.status_code == 200 and b"GLTFLoader" in three.content                                        # the bundle carries the model loader
     assert c.get("/crew/helix.glb").status_code in (200, 404)                                                  # 404 until her model is added: the hologram stays
+
+
+def test_3d_crew_use_their_robot_artwork_at_one_size_and_helix_is_her_real_model():
+    from pathlib import Path
+
+    from openjarvis.server.crew import routes
+
+    crew = Path(__file__).resolve().parents[2] / "src" / "openjarvis" / "server" / "crew"
+    js = (crew / "assets" / "station3d.js").read_text()
+    assert "function makeAgent(role" in js and "cellTex(row, col)" in js and "const AGENT_H = 34" in js                # the sprite sheet, not capsules
+    assert "CapsuleGeometry" not in js and js.count("makeAgent(") >= 4                                                   # walkway, Helix's ring and the trays all use it
+    assert "g.scale.setScalar(1.5)" not in js                                                                            # no second size for the ring crew
+    glb = (crew / "assets" / "helix.glb").read_bytes()
+    assert glb[:4] == b"glTF" and len(glb) < 4_000_000                                                                   # her model, slimmed from 26 MB so a phone can load it
+    assert any(getattr(r, "path", "") == "/crew/helix.glb" for r in routes.router.routes)
