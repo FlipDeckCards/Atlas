@@ -225,3 +225,13 @@ def test_3d_crew_use_their_robot_artwork_at_one_size_and_helix_is_her_real_model
     glb = (crew / "assets" / "helix.glb").read_bytes()
     assert glb[:4] == b"glTF" and len(glb) < 4_000_000                                                                   # her model, slimmed from 26 MB so a phone can load it
     assert any(getattr(r, "path", "") == "/crew/helix.glb" for r in routes.router.routes)
+
+
+def test_3d_files_are_cache_busted_and_the_ring_thruster_touches_the_keel():
+    from pathlib import Path
+
+    from openjarvis.server.crew.station import STATION_PAGE
+
+    js = (Path(__file__).resolve().parents[2] / "src" / "openjarvis" / "server" / "crew" / "assets" / "station3d.js").read_text()
+    assert "/crew/three.min.js?v=3" in STATION_PAGE and "/crew/station3d.js?v=3" in STATION_PAGE          # a changed bundle must not be served from a day-old cache
+    assert "T.position.y = -272" in js and "'/crew/helix.glb?v=2'" in js

@@ -487,8 +487,8 @@ async function setView(on) {
   if (!on) { VIEW3D = false; document.body.classList.remove('v3d'); if (window.Station3D) Station3D.stop(); btn.textContent = 'VIEW: 2D'; try { localStorage.setItem('aibussol_view', '2d'); } catch (e) {} return; }
   btn.textContent = 'LOADING 3D…';
   try {
-    if (!window.THREE) await loadScript('/crew/three.min.js?v=1');
-    if (!window.Station3D) await loadScript('/crew/station3d.js?v=2');
+    if (!window.THREE) await loadScript('/crew/three.min.js?v=3');
+    if (!window.Station3D) await loadScript('/crew/station3d.js?v=3');
     Station3D.start(document.getElementById('stage'), { roleColors: ROLE_COLORS, getSelected: () => selected, getRoster: () => (S && S.roster ? S.roster : []), botRows: BOT_ROWS, botUrl: '/crew/bots.png?v=' + BOT_VER,
       onSelect: (key) => { selected = key === 'hub' ? 'hub' : key === 'open' ? (isOwner() ? 'hub' : 'setup') : 'f:' + key; renderSide(true); } });
     Station3D.update(mods);
