@@ -1286,3 +1286,9 @@ class TestSocialAutomation:
         assert len(run(w.store.list_questions(UID, "open"))) == 1                       # asked once
         res = run(w.engine.answer(UID, q[0]["id"], approve=True))
         assert "Approved 3" in res["message"] and "Approved 2" in res["message"]
+
+
+def test_old_briefs_are_not_replayed_in_a_browser_that_has_not_seen_them():
+    from openjarvis.server.crew.station import STATION_PAGE
+
+    assert "FRESH_MS = 18 * 3600 * 1000" in STATION_PAGE and "< FRESH_MS" in STATION_PAGE

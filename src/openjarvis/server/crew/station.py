@@ -1845,8 +1845,9 @@ function markBriefSeen(id) { try { const s2 = seenBriefs(); if (!s2.includes(id)
 async function checkBriefs() {
   const r = await api('/api/briefs/latest').catch(() => null);
   if (!r || !r.ok) return;
-  const fresh = (r.data.items || []).filter(b => !seenBriefs().includes(b.id)).reverse();
-  fresh.forEach(b => markBriefSeen(b.id));
+  const FRESH_MS = 18 * 3600 * 1000;                                        // a brief older than 18 hours is history, not news: a new browser does not replay the backlog
+  const fresh = (r.data.items || []).filter(b => !seenBriefs().includes(b.id) && (Date.now() - new Date(b.created_at).getTime()) < FRESH_MS).reverse();
+  (r.data.items || []).forEach(b => markBriefSeen(b.id));                  // everything the feed holds counts as seen, old or new
   fresh.slice(-2).forEach(b => BRIEFS.push(b));                          // a long backlog (a new browser has seen none) shows only the 2 newest, not all of them
   if (fresh.length) loadChat(true);
 }
