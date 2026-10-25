@@ -79,3 +79,55 @@ def test_list_reviews_reads_newest_reviews_and_status_shows_connected():
 
 def test_not_connected_without_a_key():
     assert not run(conns.status(MemoryCrewStore(), "u", {}))["google_play"]["connected"]
+
+
+def _reviews_factory(replied=False):
+    posts = []
+    now = int(__import__("time").time())
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "tok"})
+        if req.method == "POST":
+            posts.append((str(req.url), json.loads(req.content)))
+            return httpx.Response(200, json={"result": {"replyText": "ok"}})
+        comments = [{"userComment": {"starRating": 2, "text": "Crashes", "lastModified": {"seconds": str(now)}}}]
+        if replied:
+            comments.append({"developerComment": {"text": "Sorry!"}})
+        return httpx.Response(200, json={"reviews": [{"reviewId": "gp:AOqpTOEabc123", "comments": comments}]})
+
+    return (lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))), posts
+
+
+def test_week_summary_and_brief_line():
+    from openjarvis.server.crew import herald
+
+    env = {"GOOGLE_PLAY_KEY": _key_json(), "GOOGLE_PLAY_APPS": PKG}
+    wk = run(conns.play_week(env, _reviews_factory()[0]))
+    assert wk["new"] == 1 and wk["unanswered"] == 1 and wk["stars"] == 2
+    assert herald.play_line(wk) == "- Google Play: 1 new review this week, 2.0 stars, 1 need a reply."
+    wk2 = run(conns.play_week(env, _reviews_factory(replied=True)[0]))
+    assert herald.play_line(wk2).endswith("all answered.")
+    assert herald.play_line({"new": 0}) == "- Google Play: no new reviews this week."
+    assert "could not read" in herald.play_line(None, "ConnectionError_")
+
+
+def test_listing_shows_ids_and_reply_status_and_a_reply_is_a_checkpoint():
+    env = {"GOOGLE_PLAY_KEY": _key_json(), "GOOGLE_PLAY_APPS": PKG}
+    out = run(conns.run("google_play", "list_reviews", {}, store=MemoryCrewStore(), user_id="u", env=env, client_factory=_reviews_factory()[0]))
+    assert "id=gp:AOqpTOEabc123" in out and "no reply yet" in out
+    assert conns.risk_of("google_play", "reply_review") == "checkpoint"
+    text = conns.describe_action("google_play", "reply_review", {"package": PKG, "review_id": "gp:AOqpTOEabc123", "reply_text": "Thanks, we will look into it."})
+    assert "PUBLIC" in text and "Thanks, we will look into it." in text
+
+
+def test_reply_posts_once_to_the_right_review_and_refuses_bad_input():
+    env = {"GOOGLE_PLAY_KEY": _key_json(), "GOOGLE_PLAY_APPS": PKG}
+    cf, posts = _reviews_factory()
+    ok = {"package": PKG, "review_id": "gp:AOqpTOEabc123", "reply_text": "Thank you for telling us."}
+    run(conns.run("google_play", "reply_review", ok, store=MemoryCrewStore(), user_id="u", env=env, client_factory=cf))
+    assert len(posts) == 1 and posts[0][0].endswith(f"/{PKG}/reviews/gp:AOqpTOEabc123:reply") and posts[0][1] == {"replyText": "Thank you for telling us."}
+    for bad in ({**ok, "reply_text": "x" * 351}, {**ok, "package": "com.other.app"}, {**ok, "review_id": "../x"}, {**ok, "reply_text": ""}):
+        with pytest.raises(conns.ConnectionError_):
+            run(conns.run("google_play", "reply_review", bad, store=MemoryCrewStore(), user_id="u", env=env, client_factory=cf))
+    assert len(posts) == 1
