@@ -1493,3 +1493,62 @@ def test_product_lines_match_aibussols_shape_and_say_why_when_a_product_cannot_b
             sys.modules.pop("asyncpg", None)
         else:
             sys.modules["asyncpg"] = real
+
+
+class TestSpokenApproval:
+    """Michael's own plain 'approve' / 'yes' / 'decline' approves the inbox cards from the SERVER, before any model runs."""
+
+    def test_only_short_plain_commands_count(self):
+        from openjarvis.server.crew.helix import parse_spoken as p
+
+        assert p("yes") == ("approve", "one") and p("Approve") == ("approve", "one") and p("hey helix, approve all") == ("approve", "all")
+        assert p("approve 2") == ("approve", ("nums", [2])) and p("approve numbers 1 and 3") == ("approve", ("nums", [1, 3]))
+        assert p("decline that") == ("decline", "one") and p("approve the calendar event") == ("approve", ("words", ["calendar", "event"]))
+        for no in ("no", "yes but make it blue", "what do you approve of", "approve the budget and then delete everything else you can find", "", "approvals are boring"):
+            assert p(no) is None
+
+    def _setup(self):
+        from tests.server.test_crew_adjust import AGENTS, UID, helix, two_task_plan, world
+
+        w = world(two_task_plan(), AGENTS)
+        calls = []
+
+        async def fake_answer(user_id, qid, *, answer="", approve=None):
+            calls.append((qid, approve))
+            await w.store.close_question(qid, "approved" if approve else "declined", "")
+            return {"ok": True, "message": "Done."}
+        w.engine.answer = fake_answer
+        return w, calls, helix.CrewCtx(UID, w.engine), UID
+
+    def test_one_card_yes_approves_it_and_two_cards_ask_which(self):
+        from tests.server.test_crew_adjust import helix
+
+        w, calls, ctx, uid = self._setup()
+        assert run(helix.spoken_approval(ctx, "approve")) is None                                    # nothing waiting: the model handles it
+        a = run(w.store.add_question("", "", uid, "ops", "Add this event to your Google Calendar: Test", ["Approve", "Decline"], {"type": "google_calendar"}))
+        out = run(helix.spoken_approval(ctx, "yes"))
+        assert out.startswith("Approved:") and "Google Calendar" in out and calls == [(a["id"], True)]
+        run(w.store.add_question("", "", uid, "ops", "Send this email to Sam", ["Approve", "Decline"], {"type": "google_send"}))
+        run(w.store.add_question("", "", uid, "ops", "Approve 70 social posts", ["Approve", "Decline"], {"type": "marnyx_approve"}))
+        ask = run(helix.spoken_approval(ctx, "approve"))
+        assert "which" in ask and "1. Send this email" in ask and "2. Approve 70" in ask and len(calls) == 1          # no guessing
+
+    def test_all_numbers_words_and_decline(self):
+        from tests.server.test_crew_adjust import helix
+
+        w, calls, ctx, uid = self._setup()
+        qs = [run(w.store.add_question("", "", uid, "ops", t, ["Approve", "Decline"], {"type": "x"})) for t in ("Send email to Sam", "Post the Monday posts", "Add calendar event")]
+        run(helix.spoken_approval(ctx, "approve 2"))
+        run(helix.spoken_approval(ctx, "approve the calendar event"))
+        run(helix.spoken_approval(ctx, "decline that"))
+        assert calls == [(qs[1]["id"], True), (qs[2]["id"], True), (qs[0]["id"], False)]
+        q2 = [run(w.store.add_question("", "", uid, "ops", t, ["Approve", "Decline"], {"type": "x"})) for t in ("A thing", "B thing")]
+        run(helix.spoken_approval(ctx, "approve all"))
+        assert {c[0] for c in calls[3:]} == {q["id"] for q in q2} and all(c[1] for c in calls[3:])
+
+    def test_plain_questions_to_agents_are_not_approvals(self):
+        from tests.server.test_crew_adjust import helix
+
+        w, calls, ctx, uid = self._setup()
+        run(w.store.add_question("m", "t", uid, "question", "Which price?", ["$5", "$10"], None))
+        assert run(helix.spoken_approval(ctx, "yes")) is None and not calls

@@ -126,6 +126,38 @@ async def station_art(name: str):
     return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=3600"})
 
 
+_ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+MANIFEST = {
+    "name": "Aibussol", "short_name": "Helix", "description": "Helix and your crew, one tap from your home screen.",
+    "start_url": "/station", "scope": "/", "display": "standalone", "orientation": "portrait-primary",
+    "background_color": "#050508", "theme_color": "#050508",
+    "icons": [{"src": "/crew/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+              {"src": "/crew/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}],
+}
+SERVICE_WORKER = ("// Aibussol: installable app shell. It never caches anything, so the Station and Helix are always live.\n"
+                  "self.addEventListener('install', () => self.skipWaiting());\n"
+                  "self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));\n"
+                  "self.addEventListener('fetch', () => {});\n")
+
+
+@router.get("/manifest.webmanifest")
+async def manifest():
+    """What lets a phone install Aibussol as an app (name, icon, full screen, opens on the Station)."""
+    return JSONResponse(MANIFEST, media_type="application/manifest+json", headers={"Cache-Control": "public, max-age=3600"})
+
+
+@router.get("/sw.js")
+async def service_worker():
+    return Response(SERVICE_WORKER, media_type="application/javascript", headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
+
+
+@router.get("/crew/icons/{icon}.png")
+async def crew_icons(icon: str):
+    if icon not in ("icon-192", "icon-512", "apple-touch-icon") or not os.path.isfile(os.path.join(_ASSETS, icon + ".png")):
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+    return FileResponse(os.path.join(_ASSETS, icon + ".png"), media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+
 _BOTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "bots.png")
 
 

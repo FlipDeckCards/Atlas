@@ -8,8 +8,10 @@ Tools offered to the chat model (owner accounts only, crew enabled):
   pause_mission / resume_mission / add_task / edit_task / retry_task: change a mission that already exists (no new spend beyond its budget)
   list_outbox / read_outbox_file: read the files of ANY of his missions, whatever its status
   Documents he attaches in chat are kept for 30 minutes and go to a mission he starts (or one he names) as attached-* files.
-Checkpoints (publish, charge, anything irreversible) and budget requests are NOT answered through the model: Michael approves or
-declines them with the buttons in the chat card or the Station, so a model can never approve its own action.
+Checkpoints (publish, charge, anything irreversible) and budget requests are NOT answered by the model: Michael approves or declines them with
+the buttons in the chat card or the Station, OR by saying or typing a plain approval ("approve", "yes", "approve all", "approve 2", "decline").
+That spoken approval is recognised by the SERVER from his own message (spoken_approval below), before any model runs, so a model, a document or
+an email can never approve anything on its own.
 """
 
 from __future__ import annotations
@@ -29,6 +31,75 @@ CREW_PENDING = PendingActions()
 DOCS_TTL_S = 30 * 60
 MAX_DOCS_KEPT = 5
 RECENT_DOCS: Dict[str, List[Dict[str, Any]]] = {}      # user id -> documents attached in chat, not yet given to a mission
+
+
+_LEAD = r"(?:(?:hey|hi|ok|okay)[ ,]+)?(?:helix[ ,.]+)?(?:(?:yes|yeah|yep|ok|okay|sure)[ ,.!]+)?(?:please[ ,]+)?(?:i[ ,]+)?(?:go ahead and[ ,]+)?"
+_SPOKEN = re.compile(rf"^{_LEAD}(approve|approved|accept|confirm|decline|reject|deny)(?:[ ,]+(.*?))?[ .!,]*(?:please|now|thanks|thank you)?[ .!,]*$", re.I)
+_ALL = re.compile(r"^(?:all|everything|them all|all of them|all of those|every one|them)$", re.I)
+_FILLER = {"the", "a", "an", "that", "this", "it", "card", "request", "one", "please", "and", "my", "to", "of", "for"}
+_APPROVABLE = ("checkpoint", "budget", "ops")
+
+
+def parse_spoken(text: str):
+    """(verb, which) for a spoken approval, else None. verb is 'approve' or 'decline'; which is 'one', 'all', ('nums', [..]) or ('words', [..]).
+    Only a short, plain command counts: 'approve', 'yes', 'approve all', 'approve 2', 'approve the calendar event', 'decline that'."""
+    t = " ".join(str(text or "").split())
+    if not t or len(t) > 90:
+        return None
+    if is_explicit_yes(t):
+        return "approve", "one"
+    m = _SPOKEN.match(t)
+    if not m:
+        return None
+    verb = "decline" if m.group(1).lower() in ("decline", "reject", "deny") else "approve"
+    tail = (m.group(2) or "").strip(" .!,").lower()
+    if not tail or tail in ("it", "that", "this", "that one", "this one", "the card", "it please"):
+        return verb, "one"
+    if _ALL.match(tail):
+        return verb, "all"
+    nums = re.findall(r"\d+", tail)
+    if nums and re.fullmatch(r"(?:(?:number|numbers|no\.?|#|card|cards|and|,|&|\s)*\d+)+(?:\s*(?:and|,|&)\s*\d+)*", tail.replace("#", " ")):
+        return verb, ("nums", [int(n) for n in nums])
+    words = [w for w in re.findall(r"[a-z0-9']+", tail) if w not in _FILLER]
+    return (verb, ("words", words)) if 0 < len(words) <= 4 else ((verb, "one") if not words else None)
+
+
+async def spoken_approval(ctx: "CrewCtx", message: str) -> Optional[str]:
+    """Michael's own plain 'approve' / 'yes' / 'decline' for the cards on his Helix inbox. Runs on the server before any model, from his message
+    alone. Returns the reply to show, or None when the message is not a spoken approval (or nothing is waiting)."""
+    cmd = parse_spoken(message)
+    if cmd is None:
+        return None
+    eng = ctx.engine
+    cards = [q for q in await eng.store.list_questions(ctx.user_id, "open") if q.get("kind") in _APPROVABLE]
+    if not cards:
+        return None
+    verb, which = cmd
+    if which == "one" and len(cards) == 1:
+        picked = cards
+    elif which == "all":
+        picked = cards
+    elif isinstance(which, tuple) and which[0] == "nums":
+        picked = [cards[i - 1] for i in dict.fromkeys(which[1]) if 1 <= i <= len(cards)]
+    elif isinstance(which, tuple) and which[0] == "words":
+        picked = [q for q in cards if all(w in str(q.get("text") or "").lower() for w in which[1])]
+        picked = picked if len(picked) == 1 else []
+    else:
+        picked = []
+    if not picked:
+        lines = "\n".join(f'{i}. {_clip(q.get("text"), 140)}' for i, q in enumerate(cards[:8], 1))
+        return (f"You have {len(cards)} thing{'s' if len(cards) != 1 else ''} waiting on your approval, so I need to know which:\n{lines}\n"
+                f"Say \"{verb} 1\", \"{verb} all\", or tap a button on the card. Nothing has been {verb}d.")
+    out = []
+    for q in picked:
+        try:
+            res = await eng.answer(ctx.user_id, q["id"], approve=(verb == "approve"))
+            out.append(f'{"Approved" if verb == "approve" else "Declined"}: {_clip(q.get("text"), 110)} {res.get("message") or ""}'.strip())
+            await eng.store.add_event(ctx.user_id, "ops", f'{"Approved" if verb == "approve" else "Declined"} by Michael\'s spoken or typed command: {_clip(q.get("text"), 120)}',
+                                      mission_id=q.get("mission_id") or "")
+        except Exception as exc:                                # already answered, a failed action, a vanished task: say so, keep going
+            out.append(f'Could not {verb} "{_clip(q.get("text"), 80)}": {getattr(exc, "message", None) or exc}')
+    return "\n".join(out)
 
 
 def remember_document(user_id: str, name: str, text: str) -> None:
@@ -412,7 +483,7 @@ async def _ops_request(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
             text, act = (f'Roll {svc["name"]} back to the deploy of "{_clip((d.get("commit") or {}).get("message"), 80)}" '
                          f'({str((d.get("commit") or {}).get("id", ""))[:7]}), which will be live for everyone.'), {"type": "render_rollback", "service_id": svc["id"], "deploy_id": d["id"]}
         await eng.store.add_question("", "", ctx.user_id, "ops", text, ["Approve", "Decline"], act)
-        return f"NOT DONE YET. I put this on the Helix inbox as an Approve card: {text} Tell the user to tap Approve there (or Decline); I cannot approve it myself."
+        return f"NOT DONE YET. I put this on the Helix inbox as an Approve card: {text} Tell the user to tap Approve there, or just say or type approve (or Decline); I cannot approve it myself."
     except devtools.DevError as exc:
         return f"Not requested: {exc}"
     except Exception:
