@@ -1185,7 +1185,7 @@ def test_the_brief_lists_what_is_waiting_on_michael_and_stays_basic():
     assert pending_lines([], {}) == ["- Nothing is waiting on you."]
     g = glance_lines({"total": {"revenue_today": 1.0, "cost_today": 2.0, "net_today": -1.0, "revenue_30d": 5.0, "cost_30d": 9.0, "net_30d": -4.0, "mrr": 4.99, "subscribers": 1}},
                      {}, {"users_total": 4, "active_24h": 1, "new_users_7d": 0}, {"running": 1, "queued": 4, "done_today": 3})
-    assert len(g) == 5 and not any("unchecked" in x.lower() or "Sites" in x for x in g)
+    assert len(g) == 4 and not any("unchecked" in x.lower() or "Sites" in x for x in g)
 
 
 def test_every_reply_has_a_listen_button_and_read_that_again_is_handled_in_the_page():
@@ -1402,3 +1402,32 @@ def test_the_public_privacy_and_terms_pages_cover_what_google_requires():
     for need in ("gmail.readonly", "gmail.send", "drive.readonly", "drive.file", "Limited Use", "Google API Services User Data Policy", "do not sell", "help@example.com", "myaccount.google.com/permissions"):
         assert need in p.replace("&rsquo;", "'")
     assert "Terms of Service" in legal.terms_html({}) and "<html" in p
+
+
+def test_asking_for_the_brief_in_chat_gives_a_fresh_short_one_and_stores_nothing():
+    from openjarvis.server.briefs import MemoryBriefStore
+    from openjarvis.server.crew.herald import Herald
+
+    w = world(two_task_plan(), AGENTS)
+
+    async def fin_none(uid, missions, keys):
+        return None
+
+    class Fin:
+        async def report(self, uid, missions, keys):
+            row = {"revenue_today": 0.0, "revenue_30d": 4.99, "cost_today": 22.07, "cost_30d": 210.27, "mrr": 4.99, "subscribers": 1, "net_today": -22.07, "net_30d": -205.28}
+            return {"total": dict(row), "factories": {}, "stripe_ok": True, "notes": []}
+
+    async def stats():
+        return {"users_total": 4, "active_24h": 1}
+
+    async def numbers(env):
+        return ["- FlipDeck: 34 total users, 1 paying now, 0 new in 24 hours."]
+    bs = MemoryBriefStore(clock=w.engine.now)
+    h = Herald(w.engine, bs, notifier=None, env={}, now=w.engine.now, finance=Fin(), stats_fn=stats, numbers_fn=numbers)
+    h._owner = UID
+    out = run(h.compose("afternoon", UID))
+    lines = out["body"].splitlines()
+    assert len(out["body"]) < 700 and len(lines) <= 12                                   # short: a few lines, not pages
+    assert "Good afternoon, Michael." in out["body"] and "Waiting on you" in out["body"] and "Nothing is waiting on you." in out["body"]
+    assert not bs.rows                                                                    # composing stores nothing and pushes nothing
