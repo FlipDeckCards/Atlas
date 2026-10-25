@@ -85,6 +85,11 @@ ACTIONS: Dict[str, Dict[str, Dict[str, Any]]] = {
         "gmail_read": {"risk": "read", "about": "Read one Gmail message in full (headers and plain text).", "args": {"id": "message id from gmail_search"}},
         "gmail_send": {"risk": "checkpoint", "about": "Send an email from the owner's Gmail. The owner sees the exact recipient, subject and text and taps Approve first.",
                        "args": {"to": "one email address", "subject": "text (up to 200)", "body": "plain text (up to 8000)"}},
+        "calendar_list": {"risk": "read", "about": "List the owner's upcoming Google Calendar events (title, start, end, place) for the next days.",
+                          "args": {"days": "integer 1 to 31 (default 7)"}},
+        "calendar_add": {"risk": "checkpoint", "about": "Add an event to the owner's Google Calendar. The owner sees the exact title, time and place and taps Approve first. Never invites other people.",
+                         "args": {"title": "text (up to 200)", "start": "ISO time WITH offset, e.g. 2026-10-31T17:00:00-07:00", "end": "optional ISO time with offset", "minutes": "optional length, 5 to 1440 (default 60)",
+                                  "location": "optional text", "notes": "optional text (up to 1000)"}},
         "drive_search": {"risk": "read", "about": "Search the owner's Google Drive by name or content and list files: name, type, modified date and the file id.",
                          "args": {"query": "words to find", "max": "integer 1 to 20 (default 10)"}},
         "drive_read": {"risk": "read", "about": "Read one Drive file as text: Google Docs, Sheets (as CSV) and plain-text files (not images or PDFs).", "args": {"file_id": "id from drive_search"}},
@@ -123,7 +128,7 @@ RENDER_SETUP = ("Paste your Render API key in the Connections panel on the Stati
                 "Aibussol only checks it can read your services; it never shows the key again.")
 RENDER_API = "https://api.render.com/v1"
 
-LABELS = {"stripe": "Stripe", "etsy": "Etsy", "marnyx": "Marnyx (your socials and email)", "google": "Google (Gmail and Drive)", "google_play": "Google Play", "app_store": "App Store"}
+LABELS = {"stripe": "Stripe", "etsy": "Etsy", "marnyx": "Marnyx (your socials and email)", "google": "Google (Gmail, Drive and Calendar)", "google_play": "Google Play", "app_store": "App Store"}
 
 SETUP = {
     "stripe": "Set STRIPE_SECRET_KEY on Render (the Aibussol billing key works).",
@@ -218,6 +223,9 @@ def describe_action(platform: str, action: str, args: Dict[str, Any]) -> str:
     if platform == "google" and action == "gmail_send":
         to, subj, body = _mail_args(args)
         return f'Send this email from your Gmail to {to}. Subject: "{subj}"\n{_clip_text(body, 1200)}'
+    if platform == "google" and action == "calendar_add":
+        ev = _event_args(args)
+        return f'Add this event to your Google Calendar: {_event_label(ev)}.' + (f' Notes: {ev["notes"]}' if ev["notes"] else "") + " Nobody else is invited."
     if platform == "google_play" and action == "reply_review":
         return (f'Post this PUBLIC reply to a Google Play review of {_clip(args.get("package"), 80)} (review {_clip(args.get("review_id"), 60)}): '
                 f'"{_clip(args.get("reply_text"), 350)}"')
@@ -523,8 +531,10 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me"
 DRIVE_API = "https://www.googleapis.com/drive/v3"
 DRIVE_UPLOAD = "https://www.googleapis.com/upload/drive/v3/files"
+CALENDAR_API = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 GOOGLE_SCOPES = ("openid email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send "
-                 "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file")
+                 "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file "
+                 "https://www.googleapis.com/auth/calendar.events")
 
 
 def google_app_configured(env=None) -> bool:
@@ -607,6 +617,34 @@ def _mail_args(args: Dict[str, Any]):
     return to, subj, body
 
 
+def _event_args(args: Dict[str, Any]) -> Dict[str, Any]:
+    """A calendar event the owner will be shown and must approve: title, start, end, place and notes, checked."""
+    title = _clip(args.get("title"), 200)
+    if not title:
+        raise ConnectionError_("An event needs a title.")
+    start = _when(args.get("start"))
+    if str(args.get("end") or "").strip():
+        end = _when(args.get("end"))
+    else:
+        try:
+            minutes = int(args.get("minutes") or 60)
+        except (TypeError, ValueError):
+            minutes = 60
+        end = start + dt.timedelta(minutes=min(1440, max(5, minutes)))
+    if end <= start:
+        raise ConnectionError_("The event must end after it starts.")
+    return {"title": title, "start": start, "end": end, "location": _clip(args.get("location"), 200), "notes": _clip(args.get("notes"), 1000)}
+
+
+def _event_label(ev: Dict[str, Any]) -> str:
+    from zoneinfo import ZoneInfo
+
+    la = ZoneInfo("America/Los_Angeles")
+    s, e = ev["start"].astimezone(la), ev["end"].astimezone(la)
+    when = s.strftime("%a %b %d %I:%M %p").replace(" 0", " ") + " to " + e.strftime("%I:%M %p").lstrip("0") + " PT"
+    return f'"{ev["title"]}", {when}' + (f' at {ev["location"]}' if ev["location"] else "")
+
+
 def _header(msg: Dict[str, Any], name: str) -> str:
     for h in (msg.get("payload") or {}).get("headers") or []:
         if str(h.get("name", "")).lower() == name.lower():
@@ -671,6 +709,8 @@ async def _google(action: str, args: Dict[str, Any], *, store, user_id: str, env
             raw = _b64.urlsafe_b64encode(m.as_bytes()).decode()
             out = _ok(await c.post(f"{GMAIL_API}/messages/send", headers=h, json={"raw": raw}), "Gmail")
             return f'Email sent to {to} (Gmail message {out.get("id")}).'
+        if action in ("calendar_list", "calendar_add"):
+            return await _calendar(action, args, c, h)
         if action == "drive_search":
             q, n = _clip(args.get("query"), 200).replace("\\", " ").replace("'", " "), max(1, min(int(args.get("max") or 10), 20)) if str(args.get("max") or "10").isdigit() else 10
             files = _ok(await c.get(f"{DRIVE_API}/files", headers=h, params={"q": f"(name contains '{q}' or fullText contains '{q}') and trashed = false", "pageSize": n,
@@ -717,6 +757,49 @@ async def _google(action: str, args: Dict[str, Any], *, store, user_id: str, env
             out = _ok(await c.post(DRIVE_UPLOAD, headers={**h, "Content-Type": f"multipart/related; boundary={boundary}"}, params={"uploadType": "multipart", "fields": "id,name,webViewLink"}, content=body), "Drive")
             return f'Saved "{out.get("name")}" ({len(data) // 1024} KB) to your Drive, in the Aibussol folder: {out.get("webViewLink") or out.get("id")}'
     raise ConnectionError_("Unsupported Google action.")
+
+
+async def _calendar(action: str, args: Dict[str, Any], c: httpx.AsyncClient, h: Dict[str, str]) -> str:
+    from zoneinfo import ZoneInfo
+
+    def need_reconnect(r: httpx.Response) -> None:
+        if r.status_code in (401, 403):
+            raise ConnectionError_("Google has not given Aibussol the Calendar permission yet. On the Station, Disconnect Google and Connect it again, and tick Calendar. "
+                                   "(Also check the Google Calendar API is switched on in the Aibussol Cloud project.)")
+
+    la = ZoneInfo("America/Los_Angeles")
+    if action == "calendar_list":
+        try:
+            days = min(31, max(1, int(args.get("days") or 7)))
+        except (TypeError, ValueError):
+            days = 7
+        now = dt.datetime.now(dt.timezone.utc)
+        r = await c.get(CALENDAR_API, headers=h, params={"timeMin": now.isoformat(), "timeMax": (now + dt.timedelta(days=days)).isoformat(), "singleEvents": "true",
+                                                         "orderBy": "startTime", "maxResults": 25})
+        need_reconnect(r)
+        items = _ok(r, "Google Calendar").get("items") or []
+        if not items:
+            return f"Google Calendar: nothing scheduled in the next {days} day(s)."
+        rows = []
+        for it in items:
+            st, en = it.get("start") or {}, it.get("end") or {}
+            if st.get("dateTime"):
+                a = dt.datetime.fromisoformat(st["dateTime"].replace("Z", "+00:00")).astimezone(la)
+                when = a.strftime("%a %b %d %I:%M %p").replace(" 0", " ") + " PT"
+            else:
+                when = f'{st.get("date", "?")} (all day)'
+            rows.append(f'{when} | {_clip(it.get("summary") or "(no title)", 120)}' + (f' | {_clip(it.get("location"), 80)}' if it.get("location") else ""))
+        return f"Google Calendar, next {days} day(s) (when | title | place):\n" + "\n".join(rows)
+    ev = _event_args(args)
+    body = {"summary": ev["title"], "start": {"dateTime": ev["start"].isoformat()}, "end": {"dateTime": ev["end"].isoformat()}}
+    if ev["location"]:
+        body["location"] = ev["location"]
+    if ev["notes"]:
+        body["description"] = ev["notes"]
+    r = await c.post(CALENDAR_API, headers=h, json=body)
+    need_reconnect(r)
+    out = _ok(r, "Google Calendar")
+    return f'Added to your Google Calendar: {_event_label(ev)}.' + (f' {out["htmlLink"]}' if out.get("htmlLink") else "")
 
 
 async def marnyx_awaiting(env, cf: "ClientFactory") -> List[Dict[str, Any]]:

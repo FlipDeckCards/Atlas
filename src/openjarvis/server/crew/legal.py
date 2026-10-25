@@ -41,6 +41,7 @@ def privacy_html(env: Optional[Mapping[str, str]] = None) -> str:
 <ul><li><b>Read your Gmail</b> (gmail.readonly): to search and read messages when you ask, for example &ldquo;did my approval email arrive?&rdquo;.</li>
 <li><b>Send email from your Gmail</b> (gmail.send): to send a message you have seen and approved. Nothing is sent until you tap Approve on the exact message.</li>
 <li><b>Read your Google Drive</b> (drive.readonly): to find and read documents, sheets and text files when you ask.</li>
+<li><b>See and add Google Calendar events</b> (calendar.events): to answer &ldquo;what is on my calendar?&rdquo; and to add an event you have seen and approved. Nothing is added until you tap Approve, and nobody else is invited.</li>
 <li><b>Save files you ask for to your Drive</b> (drive.file): to put a finished file (such as a book PDF) in a folder called Aibussol. Aibussol cannot change or delete other files in your Drive.</li></ul>
 <p>Google data is read only at the moment you ask, to answer you. We do not keep a copy of your mail or files beyond the conversation in which you asked for them, and we do not read your mail in the background.</p>
 <p><b>Limited Use.</b> Aibussol&rsquo;s use and transfer to any other app of information received from Google APIs will adhere to the

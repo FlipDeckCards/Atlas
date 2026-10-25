@@ -1327,11 +1327,11 @@ class TestGoogleConnection:
 
         w = world(two_task_plan(), AGENTS)
         st = run(conns.status(w.store, UID, self.ENV))["google"]
-        assert st["label"] == "Google (Gmail and Drive)" and st["can_connect"] and not st["connected"]
-        assert {a["name"] for a in st["actions"]} == {"gmail_search", "gmail_read", "gmail_send", "drive_search", "drive_read", "drive_save"}
+        assert st["label"] == "Google (Gmail, Drive and Calendar)" and st["can_connect"] and not st["connected"]
+        assert {a["name"] for a in st["actions"]} == {"gmail_search", "gmail_read", "gmail_send", "calendar_list", "calendar_add", "drive_search", "drive_read", "drive_save"}
         assert not run(conns.status(w.store, UID, {}))["google"]["can_connect"]                       # not set up on Render: no Connect button yet
         url = conns.google_connect_url(UID, self.ENV)
-        for part in ("gmail.readonly", "gmail.send", "drive.readonly", "drive.file", "access_type=offline", "prompt=consent", "code_challenge="):
+        for part in ("gmail.readonly", "gmail.send", "drive.readonly", "drive.file", "calendar.events", "access_type=offline", "prompt=consent", "code_challenge="):
             assert part in url
         self._linked(w)
         assert run(conns.status(w.store, UID, self.ENV))["google"]["connected"]
@@ -1373,6 +1373,24 @@ class TestGoogleConnection:
         assert "Email sent to buyer@example.com" in res["message"]
         assert [r for r in http.requests if r[0] == "POST" and r[1].endswith("/messages/send")]
         bad = run(helix.execute(ctx, "use_google", {"action": "gmail_send", "to": "not-an-address", "subject": "x", "body": "y"}))
+        assert bad.startswith("Could not do that")
+
+    def test_a_calendar_event_waits_for_approval_and_is_added_only_after_it(self):
+        w = world(two_task_plan(), AGENTS, env=dict(self.ENV))
+        url = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+        http = self._http({("POST", url): {"id": "ev1", "htmlLink": "https://calendar.google.com/e/ev1"},
+                           ("GET", url): {"items": [{"summary": "Dentist", "start": {"dateTime": "2026-10-28T09:00:00-07:00"}, "end": {"dateTime": "2026-10-28T10:00:00-07:00"}}]}})
+        w.engine.client_factory = http
+        self._linked(w)
+        ctx = helix.CrewCtx(UID, w.engine)
+        seen = run(helix.execute(ctx, "read_platform", {"platform": "google", "action": "calendar_list", "args": {"days": 7}}))
+        assert "Dentist" in seen
+        out = run(helix.execute(ctx, "use_google", {"action": "calendar_add", "title": "Launch party", "start": "2026-10-31T17:00:00-07:00", "minutes": 120, "location": "The Loft"}))
+        assert out.startswith("NOT ADDED YET") and "Launch party" in out and not [r for r in http.requests if r[0] == "POST" and r[1] == url]
+        q = run(w.store.list_questions(UID, "open"))[-1]
+        res = run(w.engine.answer(UID, q["id"], approve=True))
+        assert "Added to your Google Calendar" in res["message"] and [r for r in http.requests if r[0] == "POST" and r[1] == url]
+        bad = run(helix.execute(ctx, "use_google", {"action": "calendar_add", "title": "x", "start": "tomorrow"}))
         assert bad.startswith("Could not do that")
 
     def test_an_expired_login_is_refreshed_and_a_revoked_one_says_what_to_do(self):
