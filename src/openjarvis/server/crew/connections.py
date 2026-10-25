@@ -78,6 +78,18 @@ ACTIONS: Dict[str, Dict[str, Dict[str, Any]]] = {
                                                            "for the whole batch. Each listing needs a photo, and digital ones a file.",
                              "args": {"listing_ids": "list of integers"}},
     },
+    "google": {
+        "gmail_search": {"risk": "read", "about": "Search the owner's Gmail (Gmail search syntax, e.g. from:etsy newer_than:7d) and list the matches: sender, subject, date, a short snippet and the message id.",
+                         "args": {"query": "Gmail search text", "max": "integer 1 to 20 (default 10)"}},
+        "gmail_read": {"risk": "read", "about": "Read one Gmail message in full (headers and plain text).", "args": {"id": "message id from gmail_search"}},
+        "gmail_send": {"risk": "checkpoint", "about": "Send an email from the owner's Gmail. The owner sees the exact recipient, subject and text and taps Approve first.",
+                       "args": {"to": "one email address", "subject": "text (up to 200)", "body": "plain text (up to 8000)"}},
+        "drive_search": {"risk": "read", "about": "Search the owner's Google Drive by name or content and list files: name, type, modified date and the file id.",
+                         "args": {"query": "words to find", "max": "integer 1 to 20 (default 10)"}},
+        "drive_read": {"risk": "read", "about": "Read one Drive file as text: Google Docs, Sheets (as CSV) and plain-text files (not images or PDFs).", "args": {"file_id": "id from drive_search"}},
+        "drive_save": {"risk": "draft", "about": "Save a file from a mission outbox into the owner's Drive, in a folder called Aibussol that this app creates. Never changes or deletes files he already has.",
+                       "args": {"file": "outbox file name (a book PDF, a document...)", "name": "optional file name in Drive"}},
+    },
     "marnyx": {
         "list_accounts": {"risk": "read", "about": "List the Marnyx businesses (brands) with their connected social accounts and how many email subscribers each has.",
                           "args": {}},
@@ -104,12 +116,14 @@ RENDER_SETUP = ("Paste your Render API key in the Connections panel on the Stati
                 "Aibussol only checks it can read your services; it never shows the key again.")
 RENDER_API = "https://api.render.com/v1"
 
-LABELS = {"stripe": "Stripe", "etsy": "Etsy", "marnyx": "Marnyx (your socials and email)", "google_play": "Google Play", "app_store": "App Store"}
+LABELS = {"stripe": "Stripe", "etsy": "Etsy", "marnyx": "Marnyx (your socials and email)", "google": "Google (Gmail and Drive)", "google_play": "Google Play", "app_store": "App Store"}
 
 SETUP = {
     "stripe": "Set STRIPE_SECRET_KEY on Render (the Aibussol billing key works).",
     "etsy": "Register an app at etsy.com/developers (wait for approval), set ETSY_API_KEY (and ETSY_SHARED_SECRET if Etsy shows one) and "
             "ETSY_REDIRECT_URI=https://aibussol.com/crew/connect/etsy/callback on Render, then tap Connect Etsy in the Station.",
+    "google": "Create a Google Cloud OAuth client (type Web application), turn on the Gmail API and the Drive API, and set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and "
+              "GOOGLE_REDIRECT_URI=https://aibussol.com/crew/connect/google/callback on Render, then tap Connect Google in the Station.",
     "marnyx": "In Marnyx open Settings → Connected apps → Create key, then tap Connect here and paste it.",
     "google_play": "Not built yet. Needs: a Play developer account, a Google Cloud service account invited to Play Console, and its JSON key.",
     "app_store": "Not built yet. Needs: an Apple Developer account and an App Store Connect API key (issuer id, key id, .p8 file).",
@@ -139,11 +153,14 @@ async def status(store, user_id: str, env=None) -> Dict[str, Dict[str, Any]]:
     e = _env(env)
     stripe_on = bool((e.get("STRIPE_SECRET_KEY") or "").strip())
     etsy_linked = bool(await store.get_secret(user_id, "etsy_refresh"))
+    google_linked = bool(await store.get_secret(user_id, "google_refresh"))
     out = {
         "stripe": {"connected": stripe_on, "built": True},
         "etsy": {"connected": etsy_app_configured(env) and etsy_linked, "built": True, "can_connect": etsy_app_configured(env) and not etsy_linked,
                  "note": (await store.get_secret(user_id, "etsy_shop_note")) or ""},
         "marnyx": {"connected": bool(marnyx_key(env)), "built": True},
+        "google": {"connected": google_app_configured(env) and google_linked, "built": True, "can_connect": google_app_configured(env) and not google_linked,
+                   "note": (await store.get_secret(user_id, "google_email")) or ""},
         "google_play": {"connected": False, "built": False},
         "app_store": {"connected": False, "built": False},
     }
@@ -191,6 +208,9 @@ def describe_action(platform: str, action: str, args: Dict[str, Any]) -> str:
             lines.append(f'{i}. {_when_label(p["scheduled_at"])} · {", ".join(PLAT_NAMES.get(x, x) for x in p["platforms"])}: {_clip(p["body"], 220)}'
                          + (f' {p["hashtags"]}' if p.get("hashtags") else ""))
         return "\n".join(lines)
+    if platform == "google" and action == "gmail_send":
+        to, subj, body = _mail_args(args)
+        return f'Send this email from your Gmail to {to}. Subject: "{subj}"\n{_clip_text(body, 1200)}'
     if platform == "marnyx" and action == "approve_posts":
         return f'Approve every held draft for {_clip(args.get("business"), 60)} in Marnyx so each is published at its posting time.'
     if platform == "marnyx" and action == "send_email":
@@ -368,6 +388,209 @@ async def _marnyx(action: str, args: Dict[str, Any], *, env, cf: "ClientFactory"
     raise ConnectionError_("Unsupported Marnyx action.")
 
 
+# ── Google (Gmail and Drive): OAuth and actions ───────────────────────────────────────────────────
+
+GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me"
+DRIVE_API = "https://www.googleapis.com/drive/v3"
+DRIVE_UPLOAD = "https://www.googleapis.com/upload/drive/v3/files"
+GOOGLE_SCOPES = ("openid email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send "
+                 "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file")
+
+
+def google_app_configured(env=None) -> bool:
+    e = _env(env)
+    return bool((e.get("GOOGLE_CLIENT_ID") or "").strip() and (e.get("GOOGLE_CLIENT_SECRET") or "").strip() and (e.get("GOOGLE_REDIRECT_URI") or "").strip())
+
+
+def google_connect_url(user_id: str, env=None, states=None) -> str:
+    e = _env(env)
+    s = (states or GOOGLE_STATES).new(user_id)
+    q = {"client_id": (e.get("GOOGLE_CLIENT_ID") or "").strip(), "redirect_uri": (e.get("GOOGLE_REDIRECT_URI") or "").strip(), "response_type": "code",
+         "scope": GOOGLE_SCOPES, "access_type": "offline", "prompt": "consent", "state": s["state"], "code_challenge": s["challenge"], "code_challenge_method": "S256"}
+    return f"{GOOGLE_AUTH_URL}?{urlencode(q)}"
+
+
+async def _save_google_tokens(store, user_id: str, body: Dict[str, Any], keep_refresh: bool = False) -> None:
+    if not body.get("access_token"):
+        raise ConnectionError_("Google did not return a login.")
+    if not body.get("refresh_token") and not keep_refresh:
+        raise ConnectionError_("Google did not return a long-lived login. Open myaccount.google.com/permissions, remove Aibussol, and connect again.")
+    await store.set_secret(user_id, "google_access", body["access_token"])
+    if body.get("refresh_token"):
+        await store.set_secret(user_id, "google_refresh", body["refresh_token"])
+    await store.set_secret(user_id, "google_expires", str(int(time.time()) + int(body.get("expires_in") or 3600) - 60))
+
+
+async def google_finish_connect(store, state: str, code: str, env=None, states=None, client_factory: Optional[ClientFactory] = None) -> str:
+    """The OAuth callback: swap the code for tokens and note which Google account it is. Returns the user id it connected."""
+    pending = (states or GOOGLE_STATES).take(state)
+    if not pending:
+        raise ConnectionError_("This Google connection link has expired. Start again from the Station.")
+    if not code:
+        raise ConnectionError_("Google did not send a code (was access denied?).")
+    e = _env(env)
+    async with (client_factory or _default_client)() as c:
+        r = await c.post(GOOGLE_TOKEN_URL, data={"grant_type": "authorization_code", "code": code, "client_id": (e.get("GOOGLE_CLIENT_ID") or "").strip(),
+                                                 "client_secret": (e.get("GOOGLE_CLIENT_SECRET") or "").strip(), "redirect_uri": (e.get("GOOGLE_REDIRECT_URI") or "").strip(),
+                                                 "code_verifier": pending["verifier"]})
+        body = _ok(r, "Google")
+        granted = str(body.get("scope") or "")
+        if "gmail.readonly" not in granted or "drive.readonly" not in granted:
+            raise ConnectionError_("Google connected, but not every permission was ticked (Gmail and Drive). Connect again and tick all of them.")
+        await _save_google_tokens(store, pending["user_id"], body)
+        try:
+            me = _ok(await c.get("https://openidconnect.googleapis.com/v1/userinfo", headers={"Authorization": f"Bearer {body['access_token']}"}), "Google")
+            await store.set_secret(pending["user_id"], "google_email", str(me.get("email") or ""))
+        except ConnectionError_:
+            pass
+    return pending["user_id"]
+
+
+async def _google_access(store, user_id: str, env, c: httpx.AsyncClient) -> str:
+    access, expires = await store.get_secret(user_id, "google_access"), await store.get_secret(user_id, "google_expires")
+    if access and expires and int(expires) > time.time():
+        return access
+    refresh = await store.get_secret(user_id, "google_refresh")
+    if not refresh:
+        raise ConnectionError_("Google is not connected.")
+    e = _env(env)
+    r = await c.post(GOOGLE_TOKEN_URL, data={"grant_type": "refresh_token", "refresh_token": refresh, "client_id": (e.get("GOOGLE_CLIENT_ID") or "").strip(),
+                                             "client_secret": (e.get("GOOGLE_CLIENT_SECRET") or "").strip()})
+    if r.status_code in (400, 401):
+        raise ConnectionError_("Google no longer accepts the saved login (it was revoked, or the app is still in Testing mode, which expires logins after 7 days). Tap Connect Google again.")
+    body = _ok(r, "Google")
+    await _save_google_tokens(store, user_id, body, keep_refresh=True)
+    return body["access_token"]
+
+
+def _clip_text(v: Any, n: int) -> str:
+    t = str(v if v is not None else "").strip()
+    return t[:n] + ("…" if len(t) > n else "")
+
+
+def _mail_args(args: Dict[str, Any]):
+    to, subj, body = _clip(args.get("to"), 200), _clip(args.get("subject"), 200), str(args.get("body") or "").strip()[:8000]
+    if not re.fullmatch(r"[^@\s<>,;]+@[^@\s<>,;]+\.[^@\s<>,;]+", to):
+        raise ConnectionError_("to must be one email address.")
+    if not subj or not body:
+        raise ConnectionError_("An email needs a subject and a body.")
+    return to, subj, body
+
+
+def _header(msg: Dict[str, Any], name: str) -> str:
+    for h in (msg.get("payload") or {}).get("headers") or []:
+        if str(h.get("name", "")).lower() == name.lower():
+            return _clip(h.get("value"), 200)
+    return ""
+
+
+def _mail_text(payload: Dict[str, Any]) -> str:
+    """The readable text of a Gmail message: the text/plain part if there is one, else the HTML with tags removed."""
+    import base64 as _b64
+
+    def dec(part):
+        data = (part.get("body") or {}).get("data") or ""
+        try:
+            return _b64.urlsafe_b64decode(data + "=" * (-len(data) % 4)).decode("utf-8", "replace") if data else ""
+        except Exception:
+            return ""
+
+    def walk(part, want):
+        if part.get("mimeType") == want and dec(part):
+            return dec(part)
+        for sub in part.get("parts") or []:
+            hit = walk(sub, want)
+            if hit:
+                return hit
+        return ""
+    text = walk(payload, "text/plain")
+    if not text:
+        text = re.sub(r"<[^>]+>", " ", re.sub(r"(?is)<(script|style).*?</\1>", " ", walk(payload, "text/html")))
+    return re.sub(r"\n{3,}", "\n\n", re.sub(r"[ \t]+", " ", text)).strip()
+
+
+async def _google(action: str, args: Dict[str, Any], *, store, user_id: str, env, cf: ClientFactory, mission_id: str = "") -> str:
+    async with cf() as c:
+        token = await _google_access(store, user_id, env, c)
+        h = {"Authorization": f"Bearer {token}"}
+        if action == "gmail_search":
+            q, n = _clip(args.get("query"), 300), max(1, min(int(args.get("max") or 10), 20)) if str(args.get("max") or "10").isdigit() else 10
+            ids = _ok(await c.get(f"{GMAIL_API}/messages", headers=h, params={"q": q, "maxResults": n}), "Gmail").get("messages") or []
+            if not ids:
+                return f'Gmail: no messages match "{q}".'
+            rows = []
+            for m in ids[:n]:
+                d = _ok(await c.get(f"{GMAIL_API}/messages/{m['id']}", headers=h, params={"format": "metadata", "metadataHeaders": ["From", "Subject", "Date"]}), "Gmail")
+                rows.append(f'{m["id"]} | {_header(d, "Date")[:22]} | from {_header(d, "From")} | {_header(d, "Subject")} | {_clip(d.get("snippet"), 120)}')
+            return f'Gmail, {len(rows)} match(es) for "{q}" (id | date | from | subject | snippet):\n' + "\n".join(rows)
+        if action == "gmail_read":
+            mid = _clip(args.get("id"), 60)
+            if not re.fullmatch(r"[0-9a-fA-F]{6,40}", mid):
+                raise ConnectionError_("id must be a message id from gmail_search.")
+            d = _ok(await c.get(f"{GMAIL_API}/messages/{mid}", headers=h, params={"format": "full"}), "Gmail")
+            return (f'From: {_header(d, "From")}\nTo: {_header(d, "To")}\nDate: {_header(d, "Date")}\nSubject: {_header(d, "Subject")}\n\n'
+                    + _clip_text(_mail_text(d.get("payload") or {}) or d.get("snippet") or "(no text)", 6000))
+        if action == "gmail_send":
+            to, subj, body = _mail_args(args)
+            from email.message import EmailMessage
+            import base64 as _b64
+
+            m = EmailMessage()
+            m["To"], m["Subject"] = to, subj
+            m.set_content(body)
+            raw = _b64.urlsafe_b64encode(m.as_bytes()).decode()
+            out = _ok(await c.post(f"{GMAIL_API}/messages/send", headers=h, json={"raw": raw}), "Gmail")
+            return f'Email sent to {to} (Gmail message {out.get("id")}).'
+        if action == "drive_search":
+            q, n = _clip(args.get("query"), 200).replace("\\", " ").replace("'", " "), max(1, min(int(args.get("max") or 10), 20)) if str(args.get("max") or "10").isdigit() else 10
+            files = _ok(await c.get(f"{DRIVE_API}/files", headers=h, params={"q": f"(name contains '{q}' or fullText contains '{q}') and trashed = false", "pageSize": n,
+                                                                          "orderBy": "modifiedTime desc", "fields": "files(id,name,mimeType,modifiedTime,size)"}), "Drive").get("files") or []
+            if not files:
+                return f'Drive: no files match "{q}".'
+            return f'Drive, {len(files)} file(s) for "{q}" (id | name | type | modified):\n' + "\n".join(
+                f'{f["id"]} | {f["name"]} | {f["mimeType"].split(".")[-1].split("/")[-1]} | {str(f.get("modifiedTime", ""))[:10]}' for f in files)
+        if action == "drive_read":
+            fid = _clip(args.get("file_id"), 80)
+            if not re.fullmatch(r"[A-Za-z0-9_-]{10,80}", fid):
+                raise ConnectionError_("file_id must be an id from drive_search.")
+            meta = _ok(await c.get(f"{DRIVE_API}/files/{fid}", headers=h, params={"fields": "id,name,mimeType,size"}), "Drive")
+            mt = meta.get("mimeType", "")
+            if mt == "application/vnd.google-apps.document":
+                r = await c.get(f"{DRIVE_API}/files/{fid}/export", headers=h, params={"mimeType": "text/plain"})
+            elif mt == "application/vnd.google-apps.spreadsheet":
+                r = await c.get(f"{DRIVE_API}/files/{fid}/export", headers=h, params={"mimeType": "text/csv"})
+            elif mt.startswith("text/") or mt in ("application/json", "text/markdown"):
+                r = await c.get(f"{DRIVE_API}/files/{fid}", headers=h, params={"alt": "media"})
+            else:
+                raise ConnectionError_(f'"{meta.get("name")}" is a {mt.split("/")[-1]} file, not text. I can read Google Docs, Sheets and text files.')
+            if r.status_code >= 400:
+                raise ConnectionError_(f"Drive refused the file ({r.status_code}).")
+            return f'{meta.get("name")}:\n' + _clip_text(r.text, 8000)
+        if action == "drive_save":
+            fname = _clip(args.get("file"), 120)
+            full = await _find_output(store, user_id, mission_id, fname)
+            if not full:
+                raise ConnectionError_(f"{fname or 'That file'} is not in any of your missions' outboxes. Check the file name.")
+            content = full.get("content") or ""
+            if content.startswith("base64:"):
+                import base64 as _b64
+
+                data, mime = _b64.b64decode(content[7:]), ("application/pdf" if fname.lower().endswith(".pdf") else "application/octet-stream")
+            else:
+                data, mime = content.encode("utf-8"), "text/plain"
+            name = re.sub(r"[^A-Za-z0-9 ._()-]", "", _clip(args.get("name"), 100)) or fname
+            fl = _ok(await c.get(f"{DRIVE_API}/files", headers=h, params={"q": "name = 'Aibussol' and mimeType = 'application/vnd.google-apps.folder' and trashed = false", "fields": "files(id)"}), "Drive").get("files") or []
+            folder = fl[0]["id"] if fl else _ok(await c.post(f"{DRIVE_API}/files", headers=h, json={"name": "Aibussol", "mimeType": "application/vnd.google-apps.folder"}), "Drive")["id"]
+            boundary = "aibussol" + secrets.token_hex(8)
+            meta = json.dumps({"name": name, "parents": [folder]}).encode()
+            body = (f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n").encode() + meta + (f"\r\n--{boundary}\r\nContent-Type: {mime}\r\n\r\n").encode() + data + f"\r\n--{boundary}--".encode()
+            out = _ok(await c.post(DRIVE_UPLOAD, headers={**h, "Content-Type": f"multipart/related; boundary={boundary}"}, params={"uploadType": "multipart", "fields": "id,name,webViewLink"}, content=body), "Drive")
+            return f'Saved "{out.get("name")}" ({len(data) // 1024} KB) to your Drive, in the Aibussol folder: {out.get("webViewLink") or out.get("id")}'
+    raise ConnectionError_("Unsupported Google action.")
+
+
 async def marnyx_awaiting(env, cf: "ClientFactory") -> List[Dict[str, Any]]:
     """[{id, name, awaiting}] for every Marnyx brand: how many held drafts wait for the owner's approval."""
     base, h = marnyx_url(env), {"Authorization": f"Bearer {marnyx_key(env)}", "Accept": "application/json"}
@@ -409,6 +632,8 @@ async def run(platform: str, action: str, args: Dict[str, Any], *, store, user_i
         return await _etsy(action, args, store=store, user_id=user_id, env=env, cf=cf, mission_id=mission_id, media_fetch=media_fetch)
     if platform == "marnyx":
         return await _marnyx(action, args, env=env, cf=cf)
+    if platform == "google":
+        return await _google(action, args, store=store, user_id=user_id, env=env, cf=cf, mission_id=mission_id)
     raise ConnectionError_(f"{LABELS.get(platform, platform)} is not built yet.")
 
 
@@ -533,6 +758,7 @@ class OAuthStates:
 
 
 ETSY_STATES = OAuthStates()
+GOOGLE_STATES = OAuthStates()
 
 
 def etsy_connect_url(user_id: str, env=None, states: OAuthStates = ETSY_STATES) -> str:

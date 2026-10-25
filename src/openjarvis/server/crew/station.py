@@ -1061,6 +1061,14 @@ function linksSec() {
       const b = mk('button', 'b', 'Connect'); b.onclick = async () => { const x = await api('/api/crew/connect/etsy'); if (x.ok && x.data.url) location.href = x.data.url; else alert(x.data.detail || 'Etsy cannot be connected yet.'); };
       r.append(b);
     }
+    if (key === 'google' && c.can_connect) {
+      const b = mk('button', 'b', 'Connect'); b.onclick = async () => { const x = await api('/api/crew/connect/google'); if (x.ok && x.data.url) location.href = x.data.url; else alert(x.data.detail || 'Google cannot be connected yet.'); };
+      r.append(b);
+    }
+    if (key === 'google' && c.connected) {
+      const b = mk('button', 'b no', 'Disconnect'); b.onclick = async () => { if (confirm('Forget the Google connection? Helix will no longer see your Gmail or Drive.')) { await api('/api/crew/connect/google/disconnect', 'POST'); refresh(); } };
+      r.append(b);
+    }
     if (key === 'workbench') {
       const b = mk('button', 'b', c.paired ? 'Re-pair' : 'Pair your PC');
       b.onclick = async () => {
@@ -2239,7 +2247,7 @@ function poll() {
   pollTimer = setTimeout(poll, 4000);
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
-if (new URLSearchParams(location.search).get('connected') === 'etsy') { selected = 'links'; history.replaceState(null, '', '/station'); }
+if (['etsy', 'google'].includes(new URLSearchParams(location.search).get('connected'))) { selected = 'links'; history.replaceState(null, '', '/station'); }
 (function columnGrips() {
   const main = document.getElementById('main'); if (!main) return;
   const CLAMP = (v, lo, hi) => Math.max(lo, Math.min(hi, v));

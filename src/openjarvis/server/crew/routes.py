@@ -10,6 +10,9 @@
   POST /api/crew/run                         look for work now instead of waiting for the next tick
   GET  /api/crew/connect/etsy                the Etsy authorization URL to open (OAuth with PKCE)
   POST /api/crew/connect/etsy/disconnect     forget the Etsy tokens
+  GET  /api/crew/connect/google              the Google (Gmail + Drive) authorization URL to open
+  POST /api/crew/connect/google/disconnect   forget the Google login (and revoke it at Google)
+  GET  /crew/connect/google/callback         Google sends the browser back here
   GET  /crew/connect/etsy/callback           Etsy sends the browser back here; the one-time state ties it to the user who started it
 
 Every /api/crew route is behind the normal login (auth middleware) and is for owner accounts only.
@@ -307,9 +310,10 @@ async def crew_state(request: Request):
         # platform-level items are the owner's to set up; a subscriber never sees Render instructions
         if not st["connections"].get("web_research", {}).get("connected"):
             st["connections"].pop("web_research", None)
-        etsy = st["connections"].get("etsy")
-        if etsy and not etsy["connected"] and not etsy.get("can_connect"):
-            etsy.update(built=False, setup="Coming soon.")
+        for k_ in ("etsy", "google"):                       # platform-level OAuth apps: a subscriber sees "Coming soon" until the owner has set the app up
+            c_ = st["connections"].get(k_)
+            if c_ and not c_["connected"] and not c_.get("can_connect"):
+                c_.update(built=False, setup="Coming soon.")
         st["guides"] = guide.GUIDES
         st["house_rules"] = (await tenant.get(engine.store, uid, "house_rules")) or ""
         st["usage"] = await engine.usage(uid)
@@ -426,6 +430,8 @@ async def crew_connect(kind: str, body: ConnectIn, request: Request):
 async def crew_connect_off(kind: str, request: Request):
     if kind == "etsy":                                     # Etsy is OAuth, with its own route below
         return await crew_disconnect_etsy(request)
+    if kind == "google":                                   # so is Google
+        return await crew_disconnect_google(request)
     g = await _gate(request)
     if isinstance(g, JSONResponse):
         return g
@@ -810,3 +816,56 @@ async def crew_etsy_callback(request: Request, code: str = "", state: str = "", 
     note = await engine.store.get_secret(uid, "etsy_shop_note")
     await engine.store.add_event(uid, "connection", note or "Etsy connected.")
     return RedirectResponse("/station?connected=etsy", status_code=303)
+
+
+
+@router.get("/api/crew/connect/google")
+async def crew_connect_google(request: Request):
+    g = await _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    envx = await engine.env_for(uid)
+    if not conns.google_app_configured(envx):
+        return JSONResponse({"detail": conns.SETUP["google"] if await engine.is_owner(uid) else "Google is coming soon."}, status_code=409)
+    return {"url": conns.google_connect_url(uid, envx)}
+
+
+@router.post("/api/crew/connect/google/disconnect")
+async def crew_disconnect_google(request: Request):
+    g = await _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    refresh = await engine.store.get_secret(uid, "google_refresh")
+    if refresh:                                             # ask Google to cancel the login too, not just forget it here
+        try:
+            async with (engine.client_factory or conns._default_client)() as c:
+                await c.post("https://oauth2.googleapis.com/revoke", data={"token": refresh})
+        except Exception:
+            logger.warning("google revoke failed (the saved login is forgotten anyway)")
+    for name in ("google_access", "google_refresh", "google_expires", "google_email"):
+        await engine.store.delete_secret(uid, name)
+    await engine.store.add_event(uid, "connection", "Google disconnected.")
+    return {"ok": True}
+
+
+@router.get("/crew/connect/google/callback")
+async def crew_google_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    engine = getattr(request.app.state, "crew_engine", None)
+    if engine is None:
+        return HTMLResponse("<p>The crew is off.</p>", status_code=503)
+    if error:
+        return HTMLResponse(f"<p>Google did not connect: {html.escape(error[:200])}. <a href='/station'>Back to the Station</a></p>", status_code=400)
+    try:
+        pending = conns.GOOGLE_STATES._items.get(state or "")
+        envx = await engine.env_for(pending["user_id"]) if pending else None
+        uid = await conns.google_finish_connect(engine.store, state, code, envx, client_factory=engine.client_factory)
+    except conns.ConnectionError_ as exc:
+        logger.warning("google connect refused: %s", exc)
+        return HTMLResponse(f"<p>{html.escape(str(exc))} <a href='/station'>Back to the Station</a></p>", status_code=400)
+    except Exception:
+        logger.exception("google connect failed")
+        return HTMLResponse("<p>Google could not be connected right now. <a href='/station'>Back to the Station</a></p>", status_code=502)
+    await engine.store.add_event(uid, "connection", "Google (Gmail and Drive) connected.")
+    return RedirectResponse("/station?connected=google", status_code=303)

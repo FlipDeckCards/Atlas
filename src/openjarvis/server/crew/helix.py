@@ -192,7 +192,15 @@ CREW_TOOLS: List[Dict[str, Any]] = [
     {"type": "function", "function": {
         "name": "read_platform",
         "description": "Read from a connected platform through its official API (READ actions only; nothing is changed). For example platform etsy, action get_sales with days 30 gives orders and revenue; etsy get_shop; stripe recent_payments or get_balance.",
-        "parameters": {"type": "object", "properties": {"platform": {"type": "string"}, "action": {"type": "string"}, "days": {"type": "integer"}}, "required": ["platform", "action"]}}},
+        "parameters": {"type": "object", "properties": {"platform": {"type": "string"}, "action": {"type": "string"}, "days": {"type": "integer"},
+                                                        "args": {"type": "object", "description": "The action's own arguments, e.g. {query: 'from:etsy newer_than:7d'} for google gmail_search, {id} for gmail_read, {query} for drive_search, {file_id} for drive_read."}}, "required": ["platform", "action"]}}},
+    {"type": "function", "function": {
+        "name": "use_google",
+        "description": "Act on the user's own Gmail and Google Drive (connected on the Station's Connections panel). To READ use read_platform with platform google (gmail_search, gmail_read, drive_search, drive_read). "
+                       "Here: action gmail_send {to, subject, body} puts the exact email on the Helix inbox for his Approve tap and sends it only then; action drive_save {file, name} saves a finished file from a mission outbox "
+                       "(for example a book PDF) into a folder called Aibussol in his Drive right away (it never changes or deletes files he already has). Say plainly what happened: an email is NOT sent until he approves.",
+        "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["gmail_send", "drive_save"]}, "to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"},
+                                                        "file": {"type": "string"}, "name": {"type": "string"}}, "required": ["action"]}}},
     {"type": "function", "function": {
         "name": "schedule_posts",
         "description": "Schedule social posts for ONE brand through Marnyx (the connected socials). First call read_platform platform marnyx action list_accounts to get the exact brand name and which platforms it has. "
@@ -620,6 +628,26 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
             await eng.store.add_question("", "", ctx.user_id, "ops", text, ["Approve", "Decline"], act)
             return ("NOT PUBLISHED YET. " + saved + " I put an approval on the Helix inbox: " + text + " Tell the user the drafts are on his Marnyx calendar and wait for his Approve tap"
                     + (" (or the hold)." if at else "."))
+        if name == "use_google":
+            from openjarvis.server.crew import connections as conns_mod
+
+            act = _clip(args.get("action"), 30)
+            envx = await eng.env_for(ctx.user_id)
+            if not (await conns_mod.status(eng.store, ctx.user_id, envx))["google"]["connected"]:
+                return "Google is not connected. In the Station's Connections panel, tap Connect on Google (Gmail and Drive) first."
+            try:
+                if act == "gmail_send":
+                    params = {"to": args.get("to"), "subject": args.get("subject"), "body": args.get("body")}
+                    text = conns_mod.describe_action("google", "gmail_send", params)
+                    to, subj, body = conns_mod._mail_args(params)
+                    await eng.store.add_question("", "", ctx.user_id, "ops", text, ["Approve", "Decline"], {"type": "google_send", "to": to, "subject": subj, "body": body})
+                    return "NOT SENT YET. I put this email on the Helix inbox for his Approve tap: " + text
+                if act == "drive_save":
+                    return await conns_mod.run("google", "drive_save", {"file": args.get("file"), "name": args.get("name")}, store=eng.store, user_id=ctx.user_id, env=envx,
+                                               client_factory=eng.client_factory or conns_mod._default_client)
+            except conns_mod.ConnectionError_ as exc:
+                return f"Could not do that: {exc}"
+            return "Use action gmail_send or drive_save."
         if name == "read_platform":
             from openjarvis.server.crew import connections as conns_mod
 
@@ -627,7 +655,8 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
             if conns_mod.risk_of(plat, act) != "read":
                 return "I can only read from a platform here. Reads available: " + "; ".join(f"{p}.{a}" for p, d in conns_mod.ACTIONS.items() for a, v in d.items() if v["risk"] == "read") + "."
             try:
-                return await conns_mod.run(plat, act, {k: args[k] for k in ("days",) if k in args}, store=eng.store, user_id=ctx.user_id, mission_id="",
+                extra = args.get("args") if isinstance(args.get("args"), dict) else {}
+                return await conns_mod.run(plat, act, dict({k: args[k] for k in ("days",) if k in args}, **extra), store=eng.store, user_id=ctx.user_id, mission_id="",
                                            env=await eng.env_for(ctx.user_id), client_factory=eng.client_factory or conns_mod._default_client)
             except conns_mod.ConnectionError_ as exc:
                 return f"Could not read it: {exc}"
