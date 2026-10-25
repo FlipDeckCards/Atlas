@@ -1125,6 +1125,21 @@ def _week(n=2):
 
 
 class TestMarnyx:
+    def test_an_old_marnyx_without_hold_support_is_never_sent_posts(self):
+        from openjarvis.server.crew import connections as conns
+
+        class Old(MarnyxHttp):
+            async def get(self, url, **kw):
+                if url.endswith("/posts/awaiting"):
+                    self.requests.append(("GET", url, kw))
+                    return httpx.Response(404, json={})
+                return await super().get(url, **kw)
+        http = Old()
+        with pytest.raises(conns.ConnectionError_):
+            run(conns.run("marnyx", "schedule_week", {"business": "FlipDeck", "posts": _week(2)}, store=MemoryCrewStore(), user_id=UID,
+                          env={"MARNYX_API_KEY": "mx_" + "a" * 40}, client_factory=http))
+        assert not [r for r in http.requests if r[0] == "POST"]
+
     def test_the_week_goes_to_marnyx_as_held_drafts_and_the_crew_cannot_approve_it(self):
         posts = _week(3)
 

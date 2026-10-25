@@ -346,6 +346,9 @@ async def _marnyx(action: str, args: Dict[str, Any], *, env, cf: "ClientFactory"
                 + (f' · held: {_clip(p["auto_note"], 160)}' if p.get("auto_note") else "") for p in rows) or "none found")
         if action == "schedule_week":
             posts = _week(args)
+            probe = await c.get(f"{base}/businesses/{b['id']}/posts/awaiting", headers=h)          # an old Marnyx has no hold support and would PUBLISH: refuse to send
+            if probe.status_code == 404:
+                raise ConnectionError_("Marnyx has not been updated to hold drafts for approval yet, so nothing was sent. Deploy the latest Marnyx first.")
             out = ok(await c.post(f"{base}/businesses/{b['id']}/posts", headers=h, json={"approved_in": "Aibussol", "hold": True, "posts": posts}))
             made = [x for x in out.get("results") or [] if x.get("id")]
             bad = [f'post {x["index"] + 1}: {x.get("error")}' for x in out.get("results") or [] if not x.get("id")]
