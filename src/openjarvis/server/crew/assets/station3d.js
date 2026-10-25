@@ -35,7 +35,7 @@
   // ── the walkway lines carry a surge of colour from one end to the other: a bright band scrolling along a dim line ──
   let surgeBase = null, surges = [], surgesFixed = [];
   function surgeMap(len, dir, fixed) {
-    if (!surgeBase) { surgeBase = tex(256, 4, (g, w, h) => { const gr = g.createLinearGradient(0, 0, w, 0); gr.addColorStop(0, 'rgb(70,70,70)'); gr.addColorStop(0.34, 'rgb(70,70,70)'); gr.addColorStop(0.46, 'rgb(190,190,190)'); gr.addColorStop(0.5, 'rgb(255,255,255)'); gr.addColorStop(0.54, 'rgb(190,190,190)'); gr.addColorStop(0.66, 'rgb(70,70,70)'); gr.addColorStop(1, 'rgb(70,70,70)'); g.fillStyle = gr; g.fillRect(0, 0, w, h); }, false); surgeBase.wrapS = THREE.RepeatWrapping; }
+    if (!surgeBase) { surgeBase = tex(256, 4, (g, w, h) => { const gr = g.createLinearGradient(0, 0, w, 0); gr.addColorStop(0, 'rgb(120,120,120)'); gr.addColorStop(0.34, 'rgb(120,120,120)'); gr.addColorStop(0.46, 'rgb(190,190,190)'); gr.addColorStop(0.5, 'rgb(255,255,255)'); gr.addColorStop(0.54, 'rgb(190,190,190)'); gr.addColorStop(0.66, 'rgb(120,120,120)'); gr.addColorStop(1, 'rgb(120,120,120)'); g.fillStyle = gr; g.fillRect(0, 0, w, h); }, false); surgeBase.wrapS = THREE.RepeatWrapping; }
     const t = surgeBase.clone(); t.needsUpdate = true; t.wrapS = THREE.RepeatWrapping; t.repeat.set(len / 260, 1); (fixed ? surgesFixed : surges).push({ t, o: hash01(len, dir + 3), dir }); return t;
   }
   function moveSurges(t) { for (const list of [surges, surgesFixed]) for (const s of list) s.t.offset.x = ((s.o + s.dir * 0.00045 * t) % 1 + 1) % 1; }
@@ -138,7 +138,7 @@
     for (let k = 0; k < 8; k++) {
       const [x1, z1] = pts[k], [x2, z2] = pts[(k + 1) % 8], len = Math.hypot(x2 - x1, z2 - z1), ang = Math.atan2(z2 - z1, x2 - x1), g = new THREE.Group();
       const run = len - 2 * (PAD - 6), b = new THREE.Mesh(new THREE.BoxGeometry(run, FLOOR_Y, OW), m.deck); b.position.y = FLOOR_Y / 2; g.add(b);
-      const l = new THREE.Mesh(new THREE.BoxGeometry(len - 2 * PAD - 6, 0.9, 1.8), new THREE.MeshBasicMaterial({ color: 0x00e5ff, map: surgeMap(len - 2 * PAD - 6, -1, true), toneMapped: false })); l.position.y = FLOOR_Y + 0.3; g.add(l);
+      const l = new THREE.Mesh(new THREE.BoxGeometry(len - 2 * PAD - 6, 1.1, 4.2), new THREE.MeshBasicMaterial({ color: new THREE.Color(0x00e5ff).multiplyScalar(1.7), map: surgeMap(len - 2 * PAD - 6, -1, true), toneMapped: false })); l.position.y = FLOOR_Y + 0.3; g.add(l);
       for (const sgn of [-1, 1]) { const rail = new THREE.Mesh(new THREE.BoxGeometry(len - 2 * PAD - 2, 4, 2.4), m.hullD); rail.position.set(0, FLOOR_Y + 2, sgn * (OW / 2 - 1.2)); g.add(rail); }
       g.position.set((x1 + x2) / 2, 0, (z1 + z2) / 2); g.rotation.y = -ang; add(g);
     }
@@ -231,13 +231,14 @@
     rootG.rotation.y = -6.283185 * 3 * (ease3((s - 3.0) / 7.8));
     // up and away, away from the viewer into deep space; a pause far out; then back, braking
     const out = eIn((s - 4.8) / 2.4) * (1 - eOut((s - 8.3) / 2.6));
-    _away.set(-camera.position.x, 0, -camera.position.z).normalize(); rootG.position.set(_away.x * 7800 * out, 2400 * out, _away.z * 7800 * out);
+    _away.set(-camera.position.x, 0, -camera.position.z).normalize(); const hi = ease3((s - 7.2) / 1.1);                                              // away level into the horizon; the way back drops in from above
+    rootG.position.set(_away.x * 12000 * out, (2400 * hi + 120 * (1 - hi)) * out, _away.z * 12000 * out);
   }
   // ── the factories: open work trays and the walkway bands to them; rebuilt when the modules change ──
   function band(g, a, r0, r1, wid, col, lit, dir) {
     const m = mats(), len = r1 - r0, [mx, mz] = polar(a, (r0 + r1) / 2), b = new THREE.Group(); if (len < 4) return;
     const bx = new THREE.Mesh(new THREE.BoxGeometry(len, FLOOR_Y, wid), m.deck); bx.position.y = FLOOR_Y / 2; b.add(bx);
-    const l = new THREE.Mesh(new THREE.BoxGeometry(Math.max(2, len - 6), 0.9, 1.8), lit ? new THREE.MeshBasicMaterial({ color: col, map: surgeMap(Math.max(2, len - 6), dir || -1, false), toneMapped: false }) : new THREE.MeshBasicMaterial({ color: 0x1c2a38 })); l.position.y = FLOOR_Y + 0.3; b.add(l);
+    const l = new THREE.Mesh(new THREE.BoxGeometry(Math.max(2, len - 6), 1.1, 4.2), lit ? new THREE.MeshBasicMaterial({ color: new THREE.Color(col).multiplyScalar(1.7), map: surgeMap(Math.max(2, len - 6), dir || -1, false), toneMapped: false }) : new THREE.MeshBasicMaterial({ color: 0x1c2a38 })); l.position.y = FLOOR_Y + 0.3; b.add(l);
     for (const s of [-1, 1]) { const rail = new THREE.Mesh(new THREE.BoxGeometry(Math.max(2, len - 4), 4, 2.4), m.hullD); rail.position.set(0, FLOOR_Y + 2, s * (wid / 2 - 1.2)); b.add(rail); }
     b.position.set(mx, 0, mz); b.rotation.y = -a; g.add(b);
   }
@@ -259,7 +260,8 @@
     const gap = 38, sideW = (w - gap) / 2;
     wall(w, T, 0, len / 2 - T / 2); wall(T, len - T, -w / 2 + T / 2, -T / 2); wall(T, len - T, w / 2 - T / 2, -T / 2);
     wall(sideW, T, -(gap / 2 + sideW / 2), -len / 2 + T / 2); wall(sideW, T, gap / 2 + sideW / 2, -len / 2 + T / 2);
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) { const post = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, WH + 6, 10), m.hull); post.position.set(sx * (w / 2 - 3), FLOOR_Y + (WH + 6) / 2, sz * (len / 2 - 3)); group.add(post); }
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) { const post = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, WH + 6, 10), m.hull); post.position.set(sx * (w / 2 - 3), FLOOR_Y + (WH + 6) / 2, sz * (len / 2 - 3)); group.add(post);
+      const orb = new THREE.Mesh(new THREE.SphereGeometry(6.5, 16, 12), new THREE.MeshBasicMaterial({ color: lit ? C.clone().multiplyScalar(1.5) : C, toneMapped: false })); orb.position.set(post.position.x, FLOOR_Y + WH + 6 + 5, post.position.z); group.add(orb); }
     const n = 4, running = (m0.tasks || []).filter(t => t.status === 'running');
     for (let i = 0; i < n; i++) { const cx = -w / 2 + 22 + i * ((w - 44) / (n - 1));
       const desk = new THREE.Mesh(new THREE.BoxGeometry((w - 44) / n - 8, 9, 13), new THREE.MeshStandardMaterial({ color: 0x24384a, metalness: 0.5, roughness: 0.5 })); desk.position.set(cx, FLOOR_Y + 5.5, len / 2 - T - 11); group.add(desk);
