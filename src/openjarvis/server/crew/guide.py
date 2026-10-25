@@ -48,6 +48,16 @@ GUIDES: Dict[str, Dict[str, Any]] = {
         ],
         "field": "Marnyx key (mx_…)",
     },
+    "google_play": {
+        "label": "Google Play (reviews for your apps)",
+        "steps": [
+            "In Google Cloud, enable the \u201cGoogle Play Android Developer API\u201d, create a service account, and download a JSON key for it.",
+            "In Play Console open Users and permissions, invite the service account\u2019s email address, and grant it your apps (view app information and reply to reviews is enough).",
+            "Open the downloaded .json file, copy ALL of its text and paste it below. List your app package names, then Test & save.",
+        ],
+        "field": "Paste the whole JSON key file",
+        "extra": "App packages, e.g. com.you.app1, com.you.app2",
+    },
     "phone": {
         "label": "Phone alerts and briefs",
         "steps": [
@@ -114,6 +124,24 @@ async def test_and_save(store, user_id: str, kind: str, value: str, extra: str =
         n = len((r.json() or {}).get("businesses") or [])
         await tenant.put(store, user_id, "marnyx_key", value)
         return f"Marnyx connected ({n} business{'es' if n != 1 else ''})."
+    if kind == "google_play":
+        from openjarvis.server.crew import connections as conns
+
+        pkgs = [x.strip() for x in str(extra or "").split(",") if x.strip()]
+        if not pkgs or not all(re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+", x) for x in pkgs):
+            raise GuideError("List your app package names separated by commas, for example com.you.app.")
+        try:
+            async with cf() as c:
+                token = await conns.play_access_token(value, c)
+                if not token:
+                    raise GuideError("Google did not give back access. Try a fresh key.")
+                for pk in pkgs[:6]:
+                    await conns.play_reviews(c, token, pk, 1)
+        except conns.ConnectionError_ as exc:
+            raise GuideError(str(exc)) from None
+        await tenant.put(store, user_id, "play_key", value)
+        await tenant.put(store, user_id, "play_apps", ",".join(pkgs[:6]))
+        return f"Google Play connected for {len(pkgs[:6])} app(s)."
     if kind == "phone":
         if not re.fullmatch(r"https://ntfy\.sh/[A-Za-z0-9_-]{8,64}", value):
             raise GuideError("Use https://ntfy.sh/ followed by a private topic of 8 to 64 letters, numbers, - or _.")
@@ -134,7 +162,7 @@ async def test_and_save(store, user_id: str, kind: str, value: str, extra: str =
 
 async def disconnect(store, user_id: str, kind: str) -> None:
     names = {"stripe": ["stripe_key"], "github": ["github_token", "github_repos"], "phone": ["notify_url"], "rules": ["house_rules"],
-             "marnyx": ["marnyx_key"]}.get(kind)
+             "marnyx": ["marnyx_key"], "google_play": ["play_key", "play_apps"]}.get(kind)
     if not names:
         raise GuideError("Unknown connection.")
     for n in names:

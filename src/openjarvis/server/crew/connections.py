@@ -12,7 +12,8 @@ The owner does the one-time parts (accounts, identity, payouts, the "allow" scre
                subscription webhook (which only reads app=aibussol) ignores them.
   Etsy         ETSY_API_KEY (keystring), optional ETSY_SHARED_SECRET, ETSY_REDIRECT_URI; then "Connect Etsy" in the Station runs
                Etsy's OAuth (PKCE). Tokens are kept in crew_secrets and refreshed automatically.
-  Google Play  not built yet (planned: Play Developer API with a service account)
+  Google Play  a Google Cloud service account JSON key (pasted on the Station, kept encrypted) that Play Console has invited; reads reviews
+               through the Android Publisher API. Nothing is posted or changed on Play.
   App Store    not built yet (planned: App Store Connect API key)
 """
 
@@ -108,7 +109,10 @@ ACTIONS: Dict[str, Dict[str, Dict[str, Any]]] = {
                                                      "unsubscribe link and mailing address added, daily and monthly caps apply.",
                        "args": {"business": "business name or id", "subject": "text (up to 150)", "body_text": "plain text (up to 8000)"}},
     },
-    "google_play": {},
+    "google_play": {
+        "list_reviews": {"risk": "read", "about": "Recent Google Play reviews (stars, text, date) for one of the owner's apps; newest first.",
+                         "args": {"package": "app package name, e.g. com.flipdeckllc.flipdeckcards (omit for every connected app)", "limit": "1-20, default 10"}},
+    },
     "app_store": {},
 }
 
@@ -125,7 +129,7 @@ SETUP = {
     "google": "Create a Google Cloud OAuth client (type Web application), turn on the Gmail API and the Drive API, and set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and "
               "GOOGLE_REDIRECT_URI=https://aibussol.com/crew/connect/google/callback on Render, then tap Connect Google in the Station.",
     "marnyx": "In Marnyx open Settings → Connected apps → Create key, then tap Connect here and paste it.",
-    "google_play": "Not built yet. Needs: a Play developer account, a Google Cloud service account invited to Play Console, and its JSON key.",
+    "google_play": "Tap Connect and paste a Google Cloud service account JSON key that Play Console has invited, plus your app package names.",
     "app_store": "Not built yet. Needs: an Apple Developer account and an App Store Connect API key (issuer id, key id, .p8 file).",
 }
 
@@ -161,7 +165,7 @@ async def status(store, user_id: str, env=None) -> Dict[str, Dict[str, Any]]:
         "marnyx": {"connected": bool(marnyx_key(env)), "built": True},
         "google": {"connected": google_app_configured(env) and google_linked, "built": True, "can_connect": google_app_configured(env) and not google_linked,
                    "note": (await store.get_secret(user_id, "google_email")) or ""},
-        "google_play": {"connected": False, "built": False},
+        "google_play": {"connected": bool(play_key(env)), "built": True, "note": ", ".join(play_apps(env))},
         "app_store": {"connected": False, "built": False},
     }
     for k, v in out.items():
@@ -272,6 +276,86 @@ PLAT_NAMES = {"instagram": "Instagram", "facebook": "Facebook", "x": "X", "tikto
 
 def marnyx_key(env=None) -> str:
     return (_env(env).get("MARNYX_API_KEY") or "").strip()
+
+
+def play_key(env=None) -> str:
+    return (_env(env).get("GOOGLE_PLAY_KEY") or "").strip()
+
+
+def play_apps(env=None) -> List[str]:
+    return [x.strip() for x in (_env(env).get("GOOGLE_PLAY_APPS") or "").split(",") if x.strip()]
+
+
+PLAY_API = "https://androidpublisher.googleapis.com/androidpublisher/v3/applications"
+PLAY_SCOPE = "https://www.googleapis.com/auth/androidpublisher"
+
+
+def parse_play_key(raw: str) -> Dict[str, str]:
+    """The service account JSON file's text -> its fields, or ConnectionError_ with a safe message (never echoes the key)."""
+    try:
+        k = json.loads(raw)
+    except Exception:
+        raise ConnectionError_("That is not the JSON key file. Open the downloaded .json file, copy ALL of its text and paste it.") from None
+    if not isinstance(k, dict) or k.get("type") != "service_account" or not k.get("client_email") or "BEGIN PRIVATE KEY" not in str(k.get("private_key") or ""):
+        raise ConnectionError_("That JSON is not a service account key (it should contain type service_account, a client_email and a private_key).")
+    return {"client_email": str(k["client_email"]), "private_key": str(k["private_key"]), "token_uri": str(k.get("token_uri") or "https://oauth2.googleapis.com/token")}
+
+
+def _b64u(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode("ascii")
+
+
+async def play_access_token(raw_key: str, c: httpx.AsyncClient) -> str:
+    """Sign a short-lived JWT with the service account's private key and trade it at Google for an access token."""
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    k = parse_play_key(raw_key)
+    now = int(time.time())
+    head = _b64u(json.dumps({"alg": "RS256", "typ": "JWT"}).encode())
+    claim = _b64u(json.dumps({"iss": k["client_email"], "scope": PLAY_SCOPE, "aud": k["token_uri"], "iat": now, "exp": now + 3000}).encode())
+    try:
+        pk = serialization.load_pem_private_key(k["private_key"].encode(), password=None)
+        sig = pk.sign(f"{head}.{claim}".encode(), padding.PKCS1v15(), hashes.SHA256())
+    except Exception:
+        raise ConnectionError_("The private key in that file could not be read. Download a fresh JSON key and paste it again.") from None
+    r = await c.post(k["token_uri"], data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": f"{head}.{claim}.{_b64u(sig)}"})
+    if r.status_code >= 400:
+        raise ConnectionError_("Google did not accept that key. Check the Google Play Android Developer API is enabled on its Cloud project and the key was not deleted.")
+    return str(r.json().get("access_token") or "")
+
+
+async def play_reviews(c: httpx.AsyncClient, token: str, package: str, limit: int = 10) -> List[Dict[str, Any]]:
+    r = await c.get(f"{PLAY_API}/{package}/reviews", params={"maxResults": max(1, min(limit, 20))}, headers={"Authorization": f"Bearer {token}"})
+    if r.status_code in (401, 403):
+        raise ConnectionError_(f"Play Console has not given this key access to {package} yet. In Play Console, Users and permissions, invite the service account and grant it that app "
+                               "(it can take a while to start working after you invite it).")
+    if r.status_code == 404:
+        raise ConnectionError_(f"Google Play has no app with the package name {package}.")
+    return _ok(r, "Google Play").get("reviews") or []
+
+
+async def _play(action: str, args: Dict[str, Any], *, env, cf: "ClientFactory") -> str:
+    if action != "list_reviews":
+        raise ConnectionError_(f"google_play.{action} is not an available action.")
+    pkgs = [str(args["package"]).strip()] if str(args.get("package") or "").strip() else play_apps(env)
+    if not pkgs or any(not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+", p) for p in pkgs):
+        raise ConnectionError_("Give the app's package name, for example com.flipdeckllc.flipdeckcards.")
+    try:
+        limit = int(args.get("limit") or 10)
+    except (TypeError, ValueError):
+        limit = 10
+    out = []
+    async with cf() as c:
+        token = await play_access_token(play_key(env), c)
+        for pkg in pkgs[:6]:
+            revs = await play_reviews(c, token, pkg, limit)
+            out.append(f"{pkg}: " + ("no recent reviews." if not revs else ""))
+            for rv in revs[:limit]:
+                uc = ((rv.get("comments") or [{}])[0].get("userComment") or {})
+                when = dt.datetime.fromtimestamp(int((uc.get("lastModified") or {}).get("seconds") or 0), dt.timezone.utc).strftime("%Y-%m-%d")
+                out.append(f"- {uc.get('starRating', '?')}/5 on {when}: {_clip(uc.get('text'), 300)}")
+    return "\n".join(out)
 
 
 def marnyx_url(env=None) -> str:
@@ -634,6 +718,8 @@ async def run(platform: str, action: str, args: Dict[str, Any], *, store, user_i
         return await _marnyx(action, args, env=env, cf=cf)
     if platform == "google":
         return await _google(action, args, store=store, user_id=user_id, env=env, cf=cf, mission_id=mission_id)
+    if platform == "google_play":
+        return await _play(action, args, env=env, cf=cf)
     raise ConnectionError_(f"{LABELS.get(platform, platform)} is not built yet.")
 
 
