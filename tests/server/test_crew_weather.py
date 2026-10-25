@@ -152,3 +152,17 @@ def test_the_station_has_a_planet_and_twenty_walkway_walkers():
 
     assert "function drawPlanet(t)" in STATION_PAGE and "  drawPlanet(t);\n  drawMiniStation(t, dt);" in STATION_PAGE
     assert "Array.from({ length: 20 }, (_, i) => WALK_ROLES[i % WALK_ROLES.length])" in STATION_PAGE
+
+
+def test_on_a_phone_the_station_fills_its_box_and_the_desktop_sizing_is_untouched():
+    from openjarvis.server.crew.station import STATION_PAGE
+
+    assert "Math.min(W, H) / (2 * 382.5) * 0.95" in STATION_PAGE
+    assert "SC = Math.max(0.34, Math.min(1.25, Math.min(dw / 1060, dh / 800), Math.min(W / 1060, H / 800)));" in STATION_PAGE   # the desktop line, as it was
+
+
+def test_every_name_plate_is_the_size_of_helix_business_expansion_bays_too():
+    from openjarvis.server.crew.station import STATION_PAGE
+
+    assert "ctx.measureText('HELIX BUSINESS…').width + 18 * SC + 6" in STATION_PAGE
+    assert "const pw = fixedW, ph = fs + fs2 + 12 * SC;" in STATION_PAGE and "Expansion Bays included" in STATION_PAGE
