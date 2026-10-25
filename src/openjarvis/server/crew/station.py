@@ -472,7 +472,11 @@ function renderSide(force) {
   const side = document.getElementById('side-body');
   const ae = document.activeElement;
   // never rebuild the panel under someone's fingers: wait until they leave the field they are typing in
-  if (!force && ae && side.contains(ae) && /INPUT|TEXTAREA/.test(ae.tagName) && ae.value) { ae.onblur = () => renderSide(true); return; }
+  // leaving a field to another field in the same panel (a guided box's second input) must not rebuild it: wait for focus to settle first
+  if (!force && ae && side.contains(ae) && /INPUT|TEXTAREA/.test(ae.tagName) && ae.value) {
+    ae.onblur = () => setTimeout(() => { if (!side.contains(document.activeElement)) renderSide(true); }, 0);
+    return;
+  }
   const focused = document.activeElement && document.activeElement.id;
   if (!S) {                                                    // no crew on this account: chat, vitals, library and the viewer still work
     document.getElementById('vitals-box').replaceChildren(vitalsSec());
