@@ -21,8 +21,10 @@ DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 GOAL = (
     "Weekly social plan for the week of {week}. Work through the brands ONE AT A TIME, FlipDeck first, then Marnyx (then Aibussol if it has "
     "accounts). Echo first runs marnyx.list_accounts to see each brand and its connected socials. For each brand with connected socials Echo "
-    "writes the coming Monday to Sunday: {per_day} posts a day spread across the day (about 7am to 10pm Los Angeles time, ISO with offset), "
-    "on the platforms that brand has connected, varied (tips, behind the scenes, product, community, offers, questions to the audience), on "
+    "writes the coming Monday to Sunday: {per_day} posts a day spread across the day (about 7am to 10pm Los Angeles time, ISO with offset). "
+    "EVERY post goes to ALL of that brand's connected platforms (Facebook, Instagram, TikTok and X when all four are connected): list them all in "
+    "the post's platforms, one post for every platform. So each post must work on all of them: at most 270 characters INCLUDING the hashtags (X "
+    "allows 280), at most 5 hashtags, no links (X blocks them), and it must make sense with an automatic picture. Varied (tips, behind the scenes, product, community, offers, questions to the audience), on "
     "brand and honest, with hashtags; no claims or prices that are not true and no two posts alike. Marnyx takes at most 28 posts per call, so "
     "Echo puts each brand's week on its Marnyx calendar with TWO marnyx.schedule_week calls (Monday to Wednesday, then Thursday to Sunday). "
     "These are HELD DRAFTS at their posting times: nothing is published. Do NOT ask Michael anything and do NOT approve anything: after the "
