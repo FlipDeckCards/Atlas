@@ -135,3 +135,13 @@ def test_the_station_page_has_the_outer_ring_and_its_walkway():
     for part in ("function drawWalkway", "OUTER_ORDER = [0, 4, 2, 6, 1, 5, 3, 7]", "ringGeom(", "let walkway = null", "drawWalkway(t);\n  mods.forEach(m => drawModule"):
         assert part in STATION_PAGE
     assert "SC *= Math.sin(Math.PI / N)" not in STATION_PAGE                    # the old shrink-everything ring is gone
+
+
+def test_the_station_page_has_the_16_outer_slots_branch_routes_and_lit_junctions():
+    from openjarvis.server.crew import tenant
+    from openjarvis.server.crew.station import STATION_PAGE
+
+    for part in ("const MAX_EXTRA_BRANCHES = 16", "function routeOf(m)", "function routeAt(rt, d)", "const branch = j >= 8", "function plateDepth(S)", "const JCOL = [", "an open bay is a factory that is switched off"):
+        assert part in STATION_PAGE
+    assert "setLineDash([6 * SC, 6 * SC]); ctx.strokeStyle = alpha(col, 0.3" not in STATION_PAGE      # open bays are no longer dashed outlines
+    assert tenant.MAX_BUSINESSES == 17                                                                  # 4 inner + 16 outer slots, less the owner's fixed three

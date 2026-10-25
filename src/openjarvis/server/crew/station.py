@@ -1024,7 +1024,7 @@ function guideBox(kind) {
 }
 function setupSec() {
   const s = mk('div', 'sec');
-  const l = mk('div', 'lbl'); l.append(mk('span', null, 'Set up your Station'), mk('span', 'act', (S.businesses.length) + ' of 6 businesses')); s.append(l);
+  const l = mk('div', 'lbl'); l.append(mk('span', null, 'Set up your Station'), mk('span', 'act', (S.businesses.length) + ' of ' + (isOwner() ? 20 : 17) + ' businesses')); s.append(l);
   s.append(mk('div', 'dim', 'Every agent on the crew works for you. Add your businesses, then connect what they should use. Each step is checked before it is saved.'));
   const steps = [
     ['Add a business', S.businesses.length > 0],
@@ -1187,7 +1187,7 @@ const PLATFORMS = [
   { key: 'app_store', label: 'APP STORE', color: '#3fc8ff' },
 ];
 const RING = ['p0', 'stripe', 'p1', 'etsy', 'p2', 'google_play', 'new', 'app_store'];   // clockwise from the top
-const MAX_EXTRA_BRANCHES = 8;
+const MAX_EXTRA_BRANCHES = 16;
 const WORKING = ['active', 'planning', 'paused', 'stalled'];
 
 // The size the station has when it first loads with the columns and the chat at their default sizes: the window minus the two 210px columns, the
@@ -1525,13 +1525,16 @@ function spinOnMissionChange(missions) {
 const OUTER_ORDER = [0, 4, 2, 6, 1, 5, 3, 7];                  // outer slots fill opposite sides first so the ring stays balanced
 const H_IN = 0.75, H_OUT = 0.667;                                   // how deep (from Helix outwards) the inner and the outer factories are, as a share of the full 116
 let walkway = null;                                            // { Vc, ringW } while there is an outer ring
-// the double ring's geometry at scale S: inner modules, the walkway octagon (corners on the tubes, hugging the inner factories), outer modules
+// the name plate on a factory's outer end: its text has a minimum size, so its depth is not simply proportional to the scale
+function plateDepth(S) { return 5 * S + Math.max(8, 11 * S) + Math.max(7, 9 * S) + 12 * S + 4; }
+// the double ring's geometry at scale S: inner modules, the walkway octagon (corners on the tubes, hugging the inner factories but clear of their
+// name plates), outer modules
 function ringGeom(S, mw, coreR) {
-  const mhIn = 116 * S * H_IN, mhOut = 116 * S * H_OUT, N = RING.length;
+  const mhIn = 116 * S * H_IN, mhOut = 116 * S * H_OUT, N = RING.length, plate = plateDepth(S);
   const D1 = Math.max(coreR + 52 * S + mhIn / 2, (mw + 46 * S) / (2 * Math.sin(Math.PI / N)), mhIn / 2 + (mw + 46 * S) / (2 * Math.sin(Math.PI / N)));
-  const ringW = (20 + 14) * S * 0.8, dW = D1 + mhIn / 2 + 24 * S + 10 * S + ringW / 2;      // 24 for the name plates
+  const ringW = (20 + 14) * S * 0.8, dW = D1 + mhIn / 2 + plate + 8 * S + ringW / 2;
   const Vc = dW / Math.cos(Math.PI / 8), D2 = Vc + 17 * S + 34 * S + mhOut / 2;
-  return { mhIn, mhOut, D1, ringW, Vc, D2, extent: D2 + mhOut / 2 + 24 * S };
+  return { mhIn, mhOut, D1, ringW, dW, Vc, D2, extent: D2 + mhOut / 2 + plate };
 }
 function layout() {
   const pl = prods(), nk = newKeys();
@@ -1542,25 +1545,27 @@ function layout() {
   const [dw, dh] = designSize();                          // the ring's scale follows the browser window, never the panels you dragged
   // the optimal scale for this window, shrunk evenly (never stretched) only when the station's box is really too small to hold it
   SC = Math.max(0.34, Math.min(1.25, Math.min(dw / 1060, dh / 800), Math.min(W / 1060, H / 800)));
-  SC *= 0.94 * ((300.5 + 58 + 24) / ringGeom(1, 144, 94).extent);   // the outer ring is always there (8 slots), so the whole station is drawn smaller to fit the window (0.94: a margin so the edge labels stay inside)
+  const room = 0.97 * (300.5 + 58 + 24) * SC;                    // the outer ring is always there, so the station is drawn smaller, until the whole double ring fits where the single ring did
+  for (let i = 0; i < 6; i++) SC *= room / ringGeom(SC, 144 * SC, 94 * SC).extent;
   core = { x: W / 2, y: H / 2, r: 94 * SC };
   const mw = 144 * SC;                                       // narrower than a single ring's, so a walkway fits between neighbours
   const g = ringGeom(SC, mw, core.r), mhIn = g.mhIn, mhOut = g.mhOut, D = g.D1, D2 = g.D2;
-  walkway = { Vc: g.Vc, ringW: g.ringW };
+  walkway = { Vc: g.Vc, ringW: g.ringW, dW: g.dW };
   const prod = {};
   const open = (i) => ({ key: 'open' + i, label: 'EXPANSION BAY', color: '#ff4fb8', expansion: true, tasks: [], missions: [], state: 'OPEN',
                          idleText: isOwner() ? 'NEXT BUSINESS' : 'TAP TO ADD A BUSINESS' });
   for (let i = 0; i < 3; i++) prod['p' + i] = pl[i] ? fillBay(Object.assign({}, pl[i])) : open(i);
   const plat = {}; PLATFORMS.forEach(p => { plat[p.key] = platformModule(p); });
   const fresh = pl[3] ? fillBay(Object.assign({}, pl[3])) : nk.length ? newBay(nk[0]) : open(3);
-  const outerOpen = (j) => Object.assign(open(10 + j), { label: 'EXPANSION BAY ' + (j + 1) });
+  const outerOpen = (j) => Object.assign(open(10 + j), { label: 'EXPANSION BAY ' + (j + 1) });                // expansion bay numbers run 1 to 16 around the outer ring
   const inner = RING.map(k => k === 'new' ? fresh : (prod[k] || plat[k]));
   mods = inner.map((m, i) => {
     const a = -Math.PI / 2 + i * 2 * Math.PI / N;
     return Object.assign(m, { a, ux: Math.cos(a), uy: Math.sin(a), cx: core.x + Math.cos(a) * D, cy: core.y + Math.sin(a) * D, w: mw, h: mhIn, rot: a + Math.PI / 2, D });
   }).concat(extras.concat(Array.from({ length: Math.max(0, MAX_EXTRA_BRANCHES - extras.length) }, (_, k) => outerOpen(extras.length + k))).map((m, j) => {
-    const a = -Math.PI / 2 + Math.PI / N + OUTER_ORDER[j] * 2 * Math.PI / N;       // in the gap between two inner modules
-    return Object.assign(m, { a, ux: Math.cos(a), uy: Math.sin(a), cx: core.x + Math.cos(a) * D2, cy: core.y + Math.sin(a) * D2, w: mw, h: mhOut, rot: a + Math.PI / 2, D: D2 });
+    const branch = j >= 8;                                  // slots 9 to 16: between two outer factories, on a branch off the middle of a walkway side
+    const a = branch ? -Math.PI / 2 + OUTER_ORDER[j - 8] * 2 * Math.PI / N : -Math.PI / 2 + Math.PI / N + OUTER_ORDER[j] * 2 * Math.PI / N;       // else in the gap between two inner modules
+    return Object.assign(m, { a, ux: Math.cos(a), uy: Math.sin(a), cx: core.x + Math.cos(a) * D2, cy: core.y + Math.sin(a) * D2, w: mw, h: mhOut, rot: a + Math.PI / 2, D: D2, branch });
   }));
   mods.forEach(m => { m.a0 = m.a; });
   poseMods(DRIFT.angle + SPIN.cur);
@@ -1575,12 +1580,30 @@ function inModule(m, x, y) { const [lx, ly] = toLocal(m, x, y); return Math.abs(
 function hallW() { return 20 * SC; }
 function modLive(m) { return !!m.powered || m.tasks.some(k => k.status === 'running'); }
 
-// a docking tube: straight from Helix's core into the middle of the module's inner wall
+// the way a crew member walks from Helix's deck to a factory's door: straight down its tube; for a branch factory down the nearest tube to the
+// walkway, round to the middle of its side, then out along the branch
+function routeOf(m) {
+  const p0 = core.r + 2, door = m.D - m.h / 2 + 2, at = (u, v, r) => [core.x + u * r, core.y + v * r];
+  if (!m.branch || !walkway) return [at(m.ux, m.uy, p0), at(m.ux, m.uy, door)];
+  const a1 = m.a - Math.PI / 8, u1 = Math.cos(a1), v1 = Math.sin(a1);
+  return [at(u1, v1, p0), at(u1, v1, walkway.Vc), at(m.ux, m.uy, walkway.dW), at(m.ux, m.uy, door)];
+}
+function routeLen(rt) { let L = 0; for (let i = 1; i < rt.length; i++) L += Math.hypot(rt[i][0] - rt[i - 1][0], rt[i][1] - rt[i - 1][1]); return L; }
+function routeAt(rt, d) {                                  // [x, y, dx, dy] after walking d along the route
+  for (let i = 1; i < rt.length; i++) {
+    const dx = rt[i][0] - rt[i - 1][0], dy = rt[i][1] - rt[i - 1][1], L = Math.hypot(dx, dy);
+    if (d <= L || i === rt.length - 1) { const f = Math.max(0, Math.min(1, d / (L || 1))); return [rt[i - 1][0] + dx * f, rt[i - 1][1] + dy * f, dx, dy]; }
+    d -= L;
+  }
+  return [rt[0][0], rt[0][1], 0, 1];
+}
+
+// a docking tube: straight from Helix's core into the middle of the module's inner wall (a branch factory's starts at its walkway side)
 function drawSpoke(m, t) {
   const site = S && S.products ? S.products[m.key] : null;               // a live product site keeps its tube flowing too
   const live = m.tasks.some(k => k.status === 'running') || (m.platform && m.powered) || !!(site && site.live) || m.state === 'IDLE';
   const col = m.color, hw = hallW() / 2, wall = 4 * SC;
-  const r1 = core.r + 3, r2 = m.D - m.h / 2 + 2, ux = m.ux, uy = m.uy, nx = -uy, ny = ux;
+  const r1 = m.branch && walkway ? walkway.dW : core.r + 3, r2 = m.D - m.h / 2 + 2, ux = m.ux, uy = m.uy, nx = -uy, ny = ux;
   const P = (r, o) => [core.x + ux * r + nx * o, core.y + uy * r + ny * o];
   const quad = (o1, o2) => { const a = P(r1, o1), b = P(r2, o1), c = P(r2, o2), d = P(r1, o2); ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.lineTo(c[0], c[1]); ctx.lineTo(d[0], d[1]); ctx.closePath(); };
   ctx.fillStyle = 'rgba(0,0,0,0.55)'; quad(hw + wall + 3, -hw - wall - 3); ctx.fill();
@@ -1620,16 +1643,9 @@ function drawSpoke(m, t) {
 
 function drawModule(m, t, dt) {
   const sel = selected === 'f:' + m.key;
-  const live = modLive(m), lit = live || m.tasks.length > 0, col = m.color;
+  const live = !m.expansion && modLive(m), lit = !m.expansion && (live || m.tasks.length > 0), col = m.expansion ? '#4d6b80' : m.color;      // an open bay is a factory that is switched off
   const w = m.w, h = m.h, x0 = -w / 2, y0 = -h / 2, c = 12 * SC;
   ctx.save(); ctx.translate(m.cx, m.cy); ctx.rotate(m.rot);
-  if (m.expansion) {
-    ctx.setLineDash([6 * SC, 6 * SC]); ctx.strokeStyle = alpha(col, 0.3 + 0.12 * Math.sin(t * 0.002)); ctx.lineWidth = 1.2;
-    chamfer(x0, y0, w, h, c); ctx.stroke(); ctx.setLineDash([]);
-    ctx.strokeStyle = alpha(col, 0.08);
-    for (let i = 1; i < 6; i++) { ctx.beginPath(); ctx.moveTo(x0 + w * i / 6, y0 + 6); ctx.lineTo(x0 + w * i / 6, y0 + h - 6); ctx.stroke(); }
-    ctx.restore(); return;
-  }
   if (lit) { ctx.shadowColor = col; ctx.shadowBlur = 16 * SC + 4; }
   chamfer(x0, y0, w, h, c);
   const g = ctx.createLinearGradient(0, y0, 0, y0 + h); g.addColorStop(0, '#162536'); g.addColorStop(1, '#070c13');
@@ -1682,10 +1698,10 @@ function drawModule(m, t, dt) {
     // a crew member starting work walks from Helix's deck down this factory's tube and in through the doorway
     if (b.commute == null) b.commute = (tk.status === 'running' || tk.status === 'queued') ? 0 : 1;
     if (b.commute < 1) {
-      const len = Math.max(40, m.D - m.h / 2 - core.r);
+      const rt = routeOf(m), len = Math.max(40, routeLen(rt));
       b.commute = Math.min(1, b.commute + (dt || 16) * 0.05 / len);
-      const r = core.r + 2 + (len + 10 * SC) * b.commute;
-      drawBot(core.x + m.ux * r, core.y + m.uy * r, ROLE_COLORS[tk.role] || col, tk.status, t, b.seed, dirOf(m.ux, m.uy, 'front'), sc * 0.85, true);
+      const [rx, ry, rdx, rdy] = routeAt(rt, (len + 10 * SC) * b.commute);
+      drawBot(rx, ry, ROLE_COLORS[tk.role] || col, tk.status, t, b.seed, dirOf(rdx, rdy, 'front'), sc * 0.85, true);
       if (b.commute >= 1) { b.fx = 0.5; b.fy = 0.96; }                         // through the door: carry on inside
       return;
     }
@@ -1705,7 +1721,7 @@ function drawWaiting(m, t) {
   const waiting = m.tasks.filter(k => k.status === 'waiting');
   waiting.slice(0, 3).forEach((tk, i) => {
     const r = core.r + 30 * SC + i * 18 * SC + Math.sin(t * 0.0015 + i) * 2;
-    const qx = core.x + m.ux * r, qyb = core.y + m.uy * r;
+    const [qx, qyb] = routeAt(routeOf(m), r - core.r);
     drawBot(qx, qyb, ROLE_COLORS[tk.role] || m.color, 'waiting', t, i * 3.1, 'front', Math.max(0.8, SC), false);
     const qy = qyb - 26 * Math.max(0.8, SC);
     ctx.fillStyle = '#ff8a2a'; ctx.shadowColor = '#ff8a2a'; ctx.shadowBlur = 8; rr(qx - 6, qy, 12, 12, 3); ctx.fill(); ctx.shadowBlur = 0;
@@ -1833,7 +1849,21 @@ function drawWalkway(t) {
     for (let q = 1; q < n; q++) { const f = q / n, x = A[0] + (B[0] - A[0]) * f, y = A[1] + (B[1] - A[1]) * f;
       ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x - nx * sg * w / 2, y - ny * sg * w / 2); ctx.lineTo(x + nx * sg * w / 2, y + ny * sg * w / 2); ctx.stroke(); }
   }
-  pts.forEach(([x, y]) => { ctx.fillStyle = '#1f374a'; ctx.beginPath(); ctx.arc(x, y, w * 0.55, 0, 6.29); ctx.fill(); ctx.strokeStyle = 'rgba(0,229,255,0.6)'; ctx.lineWidth = 1.5; ctx.stroke(); });
+  // the junctions: the 8 corners where the tubes cross it and the 8 side middles where the branches leave. Each lights up in its own random colours
+  // and rhythm, with a slow chase of light round the ring on top.
+  const JCOL = ['#00e5ff', '#ff6d00', '#b06cff', '#00ff99', '#ff4fb8', '#ffe600', '#6b8cff', '#ff3344'];
+  const junctions = [];
+  for (let k = 0; k < 8; k++) { const A = pts[k], B = pts[(k + 1) % 8]; junctions.push(A, [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2]); }
+  junctions.forEach(([x, y], i) => {
+    const rnd = (n) => { const v = Math.sin((i + 1) * 91.7 + n * 47.3) * 43758.5453; return v - Math.floor(v); };
+    const period = 700 + rnd(1) * 1500, step = Math.floor(t / period + rnd(2) * 9), pick = Math.floor(rnd(step % 97 + 3) * JCOL.length + rnd(4) * 3) % JCOL.length;
+    const chase = Math.max(0, Math.cos((t * 0.0006 - i / 16 * 6.283))), pulse = 0.55 + 0.45 * Math.sin(t * (0.002 + rnd(5) * 0.004) + rnd(6) * 6.28);
+    const on = rnd(step % 53 + 7) > 0.18, col = JCOL[pick], glow = on ? Math.min(1, 0.35 + 0.45 * pulse + 0.4 * chase) : 0.12 * chase;
+    const mid = i % 2 === 1, rad = w * (mid ? 0.42 : 0.55);
+    ctx.fillStyle = '#1f374a'; ctx.beginPath(); ctx.arc(x, y, rad, 0, 6.29); ctx.fill();
+    ctx.save(); ctx.shadowColor = col; ctx.shadowBlur = glow * 12 * SC + 2; ctx.strokeStyle = alpha(col, 0.35 + 0.65 * glow); ctx.lineWidth = 1.6; ctx.stroke();
+    ctx.fillStyle = alpha(col, 0.15 + 0.8 * glow); ctx.beginPath(); ctx.arc(x, y, rad * 0.5, 0, 6.29); ctx.fill(); ctx.restore();
+  });
   const side = Math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]), sc = Math.max(0.6, Math.min(0.95, SC * 0.85));
   const at = (f) => { const u = ((f % 1) + 1) % 1 * 8, i = Math.floor(u), q = u - i, A = pts[i % 8], B = pts[(i + 1) % 8]; return [A[0] + (B[0] - A[0]) * q, A[1] + (B[1] - A[1]) * q + 4 * sc]; };
   WALK_ROLES.slice(0, 10).forEach((role, i) => {
