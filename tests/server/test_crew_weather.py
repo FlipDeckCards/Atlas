@@ -166,3 +166,20 @@ def test_every_name_plate_is_the_size_of_helix_business_expansion_bays_too():
 
     assert "ctx.measureText('HELIX BUSINESS…').width + 18 * SC + 6" in STATION_PAGE
     assert "const pw = fixedW, ph = fs + fs2 + 12 * SC;" in STATION_PAGE and "Expansion Bays included" in STATION_PAGE
+
+
+def test_the_3d_view_is_a_button_and_two_files_loaded_only_on_demand():
+    from unittest.mock import MagicMock
+
+    from fastapi.testclient import TestClient
+
+    from openjarvis.server.app import create_app
+    from openjarvis.server.crew.station import STATION_PAGE
+
+    assert 'id="t-view"' in STATION_PAGE and "VIEW: 2D" in STATION_PAGE and "async function setView(on)" in STATION_PAGE
+    assert "document.body.classList.contains('v3d')" in STATION_PAGE and "Station3D.update(mods)" in STATION_PAGE
+    assert "<script src=\"/crew/three.min.js" not in STATION_PAGE            # three.js is fetched only when the button is first used
+    c = TestClient(create_app(MagicMock(), "m", api_key="k", require_auth=True), raise_server_exceptions=False)
+    three, s3d = c.get("/crew/three.min.js"), c.get("/crew/station3d.js")
+    assert three.status_code == 200 and "javascript" in three.headers["content-type"] and len(three.content) > 100000
+    assert s3d.status_code == 200 and "window.Station3D" in s3d.text and "geodesic" in s3d.text

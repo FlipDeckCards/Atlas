@@ -60,6 +60,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
   #center #chat { flex:0 0 auto; background:var(--panel); border-top:1px solid var(--border); border-bottom:none; }
   #stage { position:relative; min-width:0; min-height:0; overflow:hidden; }
   #cv { position:absolute; inset:0; width:100%; height:100%; display:block; cursor:default; }
+  body.v3d #cv { pointer-events:none; }
   #hint { position:absolute; left:14px; bottom:12px; font-size:10px; color:var(--text-dim); letter-spacing:1px; pointer-events:none; }
   .sec { padding:14px 16px; border-bottom:1px solid var(--border); }
   .vit { display:flex; justify-content:space-between; font-size:10px; letter-spacing:1px; padding:3px 0; }
@@ -228,6 +229,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
   <span class="chip hide-m" id="c-state"></span>
   <span class="spacer"></span>
   <button class="tbtn" id="t-night" title="Let the crew keep working through quiet hours">NIGHT SHIFT</button>
+  <button class="tbtn" id="t-view" title="Switch between the flat map and the 3D station">VIEW: 2D</button>
   <button class="tbtn warn" id="t-pause" title="Stop the crew from starting any new work">PAUSE ALL</button>
   <button class="tbtn" id="t-sub" onclick="subscribe()" hidden>SUBSCRIBE</button>
   <button class="tbtn" onclick="logout()">LOGOUT</button>
@@ -476,6 +478,24 @@ async function refresh() {
 }
 function setState(t) { document.getElementById('c-state').textContent = t; }
 
+// ── the 3D view: a second way to see the Station, loaded only when you switch to it ──
+let VIEW3D = false; try { VIEW3D = localStorage.getItem('aibussol_view') === '3d'; } catch (e) {}
+let view3dReady = false;
+function loadScript(src) { return new Promise((ok, no) => { const el = document.createElement('script'); el.src = src; el.onload = ok; el.onerror = () => no(new Error('could not load ' + src)); document.head.appendChild(el); }); }
+async function setView(on) {
+  const btn = document.getElementById('t-view');
+  if (!on) { VIEW3D = false; document.body.classList.remove('v3d'); if (window.Station3D) Station3D.stop(); btn.textContent = 'VIEW: 2D'; try { localStorage.setItem('aibussol_view', '2d'); } catch (e) {} return; }
+  btn.textContent = 'LOADING 3D…';
+  try {
+    if (!window.THREE) await loadScript('/crew/three.min.js?v=1');
+    if (!window.Station3D) await loadScript('/crew/station3d.js?v=1');
+    Station3D.start(document.getElementById('stage'), { roleColors: ROLE_COLORS, getSelected: () => selected,
+      onSelect: (key) => { selected = key === 'hub' ? 'hub' : key === 'open' ? (isOwner() ? 'hub' : 'setup') : 'f:' + key; renderSide(true); } });
+    Station3D.update(mods);
+    VIEW3D = true; document.body.classList.add('v3d'); btn.textContent = 'VIEW: 3D'; try { localStorage.setItem('aibussol_view', '3d'); } catch (e) {}
+  } catch (e) { VIEW3D = false; document.body.classList.remove('v3d'); btn.textContent = 'VIEW: 2D'; setState('3D VIEW NOT AVAILABLE'); }
+}
+document.getElementById('t-view').onclick = () => setView(!VIEW3D);
 document.getElementById('t-night').onclick = async () => { if (!S) return; await api('/api/crew/settings', 'POST', { night_shift: !S.settings.night_shift }); refresh(); };
 document.getElementById('t-pause').onclick = async () => { if (!S) return; await api('/api/crew/settings', 'POST', { paused: !S.settings.paused }); refresh(); };
 
@@ -1620,6 +1640,8 @@ function layout() {
   poseMods(DRIFT.angle + SPIN.cur);
   bays = mods.filter(m => !m.platform && !m.expansion);
   core.bay = coreBay();
+  if (VIEW3D && window.Station3D && view3dReady) Station3D.update(mods);
+  else if (VIEW3D && !view3dReady) { view3dReady = true; setView(true); }
 }
 
 // a module's own frame: x across its inner wall, y from its outer end (-) to the wall facing Helix (+)
@@ -1935,6 +1957,7 @@ function paint(t) {                                       // one whole picture o
   const dt = Math.min(100, t - (lastT || t)); lastT = t; lastDraw = t;
   ctx.clearRect(0, 0, W, H);
   drawSky(t);
+  if (document.body.classList.contains('v3d')) return;                  // the 3D view is drawn on its own canvas over this sky
   stepMotion(t);
   mods.forEach(m => drawSpoke(m, t));
   drawWalkway(t);
