@@ -1593,6 +1593,7 @@ function layout() {
   const [dw, dh] = designSize();                          // the ring's scale follows the browser window, never the panels you dragged
   // the optimal scale for this window, shrunk evenly (never stretched) only when the station's box is really too small to hold it
   SC = Math.max(0.34, Math.min(1.25, Math.min(dw / 1060, dh / 800), Math.min(W / 1060, H / 800)));
+  try { if (window.matchMedia('(max-width: 820px)').matches) SC = Math.max(0.34, Math.min(1.6, Math.min(W, H) / (2 * 382.5) * 0.95)); } catch (e) {}   // on a phone the canvas is the whole box: fill it (the desktop sizing above is unchanged)
   const room = 0.97 * (300.5 + 58 + 24) * SC;                    // the outer ring is always there, so the station is drawn smaller, until the whole double ring fits where the single ring did
   for (let i = 0; i < 6; i++) SC *= room / ringGeom(SC, 144 * SC, 94 * SC).extent;
   core = { x: W / 2, y: H / 2, r: 94 * SC };
