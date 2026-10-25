@@ -80,7 +80,6 @@ def _err(exc: Exception, code: int = 400) -> JSONResponse:
     return JSONResponse({"detail": str(exc)}, status_code=code)
 
 
-@router.get("/")
 @router.get("/privacy", response_class=HTMLResponse)
 async def public_privacy():
     from openjarvis.server.crew import legal
@@ -95,6 +94,7 @@ async def public_terms():
     return HTMLResponse(legal.terms_html())
 
 
+@router.get("/")
 @router.get("/station")
 async def station_page():
     """The Station is Aibussol's home page (sign-in, Helix chat with voice, the crew, the library). The old page lives at /classic."""

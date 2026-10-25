@@ -71,6 +71,11 @@ class TestAccess:
         r = world.client.get("/station")
         assert r.status_code == 200 and "Aibussol Station" in r.text and "/api/crew/state" in r.text
 
+    def test_the_home_address_is_the_station_sign_in_not_the_privacy_page(self, world):
+        home, station, privacy = world.client.get("/"), world.client.get("/station"), world.client.get("/privacy")
+        assert home.status_code == 200 and home.text == station.text and "Aibussol Station" in home.text
+        assert privacy.status_code == 200 and "Privacy Policy" in privacy.text and privacy.text != home.text
+
     def test_state_needs_a_login_and_the_owner(self, world):
         assert world.client.get("/api/crew/state").status_code == 401
         assert world.client.get("/api/crew/state", headers=stranger()).status_code == 403
