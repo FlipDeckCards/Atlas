@@ -132,6 +132,6 @@ def test_aibussol_is_installable_as_a_phone_app():
 def test_the_station_page_has_the_outer_ring_and_its_walkway():
     from openjarvis.server.crew.station import STATION_PAGE
 
-    for part in ("function drawWalkway", "OUTER_ORDER = [0, 4, 2, 6, 1, 5, 3, 7]", "DOUBLE_FIT", "let walkway = null", "drawWalkway(t);\n  mods.forEach(m => drawModule"):
+    for part in ("function drawWalkway", "OUTER_ORDER = [0, 4, 2, 6, 1, 5, 3, 7]", "ringGeom(", "let walkway = null", "drawWalkway(t);\n  mods.forEach(m => drawModule"):
         assert part in STATION_PAGE
     assert "SC *= Math.sin(Math.PI / N)" not in STATION_PAGE                    # the old shrink-everything ring is gone

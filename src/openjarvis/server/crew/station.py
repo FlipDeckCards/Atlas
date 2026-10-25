@@ -1523,30 +1523,30 @@ function spinOnMissionChange(missions) {
 // The ring has 8 inner modules. The other 8 sit on an OUTER ring (numbered Expansion Bays until a factory takes the slot) at the end of long walkways that run through the gaps between the inner
 // ones, with a walkway ring (an octagon, as wide as Helix's own deck) between the two rings, nearer the inner factories than the outer ones.
 const OUTER_ORDER = [0, 4, 2, 6, 1, 5, 3, 7];                  // outer slots fill opposite sides first so the ring stays balanced
-const DOUBLE_FIT = 0.58;                                       // the whole station is this much smaller once there is an outer ring, so it still fits the window
+const H_IN = 1, H_OUT = 1;                                     // how deep (from Helix outwards) the inner and the outer factories are, as a share of the full 116
 let walkway = null;                                            // { Vc, ringW } while there is an outer ring
+// the double ring's geometry at scale S: inner modules, the walkway octagon (corners on the tubes, hugging the inner factories), outer modules
+function ringGeom(S, mw, coreR) {
+  const mhIn = 116 * S * H_IN, mhOut = 116 * S * H_OUT, N = RING.length;
+  const D1 = Math.max(coreR + 52 * S + mhIn / 2, (mw + 46 * S) / (2 * Math.sin(Math.PI / N)), mhIn / 2 + (mw + 46 * S) / (2 * Math.sin(Math.PI / N)));
+  const ringW = (20 + 14) * S, dW = D1 + mhIn / 2 + 24 * S + 10 * S + ringW / 2;      // 24 for the name plates
+  const Vc = dW / Math.cos(Math.PI / 8), D2 = Vc + 17 * S + 14 * S + mhOut / 2;
+  return { mhIn, mhOut, D1, ringW, Vc, D2, extent: D2 + mhOut / 2 + 24 * S };
+}
 function layout() {
   const pl = prods(), nk = newKeys();
   // the 8 fixed slots, then one outer-ring factory for every business past the 4th and every extra mission factory
   const extras = pl.slice(4).map(b => fillBay(Object.assign({}, b)))
     .concat((pl[3] ? nk : nk.slice(1)).map(newBay)).slice(0, MAX_EXTRA_BRANCHES);
-  const dbl = true, N = RING.length;                       // the outer ring is always there: 8 numbered expansion bays that real factories take over in order
+  const N = RING.length;
   const [dw, dh] = designSize();                          // the ring's scale follows the browser window, never the panels you dragged
   // the optimal scale for this window, shrunk evenly (never stretched) only when the station's box is really too small to hold it
   SC = Math.max(0.34, Math.min(1.25, Math.min(dw / 1060, dh / 800), Math.min(W / 1060, H / 800)));
-  if (dbl) SC *= DOUBLE_FIT;
+  SC *= 0.94 * ((300.5 + 58 + 24) / ringGeom(1, 144, 94).extent);   // the outer ring is always there (8 slots), so the whole station is drawn smaller to fit the window (0.94: a margin so the edge labels stay inside)
   core = { x: W / 2, y: H / 2, r: 94 * SC };
-  const mw = (dbl ? 144 : 184) * SC, mh = 116 * SC, gap = 46 * SC;        // a little narrower with an outer ring, so a walkway fits between neighbours
-  let D = Math.max(core.r + 52 * SC + mh / 2, (mw + gap) / (2 * Math.sin(Math.PI / N)));
-  let D2 = 0;
-  walkway = null;
-  if (dbl) {
-    D = Math.max(D, mh / 2 + (mw + 46 * SC) / (2 * Math.sin(Math.PI / N)));          // room for a tube between two neighbours at their inner walls
-    const ringW = hallW() + 14 * SC, dW = D + mh / 2 + 24 * SC + 10 * SC + ringW / 2;  // 24 for the name plates; the walkway hugs the inner factories
-    const Vc = dW / Math.cos(Math.PI / 8);
-    walkway = { Vc, ringW };
-    D2 = Vc + 17 * SC + 14 * SC + mh / 2;                                             // the outer factories start further out than the walkway
-  }
+  const mw = 144 * SC;                                       // narrower than a single ring's, so a walkway fits between neighbours
+  const g = ringGeom(SC, mw, core.r), mhIn = g.mhIn, mhOut = g.mhOut, D = g.D1, D2 = g.D2;
+  walkway = { Vc: g.Vc, ringW: g.ringW };
   const prod = {};
   const open = (i) => ({ key: 'open' + i, label: 'EXPANSION BAY', color: '#ff4fb8', expansion: true, tasks: [], missions: [], state: 'OPEN',
                          idleText: isOwner() ? 'NEXT BUSINESS' : 'TAP TO ADD A BUSINESS' });
@@ -1557,10 +1557,10 @@ function layout() {
   const inner = RING.map(k => k === 'new' ? fresh : (prod[k] || plat[k]));
   mods = inner.map((m, i) => {
     const a = -Math.PI / 2 + i * 2 * Math.PI / N;
-    return Object.assign(m, { a, ux: Math.cos(a), uy: Math.sin(a), cx: core.x + Math.cos(a) * D, cy: core.y + Math.sin(a) * D, w: mw, h: mh, rot: a + Math.PI / 2, D });
+    return Object.assign(m, { a, ux: Math.cos(a), uy: Math.sin(a), cx: core.x + Math.cos(a) * D, cy: core.y + Math.sin(a) * D, w: mw, h: mhIn, rot: a + Math.PI / 2, D });
   }).concat(extras.concat(Array.from({ length: Math.max(0, MAX_EXTRA_BRANCHES - extras.length) }, (_, k) => outerOpen(extras.length + k))).map((m, j) => {
     const a = -Math.PI / 2 + Math.PI / N + OUTER_ORDER[j] * 2 * Math.PI / N;       // in the gap between two inner modules
-    return Object.assign(m, { a, ux: Math.cos(a), uy: Math.sin(a), cx: core.x + Math.cos(a) * D2, cy: core.y + Math.sin(a) * D2, w: mw, h: mh, rot: a + Math.PI / 2, D: D2 });
+    return Object.assign(m, { a, ux: Math.cos(a), uy: Math.sin(a), cx: core.x + Math.cos(a) * D2, cy: core.y + Math.sin(a) * D2, w: mw, h: mhOut, rot: a + Math.PI / 2, D: D2 });
   }));
   mods.forEach(m => { m.a0 = m.a; });
   poseMods(DRIFT.angle + SPIN.cur);
