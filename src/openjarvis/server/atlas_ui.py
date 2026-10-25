@@ -1880,6 +1880,17 @@ async def chat(req: ChatRequest, request: Request):
 
         crew_before = crew_helix.CREW_PENDING.get(user_id) if crew_ctx is not None else None
 
+        if crew_ctx is not None and not (crew_before is not None and helix_tools.is_explicit_yes(req.message)):       # a plain yes to a read-back mission is the mission flow's
+            try:
+                spoken = await crew_helix.spoken_approval(crew_ctx, req.message)
+            except Exception:
+                logger.exception("spoken approval failed")
+                spoken = None
+            if spoken is not None:
+                await store.append_message(user_id, CHANNEL, "user", saved_text)
+                await store.append_message(user_id, CHANNEL, "assistant", spoken)
+                return JSONResponse({"reply": spoken, "ui_actions": [{"type": "crew_refresh"}], "model_display": model_display, "model_color": model_color})
+
         crew_changed = False
 
         async def _crew_exec(name, args):
