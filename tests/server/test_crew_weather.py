@@ -204,8 +204,8 @@ def test_3d_walkways_are_wide_with_clean_junction_pads_and_helixs_model_loads_wh
     from openjarvis.server.app import create_app
 
     js = (Path(__file__).resolve().parents[2] / "src" / "openjarvis" / "server" / "crew" / "assets" / "station3d.js").read_text()
-    assert "const OW = 30, PAD = 27;" in js and "band(g, a, 142, end, WB, C, lit)" in js and "VC + 22" in js        # wide walkways, spokes start at the hub ring's edge, cut around the corner pads
-    assert "loadHelix()" in js and "'/crew/helix.glb?v=2'" in js and "const HELIX_H = 84" in js and "holo.visible = false" in js
+    assert "const OW = 30, PAD = 27;" in js and "band(g, a, 142, end, WB, C, lit, sd)" in js and "VC + 22" in js        # wide walkways, spokes start at the hub ring's edge, cut around the corner pads
+    assert "loadHelix()" in js and "'/crew/helix.glb?v=3'" in js and "const HELIX_H = 168" in js and "holo.visible = false" in js
     c = TestClient(create_app(MagicMock(), "m", api_key="k", require_auth=True), raise_server_exceptions=False)
     three = c.get("/crew/three.min.js")
     assert three.status_code == 200 and b"GLTFLoader" in three.content                                        # the bundle carries the model loader
@@ -219,7 +219,7 @@ def test_3d_crew_use_their_robot_artwork_at_one_size_and_helix_is_her_real_model
 
     crew = Path(__file__).resolve().parents[2] / "src" / "openjarvis" / "server" / "crew"
     js = (crew / "assets" / "station3d.js").read_text()
-    assert "function makeAgent(role" in js and "cellTex(row, col)" in js and "const AGENT_H = 34" in js                # the sprite sheet, not capsules
+    assert "function makeAgent(role" in js and "cellTex(row, col)" in js and "const AGENT_H = 85" in js                # the sprite sheet, not capsules
     assert "CapsuleGeometry" not in js and js.count("makeAgent(") >= 4                                                   # walkway, Helix's ring and the trays all use it
     assert "g.scale.setScalar(1.5)" not in js                                                                            # no second size for the ring crew
     glb = (crew / "assets" / "helix.glb").read_bytes()
@@ -233,5 +233,31 @@ def test_3d_files_are_cache_busted_and_the_ring_thruster_touches_the_keel():
     from openjarvis.server.crew.station import STATION_PAGE
 
     js = (Path(__file__).resolve().parents[2] / "src" / "openjarvis" / "server" / "crew" / "assets" / "station3d.js").read_text()
-    assert "/crew/three.min.js?v=3" in STATION_PAGE and "/crew/station3d.js?v=3" in STATION_PAGE          # a changed bundle must not be served from a day-old cache
-    assert "T.position.y = -272" in js and "'/crew/helix.glb?v=2'" in js
+    assert "/crew/three.min.js?v=3" in STATION_PAGE and "/crew/station3d.js?v=" in STATION_PAGE          # a changed bundle must not be served from a day-old cache
+    assert "T.position.y = -272" in js and "'/crew/helix.glb?v=3'" in js
+
+
+def test_helix_stands_in_the_middle_with_no_projector_rings_and_plays_her_walk():
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[2] / "src" / "openjarvis" / "server" / "crew" / "assets" / "station3d.js").read_text()
+    assert "helix.position.set(0, FLOOR_Y + 14, 0)" in js and "const HELIX_H = 168" in js and "walking_woman" in js
+    assert "beamM" not in js and "hubGlow" not in js and "[[60, FLOOR_Y + 26]" not in js                  # the projector beam, its rings and its glow are gone
+    glb = (Path(__file__).resolve().parents[2] / "src" / "openjarvis" / "server" / "crew" / "assets" / "helix.glb").read_bytes()
+    assert glb[:4] == b"glTF" and len(glb) < 4_000_000 and b"Walking_Woman" in glb                         # the animated model, textures slimmed
+
+
+def test_helix_loads_and_there_are_no_travelling_balls_on_the_walkways():
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[2] / "src" / "openjarvis" / "server" / "crew" / "assets" / "station3d.js").read_text()
+    assert js.count("loadHelix();") == 1                                                                   # the call that starts loading her model must stay in buildStructure
+    assert "buildDots" not in js and "moveDots" not in js and "dotPaths" not in js                          # the lines surge; there are no balls
+
+
+def test_walkway_lines_carry_a_colour_surge_and_the_crew_are_two_and_a_half_times_bigger():
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[2] / "src" / "openjarvis" / "server" / "crew" / "assets" / "station3d.js").read_text()
+    assert "function surgeMap(len, dir, fixed)" in js and "function moveSurges(t)" in js and "map: surgeMap(" in js          # a bright band scrolls along every lit line
+    assert "const AGENT_H = 85" in js and "const HELIX_H = 168" in js

@@ -5,7 +5,7 @@
   const THREE = window.THREE;
   const RD = 660, HD = 380, FLOOR_Y = 10, R_IN = 306, R_OUT = 540, DW = 412, VC = DW / Math.cos(Math.PI / 8);
   let renderer = null, scene = null, camera = null, canvas = null, stage = null, opts = null, running = false, built = false, raf = 0, ro = null;
-  let trayAgents = [], rootG = null, hubCrew = [], crewSig = '', crewCheck = 0, winMesh = null, facGroup = null, sig = '', hitBoxes = [], selRing = null, walkers = [], holo = null, beam = null, flames = [], hubGlow = null, lastInteract = 0;
+  let trayAgents = [], rootG = null, hubCrew = [], crewSig = '', crewCheck = 0, winMesh = null, facGroup = null, sig = '', hitBoxes = [], selRing = null, walkers = [], holo = null, flames = [], lastInteract = 0;
   const cam = { az: 0.44, el: 0.42, dist: 1, zoom: 1, ly: -230 };
   const T0 = performance.now();
   const hash01 = (a, b) => { const v = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return v - Math.floor(v); };
@@ -32,8 +32,15 @@
     return new THREE.Mesh(g, mat);
   }
 
+  // ── the walkway lines carry a surge of colour from one end to the other: a bright band scrolling along a dim line ──
+  let surgeBase = null, surges = [], surgesFixed = [];
+  function surgeMap(len, dir, fixed) {
+    if (!surgeBase) { surgeBase = tex(256, 4, (g, w, h) => { const gr = g.createLinearGradient(0, 0, w, 0); gr.addColorStop(0, 'rgb(70,70,70)'); gr.addColorStop(0.34, 'rgb(70,70,70)'); gr.addColorStop(0.46, 'rgb(190,190,190)'); gr.addColorStop(0.5, 'rgb(255,255,255)'); gr.addColorStop(0.54, 'rgb(190,190,190)'); gr.addColorStop(0.66, 'rgb(70,70,70)'); gr.addColorStop(1, 'rgb(70,70,70)'); g.fillStyle = gr; g.fillRect(0, 0, w, h); }, false); surgeBase.wrapS = THREE.RepeatWrapping; }
+    const t = surgeBase.clone(); t.needsUpdate = true; t.wrapS = THREE.RepeatWrapping; t.repeat.set(len / 260, 1); (fixed ? surgesFixed : surges).push({ t, o: hash01(len, dir + 3), dir }); return t;
+  }
+  function moveSurges(t) { for (const list of [surges, surgesFixed]) for (const s of list) s.t.offset.x = ((s.o + s.dir * 0.00045 * t) % 1 + 1) % 1; }
   // ── the crew, drawn with their own robot artwork: a camera-facing sprite cut from the sprite sheet (bots.png). Every agent is the same size. ──
-  const AGENT_H = 34, SHEET_COLS = 17;
+  const AGENT_H = 85, SHEET_COLS = 17;                                        // 2.5 times the size they were (34); Helix is still about twice their height
   let sheet = null, sheetState = 0; const cellCache = new Map(), spriteList = [];
   function loadSheet() { if (sheetState) return; sheetState = 1; const im = new Image(); im.onload = () => { sheet = im; sheetState = 2; spriteList.forEach(sp => paintAgent(sp, 0)); }; im.onerror = () => { sheetState = 3; }; im.src = (opts && opts.botUrl) || '/crew/bots.png'; }
   function cellTex(row, col) {
@@ -131,7 +138,7 @@
     for (let k = 0; k < 8; k++) {
       const [x1, z1] = pts[k], [x2, z2] = pts[(k + 1) % 8], len = Math.hypot(x2 - x1, z2 - z1), ang = Math.atan2(z2 - z1, x2 - x1), g = new THREE.Group();
       const run = len - 2 * (PAD - 6), b = new THREE.Mesh(new THREE.BoxGeometry(run, FLOOR_Y, OW), m.deck); b.position.y = FLOOR_Y / 2; g.add(b);
-      const l = new THREE.Mesh(new THREE.BoxGeometry(len - 2 * PAD - 6, 0.9, 1.8), new THREE.MeshBasicMaterial({ color: 0x00e5ff })); l.position.y = FLOOR_Y + 0.3; g.add(l);
+      const l = new THREE.Mesh(new THREE.BoxGeometry(len - 2 * PAD - 6, 0.9, 1.8), new THREE.MeshBasicMaterial({ color: 0x00e5ff, map: surgeMap(len - 2 * PAD - 6, -1, true), toneMapped: false })); l.position.y = FLOOR_Y + 0.3; g.add(l);
       for (const sgn of [-1, 1]) { const rail = new THREE.Mesh(new THREE.BoxGeometry(len - 2 * PAD - 2, 4, 2.4), m.hullD); rail.position.set(0, FLOOR_Y + 2, sgn * (OW / 2 - 1.2)); g.add(rail); }
       g.position.set((x1 + x2) / 2, 0, (z1 + z2) / 2); g.rotation.y = -ang; add(g);
     }
@@ -144,10 +151,7 @@
     const dome = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 32, 0, Math.PI * 2, 0, Math.PI / 2), m.glass); dome.scale.set(RD, HD, RD); dome.renderOrder = 3; G.add(dome);
     // a second, inner skin (back faces only) so the glass has a visible edge all the way round, like a real bubble
     const inner = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 32, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0.05, side: THREE.BackSide, depthWrite: false })); inner.scale.set(RD * 0.998, HD * 0.998, RD * 0.998); inner.renderOrder = 3; G.add(inner);
-    // Helix: a glowing hologram standing in the middle of the hub, always turned towards the viewer, over a projector ring and a beam
-    const beamM = new THREE.Mesh(new THREE.CylinderGeometry(52, 66, 190, 32, 1, true), new THREE.MeshBasicMaterial({ color: 0x7fe9ff, transparent: true, opacity: 0.1, side: THREE.DoubleSide, depthWrite: false })); beamM.position.y = FLOOR_Y + 105; beamM.renderOrder = 6; G.add(beamM); beam = beamM;
-    for (const [r, y] of [[60, FLOOR_Y + 26], [48, FLOOR_Y + 66], [36, FLOOR_Y + 106], [28, FLOOR_Y + 146]]) { const t = new THREE.Mesh(new THREE.TorusGeometry(r, 1.4, 6, 40), new THREE.MeshBasicMaterial({ color: 0x7fe9ff, transparent: true, opacity: 0.6 })); t.rotation.x = Math.PI / 2; t.position.y = y; t.renderOrder = 6; G.add(t); }
-    const hg = new THREE.Sprite(new THREE.SpriteMaterial({ map: (flameAssets(), GLOWT), transparent: true, opacity: 0.55, depthWrite: false, color: 0x7fe9ff })); hg.scale.set(300, 300, 1); hg.position.y = FLOOR_Y + 40; hg.renderOrder = 6; G.add(hg); hubGlow = hg;
+    // Helix herself is her 3D model (loadHelix); this hologram of her portrait is only a stand-in until it has loaded
     loadHelix();
     const img = new Image(); img.onload = () => {
       const holoTex = tex(512, 512, (g, w, h) => { const sw = img.naturalWidth, sh = img.naturalHeight, sq = Math.min(sw, sh); g.drawImage(img, (sw - sq) / 2, 0, sq, sq, 0, 0, w, h);
@@ -167,30 +171,32 @@
   }
 
   // ── Helix herself: her 3D model walking round the hub ring, much taller than the crew. If the file is not there the hologram stays. ──
-  const HELIX_H = 84; let helix = null, mixer = null, lastT = 0;
+  const HELIX_H = 168; let helix = null, mixer = null, lastT = 0, faceAng = 0;                       // twice the size she was, in the middle of the hub
   function loadHelix() {
     if (!THREE.GLTFLoader) return;
-    new THREE.GLTFLoader().load('/crew/helix.glb?v=2', (gltf) => {
-      const obj = gltf.scene, box = new THREE.Box3().setFromObject(obj), size = box.getSize(new THREE.Vector3()), k = HELIX_H / Math.max(0.001, size.y), pivot = new THREE.Group(), inner = new THREE.Group();
-      obj.scale.setScalar(k); box.setFromObject(obj); obj.position.set(-(box.min.x + box.max.x) / 2, -box.min.y, -(box.min.z + box.max.z) / 2); inner.add(obj); pivot.add(inner);
+    new THREE.GLTFLoader().load('/crew/helix.glb?v=3', (gltf) => {
+      const obj = gltf.scene, pivot = new THREE.Group(), inner = new THREE.Group();
+      // a rigged model's size is only right once a frame of its animation is applied, so measure after that
+      let clip = null; if (gltf.animations && gltf.animations.length) { clip = gltf.animations.find(c => /walking_woman/i.test(c.name)) || gltf.animations.find(c => /walk/i.test(c.name)) || gltf.animations[0]; mixer = new THREE.AnimationMixer(obj); const act = mixer.clipAction(clip); act.play(); act.timeScale = 0.45; mixer.update(0.05); }
+      obj.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(obj, true), size = box.getSize(new THREE.Vector3()), k = HELIX_H / Math.max(0.001, size.y);
+      obj.scale.setScalar(k); obj.updateMatrixWorld(true); box.setFromObject(obj, true); obj.position.set(-(box.min.x + box.max.x) / 2, -box.min.y, -(box.min.z + box.max.z) / 2); inner.add(obj); pivot.add(inner);
       obj.traverse(o => { if (o.isMesh) { o.frustumCulled = false; if (o.material) { o.material.envMapIntensity = 1.2; } } });
-      if (gltf.animations && gltf.animations.length) { mixer = new THREE.AnimationMixer(obj); const walk = gltf.animations.find(c => /walk/i.test(c.name)) || gltf.animations[0]; mixer.clipAction(walk).play(); pivot.userData.animated = true; }
-      const hl = new THREE.PointLight(0x9fe8ff, 1.6, 300, 1.4); hl.position.set(0, HELIX_H * 0.7, 40); pivot.add(hl);
-      pivot.userData.inner = inner; helix = pivot; rootG.add(pivot);
-      if (holo) holo.visible = false; if (beam) beam.visible = false;
-    }, undefined, () => { /* no model yet: the hologram stays */ });
+      const hl = new THREE.PointLight(0x9fe8ff, 2.2, 520, 1.3); hl.position.set(0, HELIX_H * 0.6, 70); pivot.add(hl);
+      pivot.userData.inner = inner; pivot.userData.animated = !!clip; helix = pivot; helix.position.set(0, FLOOR_Y + 14, 0); rootG.add(pivot);
+      if (holo) holo.visible = false;
+    }, undefined, () => { /* no model: the hologram stays */ });
   }
-  function moveHelix(t) {
+  function moveHelix(t) {                                                            // she stands in the middle of the hub, turning to look at whoever is looking at her
     if (!helix) return; const dt = Math.min(0.1, (t - lastT) / 1000); lastT = t; if (mixer) mixer.update(dt);
-    const ang = t * 0.000042 + 1.0, r = 104, px = Math.cos(ang) * r, pz = Math.sin(ang) * r, vx = -Math.sin(ang), vz = Math.cos(ang);       // anticlockwise round the ring
-    helix.position.set(px, FLOOR_Y + (helix.userData.animated ? 0 : Math.abs(Math.sin(t * 0.0036)) * 1.6), pz); helix.rotation.y = Math.atan2(vx, vz);
-    if (!helix.userData.animated) helix.userData.inner.rotation.z = 0.05 * Math.sin(t * 0.0036);                                                  // a little sway when the model has no walk of its own
+    const want = Math.atan2(camera.position.x, camera.position.z); let d = want - faceAng; d = Math.atan2(Math.sin(d), Math.cos(d)); faceAng += d * Math.min(1, dt * 2.2); helix.rotation.y = faceAng;
+    if (!helix.userData.animated) helix.userData.inner.rotation.z = 0.04 * Math.sin(t * 0.0025);
   }
   // ── the factories: open work trays and the walkway bands to them; rebuilt when the modules change ──
-  function band(g, a, r0, r1, wid, col, lit) {
+  function band(g, a, r0, r1, wid, col, lit, dir) {
     const m = mats(), len = r1 - r0, [mx, mz] = polar(a, (r0 + r1) / 2), b = new THREE.Group(); if (len < 4) return;
     const bx = new THREE.Mesh(new THREE.BoxGeometry(len, FLOOR_Y, wid), m.deck); bx.position.y = FLOOR_Y / 2; b.add(bx);
-    const l = new THREE.Mesh(new THREE.BoxGeometry(Math.max(2, len - 6), 0.9, 1.8), new THREE.MeshBasicMaterial({ color: lit ? col : 0x2a3a4a })); l.position.y = FLOOR_Y + 0.3; b.add(l);
+    const l = new THREE.Mesh(new THREE.BoxGeometry(Math.max(2, len - 6), 0.9, 1.8), lit ? new THREE.MeshBasicMaterial({ color: col, map: surgeMap(Math.max(2, len - 6), dir || -1, false), toneMapped: false }) : new THREE.MeshBasicMaterial({ color: 0x1c2a38 })); l.position.y = FLOOR_Y + 0.3; b.add(l);
     for (const s of [-1, 1]) { const rail = new THREE.Mesh(new THREE.BoxGeometry(Math.max(2, len - 4), 4, 2.4), m.hullD); rail.position.set(0, FLOOR_Y + 2, s * (wid / 2 - 1.2)); b.add(rail); }
     b.position.set(mx, 0, mz); b.rotation.y = -a; g.add(b);
   }
@@ -223,15 +229,15 @@
     const hb = new THREE.Mesh(new THREE.BoxGeometry(w, 40, len), new THREE.MeshBasicMaterial({ visible: false })); hb.position.set(0, FLOOR_Y + 15, 0); group.add(hb); hb.userData = { key: m0.key, expansion: !!m0.expansion }; hitBoxes.push(hb);
     const lab = labelSprite(String(m0.label || m0.key || '').toUpperCase(), m0.state || '', col, lit); const [lx, lz] = polar(a, D + (len / 2) + 26); lab.position.set(lx, FLOOR_Y + 62, lz); g.add(lab);
     // the way in: a band from Helix's ring (or from the walkway, for the branch factories) to the open gap
-    const branch = idx >= 16, WB = 26, end = D - len / 2 + 3;
-    if (branch) band(g, a, DW + 15, end, WB, C, lit);                                           // off the middle of a walkway side
-    else if (idx >= 8) { band(g, a, 142, VC - 22, WB, C, lit); band(g, a, VC + 22, end, WB, C, lit); }   // through the gap, crossing the walkway at its corner pad
-    else band(g, a, 142, end, WB, C, lit);                                                      // an inner factory: starts at the edge of Helix's ring, not inside it
+    const branch = idx >= 16, WB = 26, end = D - len / 2 + 3, sd = idx % 2 ? 1 : -1;                  // surges alternate: some run out to the factory, some in to Helix
+    if (branch) band(g, a, DW + 15, end, WB, C, lit, sd);                                           // off the middle of a walkway side
+    else if (idx >= 8) { band(g, a, 142, VC - 22, WB, C, lit, sd); band(g, a, VC + 22, end, WB, C, lit, sd); }   // through the gap, crossing the walkway at its corner pad
+    else band(g, a, 142, end, WB, C, lit, sd);                                                      // an inner factory: starts at the edge of Helix's ring, not inside it
     return { a, D };
   }
   function rebuild(mods) {
     while (facGroup.children.length) { const c = facGroup.children.pop(); c.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material && o.material.map) o.material.map.dispose(); }); }
-    for (const ag of trayAgents) dropAgent(ag); trayAgents = []; hitBoxes = []; const slots = {};
+    for (const ag of trayAgents) dropAgent(ag); trayAgents = []; hitBoxes = []; surges = []; const slots = {};
     mods.forEach((m0, i) => { slots[m0.key] = tray(facGroup, i, m0); });
     facGroup.userData.slots = slots;
   }
@@ -291,10 +297,8 @@
     const d = cam.dist * cam.zoom, ce = Math.cos(cam.el);
     camera.position.set(Math.sin(cam.az) * d * ce, Math.sin(cam.el) * d + cam.ly * 0.2, Math.cos(cam.az) * d * ce); camera.lookAt(0, cam.ly, 0);
     if (holo) holo.rotation.y = Math.atan2(camera.position.x, camera.position.z);
-    if (beam) beam.material.opacity = 0.09 + 0.04 * Math.sin(t * 0.003);
-    if (hubGlow) hubGlow.material.opacity = 0.5 + 0.12 * Math.sin(t * 0.002);
     for (let i = 0; i < flames.length; i++) { const f = flames[i], s = 1 + 0.07 * Math.sin(t * 0.03 + i * 1.7) + 0.03 * Math.sin(t * 0.071 + i); f.scale.y = s; f.scale.x = f.scale.z = 1 + 0.03 * Math.sin(t * 0.05 + i * 2.3); }
-    moveHelix(t); updateRim(t); if (t - crewCheck > 700) { crewCheck = t; syncCrew(); } moveCrew(t);
+    moveHelix(t); moveSurges(t); updateRim(t); if (t - crewCheck > 700) { crewCheck = t; syncCrew(); } moveCrew(t);
     const pts = octPts();
     if (pts) for (const w of walkers) { const u = w.userData, f = (((u.f0 + u.dir * u.v * t) % 1) + 1) % 1 * 8, k = Math.floor(f) % 8, q = f - Math.floor(f), A = pts[k], B = pts[(k + 1) % 8];
       const dx = B[0] - A[0], dz = B[1] - A[1], L = Math.hypot(dx, dz) || 1; w.position.set(A[0] + dx * q + (-dz / L) * u.off, FLOOR_Y + Math.abs(Math.sin(t * 0.012 + u.f0 * 30)) * 0.8, A[1] + dz * q + (dx / L) * u.off); faceAgent(w, dx / L * u.dir, dz / L * u.dir, t, true); }
