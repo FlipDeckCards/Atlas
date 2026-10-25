@@ -1292,3 +1292,104 @@ def test_old_briefs_are_not_replayed_in_a_browser_that_has_not_seen_them():
     from openjarvis.server.crew.station import STATION_PAGE
 
     assert "FRESH_MS = 18 * 3600 * 1000" in STATION_PAGE and "< FRESH_MS" in STATION_PAGE
+
+
+class TestGoogleConnection:
+    ENV = {"GOOGLE_CLIENT_ID": "cid", "GOOGLE_CLIENT_SECRET": "sec", "GOOGLE_REDIRECT_URI": "https://aibussol.com/crew/connect/google/callback"}
+
+    def _http(self, replies):
+        import httpx
+        from tests.server.test_crew import FakeHttp
+
+        class Http(FakeHttp):
+            async def get(self, url, **kw):
+                self.requests.append(("GET", url, kw))
+                for key, body in self.replies.items():
+                    if key[0] == "GET" and url.startswith(key[1]):
+                        return httpx.Response(200, json=body) if not isinstance(body, str) else httpx.Response(200, text=body)
+                return httpx.Response(404, json={})
+
+            async def post(self, url, **kw):
+                self.requests.append(("POST", url, kw))
+                for key, body in self.replies.items():
+                    if key[0] == "POST" and url.startswith(key[1]):
+                        return httpx.Response(200, json=body)
+                return httpx.Response(404, json={})
+        return Http(replies)
+
+    def _linked(self, w):
+        import time as _t
+        for k, v in (("google_access", "tok"), ("google_refresh", "ref"), ("google_expires", str(int(_t.time()) + 3000)), ("google_email", "me@example.com")):
+            run(w.store.set_secret(UID, k, v))
+
+    def test_it_is_a_row_on_the_connections_panel_with_a_connect_url_and_all_four_permissions(self):
+        from openjarvis.server.crew import connections as conns
+
+        w = world(two_task_plan(), AGENTS)
+        st = run(conns.status(w.store, UID, self.ENV))["google"]
+        assert st["label"] == "Google (Gmail and Drive)" and st["can_connect"] and not st["connected"]
+        assert {a["name"] for a in st["actions"]} == {"gmail_search", "gmail_read", "gmail_send", "drive_search", "drive_read", "drive_save"}
+        assert not run(conns.status(w.store, UID, {}))["google"]["can_connect"]                       # not set up on Render: no Connect button yet
+        url = conns.google_connect_url(UID, self.ENV)
+        for part in ("gmail.readonly", "gmail.send", "drive.readonly", "drive.file", "access_type=offline", "prompt=consent", "code_challenge="):
+            assert part in url
+        self._linked(w)
+        assert run(conns.status(w.store, UID, self.ENV))["google"]["connected"]
+
+    def test_subscribers_use_the_platform_google_app_but_their_own_login(self):
+        from openjarvis.server.crew import tenant
+
+        w = world(two_task_plan(), AGENTS)
+        sub = run(tenant.subscriber_env(w.store, "sub-1", dict(self.ENV, ETSY_API_KEY="e"), "Sam"))
+        assert sub["GOOGLE_CLIENT_ID"] == "cid" and sub["GOOGLE_REDIRECT_URI"].endswith("/google/callback")
+        assert run(w.store.get_secret("sub-1", "google_refresh")) is None                             # their own login is theirs alone
+
+    def test_helix_reads_mail_and_drive_and_the_agents_cannot(self):
+        w = world(two_task_plan(), AGENTS, env=dict(self.ENV))
+        http = self._http({("GET", "https://gmail.googleapis.com/gmail/v1/users/me/messages/abc123"): {"id": "abc123", "snippet": "Your app was approved",
+                                                                                                          "payload": {"headers": [{"name": "From", "value": "Etsy <no-reply@etsy.com>"}, {"name": "Subject", "value": "Approved"}, {"name": "Date", "value": "Sat, 24 Oct 2026"}]}},
+                           ("GET", "https://gmail.googleapis.com/gmail/v1/users/me/messages"): {"messages": [{"id": "abc123"}]},
+                           ("GET", "https://www.googleapis.com/drive/v3/files"): {"files": [{"id": "F" * 12, "name": "Plan", "mimeType": "application/vnd.google-apps.document", "modifiedTime": "2026-10-20T00:00:00Z"}]}})
+        w.engine.client_factory = http
+        self._linked(w)
+        ctx = helix.CrewCtx(UID, w.engine)
+        mail = run(helix.execute(ctx, "read_platform", {"platform": "google", "action": "gmail_search", "args": {"query": "from:etsy"}}))
+        assert "abc123" in mail and "Etsy <no-reply@etsy.com>" in mail and "Approved" in mail
+        files = run(helix.execute(ctx, "read_platform", {"platform": "google", "action": "drive_search", "args": {"query": "plan"}}))
+        assert "Plan" in files and "FFFFFFFFFFFF" in files
+        out, _ = run(w.engine._connection(dict(run(w.store.list_tasks(run(start(w))["id"]))[0], role="analyst", _env=w.engine.env), {}, {"platform": "google", "action": "gmail_search", "args": {"query": "x"}}))
+        assert "Helix's alone" in out
+
+    def test_an_email_waits_for_approval_and_is_sent_only_after_it(self):
+        w = world(two_task_plan(), AGENTS, env=dict(self.ENV))
+        http = self._http({("POST", "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"): {"id": "m1"}})
+        w.engine.client_factory = http
+        self._linked(w)
+        ctx = helix.CrewCtx(UID, w.engine)
+        out = run(helix.execute(ctx, "use_google", {"action": "gmail_send", "to": "buyer@example.com", "subject": "Your order", "body": "Thanks!"}))
+        assert out.startswith("NOT SENT YET") and "buyer@example.com" in out and not [r for r in http.requests if r[0] == "POST"]
+        q = run(w.store.list_questions(UID, "open"))[-1]
+        res = run(w.engine.answer(UID, q["id"], approve=True))
+        assert "Email sent to buyer@example.com" in res["message"]
+        assert [r for r in http.requests if r[0] == "POST" and r[1].endswith("/messages/send")]
+        bad = run(helix.execute(ctx, "use_google", {"action": "gmail_send", "to": "not-an-address", "subject": "x", "body": "y"}))
+        assert bad.startswith("Could not do that")
+
+    def test_an_expired_login_is_refreshed_and_a_revoked_one_says_what_to_do(self):
+        import time as _t
+        from openjarvis.server.crew import connections as conns
+
+        w = world(two_task_plan(), AGENTS, env=dict(self.ENV))
+        self._linked(w)
+        run(w.store.set_secret(UID, "google_expires", str(int(_t.time()) - 10)))
+        http = self._http({("POST", conns.GOOGLE_TOKEN_URL): {"access_token": "fresh", "expires_in": 3600}, ("GET", "https://gmail.googleapis.com/gmail/v1/users/me/messages"): {"messages": []}})
+        run(conns.run("google", "gmail_search", {"query": "x"}, store=w.store, user_id=UID, env=self.ENV, client_factory=http))
+        assert run(w.store.get_secret(UID, "google_access")) == "fresh" and run(w.store.get_secret(UID, "google_refresh")) == "ref"
+        import httpx
+        class Revoked(type(http)):
+            async def post(self, url, **kw):
+                return httpx.Response(400, json={"error": "invalid_grant"})
+        run(w.store.set_secret(UID, "google_expires", str(int(_t.time()) - 10)))
+        with pytest.raises(conns.ConnectionError_) as ei:
+            run(conns.run("google", "gmail_search", {"query": "x"}, store=w.store, user_id=UID, env=self.ENV, client_factory=Revoked({})))
+        assert "Connect Google again" in str(ei.value)
