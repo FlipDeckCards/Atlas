@@ -183,3 +183,13 @@ def test_the_3d_view_is_a_button_and_two_files_loaded_only_on_demand():
     three, s3d = c.get("/crew/three.min.js"), c.get("/crew/station3d.js")
     assert three.status_code == 200 and "javascript" in three.headers["content-type"] and len(three.content) > 100000
     assert s3d.status_code == 200 and "window.Station3D" in s3d.text and "geodesic" in s3d.text
+
+
+def test_3d_view_has_big_dome_panels_coloured_rim_lights_and_the_crew_on_helixs_ring():
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[2] / "src" / "openjarvis" / "server" / "crew" / "assets" / "station3d.js").read_text()
+    assert "IcosahedronGeometry(1, 1)" in js and "IcosahedronGeometry(1, 3)" not in js           # a handful of big hexagon panels, not a mesh of piping
+    assert "function updateRim(t)" in js and "setColorAt(i" in js and "0xffe9b8" not in js          # the rim lights are coloured and animated, not all yellow
+    assert "function syncCrew()" in js and "getRoster" in js                                          # the idle crew walk Helix's own ring
+    assert "v: 0.0000055 + (i % 5) * 0.000002" in js                                                   # the walkway crew move slowly
