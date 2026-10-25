@@ -44,6 +44,7 @@ PRODUCT_SQL = {
                "SELECT (SELECT count(*) FROM users) AS users_total, "
                "(SELECT count(*) FROM subscriptions WHERE status IN ('active','trialing')) AS paying_now, "
                "(SELECT count(*) FROM users WHERE created_at > now()-interval '24 hours') AS new_users_24h, "
+               "(SELECT count(*) FROM users WHERE last_login_at > now()-interval '24 hours') AS active_24h, "
                "(SELECT count(*) FROM users WHERE created_at > now()-interval '7 days') AS new_users_7d, "
                "(SELECT count(*) FROM posts WHERE status='published' AND published_at > now()-interval '7 days') AS published_7d, "
                "(SELECT count(*) FROM posts WHERE status='failed' AND updated_at > now()-interval '7 days') AS failed_7d"),
@@ -53,15 +54,17 @@ NUMBER_WORDS = {"users_total": "total users", "paying_now": "paying now", "new_u
                 "failed_7d": "posts failed in 7 days"}
 
 
-SHORT_WORDS = {"users_total": "users", "paying_now": "paying", "new_users_24h": "new today", "visitors_24h": "visitors today"}
+SHORT_WORDS = {"users_total": "users", "paying_now": "paying", "new_users_24h": "new today", "active_24h": "active today", "visitors_24h": "visitors today"}
 
 
 async def product_numbers(env) -> List[str]:
+    """One short line per product, the same shape as Aibussol's: users, paying, and who was active today. A product that cannot be read gets one short line saying why."""
     out = []
     for name, (var, sql) in PRODUCT_SQL.items():
         dsn = (env.get(var) or "").strip()
         if not dsn:
-            continue                                                  # a product with no database connection is left out of the brief, not listed as unchecked
+            out.append(f"- {name}: not connected ({var} is not set).")
+            continue
         try:
             import asyncio
 
@@ -73,10 +76,12 @@ async def product_numbers(env) -> List[str]:
                 row = await asyncio.wait_for(conn.fetchrow(sql), timeout=20)
             finally:
                 await conn.close()
-            keep = [k for k in ("users_total", "paying_now", "new_users_24h") if k in row.keys()]
+            have = list(row.keys())
+            keep = [k for k in ("users_total", "paying_now", "active_24h", "visitors_24h") if k in have]
             out.append(f"- {name}: " + ", ".join(f"{int(row[k] or 0)} {SHORT_WORDS[k]}" for k in keep) + ".")
         except Exception as exc:
             logger.warning("herald: %s numbers failed: %s", name, type(exc).__name__)
+            out.append(f"- {name}: could not read ({type(exc).__name__}).")
     return out
 
 
