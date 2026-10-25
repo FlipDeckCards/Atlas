@@ -1387,6 +1387,53 @@ function drawMiniStation(t, dt) {                                         // far
   ctx.restore();
 }
 
+// a ringed gas giant far off in the top-left corner (painted once, then just drawn), with a small moon going round it
+const PLANET = { key: '', img: null, R: 0, pad: 0 }, PLANET_TILT = -0.34;
+function planetSprite(R) {
+  const pad = Math.ceil(R * 2.7), c = document.createElement('canvas'); c.width = c.height = pad * 2; const g = c.getContext('2d'), cx = pad, cy = pad;
+  const rings = (front) => {
+    g.save(); g.translate(cx, cy); g.rotate(PLANET_TILT);
+    [[1.55, 0.2, 2.4], [1.66, 0.34, 4.5], [1.78, 0.28, 3.4], [1.9, 0.16, 2], [2.02, 0.1, 1.4]].forEach(([k, a, lw]) => {
+      g.strokeStyle = 'rgba(236,206,160,' + a + ')'; g.lineWidth = lw * Math.max(0.6, R / 50);
+      g.beginPath(); g.ellipse(0, 0, R * k, R * k * 0.24, 0, front ? 0 : Math.PI, front ? Math.PI : Math.PI * 2); g.stroke();
+    });
+    g.restore();
+  };
+  const halo = g.createRadialGradient(cx, cy, R * 0.9, cx, cy, R * 1.55);                       // a faint atmosphere
+  halo.addColorStop(0, 'rgba(176,130,255,0.30)'); halo.addColorStop(1, 'rgba(176,130,255,0)');
+  g.fillStyle = halo; g.beginPath(); g.arc(cx, cy, R * 1.55, 0, 6.29); g.fill();
+  rings(false);                                                                                // the half of the rings behind the planet
+  g.save(); g.beginPath(); g.arc(cx, cy, R, 0, 6.29); g.clip();
+  const bands = ['#34255a', '#4d3478', '#7a4a9c', '#b8688f', '#e29a74', '#f0b98a', '#d9856f', '#9a5a95', '#5c3c86', '#33265a'];
+  const grad = g.createLinearGradient(cx, cy - R, cx, cy + R);
+  bands.forEach((col, i) => grad.addColorStop(i / (bands.length - 1), col));
+  g.fillStyle = grad; g.fillRect(cx - R, cy - R, R * 2, R * 2);
+  g.save(); g.translate(cx, cy); g.rotate(PLANET_TILT * 0.6);                                  // thin storm bands across the face
+  for (let i = -9; i <= 9; i++) { g.fillStyle = i % 2 ? 'rgba(255,230,200,0.07)' : 'rgba(20,10,40,0.12)'; g.fillRect(-R, i * R * 0.105, R * 2, R * (0.05 + (i % 3) * 0.02)); }
+  g.fillStyle = 'rgba(255,196,150,0.35)'; g.beginPath(); g.ellipse(-R * 0.22, R * 0.3, R * 0.2, R * 0.09, 0, 0, 6.29); g.fill();   // a great spot
+  g.restore();
+  const shade = g.createRadialGradient(cx + R * 0.5, cy - R * 0.5, R * 0.15, cx + R * 0.5, cy - R * 0.5, R * 1.75);          // lit from the upper right (the Milky Way side)
+  shade.addColorStop(0, 'rgba(0,0,12,0)'); shade.addColorStop(0.55, 'rgba(0,0,12,0.35)'); shade.addColorStop(1, 'rgba(0,0,12,0.93)');
+  g.fillStyle = shade; g.fillRect(cx - R, cy - R, R * 2, R * 2);
+  g.restore();
+  g.strokeStyle = 'rgba(255,214,170,0.55)'; g.lineWidth = Math.max(1, R * 0.03);               // a bright rim on the lit edge
+  g.beginPath(); g.arc(cx, cy, R - 0.5, -Math.PI * 0.62, Math.PI * 0.08); g.stroke();
+  rings(true);                                                                                 // and the half in front
+  return c;
+}
+function drawPlanet(t) {
+  const R = Math.max(24, Math.min(W, H) * 0.078), key = Math.round(R);
+  if (PLANET.key !== String(key)) { PLANET.img = planetSprite(R); PLANET.key = String(key); PLANET.R = R; PLANET.pad = Math.ceil(R * 2.7); }
+  const x = W * 0.095 + Math.sin(t * 0.00004) * 2, y = H * 0.135 + Math.cos(t * 0.00003) * 1.5;
+  ctx.save(); ctx.globalAlpha = 0.93; ctx.drawImage(PLANET.img, x - PLANET.pad, y - PLANET.pad); ctx.restore();
+  // the moon: an ellipse tilted like the rings; behind the planet it is hidden
+  const ang = t * 0.00022, ox = Math.cos(ang) * R * 2.45, oy = Math.sin(ang) * R * 0.62, rc = Math.cos(PLANET_TILT), rs = Math.sin(PLANET_TILT);
+  const mx = x + ox * rc - oy * rs, my = y + ox * rs + oy * rc, mr = Math.max(3, R * 0.13), behind = Math.sin(ang) < 0 && Math.hypot(mx - x, my - y) < R + mr;
+  if (!behind) {
+    const mg = ctx.createRadialGradient(mx + mr * 0.35, my - mr * 0.35, mr * 0.1, mx, my, mr);
+    mg.addColorStop(0, '#f4ecff'); mg.addColorStop(1, '#6a5a85'); ctx.fillStyle = mg; ctx.beginPath(); ctx.arc(mx, my, mr, 0, 6.29); ctx.fill();
+  }
+}
 function drawSky(t) {
   const dt = lastSkyT ? Math.min(100, t - lastSkyT) : 16; lastSkyT = t;
   if (sky) ctx.drawImage(sky, 0, 0, W, H);
@@ -1396,6 +1443,7 @@ function drawSky(t) {
     const x = (s.x + t * 0.003 * s.z) % W; const sz = s.z > 0.9 ? 1.8 : 1;
     ctx.fillRect(x, s.y, sz, sz);
   }
+  drawPlanet(t);
   drawMiniStation(t, dt);
   drawRocks(t);
   drawMeteors(t);
@@ -1865,9 +1913,9 @@ function drawWalkway(t) {
   });
   const side = Math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]), sc = Math.max(0.6, Math.min(0.95, SC * 0.85));
   const at = (f) => { const u = ((f % 1) + 1) % 1 * 8, i = Math.floor(u), q = u - i, A = pts[i % 8], B = pts[(i + 1) % 8]; return [A[0] + (B[0] - A[0]) * q, A[1] + (B[1] - A[1]) * q + 4 * sc]; };
-  WALK_ROLES.slice(0, 10).forEach((role, i) => {
+  Array.from({ length: 20 }, (_, i) => WALK_ROLES[i % WALK_ROLES.length]).forEach((role, i) => {
     const R = (k) => { const v = Math.sin((i + 3) * 12.9898 + k * 78.233) * 43758.5453; return v - Math.floor(v); };
-    const dir = R(1) < 0.5 ? -1 : 1, f0 = i / 10 + R(2) * 0.04, v = 0.0000012 + R(3) * 0.000002, A = 0.01 + R(4) * 0.03, wv = 0.00008 + R(5) * 0.00012, ph = R(6) * 6.28;
+    const dir = R(1) < 0.5 ? -1 : 1, f0 = i / 20 + R(2) * 0.02, v = 0.0000012 + R(3) * 0.000002, A = 0.01 + R(4) * 0.03, wv = 0.00008 + R(5) * 0.00012, ph = R(6) * 6.28;
     const f = (tt) => f0 + dir * (v * tt + A * Math.sin(wv * tt + ph));
     const [px, py] = at(f(t)), [qx, qy] = at(f(t + 40)), moving = Math.hypot(qx - px, qy - py) / 40 > 0.0012 * (side / 120);
     drawBot(px, py, ROLE_COLORS[role] || '#00e5ff', 'idle', t, i * 4.7, moving ? dirOf(qx - px, qy - py, 'front') : 'front', sc, moving);
