@@ -1781,11 +1781,12 @@ function drawWaiting(m, t) {
 // a name plate just outside each module's outer end, always upright, plus the module's status line in its middle
 function drawPlate(m, t) {
   const fs = Math.max(8, 11 * SC), fs2 = Math.max(7, 9 * SC);
-  // every plate is the size of Helix Business's (long names are shortened to fit); only the Expansion Bays, whose names are longer, size to their text
-  ctx.font = '700 ' + fs + 'px Orbitron, monospace'; const fixedW = ctx.measureText('HELIX BUSINESS…').width + 18 * SC + 6;
-  const name = fitText((m.isNew ? '◆ ' : '') + m.label, m.expansion ? 190 * SC + 20 : fixedW - 18 * SC - 6), nw = ctx.measureText(name).width;
-  ctx.font = fs2 + 'px Share Tech Mono, monospace'; const st = m.state || '', sw = ctx.measureText(st).width;
-  const pw = m.expansion ? Math.max(nw, sw) + 18 * SC + 6 : fixedW, ph = fs + fs2 + 12 * SC;
+  // every plate is the size of Helix Business's, Expansion Bays included: a longer name is set in a smaller type (down to 62%), then shortened if still too long
+  ctx.font = '700 ' + fs + 'px Orbitron, monospace'; const fixedW = ctx.measureText('HELIX BUSINESS…').width + 18 * SC + 6, availW = fixedW - 18 * SC - 6;
+  const full = (m.isNew ? '◆ ' : '') + m.label, k = Math.max(0.62, Math.min(1, availW / (ctx.measureText(full + '…').width || 1))), nfs = fs * k;
+  ctx.font = '700 ' + nfs + 'px Orbitron, monospace'; const name = fitText(full, availW);
+  ctx.font = fs2 + 'px Share Tech Mono, monospace'; const st = m.state || '';
+  const pw = fixedW, ph = fs + fs2 + 12 * SC;
   // the plate lies flat against the factory's outer end, centred on it, turned with the factory so the name always faces Helix, whatever angle the ring has turned to
   ctx.save(); ctx.translate(m.cx, m.cy); ctx.rotate(m.rot); ctx.translate(0, -m.h / 2 - 5 * SC - ph / 2);
   const ox = 0, x = -pw / 2, y = -ph / 2;
@@ -1793,7 +1794,7 @@ function drawPlate(m, t) {
   ctx.strokeStyle = alpha(m.color, 0.55); ctx.lineWidth = 1; rr(x, y, pw, ph, 3); ctx.stroke();
   ctx.fillStyle = m.color; ctx.fillRect(x, y + 3, 2, ph - 6);
   ctx.textAlign = 'center';
-  ctx.font = '700 ' + fs + 'px Orbitron, monospace'; ctx.fillStyle = m.color; ctx.fillText(name, ox, y + 5 * SC + fs);
+  ctx.font = '700 ' + nfs + 'px Orbitron, monospace'; ctx.fillStyle = m.color; ctx.fillText(name, ox, y + 5 * SC + fs - (fs - nfs) * 0.4);
   ctx.font = fs2 + 'px Share Tech Mono, monospace';
   ctx.fillStyle = st === 'COMING SOON' ? '#ff2d95' : st === 'DOWN' ? '#ff3344' : st === 'NEEDS YOU' || st === 'OFFLINE' || st === 'IDLE' ? '#ff8a2a' : st === 'WORKING' || st === 'ONLINE' || st === 'LIVE' ? '#00ff99' : 'rgba(142,207,224,0.65)';
   ctx.fillText(st, ox, y + 7 * SC + fs + fs2);
