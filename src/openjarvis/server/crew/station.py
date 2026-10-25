@@ -488,7 +488,7 @@ async function setView(on) {
   btn.textContent = 'LOADING 3D…';
   try {
     if (!window.THREE) await loadScript('/crew/three.min.js?v=3');
-    if (!window.Station3D) await loadScript('/crew/station3d.js?v=12');
+    if (!window.Station3D) await loadScript('/crew/station3d.js?v=13');
     Station3D.start(document.getElementById('stage'), { roleColors: ROLE_COLORS, getSelected: () => selected, getRoster: () => (S && S.roster ? S.roster : []), botRows: BOT_ROWS, botUrl: '/crew/bots.png?v=' + BOT_VER,
       onHelix: () => { selected = 'hub'; renderSide(true); startSpin(); },
       onLaunch: () => { const say = 'Prepare for take off!', log = document.getElementById('chat-log'), el = chatMsg('assistant', say); log.append(el); log.scrollTop = log.scrollHeight; try { speakReply(say, el, false); } catch (e) {} },

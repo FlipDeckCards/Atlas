@@ -231,8 +231,10 @@
     rootG.rotation.y = -6.283185 * 3 * (ease3((s - 3.0) / 7.8));
     // up and away, away from the viewer into deep space; a pause far out; then back, braking
     const out = eIn((s - 4.8) / 2.4) * (1 - eOut((s - 8.3) / 2.6));
-    _away.set(-camera.position.x, 0, -camera.position.z).normalize(); const hi = ease3((s - 7.2) / 1.1);                                              // away level into the horizon; the way back drops in from above
-    rootG.position.set(_away.x * 12000 * out, (2400 * hi + 120 * (1 - hi)) * out, _away.z * 12000 * out);
+    // out: straight down the line of sight so it shrinks into the middle of the screen (never up off the top); back: lifted overhead so it drops in from above
+    const hi = ease3((s - 7.2) / 1.1); _away.copy(camera.position).negate().normalize();
+    const hz = Math.hypot(camera.position.x, camera.position.z) || 1, hx = -camera.position.x / hz, hzz = -camera.position.z / hz;
+    rootG.position.set((_away.x * 14000 * (1 - hi) + hx * 12000 * hi) * out, (_away.y * 14000 * (1 - hi) + 2400 * hi) * out, (_away.z * 14000 * (1 - hi) + hzz * 12000 * hi) * out);
   }
   // ── the factories: open work trays and the walkway bands to them; rebuilt when the modules change ──
   function band(g, a, r0, r1, wid, col, lit, dir) {

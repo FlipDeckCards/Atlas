@@ -269,7 +269,7 @@ def test_the_3d_take_off_sequence_is_wired_to_missions_clicks_and_the_chat():
     from openjarvis.server.crew.station import STATION_PAGE
 
     js = (Path(__file__).resolve().parents[2] / "src" / "openjarvis" / "server" / "crew" / "assets" / "station3d.js").read_text()
-    for part in ("function startLaunch()", "function stepLaunch()", "boostPivots.forEach", "rootG.rotation.y = -6.283185 * 3", "rootG.position.set(_away.x * 12000 * out", "/backflip/i", "launch() { return startLaunch(); }"):
+    for part in ("function startLaunch()", "function stepLaunch()", "boostPivots.forEach", "rootG.rotation.y = -6.283185 * 3", "rootG.position.set((_away.x * 14000 * (1 - hi) + hx * 12000 * hi) * out", "/backflip/i", "launch() { return startLaunch(); }"):
         assert part in js
     assert "Station3D.launch(); return; }" in STATION_PAGE                    # a mission starting or finishing, or a click on Helix, launches the 3D station
     assert "Prepare for take off!" in STATION_PAGE and "onHelix:" in STATION_PAGE
