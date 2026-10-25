@@ -201,7 +201,7 @@ CREW_TOOLS: List[Dict[str, Any]] = [
         "parameters": {"type": "object", "properties": {"business": {"type": "string"},
                                                         "posts": {"type": "array", "items": {"type": "object", "properties": {
                                                             "body": {"type": "string"}, "hashtags": {"type": "string"},
-                                                            "platforms": {"type": "array", "items": {"type": "string"}, "description": "instagram, facebook, x, tiktok: only ones the brand has connected"},
+                                                            "platforms": {"type": "array", "items": {"type": "string"}, "description": "instagram, facebook, x, tiktok. Default: ALL of the ones the brand has connected (one post on every platform), so keep the text and hashtags under 270 characters (X's limit) and without links"},
                                                             "scheduled_at": {"type": "string", "description": "ISO time with offset, at least 10 minutes from now, e.g. 2026-10-27T09:00:00-07:00"}},
                                                             "required": ["body", "platforms", "scheduled_at"]}}},
                        "required": ["business", "posts"]}}},

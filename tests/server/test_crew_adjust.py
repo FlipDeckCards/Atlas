@@ -1210,7 +1210,7 @@ class TestSocialAutomation:
         assert weekly.schedule({}) == (6, 9, 0) and weekly.notify_time({}) == (6, 17, 0)
         assert weekly.social_mode({"CREW_SOCIAL_MODE": "auto_pause"}) == "auto_pause" and weekly.auto_at({}) == "" and weekly.auto_at({"CREW_SOCIAL_MODE": "auto_pause"}) != ""
         goal = weekly.GOAL.format(week="x", per_day=5)
-        assert "5 posts a day" in goal and "FlipDeck first, then Marnyx" in goal and "HELD DRAFTS" in goal and "TWO marnyx.schedule_week" in goal
+        assert "5 posts a day" in goal and "ALL of that brand's connected platforms" in goal and "270 characters INCLUDING the hashtags" in goal and "FlipDeck first, then Marnyx" in goal and "HELD DRAFTS" in goal and "TWO marnyx.schedule_week" in goal
 
     def test_helix_saves_held_drafts_then_asks_once_and_approving_goes_back_into_marnyx(self):
         from tests.server.test_crew import MarnyxHttp
