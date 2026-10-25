@@ -1774,8 +1774,19 @@ async def chat(req: ChatRequest, request: Request):
     brief_period = None if has_files or not briefs.owner_request(request) else briefs.wants_brief(req.message)
     if brief_period:
         try:
-            found = await briefs.find_brief(briefs.store_for(request), brief_period)
-            reply = briefs.brief_reply(found, brief_period)
+            reply = ""
+            herald = getattr(getattr(request.app.state, "crew_engine", None), "herald", None)
+            if herald is not None:                                       # a fresh, short brief from this moment's numbers (nothing stored, nothing pushed)
+                try:
+                    from openjarvis.server import brief_content as _bc
+
+                    p_ = brief_period if brief_period in ("morning", "afternoon", "evening") else _bc.greeting_period(herald.now())
+                    reply = (await herald.compose(p_, await herald.owner_id() or user_id))["body"].replace("## ", "")
+                except Exception:
+                    logger.exception("fresh brief failed; using the stored one")
+            if not reply:
+                found = await briefs.find_brief(briefs.store_for(request), brief_period)
+                reply = briefs.brief_reply(found, brief_period)
         except Exception:
             logger.exception("brief lookup failed")
             reply = "I couldn't load the brief feed right now. Please try again."

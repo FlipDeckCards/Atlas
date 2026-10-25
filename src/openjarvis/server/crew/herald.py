@@ -73,7 +73,7 @@ async def product_numbers(env) -> List[str]:
                 row = await asyncio.wait_for(conn.fetchrow(sql), timeout=20)
             finally:
                 await conn.close()
-            keep = [k for k in ("users_total", "paying_now", "new_users_24h", "visitors_24h") if k in row.keys()]
+            keep = [k for k in ("users_total", "paying_now", "new_users_24h") if k in row.keys()]
             out.append(f"- {name}: " + ", ".join(f"{int(row[k] or 0)} {SHORT_WORDS[k]}" for k in keep) + ".")
         except Exception as exc:
             logger.warning("herald: %s numbers failed: %s", name, type(exc).__name__)
@@ -102,16 +102,15 @@ def next_slot(now: dt.datetime) -> dt.datetime:
 
 def glance_lines(fin: Optional[Dict[str, Any]], products: Dict[str, Any], stats: Optional[Dict[str, Any]], crew: Dict[str, int],
                  names: Optional[Dict[str, str]] = None, owner: bool = True) -> List[str]:
-    """The brief's numbers, kept basic: money, subscribers, Aibussol's users, and the crew's counts. No site checks, no per-product lists, no 'unchecked' lines."""
+    """Only what matters, four short lines: money, subscriptions, Aibussol's users, and the crew. No site checks, no per-product lists, no 'unchecked' lines."""
     out: List[str] = []
     if fin:
         t = fin["total"]
-        out.append(f"- Money today: in {_money(t['revenue_today'])}, out {_money(t['cost_today'])}, net {_money(t['net_today'])}.")
-        out.append(f"- Last 30 days: in {_money(t['revenue_30d'])}, out {_money(t['cost_30d'])}, net {_money(t['net_30d'])}.")
-        out.append(f"- Subscriptions: MRR {_money(t['mrr'])} from {t['subscribers']} subscriber(s).")
+        out.append(f"- Money: today in {_money(t['revenue_today'])}, out {_money(t['cost_today'])}. Last 30 days in {_money(t['revenue_30d'])}, out {_money(t['cost_30d'])}.")
+        out.append(f"- Subscriptions: {t['subscribers']} paying, MRR {_money(t['mrr'])}.")
     if owner and stats:
-        out.append(f"- Aibussol: {stats.get('users_total', 0)} users, {stats.get('active_24h', 0)} active today, {stats.get('new_users_7d', 0)} new this week.")
-    out.append(f"- Crew: {crew.get('running', 0)} running, {crew.get('queued', 0)} queued, {crew.get('done_today', 0)} finished today.")
+        out.append(f"- Aibussol: {stats.get('users_total', 0)} users, {stats.get('active_24h', 0)} active today.")
+    out.append(f"- Crew: {crew.get('running', 0)} running, {crew.get('queued', 0)} queued, {crew.get('done_today', 0)} done today.")
     return out
 
 
@@ -234,6 +233,28 @@ class Herald:
             logger.exception("herald: aibussol stats failed")
             return None
 
+    async def compose(self, period: str, uid: str, env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """The brief's text, built from this moment's numbers. Stores nothing and sends nothing (run() does that; the chat uses it to answer 'give me the brief')."""
+        env = dict(os.environ) if env is None and self.env is None else dict(env if env is not None else self.env)
+        if not env.get("STRIPE_READ_KEY") and env.get("STRIPE_SECRET_KEY"):
+            env["STRIPE_READ_KEY"] = env["STRIPE_SECRET_KEY"]
+        fin = await self._finance(uid) if uid else None
+        crew = await self._crew_counts(uid) if uid else {}
+        glance = glance_lines(fin, {}, await self._stats(), crew)
+        try:
+            glance += await self.numbers_fn(env)
+        except Exception:
+            logger.exception("herald: product numbers failed")
+        try:
+            questions = await self.engine.store.list_questions(uid, "open") if uid else []
+        except Exception:
+            questions = []
+        pend = pending_lines(questions, crew)
+        greeting = {"morning": "Good morning", "afternoon": "Good afternoon", "evening": "Good evening"}.get(period, "Hello")
+        body = f"{greeting}, Michael.\n\n## Numbers\n" + "\n".join(glance) + "\n\n## Waiting on you\n" + "\n".join(pend)
+        spoken = glance[0].lstrip("- ") + " " + (f"{len(questions)} thing(s) are waiting on you." if questions else "Nothing is waiting on you.")
+        return {"body": body, "glance": glance, "pending": pend, "act": pend[0].lstrip("- "), "spoken": spoken, "questions": len(questions)}
+
     async def run(self, period: Optional[str] = None) -> Dict[str, Any]:
         """Make one brief now (period defaults to the one for the current time), store it, post it to Helix chat, push it to the phone."""
         if self.busy:
@@ -248,24 +269,9 @@ class Herald:
             env = dict(os.environ) if self.env is None else dict(self.env)
             if not env.get("STRIPE_READ_KEY") and env.get("STRIPE_SECRET_KEY"):
                 env["STRIPE_READ_KEY"] = env["STRIPE_SECRET_KEY"]
-            fin = await self._finance(uid) if uid else None
-            crew = await self._crew_counts(uid) if uid else {}
-            glance = glance_lines(fin, {}, await self._stats(), crew)
-            try:
-                glance += await self.numbers_fn(env)
-            except Exception:
-                logger.exception("herald: product numbers failed")
-            try:
-                questions = await self.engine.store.list_questions(uid, "open") if uid else []
-            except Exception:
-                questions = []
-            pend = pending_lines(questions, crew)
-            greeting = {"morning": "Good morning", "afternoon": "Good afternoon", "evening": "Good evening"}[period]
-            body = f"{greeting}, Michael.\n\n## Numbers\n" + "\n".join(glance) + "\n\n## Waiting on you\n" + "\n".join(pend)
-            base = {"product": "FlipDeck and Marnyx", "period": period}
-            act = pend[0].lstrip("- ")
-            spoken = (glance[0].lstrip("- ") + " " + (f"{len(questions)} thing(s) are waiting on you." if questions else "Nothing is waiting on you.")).replace("Money today:", "Money today,")
-            base["spoken_summary"] = spoken
+            c = await self.compose(period, uid, env)
+            glance, act, base = c["glance"], c["act"], {"product": "FlipDeck and Marnyx", "period": period, "spoken_summary": c["spoken"]}
+            body = c["body"]
             from openjarvis.server.briefs import clean_for_storage
 
             prev = None                                                   # a basic brief repeats its numbers on purpose: nothing is dropped as 'already reported'
