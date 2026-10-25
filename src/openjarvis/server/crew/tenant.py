@@ -38,7 +38,7 @@ GENERIC_RULES = (
     "unless they ask; if their PC is not connected, Rig's task waits.\n"
     "- Anything public, paid or permanent waits for their Approve."
 )
-MAX_BUSINESSES = 6
+MAX_BUSINESSES = 17                                       # the station has 4 inner and 16 outer factory slots; the owner's 3 fixed ones are separate
 PALETTE = ["#ff6d00", "#b06cff", "#ff3344", "#00e5ff", "#34d17a", "#ffd23f"]
 
 
