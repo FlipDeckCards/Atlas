@@ -75,3 +75,33 @@ def test_the_engine_runs_get_weather_for_gale_only_and_reports_a_bad_place_in_wo
     assert "could not find a place" in out
     other, _ = run(w.engine._tool(dict(task, role="writer"), mission, "get_weather", {"place": "Los Angeles"}))
     assert "Weather for" not in other
+
+
+def test_jet_plans_trips_with_search_and_the_forecast_and_cannot_book_or_spend():
+    names = {t["function"]["name"] for t in eng_mod.tools_for("travel")}
+    assert eng_mod.ROLES["travel"]["name"] == "Jet" and eng_mod.ROLES["travel"]["model"] == "agent"
+    assert {"web_search", "get_weather", "save_output", "finish"} <= names
+    assert not names & {"use_connection", "marnyx_post", "repo_commit", "request_merge", "generate_image", "check_site", "make_book"}
+
+
+def test_the_engine_gives_jet_the_forecast_for_its_travel_dates():
+    from tests.server.test_crew import two_task_plan, world
+
+    w = world(two_task_plan(), {})
+    w.engine.client_factory = _factory()[0]
+    task = {"user_id": "u", "mission_id": "m", "id": "t", "role": "travel", "_transcript": []}
+    out, _ = run(w.engine._tool(task, {"id": "m"}, "get_weather", {"place": "Los Angeles, CA", "days": 2}))
+    assert "Weather for Los Angeles" in out
+
+
+def test_cue_plans_events_with_search_and_the_forecast_and_cannot_send_book_or_pay():
+    from tests.server.test_crew import two_task_plan, world
+
+    names = {t["function"]["name"] for t in eng_mod.tools_for("event")}
+    assert eng_mod.ROLES["event"]["name"] == "Cue" and eng_mod.ROLES["event"]["model"] == "agent"
+    assert {"web_search", "get_weather", "save_output", "finish"} <= names
+    assert not names & {"use_connection", "marnyx_post", "repo_commit", "request_merge", "generate_image", "check_site", "make_book"}
+    w = world(two_task_plan(), {})
+    w.engine.client_factory = _factory()[0]
+    out, _ = run(w.engine._tool({"user_id": "u", "mission_id": "m", "id": "t", "role": "event", "_transcript": []}, {"id": "m"}, "get_weather", {"place": "Los Angeles, CA"}))
+    assert "Weather for Los Angeles" in out

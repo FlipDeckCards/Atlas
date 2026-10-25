@@ -93,6 +93,12 @@ ROLES: Dict[str, Dict[str, str]] = {
     "weather": {"name": "Gale", "model": "lookup", "about": "Weather: reads the current conditions and a short forecast for any place with get_weather (free Open-Meteo data, no key), and writes it up plainly: what to wear, whether an outdoor plan, a shoot or a launch event is a good idea. Reads only.",
                 "can": "Current weather and a 1 to 7 day forecast for any place, plain-language advice for outdoor plans",
                 "cannot": "Post, send or change anything; it only reads the forecast"},
+    "travel": {"name": "Jet", "model": "agent", "about": "Travel planning with Claude: itineraries, budgets, packing lists, what to see and eat, best times to go and how to get around. Researches places with web_search and checks the forecast for the dates with get_weather. Plans only: it cannot book or buy anything.",
+               "can": "Trip itineraries, budgets, packing lists, destination research, forecasts for the travel dates",
+               "cannot": "Book flights or hotels, spend money or contact anyone; booking is yours to do from its plan"},
+    "event": {"name": "Cue", "model": "agent", "about": "Event planning with Claude: launch parties, pop-ups, meetups, giveaways, livestreams and parties. Writes the plan (timeline, budget, guest list, checklist, run-of-show), researches venues and vendors with web_search, checks the forecast for the date with get_weather, and drafts invitation text. Plans only: it cannot send invites, book or pay.",
+               "can": "Event plans, budgets, timelines, checklists, run-of-show, venue and vendor research, forecast check, invitation drafts",
+               "cannot": "Send invitations, book venues, pay anyone or add anything to a calendar; you do those from its plan"},
     "reviewer": {"name": "Lens", "model": "agent", "about": "Checks the crew's work before it reaches Michael: reads every deliverable, fact-checks with web_search, and sends a task back once with request_changes when it is wrong or incomplete. Saves a short review.",
                  "can": "Read every deliverable, fact-check on the web, send work back once for fixes, write the review",
                  "cannot": "Change the work itself or approve anything for you"},
@@ -249,7 +255,7 @@ _REVIEW_TOOL = {"type": "function", "function": {
     "parameters": {"type": "object", "properties": {"task_number": {"type": "integer"}, "notes": {"type": "string"}}, "required": ["task_number", "notes"]}}}
 
 LIMITS = {"make_book": 6, "edit_image": 8, "inspect_image": 12, "repo_checks": 10, "web_search": 12, "generate_image": 16, "make_design_files": 10, "repo_commit": 10, "check_site": 20, "business_numbers": 3, "get_weather": 8}
-SEARCHERS = ("researcher", "reviewer", "marketer", "social", "support", "analyst", "qa", "finance")
+SEARCHERS = ("researcher", "reviewer", "marketer", "social", "support", "analyst", "qa", "finance", "travel", "event")
 IMAGERS = ("designer", "marketer", "social")
 READERS = ("support", "analyst", "finance")                # read-only platform access
 PUBLISHERS = ("social", "marketer")                       # Marnyx posts and email (each an approval); everything else read-only
@@ -366,8 +372,10 @@ def tools_for(role: str) -> List[Dict[str, Any]]:
         extra.append(_MARNYX_TOOL)
     if role in ("analyst", "finance"):
         extra.append(_NUMBERS_TOOL)
-    if role == "weather":
+    if role in ("weather", "travel", "event"):
         extra.append(_WEATHER_TOOL)
+    if role in ("travel", "event"):
+        extra.append(_SEARCH_TOOL)
     if role == "qa":
         extra += [_SITE_TOOL] + [t for t in _REPO_TOOLS if t["function"]["name"] in ("repo_files", "repo_read")]
     return _BASE_TOOLS + extra
@@ -1721,7 +1729,7 @@ class CrewEngine:
             return await self._repo(task, mission, name, args)
         if name == "check_site" and task["role"] == "qa":
             return await self._check_site(task, args), None
-        if name == "get_weather" and task["role"] == "weather":
+        if name == "get_weather" and task["role"] in ("weather", "travel", "event"):
             from openjarvis.server.crew import weather
 
             try:
