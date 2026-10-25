@@ -196,11 +196,13 @@ CREW_TOOLS: List[Dict[str, Any]] = [
                                                         "args": {"type": "object", "description": "The action's own arguments, e.g. {query: 'from:etsy newer_than:7d'} for google gmail_search, {id} for gmail_read, {query} for drive_search, {file_id} for drive_read."}}, "required": ["platform", "action"]}}},
     {"type": "function", "function": {
         "name": "use_google",
-        "description": "Act on the user's own Gmail and Google Drive (connected on the Station's Connections panel). To READ use read_platform with platform google (gmail_search, gmail_read, drive_search, drive_read). "
+        "description": "Act on the user's own Gmail, Google Drive and Google Calendar (connected on the Station's Connections panel). To READ use read_platform with platform google (gmail_search, gmail_read, drive_search, drive_read, calendar_list with {days}). "
+                       "Action calendar_add {title, start (ISO WITH offset, Los Angeles is -07:00 or -08:00), end or minutes, location, notes} puts the exact event on the Helix inbox for his Approve tap and adds it to his calendar only then; nobody else is invited. "
                        "Here: action gmail_send {to, subject, body} puts the exact email on the Helix inbox for his Approve tap and sends it only then; action drive_save {file, name} saves a finished file from a mission outbox "
                        "(for example a book PDF) into a folder called Aibussol in his Drive right away (it never changes or deletes files he already has). Say plainly what happened: an email is NOT sent until he approves.",
-        "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["gmail_send", "drive_save"]}, "to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"},
-                                                        "file": {"type": "string"}, "name": {"type": "string"}}, "required": ["action"]}}},
+        "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["gmail_send", "drive_save", "calendar_add"]}, "to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"},
+                                                        "file": {"type": "string"}, "name": {"type": "string"}, "title": {"type": "string"}, "start": {"type": "string"}, "end": {"type": "string"},
+                                                        "minutes": {"type": "integer"}, "location": {"type": "string"}, "notes": {"type": "string"}}, "required": ["action"]}}},
     {"type": "function", "function": {
         "name": "schedule_posts",
         "description": "Schedule social posts for ONE brand through Marnyx (the connected socials). First call read_platform platform marnyx action list_accounts to get the exact brand name and which platforms it has. "
@@ -634,7 +636,7 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
             act = _clip(args.get("action"), 30)
             envx = await eng.env_for(ctx.user_id)
             if not (await conns_mod.status(eng.store, ctx.user_id, envx))["google"]["connected"]:
-                return "Google is not connected. In the Station's Connections panel, tap Connect on Google (Gmail and Drive) first."
+                return "Google is not connected. In the Station's Connections panel, tap Connect on Google (Gmail, Drive and Calendar) first."
             try:
                 if act == "gmail_send":
                     params = {"to": args.get("to"), "subject": args.get("subject"), "body": args.get("body")}
@@ -642,12 +644,18 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
                     to, subj, body = conns_mod._mail_args(params)
                     await eng.store.add_question("", "", ctx.user_id, "ops", text, ["Approve", "Decline"], {"type": "google_send", "to": to, "subject": subj, "body": body})
                     return "NOT SENT YET. I put this email on the Helix inbox for his Approve tap: " + text
+                if act == "calendar_add":
+                    params = {k: args.get(k) for k in ("title", "start", "end", "minutes", "location", "notes")}
+                    text = conns_mod.describe_action("google", "calendar_add", params)
+                    ev = conns_mod._event_args(params)
+                    await eng.store.add_question("", "", ctx.user_id, "ops", text, ["Approve", "Decline"], {"type": "google_calendar", **{k: v for k, v in params.items() if v not in (None, "")}, "title": ev["title"]})
+                    return "NOT ADDED YET. I put this event on the Helix inbox for his Approve tap: " + text
                 if act == "drive_save":
                     return await conns_mod.run("google", "drive_save", {"file": args.get("file"), "name": args.get("name")}, store=eng.store, user_id=ctx.user_id, env=envx,
                                                client_factory=eng.client_factory or conns_mod._default_client)
             except conns_mod.ConnectionError_ as exc:
                 return f"Could not do that: {exc}"
-            return "Use action gmail_send or drive_save."
+            return "Use action gmail_send, drive_save or calendar_add."
         if name == "read_platform":
             from openjarvis.server.crew import connections as conns_mod
 

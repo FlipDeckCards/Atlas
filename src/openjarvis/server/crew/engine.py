@@ -2196,7 +2196,7 @@ class CrewEngine:
         if risk is None:
             return f"Error: {platform}.{action} is not an available action.", None
         if platform == "google":
-            return "Gmail and Drive are Helix's alone: agents never read the owner's mail or files. Note what you need in your summary and Helix will handle it.", None
+            return "Gmail, Drive and Calendar are Helix's alone: agents never read the owner's mail, files or calendar. Note what you need in your summary and Helix will handle it.", None
         if platform == "etsy" and risk != "read" and await self._art_blocks(uid, mid):
             return "Blocked: Michael has not approved the artwork yet. Do not create or publish listings until he does.", None
         envx = task.get("_env", self.env)
@@ -2344,6 +2344,9 @@ class CrewEngine:
                 result = f'Mission started with a ${m["budget_usd"]:.2f} budget. Forge will fix it on a crew/ branch and ask you before merging.'
             elif kind == "google_send":
                 result = await conns.run("google", "gmail_send", {"to": act.get("to"), "subject": act.get("subject"), "body": act.get("body")}, store=self.store,
+                                         user_id=user_id, env=envx, client_factory=self.client_factory)
+            elif kind == "google_calendar":
+                result = await conns.run("google", "calendar_add", {k: act.get(k) for k in ("title", "start", "end", "minutes", "location", "notes")}, store=self.store,
                                          user_id=user_id, env=envx, client_factory=self.client_factory)
             elif kind == "marnyx_approve":
                 outs = []
