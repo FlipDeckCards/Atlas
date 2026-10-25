@@ -1103,10 +1103,16 @@ class MarnyxHttp(FakeHttp):
         self.requests.append(("GET", url, kw))
         if url.endswith("/businesses"):
             return httpx.Response(200, json=self.BIZ)
+        if url.endswith("/posts/awaiting"):
+            n = {"4": 3, "5": 2}.get(url.split("/businesses/")[1].split("/")[0], 0)
+            return httpx.Response(200, json={"awaiting": n, "posts": [{"id": 100 + i, "scheduled_at": "2026-10-27T16:00:00Z", "body": "x"} for i in range(n)]})
         return httpx.Response(200, json={"posts": []})
 
     async def post(self, url, **kw):
         self.requests.append(("POST", url, kw))
+        if url.endswith("/posts/approve"):
+            n = {"4": 3, "5": 2}.get(url.split("/businesses/")[1].split("/")[0], 0)
+            return httpx.Response(200, json={"approved": n, "ids": []})
         if url.endswith("/posts"):
             return httpx.Response(201, json={"created": len(kw["json"]["posts"]), "results": [{"index": i, "id": 100 + i} for i in range(len(kw["json"]["posts"]))]})
         return httpx.Response(201, json={"id": 9, "status": "queued", "recipients": 12})
@@ -1119,25 +1125,40 @@ def _week(n=2):
 
 
 class TestMarnyx:
-    def test_the_week_reads_as_one_approval_and_runs_only_when_approved(self):
+    def test_an_old_marnyx_without_hold_support_is_never_sent_posts(self):
+        from openjarvis.server.crew import connections as conns
+
+        class Old(MarnyxHttp):
+            async def get(self, url, **kw):
+                if url.endswith("/posts/awaiting"):
+                    self.requests.append(("GET", url, kw))
+                    return httpx.Response(404, json={})
+                return await super().get(url, **kw)
+        http = Old()
+        with pytest.raises(conns.ConnectionError_):
+            run(conns.run("marnyx", "schedule_week", {"business": "FlipDeck", "posts": _week(2)}, store=MemoryCrewStore(), user_id=UID,
+                          env={"MARNYX_API_KEY": "mx_" + "a" * 40}, client_factory=http))
+        assert not [r for r in http.requests if r[0] == "POST"]
+
+    def test_the_week_goes_to_marnyx_as_held_drafts_and_the_crew_cannot_approve_it(self):
         posts = _week(3)
 
         def echo(turn, msgs):
             if turn == 0:
                 return resp(calls=[("use_connection", {"platform": "marnyx", "action": "schedule_week", "args": {"business": "FlipDeck", "posts": posts}})])
-            return resp(calls=[("finish", {"summary": "Week sent."})])
+            if turn == 1:
+                return resp(calls=[("use_connection", {"platform": "marnyx", "action": "approve_posts", "args": {"business": "FlipDeck"}})])
+            assert "Only Helix asks" in json.dumps(msgs)
+            return resp(calls=[("finish", {"summary": "Week drafted."})])
         http = MarnyxHttp()
         w = world({"tasks": [{"title": "Plan the FlipDeck week", "role": "social", "brief": "b"}]}, {"Plan the FlipDeck week": echo},
                   env={"MARNYX_API_KEY": "mx_" + "a" * 40}, http=http)
         m = run(start(w))
-        q = run(w.store.list_questions(UID))
-        assert len(q) == 1 and q[0]["kind"] == "checkpoint" and "Schedule 3 post(s) for FlipDeck" in q[0]["text"] and "Instagram, Facebook" in q[0]["text"]
-        assert not [r for r in http.requests if r[0] == "POST"]                     # nothing sent before Approve
-        run(w.engine.answer(UID, q[0]["id"], approve=True))
-        run(w.engine.run_until_idle())
+        assert not run(w.store.list_questions(UID))                                  # drafting needs no tap: nothing is published
         sent = [r for r in http.requests if r[0] == "POST"]
         assert len(sent) == 1 and sent[0][1].endswith("/businesses/4/posts") and len(sent[0][2]["json"]["posts"]) == 3
-        assert sent[0][2]["headers"]["Authorization"] == "Bearer mx_" + "a" * 40
+        assert sent[0][2]["json"]["hold"] is True and sent[0][2]["headers"]["Authorization"] == "Bearer mx_" + "a" * 40
+        assert not [r for r in sent if r[1].endswith("/approve")]                    # and Echo cannot approve
         assert run(w.store.get_mission(m["id"]))["status"] == "done"
 
     def test_other_crew_cannot_post_and_echo_cannot_charge(self):
@@ -1174,7 +1195,7 @@ class TestMarnyx:
     def test_the_weekly_plan_starts_once_a_week_while_marnyx_is_connected(self):
         from openjarvis.server.crew.weekly import WeeklySocial
 
-        sunday_6pm = dt.datetime(2026, 10, 26, 1, 0, tzinfo=dt.timezone.utc)      # Sun Oct 25, 6 PM in Los Angeles
+        sunday_6pm = dt.datetime(2026, 10, 26, 1, 0, tzinfo=dt.timezone.utc)      # Sun Oct 25, 6 PM in Los Angeles (after the 9 AM drafting time)
         w = world({"tasks": [{"title": "Plan", "role": "social", "brief": "b"}]}, {"Plan": [resp(calls=[("finish", {"summary": "ok"})])]},
                   env={"MARNYX_API_KEY": "mx_" + "a" * 40}, now=sunday_6pm)
 
