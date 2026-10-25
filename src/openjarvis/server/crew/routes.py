@@ -164,6 +164,15 @@ async def crew_three():
     return FileResponse(os.path.join(_ASSETS, "three.min.js"), media_type="application/javascript", headers={"Cache-Control": "public, max-age=86400"})
 
 
+@router.get("/crew/helix.glb")
+async def crew_helix_model():
+    """Helix's own 3D model (the 3D view falls back to a hologram of her portrait when the file is not there)."""
+    path = os.path.join(_ASSETS, "helix.glb")
+    if not os.path.isfile(path):
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+    return FileResponse(path, media_type="model/gltf-binary", headers={"Cache-Control": "public, max-age=86400"})
+
+
 @router.get("/crew/station3d.js")
 async def crew_station3d():
     return FileResponse(os.path.join(_ASSETS, "station3d.js"), media_type="application/javascript", headers={"Cache-Control": "no-cache"})
