@@ -158,6 +158,17 @@ async def crew_icons(icon: str):
     return FileResponse(os.path.join(_ASSETS, icon + ".png"), media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
 
 
+@router.get("/crew/three.min.js")
+async def crew_three():
+    """three.js, served from here (no outside host), loaded only when the Station is switched to its 3D view."""
+    return FileResponse(os.path.join(_ASSETS, "three.min.js"), media_type="application/javascript", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@router.get("/crew/station3d.js")
+async def crew_station3d():
+    return FileResponse(os.path.join(_ASSETS, "station3d.js"), media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+
+
 _BOTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "bots.png")
 
 
