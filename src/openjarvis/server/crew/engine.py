@@ -2184,16 +2184,11 @@ class CrewEngine:
             what = conns.describe_action(platform, action, params)
         except conns.ConnectionError_ as exc:
             return f"Error: {exc}", None
-        act = {"platform": platform, "action": action, "args": params}
-        hold = ""
-        if platform == "marnyx" and action == "schedule_week":
-            from openjarvis.server.crew import weekly
-
-            act["auto_at"] = weekly.auto_at(envx, self.now())                           # a social week is held, then schedules itself unless declined
-            hold = (f" It schedules itself in {weekly.hold_hours(envx):g} hours unless you decline it." if act["auto_at"] else "")
-        await self.store.add_question(mid, tid, uid, "checkpoint", what + hold, ["Approve", "Decline"], act)
-        await self.store.add_event(uid, "checkpoint", f"Checkpoint for Michael: {what}{hold}", mission_id=mid, task_id=tid)
-        await self._notify(uid, "Approval needed" if not hold else "Social week held", what + hold + "\nApprove or decline it in Aibussol.")
+        if platform == "marnyx" and action == "approve_posts":
+            return "Only Helix asks for the approval of held posts, after Michael said yes. Do not call this; finish your plan.", None
+        await self.store.add_question(mid, tid, uid, "checkpoint", what, ["Approve", "Decline"], {"platform": platform, "action": action, "args": params})
+        await self.store.add_event(uid, "checkpoint", f"Checkpoint for Michael: {what}", mission_id=mid, task_id=tid)
+        await self._notify(uid, "Approval needed", what + "\nApprove or decline it in Aibussol.")
         return "Sent to Michael as a checkpoint. It has NOT run. Stop here; you will continue with the result.", "waiting"
 
     # ── answers from the owner ───────────────────────────────────────────────────────────────────
@@ -2315,9 +2310,11 @@ class CrewEngine:
             if kind == "start_mission":
                 m = await self.start_mission(user_id, act.get("goal") or "", act.get("budget_usd"))
                 result = f'Mission started with a ${m["budget_usd"]:.2f} budget. Forge will fix it on a crew/ branch and ask you before merging.'
-            elif kind == "marnyx_schedule":
-                result = await conns.run("marnyx", "schedule_week", {"business": act.get("business"), "posts": act.get("posts")}, store=self.store, user_id=user_id,
-                                         env=envx, client_factory=self.client_factory)
+            elif kind == "marnyx_approve":
+                outs = []
+                for name in act.get("businesses") or []:                 # goes back into Marnyx and approves every held draft of each brand
+                    outs.append(await conns.run("marnyx", "approve_posts", {"business": name}, store=self.store, user_id=user_id, env=envx, client_factory=self.client_factory))
+                result = " ".join(outs) or "Nothing to approve."
             else:
                 rd = devtools.Render(envx, self.client_factory)
                 sid = str(act.get("service_id") or "")

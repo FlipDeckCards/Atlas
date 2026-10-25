@@ -196,8 +196,8 @@ CREW_TOOLS: List[Dict[str, Any]] = [
     {"type": "function", "function": {
         "name": "schedule_posts",
         "description": "Schedule social posts for ONE brand through Marnyx (the connected socials). First call read_platform platform marnyx action list_accounts to get the exact brand name and which platforms it has. "
-                       "You write the posts yourself, here. Up to 28 per call (call again for more). This puts a held approval in the inbox: by default it schedules itself after a hold unless the user declines, "
-                       "or waits for his Approve tap; say which it did. Nothing is posted until then.",
+                       "You write the posts yourself, here. Up to 28 per call (call again for more). The posts are saved to his Marnyx calendar as HELD DRAFTS at their posting times, and one Approve card "
+                       "goes to the inbox; nothing is published until he approves (then you approve them in Marnyx and it publishes each at its time).",
         "parameters": {"type": "object", "properties": {"business": {"type": "string"},
                                                         "posts": {"type": "array", "items": {"type": "object", "properties": {
                                                             "body": {"type": "string"}, "hashtags": {"type": "string"},
@@ -607,16 +607,19 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
             params = {"business": _clip(args.get("business"), 60), "posts": args.get("posts")}
             try:
                 conns_mod._week(params)                                                     # the same checks the crew's posts get
-                text = conns_mod.describe_action("marnyx", "schedule_week", params)
+                saved = await conns_mod.run("marnyx", "schedule_week", params, store=eng.store, user_id=ctx.user_id, env=envx,
+                                            client_factory=eng.client_factory or conns_mod._default_client)
             except conns_mod.ConnectionError_ as exc:
                 return f"Not scheduled: {exc}"
             at = weekly.auto_at(envx, eng.now())
-            hold = f" It schedules itself in {weekly.hold_hours(envx):g} hours unless you decline it." if at else ""
-            act = {"type": "marnyx_schedule", "business": params["business"], "posts": params["posts"]}
+            hold = f" They approve themselves in {weekly.hold_hours(envx):g} hours unless you decline." if at else ""
+            act = {"type": "marnyx_approve", "businesses": [params["business"]]}
             if at:
                 act["auto_at"] = at
-            await eng.store.add_question("", "", ctx.user_id, "ops", text + hold, ["Approve", "Decline"], act)
-            return ("NOT POSTED YET. I put this on the Helix inbox: " + text + hold + " Tell the user which it is (held then automatic, or waiting for his Approve tap).")
+            text = (f"Approve the held drafts for {params['business']} in Marnyx: Helix approves them there and Marnyx publishes each at its posting time.{hold}")
+            await eng.store.add_question("", "", ctx.user_id, "ops", text, ["Approve", "Decline"], act)
+            return ("NOT PUBLISHED YET. " + saved + " I put an approval on the Helix inbox: " + text + " Tell the user the drafts are on his Marnyx calendar and wait for his Approve tap"
+                    + (" (or the hold)." if at else "."))
         if name == "read_platform":
             from openjarvis.server.crew import connections as conns_mod
 

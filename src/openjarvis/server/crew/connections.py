@@ -83,11 +83,15 @@ ACTIONS: Dict[str, Dict[str, Dict[str, Any]]] = {
                           "args": {}},
         "post_status": {"risk": "read", "about": "Where posts already sent to Marnyx stand (scheduled, published with link, failed with reason).",
                         "args": {"business": "business name or id", "ids": "list of Marnyx post ids"}},
-        "schedule_week": {"risk": "checkpoint", "about": "Schedule a week of posts for ONE brand on its connected socials through Marnyx. The owner approves the whole "
-                                                        "week at once; Marnyx adds a picture to each post and publishes each at its time.",
+        "schedule_week": {"risk": "draft", "about": "Put up to 28 posts for ONE brand on its Marnyx calendar as HELD DRAFTS at their posting times. Nothing is published: "
+                                                   "Marnyx adds a picture to each, and the owner approves the whole week once in Aibussol before any of it goes out.",
                           "args": {"business": "business name or id (from list_accounts)",
                                    "posts": "list of up to 28: {body, hashtags, platforms: [instagram|facebook|x|tiktok], scheduled_at: ISO time with offset, "
                                             "e.g. 2026-10-27T09:00:00-07:00}"}},
+        "list_awaiting": {"risk": "read", "about": "The held draft posts on one brand's Marnyx calendar that are still waiting for the owner's approval (count and times).",
+                          "args": {"business": "business name or id"}},
+        "approve_posts": {"risk": "checkpoint", "about": "Approve ALL of one brand's held drafts so Marnyx publishes each at its posting time. Only Helix asks for this, after the owner said yes.",
+                          "args": {"business": "business name or id"}},
         "send_email": {"risk": "checkpoint", "about": "Send an email campaign to ONE brand's subscribed contacts through Marnyx (Postmark): consent-only list, "
                                                      "unsubscribe link and mailing address added, daily and monthly caps apply.",
                        "args": {"business": "business name or id", "subject": "text (up to 150)", "body_text": "plain text (up to 8000)"}},
@@ -182,11 +186,13 @@ def describe_action(platform: str, action: str, args: Dict[str, Any]) -> str:
     """One plain sentence, written by the server, of what a checkpoint will do if approved."""
     if platform == "marnyx" and action == "schedule_week":
         posts = _week(args)
-        lines = [f'Schedule {len(posts)} post(s) for {_clip(args.get("business"), 60)} through Marnyx (each gets a picture and goes out at its time):']
+        lines = [f'Put {len(posts)} held draft post(s) for {_clip(args.get("business"), 60)} on the Marnyx calendar (nothing goes out until you approve the week):']
         for i, p in enumerate(posts, 1):
             lines.append(f'{i}. {_when_label(p["scheduled_at"])} · {", ".join(PLAT_NAMES.get(x, x) for x in p["platforms"])}: {_clip(p["body"], 220)}'
                          + (f' {p["hashtags"]}' if p.get("hashtags") else ""))
         return "\n".join(lines)
+    if platform == "marnyx" and action == "approve_posts":
+        return f'Approve every held draft for {_clip(args.get("business"), 60)} in Marnyx so each is published at its posting time.'
     if platform == "marnyx" and action == "send_email":
         subj, body = _email(args)
         return (f'Email {_clip(args.get("business"), 60)}\'s subscribed contacts through Marnyx. Subject: "{subj}"\n'
@@ -340,16 +346,38 @@ async def _marnyx(action: str, args: Dict[str, Any], *, env, cf: "ClientFactory"
                 + (f' · held: {_clip(p["auto_note"], 160)}' if p.get("auto_note") else "") for p in rows) or "none found")
         if action == "schedule_week":
             posts = _week(args)
-            out = ok(await c.post(f"{base}/businesses/{b['id']}/posts", headers=h, json={"approved_in": "Aibussol", "posts": posts}))
+            out = ok(await c.post(f"{base}/businesses/{b['id']}/posts", headers=h, json={"approved_in": "Aibussol", "hold": True, "posts": posts}))
             made = [x for x in out.get("results") or [] if x.get("id")]
             bad = [f'post {x["index"] + 1}: {x.get("error")}' for x in out.get("results") or [] if not x.get("id")]
-            return (f'Marnyx accepted {len(made)} of {len(posts)} post(s) for {b["name"]}; each is approved and scheduled once its picture is ready. '
+            return (f'Marnyx saved {len(made)} of {len(posts)} post(s) for {b["name"]} as HELD DRAFTS on its calendar at their posting times; nothing is published yet. '
                     f'Marnyx post ids: {", ".join(str(x["id"]) for x in made)}.' + (" Not accepted: " + "; ".join(bad) if bad else ""))
+        if action == "list_awaiting":
+            out = ok(await c.get(f"{base}/businesses/{b['id']}/posts/awaiting", headers=h))
+            ps = out.get("posts") or []
+            return (f'{b["name"]}: {out.get("awaiting", len(ps))} held draft(s) waiting for approval' + (f', from {_when_label(ps[0]["scheduled_at"])} to {_when_label(ps[-1]["scheduled_at"])}.' if ps else "."))
+        if action == "approve_posts":
+            out = ok(await c.post(f"{base}/businesses/{b['id']}/posts/approve", headers=h, json={"all": True, "approved_in": "Aibussol"}))
+            return f'Approved {out.get("approved", 0)} held draft(s) for {b["name"]}; Marnyx publishes each at its posting time.'
         if action == "send_email":
             subj, body = _email(args)
             out = ok(await c.post(f"{base}/businesses/{b['id']}/emails", headers=h, json={"subject": subj, "body_text": body, "approved_in": "Aibussol"}))
             return f'Marnyx is sending "{subj}" to {out.get("recipients")} subscribed contact(s) of {b["name"]} (campaign {out.get("id")}).'
     raise ConnectionError_("Unsupported Marnyx action.")
+
+
+async def marnyx_awaiting(env, cf: "ClientFactory") -> List[Dict[str, Any]]:
+    """[{id, name, awaiting}] for every Marnyx brand: how many held drafts wait for the owner's approval."""
+    base, h = marnyx_url(env), {"Authorization": f"Bearer {marnyx_key(env)}", "Accept": "application/json"}
+    out: List[Dict[str, Any]] = []
+    async with cf() as c:
+        r = await c.get(f"{base}/businesses", headers=h)
+        if r.status_code >= 400:
+            raise ConnectionError_(f"Marnyx answered {r.status_code}.")
+        for b in r.json().get("businesses") or []:
+            a = await c.get(f"{base}/businesses/{b['id']}/posts/awaiting", headers=h)
+            n = int(a.json().get("awaiting", 0)) if a.status_code < 400 else 0
+            out.append({"id": b["id"], "name": b["name"], "awaiting": n})
+    return out
 
 
 # ── running an action ────────────────────────────────────────────────────────────────────────────

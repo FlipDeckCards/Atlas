@@ -1203,46 +1203,86 @@ class TestSocialAutomation:
         t = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=1)
         return [{"body": f"Post {i}", "hashtags": "#a", "platforms": ["instagram"], "scheduled_at": (t + _dt.timedelta(hours=i)).isoformat()} for i in range(n)]
 
-    def test_the_defaults_are_a_held_week_and_five_posts_a_day(self):
+    def test_the_defaults_are_one_approval_five_posts_a_day_and_sunday_times(self):
         from openjarvis.server.crew import weekly
 
-        assert weekly.social_mode({}) == "auto_pause" and weekly.per_day({}) == 5 and weekly.hold_hours({}) == 6.0
-        assert weekly.social_mode({"CREW_SOCIAL_MODE": "approve"}) == "approve" and weekly.auto_at({"CREW_SOCIAL_MODE": "approve"}) == ""
-        assert weekly.auto_at({}) != "" and "5 posts a day" in weekly.GOAL.format(week="x", per_day=5, hold="y") and "TWO marnyx.schedule_week" in weekly.GOAL
+        assert weekly.social_mode({}) == "approve" and weekly.per_day({}) == 5 and weekly.hold_hours({}) == 6.0
+        assert weekly.schedule({}) == (6, 9, 0) and weekly.notify_time({}) == (6, 17, 0)
+        assert weekly.social_mode({"CREW_SOCIAL_MODE": "auto_pause"}) == "auto_pause" and weekly.auto_at({}) == "" and weekly.auto_at({"CREW_SOCIAL_MODE": "auto_pause"}) != ""
+        goal = weekly.GOAL.format(week="x", per_day=5)
+        assert "5 posts a day" in goal and "FlipDeck first, then Marnyx" in goal and "HELD DRAFTS" in goal and "TWO marnyx.schedule_week" in goal
 
-    def test_helix_schedule_posts_holds_the_week_and_a_due_hold_schedules_it(self):
-        import datetime as _dt
-        w = world(two_task_plan(), AGENTS)
-        w.engine.env = dict(w.engine.env or {}, **self.ENV)
-        ran = {}
-
-        async def fake_run(platform, action, args, **kw):
-            ran["call"] = (platform, action, args["business"], len(args["posts"]))
-            return "Marnyx accepted 2 of 2 post(s)"
-        from openjarvis.server.crew import connections as conns
-        orig = conns.run
-        conns.run = fake_run
-        try:
-            ctx = helix.CrewCtx(UID, w.engine)
-            out = run(helix.execute(ctx, "schedule_posts", {"business": "FlipDeck", "posts": self._posts()}))
-            assert out.startswith("NOT POSTED YET") and "6 hours" in out
-            q = run(w.store.list_questions(UID, "open"))[-1]
-            assert q["kind"] == "ops" and q["action"]["type"] == "marnyx_schedule" and q["action"]["auto_at"]
-            assert run(w.engine._auto_approve_due()) == 0 and "call" not in ran                       # the hold has not passed
-            q["action"]["auto_at"] = (w.engine.now() - _dt.timedelta(minutes=1)).isoformat()
-            w.store.questions[q["id"]]["action"] = __import__("json").dumps(q["action"])
-            assert run(w.engine._auto_approve_due()) == 1 and ran["call"] == ("marnyx", "schedule_week", "FlipDeck", 2)
-            assert run(w.store.get_question(q["id"]))["status"] == "approved"
-        finally:
-            conns.run = orig
-
-    def test_a_declined_hold_never_runs_and_bad_posts_are_refused(self):
-        w = world(two_task_plan(), AGENTS)
-        w.engine.env = dict(w.engine.env or {}, **self.ENV)
+    def test_helix_saves_held_drafts_then_asks_once_and_approving_goes_back_into_marnyx(self):
+        from tests.server.test_crew import MarnyxHttp
+        w = world(two_task_plan(), AGENTS, env=dict(self.ENV))
+        http = MarnyxHttp()
+        w.engine.client_factory = http
         ctx = helix.CrewCtx(UID, w.engine)
-        bad = run(helix.execute(ctx, "schedule_posts", {"business": "FlipDeck", "posts": [{"body": "x", "platforms": ["myspace"], "scheduled_at": "2030-01-01T09:00:00-07:00"}]}))
-        assert bad.startswith("Not scheduled")
-        run(helix.execute(ctx, "schedule_posts", {"business": "FlipDeck", "posts": self._posts(1)}))
+        out = run(helix.execute(ctx, "schedule_posts", {"business": "FlipDeck", "posts": self._posts(3)}))
+        assert out.startswith("NOT PUBLISHED YET") and "HELD DRAFTS" in out
+        sent = [r for r in http.requests if r[0] == "POST"]
+        assert len(sent) == 1 and sent[0][2]["json"]["hold"] is True
         q = run(w.store.list_questions(UID, "open"))[-1]
-        run(w.engine.answer(UID, q["id"], approve=False))
+        assert q["kind"] == "ops" and q["action"]["type"] == "marnyx_approve" and q["action"]["businesses"] == ["FlipDeck"] and "auto_at" not in q["action"]
+        assert run(w.engine._auto_approve_due()) == 0                                # approve mode: no hold timer
+        res = run(w.engine.answer(UID, q["id"], approve=True))
+        assert "Approved 3 held draft(s) for FlipDeck" in res["message"]
+        assert [r for r in http.requests if r[0] == "POST" and r[1].endswith("/businesses/4/posts/approve")][0][2]["json"]["all"] is True
+
+    def test_auto_pause_mode_approves_itself_after_the_hold_and_a_decline_stops_it(self):
+        import datetime as _dt
+        from tests.server.test_crew import MarnyxHttp
+        w = world(two_task_plan(), AGENTS, env=dict(self.ENV, CREW_SOCIAL_MODE="auto_pause"))
+        http = MarnyxHttp()
+        w.engine.client_factory = http
+        ctx = helix.CrewCtx(UID, w.engine)
+        run(helix.execute(ctx, "schedule_posts", {"business": "FlipDeck", "posts": self._posts(2)}))
+        q = run(w.store.list_questions(UID, "open"))[-1]
+        assert q["action"]["auto_at"] and run(w.engine._auto_approve_due()) == 0     # the hold has not passed
+        w.store.questions[q["id"]]["action"] = __import__("json").dumps(dict(q["action"], auto_at=(w.engine.now() - _dt.timedelta(minutes=1)).isoformat()))
+        assert run(w.engine._auto_approve_due()) == 1
+        assert run(w.store.get_question(q["id"]))["status"] == "approved"
+        run(helix.execute(ctx, "schedule_posts", {"business": "FlipDeck", "posts": self._posts(1)}))
+        q2 = run(w.store.list_questions(UID, "open"))[-1]
+        run(w.engine.answer(UID, q2["id"], approve=False))
         assert run(w.engine._auto_approve_due()) == 0
+
+    def test_bad_posts_are_refused_before_anything_is_saved(self):
+        from tests.server.test_crew import MarnyxHttp
+        w = world(two_task_plan(), AGENTS, env=dict(self.ENV))
+        http = MarnyxHttp()
+        w.engine.client_factory = http
+        bad = run(helix.execute(helix.CrewCtx(UID, w.engine), "schedule_posts",
+                                {"business": "FlipDeck", "posts": [{"body": "x", "platforms": ["myspace"], "scheduled_at": "2030-01-01T09:00:00-07:00"}]}))
+        assert bad.startswith("Not scheduled") and not [r for r in http.requests if r[0] == "POST"]
+
+    def test_sunday_evening_helix_asks_once_for_the_whole_week_and_each_brand_is_approved(self):
+        import datetime as _dt
+        from openjarvis.server.crew.weekly import WeeklySocial
+        from tests.server.test_crew import MarnyxHttp, resp, start as start_mission, world as crew_world
+
+        sunday_9am = _dt.datetime(2026, 10, 25, 16, 0, tzinfo=_dt.timezone.utc)       # Sun Oct 25, 9 AM in Los Angeles
+        http = MarnyxHttp()
+        w = crew_world({"tasks": [{"title": "Plan", "role": "social", "brief": "b"}]}, {"Plan": [resp(calls=[("finish", {"summary": "ok"})])]},
+                       env={"MARNYX_API_KEY": "mx_" + "a" * 40}, now=sunday_9am, http=http)
+
+        class H:
+            async def owner_id(self):
+                return UID
+        clock = {"t": sunday_9am}
+        wk = WeeklySocial(w.engine, H(), env={}, now=lambda: clock["t"])
+        mid = run(wk.maybe_run())
+        assert mid and "5 posts a day" in run(w.store.get_mission(mid))["goal"]
+        run(w.engine.run_until_idle())
+        clock["t"] = sunday_9am + _dt.timedelta(hours=4)                               # 1 PM: not yet
+        run(wk.maybe_run())
+        assert not run(w.store.list_questions(UID, "open"))
+        clock["t"] = sunday_9am + _dt.timedelta(hours=8, minutes=1)                    # 5 PM Los Angeles
+        run(wk.maybe_run())
+        q = run(w.store.list_questions(UID, "open"))
+        assert len(q) == 1 and "Approve 5 social posts" in q[0]["text"] and "FlipDeck 3, Marnyx 2" in q[0]["text"]
+        assert q[0]["action"]["businesses"] == ["FlipDeck", "Marnyx"] and "auto_at" not in q[0]["action"]
+        run(wk.maybe_run())
+        assert len(run(w.store.list_questions(UID, "open"))) == 1                       # asked once
+        res = run(w.engine.answer(UID, q[0]["id"], approve=True))
+        assert "Approved 3" in res["message"] and "Approved 2" in res["message"]
