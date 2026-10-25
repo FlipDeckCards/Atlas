@@ -1849,17 +1849,16 @@ function drawWalkway(t) {
     for (let q = 1; q < n; q++) { const f = q / n, x = A[0] + (B[0] - A[0]) * f, y = A[1] + (B[1] - A[1]) * f;
       ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x - nx * sg * w / 2, y - ny * sg * w / 2); ctx.lineTo(x + nx * sg * w / 2, y + ny * sg * w / 2); ctx.stroke(); }
   }
-  // the junctions: the 8 corners where the tubes cross it and the 8 side middles where the branches leave. Each lights up in its own random colours
-  // and rhythm, with a slow chase of light round the ring on top.
+  // the junctions: the 8 corners where the tubes from Helix cross it (the branch factories hang off the walkway alone, so they get none). Each lights
+  // up in its own random colours and rhythm, with a slow chase of light round the ring on top.
   const JCOL = ['#00e5ff', '#ff6d00', '#b06cff', '#00ff99', '#ff4fb8', '#ffe600', '#6b8cff', '#ff3344'];
-  const junctions = [];
-  for (let k = 0; k < 8; k++) { const A = pts[k], B = pts[(k + 1) % 8]; junctions.push(A, [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2]); }
+  const junctions = pts.slice();
   junctions.forEach(([x, y], i) => {
     const rnd = (n) => { const v = Math.sin((i + 1) * 91.7 + n * 47.3) * 43758.5453; return v - Math.floor(v); };
     const period = 700 + rnd(1) * 1500, step = Math.floor(t / period + rnd(2) * 9), pick = Math.floor(rnd(step % 97 + 3) * JCOL.length + rnd(4) * 3) % JCOL.length;
-    const chase = Math.max(0, Math.cos((t * 0.0006 - i / 16 * 6.283))), pulse = 0.55 + 0.45 * Math.sin(t * (0.002 + rnd(5) * 0.004) + rnd(6) * 6.28);
+    const chase = Math.max(0, Math.cos((t * 0.0006 - i / 8 * 6.283))), pulse = 0.55 + 0.45 * Math.sin(t * (0.002 + rnd(5) * 0.004) + rnd(6) * 6.28);
     const on = rnd(step % 53 + 7) > 0.18, col = JCOL[pick], glow = on ? Math.min(1, 0.35 + 0.45 * pulse + 0.4 * chase) : 0.12 * chase;
-    const mid = i % 2 === 1, rad = w * (mid ? 0.42 : 0.55);
+    const rad = w * 0.55;
     ctx.fillStyle = '#1f374a'; ctx.beginPath(); ctx.arc(x, y, rad, 0, 6.29); ctx.fill();
     ctx.save(); ctx.shadowColor = col; ctx.shadowBlur = glow * 12 * SC + 2; ctx.strokeStyle = alpha(col, 0.35 + 0.65 * glow); ctx.lineWidth = 1.6; ctx.stroke();
     ctx.fillStyle = alpha(col, 0.15 + 0.8 * glow); ctx.beginPath(); ctx.arc(x, y, rad * 0.5, 0, 6.29); ctx.fill(); ctx.restore();
