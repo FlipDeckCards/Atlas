@@ -1393,3 +1393,12 @@ class TestGoogleConnection:
         with pytest.raises(conns.ConnectionError_) as ei:
             run(conns.run("google", "gmail_search", {"query": "x"}, store=w.store, user_id=UID, env=self.ENV, client_factory=Revoked({})))
         assert "Connect Google again" in str(ei.value)
+
+
+def test_the_public_privacy_and_terms_pages_cover_what_google_requires():
+    from openjarvis.server.crew import legal
+
+    p = legal.privacy_html({"PRIVACY_CONTACT": "help@example.com"})
+    for need in ("gmail.readonly", "gmail.send", "drive.readonly", "drive.file", "Limited Use", "Google API Services User Data Policy", "do not sell", "help@example.com", "myaccount.google.com/permissions"):
+        assert need in p.replace("&rsquo;", "'")
+    assert "Terms of Service" in legal.terms_html({}) and "<html" in p
