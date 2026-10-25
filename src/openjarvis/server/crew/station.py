@@ -1693,7 +1693,7 @@ function drawPlate(m, t) {
   ctx.textAlign = 'center';
   ctx.font = '700 ' + fs + 'px Orbitron, monospace'; ctx.fillStyle = m.color; ctx.fillText(name, ox, y + 5 * SC + fs);
   ctx.font = fs2 + 'px Share Tech Mono, monospace';
-  ctx.fillStyle = st === 'DOWN' ? '#ff3344' : st === 'NEEDS YOU' || st === 'OFFLINE' || st === 'IDLE' ? '#ff8a2a' : st === 'WORKING' || st === 'ONLINE' || st === 'LIVE' ? '#00ff99' : 'rgba(142,207,224,0.65)';
+  ctx.fillStyle = st === 'COMING SOON' ? '#ff2d95' : st === 'DOWN' ? '#ff3344' : st === 'NEEDS YOU' || st === 'OFFLINE' || st === 'IDLE' ? '#ff8a2a' : st === 'WORKING' || st === 'ONLINE' || st === 'LIVE' ? '#00ff99' : 'rgba(142,207,224,0.65)';
   ctx.fillText(st, ox, y + 7 * SC + fs + fs2);
   ctx.restore();
 }
