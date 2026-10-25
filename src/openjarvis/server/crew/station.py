@@ -488,8 +488,10 @@ async function setView(on) {
   btn.textContent = 'LOADING 3D…';
   try {
     if (!window.THREE) await loadScript('/crew/three.min.js?v=3');
-    if (!window.Station3D) await loadScript('/crew/station3d.js?v=7');
+    if (!window.Station3D) await loadScript('/crew/station3d.js?v=8');
     Station3D.start(document.getElementById('stage'), { roleColors: ROLE_COLORS, getSelected: () => selected, getRoster: () => (S && S.roster ? S.roster : []), botRows: BOT_ROWS, botUrl: '/crew/bots.png?v=' + BOT_VER,
+      onHelix: () => { selected = 'hub'; renderSide(true); startSpin(); },
+      onLaunch: () => { const say = 'Prepare for take off!', log = document.getElementById('chat-log'), el = chatMsg('assistant', say); log.append(el); log.scrollTop = log.scrollHeight; try { speakReply(say, el, false); } catch (e) {} },
       onSelect: (key) => { selected = key === 'hub' ? 'hub' : key === 'open' ? (isOwner() ? 'hub' : 'setup') : 'f:' + key; renderSide(true); } });
     Station3D.update(mods);
     VIEW3D = true; document.body.classList.add('v3d'); btn.textContent = 'VIEW: 3D'; try { localStorage.setItem('aibussol_view', '3d'); } catch (e) {}
@@ -1563,6 +1565,7 @@ function poseMods(extra) {
   });
 }
 function startSpin() {
+  if (document.body.classList.contains('v3d') && window.Station3D && !reducedMotion) { Station3D.launch(); return; }     // in the 3D view the same moments launch the whole station
   if (SPIN.on || !mods.length || reducedMotion) return;
   SPIN.on = true; SPIN.t0 = performance.now(); SPIN.cur = 0;
 }

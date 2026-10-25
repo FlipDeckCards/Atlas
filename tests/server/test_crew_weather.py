@@ -261,3 +261,15 @@ def test_walkway_lines_carry_a_colour_surge_and_the_crew_are_two_and_a_half_time
     js = (Path(__file__).resolve().parents[2] / "src" / "openjarvis" / "server" / "crew" / "assets" / "station3d.js").read_text()
     assert "function surgeMap(len, dir, fixed)" in js and "function moveSurges(t)" in js and "map: surgeMap(" in js          # a bright band scrolls along every lit line
     assert "const AGENT_H = 85" in js and "const HELIX_H = 168" in js
+
+
+def test_the_3d_take_off_sequence_is_wired_to_missions_clicks_and_the_chat():
+    from pathlib import Path
+
+    from openjarvis.server.crew.station import STATION_PAGE
+
+    js = (Path(__file__).resolve().parents[2] / "src" / "openjarvis" / "server" / "crew" / "assets" / "station3d.js").read_text()
+    for part in ("function startLaunch()", "function stepLaunch()", "boostPivots.forEach", "rootG.rotation.y = -6.283185 * 3", "rootG.position.set(_away.x * 7800 * out", "/backflip/i", "launch() { return startLaunch(); }"):
+        assert part in js
+    assert "Station3D.launch(); return; }" in STATION_PAGE                    # a mission starting or finishing, or a click on Helix, launches the 3D station
+    assert "Prepare for take off!" in STATION_PAGE and "onHelix:" in STATION_PAGE
