@@ -1431,3 +1431,47 @@ def test_asking_for_the_brief_in_chat_gives_a_fresh_short_one_and_stores_nothing
     assert len(out["body"]) < 700 and len(lines) <= 12                                   # short: a few lines, not pages
     assert "Good afternoon, Michael." in out["body"] and "Waiting on you" in out["body"] and "Nothing is waiting on you." in out["body"]
     assert not bs.rows                                                                    # composing stores nothing and pushes nothing
+
+
+def test_product_lines_match_aibussols_shape_and_say_why_when_a_product_cannot_be_read():
+    import asyncio
+    import sys
+    import types
+    from openjarvis.server.crew import herald
+
+    class Row:
+        def __init__(self, d):
+            self.d = d
+
+        def keys(self):
+            return iter(list(self.d))
+
+        def __getitem__(self, k):
+            return self.d[k]
+
+    class Conn:
+        async def execute(self, q):
+            pass
+
+        async def fetchrow(self, q):
+            return Row({"users_total": 3, "paying_now": 0, "new_users_24h": 0, "active_24h": 1}) if "last_login_at" in q else Row({"users_total": 34, "paying_now": 1, "visitors_24h": 17})
+
+        async def close(self):
+            pass
+
+    async def connect(dsn, timeout=10):
+        if dsn == "bad":
+            raise ConnectionError("x")
+        return Conn()
+    real = sys.modules.get("asyncpg")
+    sys.modules["asyncpg"] = types.SimpleNamespace(connect=connect)
+    try:
+        ok = asyncio.run(herald.product_numbers({"FLIPDECK_READ_DATABASE_URL": "a", "MARNYX_READ_DATABASE_URL": "b"}))
+        assert ok == ["- FlipDeck: 34 users, 1 paying, 17 visitors today.", "- Marnyx: 3 users, 0 paying, 1 active today."]
+        bad = asyncio.run(herald.product_numbers({"FLIPDECK_READ_DATABASE_URL": "bad"}))
+        assert "could not read" in bad[0] and "MARNYX_READ_DATABASE_URL is not set" in bad[1]
+    finally:
+        if real is None:
+            sys.modules.pop("asyncpg", None)
+        else:
+            sys.modules["asyncpg"] = real
