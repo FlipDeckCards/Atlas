@@ -488,8 +488,8 @@ async function setView(on) {
   btn.textContent = 'LOADING 3D…';
   try {
     if (!window.THREE) await loadScript('/crew/three.min.js?v=1');
-    if (!window.Station3D) await loadScript('/crew/station3d.js?v=1');
-    Station3D.start(document.getElementById('stage'), { roleColors: ROLE_COLORS, getSelected: () => selected, getRoster: () => (S && S.roster ? S.roster : []),
+    if (!window.Station3D) await loadScript('/crew/station3d.js?v=2');
+    Station3D.start(document.getElementById('stage'), { roleColors: ROLE_COLORS, getSelected: () => selected, getRoster: () => (S && S.roster ? S.roster : []), botRows: BOT_ROWS, botUrl: '/crew/bots.png?v=' + BOT_VER,
       onSelect: (key) => { selected = key === 'hub' ? 'hub' : key === 'open' ? (isOwner() ? 'hub' : 'setup') : 'f:' + key; renderSide(true); } });
     Station3D.update(mods);
     VIEW3D = true; document.body.classList.add('v3d'); btn.textContent = 'VIEW: 3D'; try { localStorage.setItem('aibussol_view', '3d'); } catch (e) {}

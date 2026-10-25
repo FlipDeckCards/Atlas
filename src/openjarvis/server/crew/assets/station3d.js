@@ -1,13 +1,14 @@
-/* The Station in 3D: one big geodesic glass dome over the open factory trays, walkways at one walking level, Helix as a hologram in the middle,
+/* The Station in 3D: one big clear glass dome over the open factory trays, walkways at one walking level, Helix as a hologram in the middle,
    and a ring of booster engines. Loaded only when the VIEW button is switched to 3D. Needs three.js (window.THREE) loaded first. */
 (function () {
   'use strict';
   const THREE = window.THREE;
   const RD = 660, HD = 380, FLOOR_Y = 10, R_IN = 306, R_OUT = 540, DW = 412, VC = DW / Math.cos(Math.PI / 8);
   let renderer = null, scene = null, camera = null, canvas = null, stage = null, opts = null, running = false, built = false, raf = 0, ro = null;
-  let rootG = null, hubCrew = [], crewSig = '', crewCheck = 0, winMesh = null, facGroup = null, sig = '', hitBoxes = [], selRing = null, walkers = [], holo = null, beam = null, flames = [], hubGlow = null, lastInteract = 0;
+  let trayAgents = [], rootG = null, hubCrew = [], crewSig = '', crewCheck = 0, winMesh = null, facGroup = null, sig = '', hitBoxes = [], selRing = null, walkers = [], holo = null, beam = null, flames = [], hubGlow = null, lastInteract = 0;
   const cam = { az: 0.44, el: 0.42, dist: 1, zoom: 1, ly: -230 };
   const T0 = performance.now();
+  const hash01 = (a, b) => { const v = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return v - Math.floor(v); };
 
   const tex = (w, h, fn, srgb) => { const c = document.createElement('canvas'); c.width = w; c.height = h; fn(c.getContext('2d'), w, h); const t = new THREE.CanvasTexture(c); if (srgb !== false) t.encoding = THREE.sRGBEncoding; t.anisotropy = 4; return t; };
   const polar = (a, r) => [Math.cos(a) * r, Math.sin(a) * r];
@@ -17,7 +18,7 @@
     return M || (M = {
       hull: HULL(), hullD: new THREE.MeshStandardMaterial({ color: 0x5e6a7a, metalness: 0.75, roughness: 0.42, envMapIntensity: 1 }),
       gold: new THREE.MeshStandardMaterial({ color: 0xd9b25c, metalness: 0.9, roughness: 0.3 }),
-      glass: new THREE.MeshPhysicalMaterial({ color: 0xa8ecff, transparent: true, opacity: 0.14, roughness: 0.03, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.04, side: THREE.DoubleSide, depthWrite: false, envMapIntensity: 1.8 }),
+      glass: new THREE.MeshPhysicalMaterial({ color: 0xa8ecff, transparent: true, opacity: 0.11, roughness: 0.03, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.04, side: THREE.DoubleSide, depthWrite: false, envMapIntensity: 1.8 }),
       noz: new THREE.MeshStandardMaterial({ color: 0x3a4658, metalness: 0.9, roughness: 0.3, side: THREE.DoubleSide }),
       dark: new THREE.MeshStandardMaterial({ color: 0x161f2c, metalness: 0.6, roughness: 0.5 }),
       deck: new THREE.MeshStandardMaterial({ color: 0x27384a, metalness: 0.6, roughness: 0.45 }),
@@ -30,6 +31,32 @@
     const g = new THREE.ExtrudeGeometry(sh, { depth: h, bevelEnabled: true, bevelThickness: 1.4, bevelSize: 1.4, bevelSegments: 2, curveSegments: 8 }); g.rotateX(-Math.PI / 2);
     return new THREE.Mesh(g, mat);
   }
+
+  // ── the crew, drawn with their own robot artwork: a camera-facing sprite cut from the sprite sheet (bots.png). Every agent is the same size. ──
+  const AGENT_H = 34, SHEET_COLS = 17;
+  let sheet = null, sheetState = 0; const cellCache = new Map(), spriteList = [];
+  function loadSheet() { if (sheetState) return; sheetState = 1; const im = new Image(); im.onload = () => { sheet = im; sheetState = 2; spriteList.forEach(sp => paintAgent(sp, 0)); }; im.onerror = () => { sheetState = 3; }; im.src = (opts && opts.botUrl) || '/crew/bots.png'; }
+  function cellTex(row, col) {
+    const k = row * 100 + col; let t = cellCache.get(k); if (t) return t;
+    const c = document.createElement('canvas'); c.width = c.height = 64; c.getContext('2d').drawImage(sheet, col * 64, row * 64, 64, 64, 0, 0, 64, 64);
+    t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; t.anisotropy = 4; cellCache.set(k, t); return t;
+  }
+  function makeAgent(role, tint) {
+    loadSheet(); const rows = (opts && opts.botRows) || [], idx = rows.indexOf(role), row = idx < 0 ? 1 : idx;
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, alphaTest: 0.2, depthWrite: true, color: 0xffffff }));
+    sp.scale.set(AGENT_H, AGENT_H, 1); sp.center.set(0.5, 0.13); sp.userData.row = row; sp.userData.col = -1; sp.userData.seed = hash01(row + 3, 7) * 9;
+    spriteList.push(sp); if (sheetState === 2) paintAgent(sp, 0); return sp;
+  }
+  function paintAgent(sp, col) { if (sheetState !== 2 || sp.userData.col === col) return; sp.userData.col = col; sp.material.map = cellTex(sp.userData.row, col); sp.material.needsUpdate = true; }
+  const _cr = new THREE.Vector3(), _cf = new THREE.Vector3();
+  function faceAgent(sp, vx, vz, t, moving) {                          // pick the standing picture, or the walking frame for the way they go as seen from the camera
+    if (sheetState !== 2) return; if (!moving) { paintAgent(sp, 0); return; }
+    _cr.set(Math.cos(cam.az), 0, -Math.sin(cam.az)); _cf.set(-Math.sin(cam.az), 0, -Math.cos(cam.az));
+    const dr = vx * _cr.x + vz * _cr.z, df = vx * _cf.x + vz * _cf.z, frame = Math.floor(t * 0.008 + sp.userData.seed * 7) % 4;
+    const dir = Math.abs(dr) >= Math.abs(df) * 0.8 ? (dr > 0 ? 2 : 3) : (df > 0 ? 1 : 0);          // 0 front, 1 back, 2 right, 3 left
+    paintAgent(sp, 1 + dir * 4 + frame);
+  }
+  function dropAgent(sp) { const i = spriteList.indexOf(sp); if (i >= 0) spriteList.splice(i, 1); if (sp.parent) sp.parent.remove(sp); sp.material.dispose(); }
 
   // ── rocket flames: a tapering teardrop in three layers, a hot glow at the nozzle and shock diamonds ──
   let FL = null, GLOWT = null;
@@ -115,17 +142,8 @@
     G.userData.oct = pts;
     // the dome: glass plus a geodesic hexagon frame (the dual of an icosphere)
     const dome = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 32, 0, Math.PI * 2, 0, Math.PI / 2), m.glass); dome.scale.set(RD, HD, RD); dome.renderOrder = 3; G.add(dome);
-    const ico = new THREE.IcosahedronGeometry(1, 1).toNonIndexed(), pos = ico.attributes.position, faces = [], emap = new Map(), key = (v) => v.map(n => Math.round(n * 1e4)).join(',');
-    for (let f = 0; f < pos.count / 3; f++) { const vs = [0, 1, 2].map(k => new THREE.Vector3(pos.getX(f * 3 + k), pos.getY(f * 3 + k), pos.getZ(f * 3 + k)));
-      faces.push(vs.reduce((acc, v) => acc.add(v), new THREE.Vector3()).divideScalar(3).normalize());
-      for (let k = 0; k < 3; k++) { const A = vs[k], B = vs[(k + 1) % 3], ek = [key([A.x, A.y, A.z]), key([B.x, B.y, B.z])].sort().join('|'); (emap.get(ek) || emap.set(ek, []).get(ek)).push(f); } }
-    const struts = []; emap.forEach(fs => { if (fs.length === 2) { const A = faces[fs[0]], B = faces[fs[1]]; if (A.y >= -0.02 && B.y >= -0.02) struts.push([A, B]); } });
-    const E = (v) => new THREE.Vector3(v.x * RD, Math.max(0, v.y) * HD, v.z * RD), m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
-    const inst = new THREE.InstancedMesh(new THREE.CylinderGeometry(1, 1, 1, 6), m.hullD, struts.length);
-    struts.forEach(([A, B], i) => { const P = E(A), Q = E(B), d = Q.clone().sub(P), len = d.length(); q.setFromUnitVectors(up, d.normalize()); m4.compose(P.clone().add(Q).multiplyScalar(0.5), q, new THREE.Vector3(4.6, len, 4.6)); inst.setMatrixAt(i, m4); });
-    inst.renderOrder = 4; G.add(inst);
-    const nodes = new Map(); struts.forEach(([A, B]) => { for (const v of [A, B]) nodes.set(key([v.x, v.y, v.z]), v); });
-    const ni = new THREE.InstancedMesh(new THREE.SphereGeometry(7, 10, 8), m.gold, nodes.size); let ci = 0; nodes.forEach(v => { m4.makeTranslation(...E(v).toArray()); ni.setMatrixAt(ci++, m4); }); ni.renderOrder = 4; G.add(ni);
+    // a second, inner skin (back faces only) so the glass has a visible edge all the way round, like a real bubble
+    const inner = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 32, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0.05, side: THREE.BackSide, depthWrite: false })); inner.scale.set(RD * 0.998, HD * 0.998, RD * 0.998); inner.renderOrder = 3; G.add(inner);
     // Helix: a glowing hologram standing in the middle of the hub, always turned towards the viewer, over a projector ring and a beam
     const beamM = new THREE.Mesh(new THREE.CylinderGeometry(52, 66, 190, 32, 1, true), new THREE.MeshBasicMaterial({ color: 0x7fe9ff, transparent: true, opacity: 0.1, side: THREE.DoubleSide, depthWrite: false })); beamM.position.y = FLOOR_Y + 105; beamM.renderOrder = 6; G.add(beamM); beam = beamM;
     for (const [r, y] of [[60, FLOOR_Y + 26], [48, FLOOR_Y + 66], [36, FLOOR_Y + 106], [28, FLOOR_Y + 146]]) { const t = new THREE.Mesh(new THREE.TorusGeometry(r, 1.4, 6, 40), new THREE.MeshBasicMaterial({ color: 0x7fe9ff, transparent: true, opacity: 0.6 })); t.rotation.x = Math.PI / 2; t.position.y = y; t.renderOrder = 6; G.add(t); }
@@ -139,11 +157,9 @@
       holo.userData.hub = true; };
     img.src = '/crew/helix.jpg';
     // the crew walking the octagon (for looks); working crew stand in their trays
-    const RC = ['#5ad1ff', '#4dffc3', '#ffc14d', '#ff7ad9', '#ff6d00', '#ff3d6e', '#ffe600', '#6b8cff', '#00c2a8', '#2bd96b'];
-    for (let i = 0; i < 20; i++) { const col = new THREE.Color(RC[i % 10]), gw = new THREE.Group();
-      const body = new THREE.Mesh(new THREE.CapsuleGeometry(3.6, 7, 3, 8), new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.45, roughness: 0.5 })); body.position.y = 8.5; gw.add(body);
-      const head = new THREE.Mesh(new THREE.SphereGeometry(4, 10, 8), new THREE.MeshStandardMaterial({ color: 0xe8f0f6, roughness: 0.35 })); head.position.y = 18; gw.add(head);
-      gw.userData = { f0: i / 20, dir: i % 3 === 0 ? -1 : 1, v: 0.0000055 + (i % 5) * 0.000002, off: (i % 2 ? 4 : -4) };
+    const WALK = ['researcher', 'writer', 'designer', 'marketer', 'social', 'support', 'analyst', 'qa', 'finance', 'weather', 'travel', 'event', 'builder', 'operator', 'reviewer', 'briefer', 'workbench', 'researcher', 'writer', 'designer'];
+    for (let i = 0; i < 20; i++) { const gw = makeAgent(WALK[i]);
+      gw.userData.f0 = i / 20; gw.userData.dir = i % 3 === 0 ? -1 : 1; gw.userData.v = 0.0000055 + (i % 5) * 0.000002; gw.userData.off = (i % 2 ? 4 : -4);
       add(gw); walkers.push(gw); }
     facGroup = new THREE.Group(); G.add(facGroup);
     selRing = new THREE.Mesh(new THREE.TorusGeometry(1, 0.03, 6, 48), new THREE.MeshBasicMaterial({ color: 0xffffff })); selRing.rotation.x = Math.PI / 2; selRing.visible = false; G.add(selRing);
@@ -159,6 +175,7 @@
       obj.scale.setScalar(k); box.setFromObject(obj); obj.position.set(-(box.min.x + box.max.x) / 2, -box.min.y, -(box.min.z + box.max.z) / 2); inner.add(obj); pivot.add(inner);
       obj.traverse(o => { if (o.isMesh) { o.frustumCulled = false; if (o.material) { o.material.envMapIntensity = 1.2; } } });
       if (gltf.animations && gltf.animations.length) { mixer = new THREE.AnimationMixer(obj); const walk = gltf.animations.find(c => /walk/i.test(c.name)) || gltf.animations[0]; mixer.clipAction(walk).play(); pivot.userData.animated = true; }
+      const hl = new THREE.PointLight(0x9fe8ff, 1.6, 300, 1.4); hl.position.set(0, HELIX_H * 0.7, 40); pivot.add(hl);
       pivot.userData.inner = inner; helix = pivot; rootG.add(pivot);
       if (holo) holo.visible = false; if (beam) beam.visible = false;
     }, undefined, () => { /* no model yet: the hologram stays */ });
@@ -201,9 +218,7 @@
       const desk = new THREE.Mesh(new THREE.BoxGeometry((w - 44) / n - 8, 9, 13), new THREE.MeshStandardMaterial({ color: 0x24384a, metalness: 0.5, roughness: 0.5 })); desk.position.set(cx, FLOOR_Y + 5.5, len / 2 - T - 11); group.add(desk);
       const on = lit && (i < running.length || !m0.tasks || !m0.tasks.length), scr = new THREE.Mesh(new THREE.BoxGeometry((w - 44) / n - 14, 3, 7), new THREE.MeshBasicMaterial({ color: on ? C : 0x26323f })); scr.position.set(cx, FLOOR_Y + 10.4, len / 2 - T - 11); group.add(scr); }
     // crew with a running task here stand at their consoles
-    running.slice(0, 4).forEach((tk, i) => { const rc = new THREE.Color((opts && opts.roleColors && opts.roleColors[tk.role]) || '#ffffff'), cx = -w / 2 + 22 + i * ((w - 44) / (n - 1));
-      const b = new THREE.Mesh(new THREE.CapsuleGeometry(3.6, 7, 3, 8), new THREE.MeshStandardMaterial({ color: rc, emissive: rc, emissiveIntensity: 0.5, roughness: 0.5 })); b.position.set(cx, FLOOR_Y + 9, len / 2 - T - 24); group.add(b);
-      const h = new THREE.Mesh(new THREE.SphereGeometry(4, 10, 8), new THREE.MeshStandardMaterial({ color: 0xe8f0f6, roughness: 0.35 })); h.position.set(cx, FLOOR_Y + 18.5, len / 2 - T - 24); group.add(h); });
+    running.slice(0, 4).forEach((tk, i) => { const cx = -w / 2 + 22 + i * ((w - 44) / (n - 1)), ag = makeAgent(tk.role); ag.userData.tray = true; ag.position.set(cx, FLOOR_Y + 1, len / 2 - T - 26); group.add(ag); trayAgents.push(ag); });
     const [px, pz] = polar(a, D); group.position.set(px, 0, pz); group.rotation.y = Math.PI / 2 - a; g.add(group);
     const hb = new THREE.Mesh(new THREE.BoxGeometry(w, 40, len), new THREE.MeshBasicMaterial({ visible: false })); hb.position.set(0, FLOOR_Y + 15, 0); group.add(hb); hb.userData = { key: m0.key, expansion: !!m0.expansion }; hitBoxes.push(hb);
     const lab = labelSprite(String(m0.label || m0.key || '').toUpperCase(), m0.state || '', col, lit); const [lx, lz] = polar(a, D + (len / 2) + 26); lab.position.set(lx, FLOOR_Y + 62, lz); g.add(lab);
@@ -216,7 +231,7 @@
   }
   function rebuild(mods) {
     while (facGroup.children.length) { const c = facGroup.children.pop(); c.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material && o.material.map) o.material.map.dispose(); }); }
-    hitBoxes = []; const slots = {};
+    for (const ag of trayAgents) dropAgent(ag); trayAgents = []; hitBoxes = []; const slots = {};
     mods.forEach((m0, i) => { slots[m0.key] = tray(facGroup, i, m0); });
     facGroup.userData.slots = slots;
   }
@@ -281,14 +296,14 @@
     moveHelix(t); updateRim(t); if (t - crewCheck > 700) { crewCheck = t; syncCrew(); } moveCrew(t);
     const pts = octPts();
     if (pts) for (const w of walkers) { const u = w.userData, f = (((u.f0 + u.dir * u.v * t) % 1) + 1) % 1 * 8, k = Math.floor(f) % 8, q = f - Math.floor(f), A = pts[k], B = pts[(k + 1) % 8];
-      const dx = B[0] - A[0], dz = B[1] - A[1], L = Math.hypot(dx, dz) || 1; w.position.set(A[0] + dx * q + (-dz / L) * u.off, FLOOR_Y + Math.abs(Math.sin(t * 0.012 + u.f0 * 30)) * 0.8, A[1] + dz * q + (dx / L) * u.off); w.rotation.y = -Math.atan2(dz, dx) * u.dir; }
+      const dx = B[0] - A[0], dz = B[1] - A[1], L = Math.hypot(dx, dz) || 1; w.position.set(A[0] + dx * q + (-dz / L) * u.off, FLOOR_Y + Math.abs(Math.sin(t * 0.012 + u.f0 * 30)) * 0.8, A[1] + dz * q + (dx / L) * u.off); faceAgent(w, dx / L * u.dir, dz / L * u.dir, t, true); }
     // the selected factory wears a ring
     const sel = opts && opts.getSelected ? String(opts.getSelected() || '') : '', slots = facGroup && facGroup.userData.slots;
     if (selRing) { const key = sel.startsWith('f:') ? sel.slice(2) : '', s = slots && slots[key]; if (s) { const [x, z] = polar(s.a, s.D); selRing.visible = true; selRing.position.set(x, FLOOR_Y + 2, z); selRing.scale.setScalar(86); selRing.material.opacity = 1; selRing.material.color.setHSL((t * 0.0004) % 1, 0.9, 0.7); } else selRing.visible = false; }
     renderer.render(scene, camera);
   }
+  const RIM_PLACEHOLDER = 0;
   const RIM = [0x00e5ff, 0xff6d00, 0xb06cff, 0x00ff99, 0xff4fb8, 0xffe600, 0x6b8cff, 0xff3344], rimC = new THREE.Color();
-  const hash01 = (a, b) => { const v = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return v - Math.floor(v); };
   function updateRim(t) {                                                // each light has its own colour, rhythm and on/off pattern, plus a slow chase of light round the rim
     if (!winMesh) return; for (let i = 0; i < 72; i++) { const period = 500 + hash01(i, 1) * 1900, step = Math.floor(t / period + hash01(i, 2) * 40), on = hash01(i, step % 91 + 3) > 0.22;
       const chase = Math.max(0, Math.cos(t * 0.0007 - i / 72 * 6.283 * 2)), k = on ? 0.55 + 0.45 * Math.sin(t * (0.002 + hash01(i, 5) * 0.004) + i) + 0.4 * chase : 0.06 + 0.35 * chase;
@@ -297,20 +312,18 @@
   function syncCrew() {                                                  // the crew with nothing to do walk Helix's own ring, as they do on the flat map
     const roster = opts && opts.getRoster ? opts.getRoster() : [], idle = roster.filter(a => a.role !== 'lead' && !a.working && !a.waiting), s2 = idle.map(a => a.role).join(',');
     if (s2 === crewSig || !rootG) return; crewSig = s2;
-    for (const f of hubCrew) { rootG.remove(f); f.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); } hubCrew = [];
-    idle.forEach((a, i) => { const col = new THREE.Color((opts.roleColors && opts.roleColors[a.role]) || '#ffffff'), g = new THREE.Group();
-      const body = new THREE.Mesh(new THREE.CapsuleGeometry(4.6, 9, 3, 8), new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.5, roughness: 0.5 })); body.position.y = 10.5; g.add(body);
-      const head = new THREE.Mesh(new THREE.SphereGeometry(5.2, 10, 8), new THREE.MeshStandardMaterial({ color: 0xe8f0f6, roughness: 0.35 })); head.position.y = 22.5; g.add(head);
-      g.scale.setScalar(1.5); const R = (k) => hash01(i + 1, k);
-      g.userData = { a0: i / Math.max(1, idle.length) * 6.283 + R(2) * 0.4, dir: R(1) < 0.5 ? -1 : 1, v: 0.000018 + R(3) * 0.000028, sw: 0.25 + R(4) * 0.4, wv: 0.00008 + R(5) * 0.00012, ph: R(6) * 6.28, lane: 84 + R(7) * 40, lv: 0.0001 + R(8) * 0.0002, lp: R(9) * 6.28 };
+    for (const f of hubCrew) dropAgent(f); hubCrew = [];
+    idle.forEach((a, i) => { const g = makeAgent(a.role), R = (k) => hash01(i + 1, k);
+      g.userData.a0 = i / Math.max(1, idle.length) * 6.283 + R(2) * 0.4; g.userData.dir = R(1) < 0.5 ? -1 : 1; g.userData.v = 0.000018 + R(3) * 0.000028; g.userData.sw = 0.25 + R(4) * 0.4; g.userData.wv = 0.00008 + R(5) * 0.00012; g.userData.ph = R(6) * 6.28; g.userData.lane = 84 + R(7) * 40; g.userData.lv = 0.0001 + R(8) * 0.0002; g.userData.lp = R(9) * 6.28;
       rootG.add(g); hubCrew.push(g); }); }
   function moveCrew(t) { for (const g of hubCrew) { const u = g.userData, ang = u.a0 + u.dir * (u.v * t + u.sw * Math.sin(u.wv * t + u.ph)), r = u.lane + 8 * Math.sin(u.lv * t + u.lp), px = Math.cos(ang) * r, pz = Math.sin(ang) * r;
       const ang2 = u.a0 + u.dir * (u.v * (t + 40) + u.sw * Math.sin(u.wv * (t + 40) + u.ph)), r2 = u.lane + 8 * Math.sin(u.lv * (t + 40) + u.lp), qx = Math.cos(ang2) * r2, qz = Math.sin(ang2) * r2, moving = Math.hypot(qx - px, qz - pz) > 0.012;
-      g.position.set(px, FLOOR_Y + (moving ? Math.abs(Math.sin(t * 0.012 + u.a0 * 9)) * 1.2 : 0), pz); if (moving) g.rotation.y = -Math.atan2(qz - pz, qx - px) + Math.PI / 2; } }
+      g.position.set(px, FLOOR_Y + (moving ? Math.abs(Math.sin(t * 0.012 + u.a0 * 9)) * 1.2 : 0), pz); faceAgent(g, qx - px, qz - pz, t, moving); } }
   let _oct = null; function octPts() { if (_oct) return _oct; const g = scene.children.find(c => c.userData && c.userData.oct); if (g) _oct = g.userData.oct; return _oct; }
 
   window.Station3D = {
     start(stageEl, o) { stage = stageEl; opts = o || {}; if (!renderer) setup(); canvas.style.display = 'block'; running = true; lastInteract = 0; resize(); if (!raf) frame(); },
+    look(o) { Object.assign(cam, o || {}); lastInteract = performance.now(); },
     stop() { running = false; if (canvas) canvas.style.display = 'none'; },
     update(mods) {
       if (!built || !mods) return; const s = mods.map(m => [m.key, m.label, m.color, m.expansion ? 1 : 0, m.state, (m.tasks || []).filter(t => t.status === 'running').map(t => t.role).join('+')].join('|')).join('~');
