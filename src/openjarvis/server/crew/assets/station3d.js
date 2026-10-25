@@ -40,7 +40,7 @@
   }
   function moveSurges(t) { for (const list of [surges, surgesFixed]) for (const s of list) s.t.offset.x = ((s.o + s.dir * 0.00045 * t) % 1 + 1) % 1; }
   // ── the crew, drawn with their own robot artwork: a camera-facing sprite cut from the sprite sheet (bots.png). Every agent is the same size. ──
-  const AGENT_H = 85, SHEET_COLS = 17;                                        // 2.5 times the size they were (34); Helix is still about twice their height
+  const AGENT_H = 60, SHEET_COLS = 17;                                        // 1.75 times the size they were (34); Helix is still about twice their height
   let sheet = null, sheetState = 0; const cellCache = new Map(), spriteList = [];
   function loadSheet() { if (sheetState) return; sheetState = 1; const im = new Image(); im.onload = () => { sheet = im; sheetState = 2; spriteList.forEach(sp => paintAgent(sp, 0)); }; im.onerror = () => { sheetState = 3; }; im.src = (opts && opts.botUrl) || '/crew/bots.png'; }
   function cellTex(row, col) {
@@ -188,9 +188,22 @@
       if (holo) holo.visible = false;
     }, undefined, () => { /* no model: the hologram stays */ });
   }
-  function moveHelix(t) {                                                            // she stands in the middle of the hub, turning to look at whoever is looking at her
+  const hw = { x: 0, z: 0, tx: 0, tz: 0, ready: false };                              // where she is on the hub and where she is heading
+  function moveHelix(t) {                                                            // she strolls the centre and the ring; for take-off she comes back to the middle first
     if (!helix) return; const dt = Math.min(0.1, (t - lastT) / 1000); lastT = t; if (mixer) mixer.update(dt);
-    const want = Math.atan2(camera.position.x, camera.position.z); let d = want - faceAng; d = Math.atan2(Math.sin(d), Math.cos(d)); faceAng += d * Math.min(1, dt * 2.2); helix.rotation.y = faceAng;
+    let want = null, speed = 26;
+    if (launchS !== null) {                                                          // called for take-off: straight back to the centre, then face the camera for the flip
+      hw.tx = 0; hw.tz = 0; speed = 70;
+      if (Math.hypot(hw.x, hw.z) < 2) want = Math.atan2(camera.position.x, camera.position.z);
+    } else if (!hw.ready || Math.hypot(hw.tx - hw.x, hw.tz - hw.z) < 4) {           // pick the next spot to stroll to: anywhere from the middle out to the ring
+      const a = Math.random() * 6.283185, r = Math.random() < 0.25 ? Math.random() * 40 : 70 + Math.random() * 56; hw.tx = Math.cos(a) * r; hw.tz = Math.sin(a) * r; hw.ready = true;
+    }
+    const dx = hw.tx - hw.x, dz = hw.tz - hw.z, dist = Math.hypot(dx, dz);
+    if (dist > 1) { const st = Math.min(dist, speed * dt); hw.x += dx / dist * st; hw.z += dz / dist * st; if (want === null) want = Math.atan2(dx, dz); }
+    if (want === null) want = faceAng;
+    let d = want - faceAng; d = Math.atan2(Math.sin(d), Math.cos(d)); faceAng += d * Math.min(1, dt * (launchS !== null ? 6 : 4)); helix.rotation.y = faceAng;
+    helix.position.set(hw.x, FLOOR_Y + 14, hw.z);
+    if (actions && launchS === null && actions.walk) actions.walk.timeScale = 0.8;
     if (!helix.userData.animated) helix.userData.inner.rotation.z = 0.04 * Math.sin(t * 0.0025);
   }
   // ── take-off: Helix does a backflip and calls it, the side thrusters swing round, the whole station spins clockwise and rockets off into deep space, then comes back ──
@@ -198,9 +211,8 @@
   const _away = new THREE.Vector3();
   function startLaunch() {
     if (launchS !== null || !running || document.hidden) return false;
-    launchS = { t0: performance.now(), flipped: false, said: false };
+    launchS = { t0: performance.now(), flipped: false, said: false, flipAt: Math.min(2.2, Math.hypot(hw.x, hw.z) / 70 + 0.4) };
     if (opts && opts.onLaunch) opts.onLaunch();
-    if (actions && actions.flip) { const f = actions.flip; f.reset(); f.setLoop(THREE.LoopOnce, 1); f.clampWhenFinished = true; f.timeScale = 1; f.play(); actions.walk.crossFadeTo(f, 0.2, false); launchS.flipped = true; }
     return true;
   }
   function stepLaunch() {
@@ -208,7 +220,8 @@
     if (s >= LAUNCH_S) {                                                           // landed: everything back exactly as it was
       launchS = null; boost = 1; rootG.position.set(0, 0, 0); rootG.rotation.y = 0; boostPivots.forEach(p => { p.rotation.set(0, 0, 0.2); });
       if (actions && actions.flip) { actions.walk.reset().play(); actions.walk.timeScale = 0.45; actions.flip.stop(); } return; }
-    if (actions && actions.flip && launchS.flipped && s > 2.3) { launchS.flipped = false; actions.walk.reset(); actions.walk.timeScale = 0.45; actions.walk.play(); actions.flip.crossFadeTo(actions.walk, 0.3, false); }
+    if (actions && actions.flip && !launchS.flipped && !launchS.said && s >= launchS.flipAt) { const f = actions.flip; f.reset(); f.setLoop(THREE.LoopOnce, 1); f.clampWhenFinished = true; f.timeScale = 1; f.play(); actions.walk.crossFadeTo(f, 0.2, false); launchS.flipped = true; launchS.said = true; }
+    if (actions && actions.flip && launchS.flipped && s > launchS.flipAt + 2.3) { launchS.flipped = false; actions.walk.reset(); actions.walk.timeScale = 0.45; actions.walk.play(); actions.flip.crossFadeTo(actions.walk, 0.3, false); }
     // the side thrusters swing round on their knuckles, then lock pointing straight down for the burn, then relax again on the way back
     const sw = (s - 1.5) / 2.0, back = ease3((s - 10.2) / 1.2);
     const ang = s < 1.5 ? 0.2 : sw < 1 ? 0.2 + (-0.1 - 0.2) * ease3(sw) + 0.65 * Math.sin(sw * Math.PI * 2) : -0.1 + (0.2 + 0.1) * back;

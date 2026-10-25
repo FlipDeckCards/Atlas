@@ -219,7 +219,7 @@ def test_3d_crew_use_their_robot_artwork_at_one_size_and_helix_is_her_real_model
 
     crew = Path(__file__).resolve().parents[2] / "src" / "openjarvis" / "server" / "crew"
     js = (crew / "assets" / "station3d.js").read_text()
-    assert "function makeAgent(role" in js and "cellTex(row, col)" in js and "const AGENT_H = 85" in js                # the sprite sheet, not capsules
+    assert "function makeAgent(role" in js and "cellTex(row, col)" in js and "const AGENT_H = 60" in js                # the sprite sheet, not capsules
     assert "CapsuleGeometry" not in js and js.count("makeAgent(") >= 4                                                   # walkway, Helix's ring and the trays all use it
     assert "g.scale.setScalar(1.5)" not in js                                                                            # no second size for the ring crew
     glb = (crew / "assets" / "helix.glb").read_bytes()
@@ -260,7 +260,7 @@ def test_walkway_lines_carry_a_colour_surge_and_the_crew_are_two_and_a_half_time
 
     js = (Path(__file__).resolve().parents[2] / "src" / "openjarvis" / "server" / "crew" / "assets" / "station3d.js").read_text()
     assert "function surgeMap(len, dir, fixed)" in js and "function moveSurges(t)" in js and "map: surgeMap(" in js          # a bright band scrolls along every lit line
-    assert "const AGENT_H = 85" in js and "const HELIX_H = 168" in js
+    assert "const AGENT_H = 60" in js and "const HELIX_H = 168" in js
 
 
 def test_the_3d_take_off_sequence_is_wired_to_missions_clicks_and_the_chat():
