@@ -193,3 +193,20 @@ def test_3d_view_has_big_dome_panels_coloured_rim_lights_and_the_crew_on_helixs_
     assert "function updateRim(t)" in js and "setColorAt(i" in js and "0xffe9b8" not in js          # the rim lights are coloured and animated, not all yellow
     assert "function syncCrew()" in js and "getRoster" in js                                          # the idle crew walk Helix's own ring
     assert "v: 0.0000055 + (i % 5) * 0.000002" in js                                                   # the walkway crew move slowly
+
+
+def test_3d_walkways_are_wide_with_clean_junction_pads_and_helixs_model_loads_when_present():
+    from pathlib import Path
+
+    from fastapi.testclient import TestClient
+    from unittest.mock import MagicMock
+
+    from openjarvis.server.app import create_app
+
+    js = (Path(__file__).resolve().parents[2] / "src" / "openjarvis" / "server" / "crew" / "assets" / "station3d.js").read_text()
+    assert "const OW = 30, PAD = 27;" in js and "band(g, a, 142, end, WB, C, lit)" in js and "VC + 22" in js        # wide walkways, spokes start at the hub ring's edge, cut around the corner pads
+    assert "loadHelix()" in js and "'/crew/helix.glb?v=1'" in js and "const HELIX_H = 84" in js and "holo.visible = false" in js
+    c = TestClient(create_app(MagicMock(), "m", api_key="k", require_auth=True), raise_server_exceptions=False)
+    three = c.get("/crew/three.min.js")
+    assert three.status_code == 200 and b"GLTFLoader" in three.content                                        # the bundle carries the model loader
+    assert c.get("/crew/helix.glb").status_code in (200, 404)                                                  # 404 until her model is added: the hologram stays

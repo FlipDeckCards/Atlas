@@ -98,16 +98,20 @@
     const h3 = new THREE.Mesh(new THREE.CylinderGeometry(62, 68, 14, 48), m.dark); h3.position.y = FLOOR_Y + 7; hub.add(h3);
     for (const [r, y, c, tr] of [[138, FLOOR_Y + 2, m.gold, 3.2], [112, FLOOR_Y + 1.6, new THREE.MeshBasicMaterial({ color: 0x7fe9ff }), 1.4], [66, FLOOR_Y + 15, new THREE.MeshBasicMaterial({ color: 0x7fe9ff }), 2.4]]) { const t = new THREE.Mesh(new THREE.TorusGeometry(r, tr, 8, 72), c); t.rotation.x = Math.PI / 2; t.position.y = y; hub.add(t); }
     add(hub);
-    // the octagon walkway at walking level, plain joints
+    // the octagon walkway at walking level: wide, with a proper round junction pad at each corner
     const pts = []; for (let k = 0; k < 8; k++) { const a = -Math.PI / 2 + Math.PI / 8 + k * Math.PI / 4; pts.push([Math.cos(a) * VC, Math.sin(a) * VC]); }
+    const OW = 30, PAD = 27;
     for (let k = 0; k < 8; k++) {
       const [x1, z1] = pts[k], [x2, z2] = pts[(k + 1) % 8], len = Math.hypot(x2 - x1, z2 - z1), ang = Math.atan2(z2 - z1, x2 - x1), g = new THREE.Group();
-      const b = new THREE.Mesh(new THREE.BoxGeometry(len, FLOOR_Y, 22), m.deck); b.position.y = FLOOR_Y / 2; g.add(b);
-      const l = new THREE.Mesh(new THREE.BoxGeometry(len - 6, 0.9, 1.6), new THREE.MeshBasicMaterial({ color: 0x00e5ff })); l.position.y = FLOOR_Y + 0.3; g.add(l);
-      for (const sgn of [-1, 1]) { const rail = new THREE.Mesh(new THREE.BoxGeometry(len, 4, 2.2), m.hullD); rail.position.set(0, FLOOR_Y + 2, sgn * 10); g.add(rail); }
+      const run = len - 2 * (PAD - 6), b = new THREE.Mesh(new THREE.BoxGeometry(run, FLOOR_Y, OW), m.deck); b.position.y = FLOOR_Y / 2; g.add(b);
+      const l = new THREE.Mesh(new THREE.BoxGeometry(len - 2 * PAD - 6, 0.9, 1.8), new THREE.MeshBasicMaterial({ color: 0x00e5ff })); l.position.y = FLOOR_Y + 0.3; g.add(l);
+      for (const sgn of [-1, 1]) { const rail = new THREE.Mesh(new THREE.BoxGeometry(len - 2 * PAD - 2, 4, 2.4), m.hullD); rail.position.set(0, FLOOR_Y + 2, sgn * (OW / 2 - 1.2)); g.add(rail); }
       g.position.set((x1 + x2) / 2, 0, (z1 + z2) / 2); g.rotation.y = -ang; add(g);
     }
-    pts.forEach(([x, z]) => { const j = new THREE.Mesh(new THREE.CylinderGeometry(16, 16, FLOOR_Y, 20), m.deck); j.position.set(x, FLOOR_Y / 2, z); add(j); });
+    pts.forEach(([x, z]) => {
+      const pad = new THREE.Mesh(new THREE.CylinderGeometry(PAD, PAD, FLOOR_Y + 0.8, 40), new THREE.MeshStandardMaterial({ color: 0x33485c, metalness: 0.6, roughness: 0.4 })); pad.position.set(x, (FLOOR_Y + 0.8) / 2, z); add(pad);
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(PAD, 2.2, 8, 40), m.gold); rim.rotation.x = Math.PI / 2; rim.position.set(x, FLOOR_Y + 0.8, z); add(rim);
+      const inn = new THREE.Mesh(new THREE.TorusGeometry(PAD * 0.55, 0.9, 6, 32), new THREE.MeshBasicMaterial({ color: 0x7fe9ff })); inn.rotation.x = Math.PI / 2; inn.position.set(x, FLOOR_Y + 1.3, z); add(inn); });
     G.userData.oct = pts;
     // the dome: glass plus a geodesic hexagon frame (the dual of an icosphere)
     const dome = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 32, 0, Math.PI * 2, 0, Math.PI / 2), m.glass); dome.scale.set(RD, HD, RD); dome.renderOrder = 3; G.add(dome);
@@ -126,6 +130,7 @@
     const beamM = new THREE.Mesh(new THREE.CylinderGeometry(52, 66, 190, 32, 1, true), new THREE.MeshBasicMaterial({ color: 0x7fe9ff, transparent: true, opacity: 0.1, side: THREE.DoubleSide, depthWrite: false })); beamM.position.y = FLOOR_Y + 105; beamM.renderOrder = 6; G.add(beamM); beam = beamM;
     for (const [r, y] of [[60, FLOOR_Y + 26], [48, FLOOR_Y + 66], [36, FLOOR_Y + 106], [28, FLOOR_Y + 146]]) { const t = new THREE.Mesh(new THREE.TorusGeometry(r, 1.4, 6, 40), new THREE.MeshBasicMaterial({ color: 0x7fe9ff, transparent: true, opacity: 0.6 })); t.rotation.x = Math.PI / 2; t.position.y = y; t.renderOrder = 6; G.add(t); }
     const hg = new THREE.Sprite(new THREE.SpriteMaterial({ map: (flameAssets(), GLOWT), transparent: true, opacity: 0.55, depthWrite: false, color: 0x7fe9ff })); hg.scale.set(300, 300, 1); hg.position.y = FLOOR_Y + 40; hg.renderOrder = 6; G.add(hg); hubGlow = hg;
+    loadHelix();
     const img = new Image(); img.onload = () => {
       const holoTex = tex(512, 512, (g, w, h) => { const sw = img.naturalWidth, sh = img.naturalHeight, sq = Math.min(sw, sh); g.drawImage(img, (sw - sq) / 2, 0, sq, sq, 0, 0, w, h);
         const gr = g.createRadialGradient(w / 2, h * 0.42, h * 0.12, w / 2, h * 0.5, h * 0.52); gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,1)'); g.globalCompositeOperation = 'destination-out'; g.fillStyle = gr; g.fillRect(0, 0, w, h);
@@ -145,12 +150,31 @@
     built = true;
   }
 
+  // ── Helix herself: her 3D model walking round the hub ring, much taller than the crew. If the file is not there the hologram stays. ──
+  const HELIX_H = 84; let helix = null, mixer = null, lastT = 0;
+  function loadHelix() {
+    if (!THREE.GLTFLoader) return;
+    new THREE.GLTFLoader().load('/crew/helix.glb?v=1', (gltf) => {
+      const obj = gltf.scene, box = new THREE.Box3().setFromObject(obj), size = box.getSize(new THREE.Vector3()), k = HELIX_H / Math.max(0.001, size.y), pivot = new THREE.Group(), inner = new THREE.Group();
+      obj.scale.setScalar(k); box.setFromObject(obj); obj.position.set(-(box.min.x + box.max.x) / 2, -box.min.y, -(box.min.z + box.max.z) / 2); inner.add(obj); pivot.add(inner);
+      obj.traverse(o => { if (o.isMesh) { o.frustumCulled = false; if (o.material) { o.material.envMapIntensity = 1.2; } } });
+      if (gltf.animations && gltf.animations.length) { mixer = new THREE.AnimationMixer(obj); const walk = gltf.animations.find(c => /walk/i.test(c.name)) || gltf.animations[0]; mixer.clipAction(walk).play(); pivot.userData.animated = true; }
+      pivot.userData.inner = inner; helix = pivot; rootG.add(pivot);
+      if (holo) holo.visible = false; if (beam) beam.visible = false;
+    }, undefined, () => { /* no model yet: the hologram stays */ });
+  }
+  function moveHelix(t) {
+    if (!helix) return; const dt = Math.min(0.1, (t - lastT) / 1000); lastT = t; if (mixer) mixer.update(dt);
+    const ang = t * 0.000042 + 1.0, r = 104, px = Math.cos(ang) * r, pz = Math.sin(ang) * r, vx = -Math.sin(ang), vz = Math.cos(ang);       // anticlockwise round the ring
+    helix.position.set(px, FLOOR_Y + (helix.userData.animated ? 0 : Math.abs(Math.sin(t * 0.0036)) * 1.6), pz); helix.rotation.y = Math.atan2(vx, vz);
+    if (!helix.userData.animated) helix.userData.inner.rotation.z = 0.05 * Math.sin(t * 0.0036);                                                  // a little sway when the model has no walk of its own
+  }
   // ── the factories: open work trays and the walkway bands to them; rebuilt when the modules change ──
   function band(g, a, r0, r1, wid, col, lit) {
-    const m = mats(), len = r1 - r0, [mx, mz] = polar(a, (r0 + r1) / 2), b = new THREE.Group();
+    const m = mats(), len = r1 - r0, [mx, mz] = polar(a, (r0 + r1) / 2), b = new THREE.Group(); if (len < 4) return;
     const bx = new THREE.Mesh(new THREE.BoxGeometry(len, FLOOR_Y, wid), m.deck); bx.position.y = FLOOR_Y / 2; b.add(bx);
-    const l = new THREE.Mesh(new THREE.BoxGeometry(len, 0.9, 1.6), new THREE.MeshBasicMaterial({ color: lit ? col : 0x2a3a4a })); l.position.y = FLOOR_Y + 0.3; b.add(l);
-    for (const s of [-1, 1]) { const rail = new THREE.Mesh(new THREE.BoxGeometry(len, 4, 2), m.hullD); rail.position.set(0, FLOOR_Y + 2, s * (wid / 2 - 1)); b.add(rail); }
+    const l = new THREE.Mesh(new THREE.BoxGeometry(Math.max(2, len - 6), 0.9, 1.8), new THREE.MeshBasicMaterial({ color: lit ? col : 0x2a3a4a })); l.position.y = FLOOR_Y + 0.3; b.add(l);
+    for (const s of [-1, 1]) { const rail = new THREE.Mesh(new THREE.BoxGeometry(Math.max(2, len - 4), 4, 2.4), m.hullD); rail.position.set(0, FLOOR_Y + 2, s * (wid / 2 - 1.2)); b.add(rail); }
     b.position.set(mx, 0, mz); b.rotation.y = -a; g.add(b);
   }
   function labelSprite(text, state, col, lit) {
@@ -168,7 +192,7 @@
     const inner = slab(w - 12, len - 12, 8, 1.4, new THREE.MeshStandardMaterial({ color: 0x0f1822, metalness: 0.5, roughness: 0.6 })); inner.position.y = FLOOR_Y; group.add(inner);
     const wall = (ww, dd, px, pz) => { const q = new THREE.Mesh(new THREE.BoxGeometry(ww, WH, dd), m.wall); q.position.set(px, FLOOR_Y + WH / 2, pz); group.add(q);
       const cap = new THREE.Mesh(new THREE.BoxGeometry(ww + 0.6, 3.2, dd + 0.6), cm); cap.position.set(px, FLOOR_Y + WH + 1.6, pz); group.add(cap); };
-    const gap = 28, sideW = (w - gap) / 2;
+    const gap = 38, sideW = (w - gap) / 2;
     wall(w, T, 0, len / 2 - T / 2); wall(T, len - T, -w / 2 + T / 2, -T / 2); wall(T, len - T, w / 2 - T / 2, -T / 2);
     wall(sideW, T, -(gap / 2 + sideW / 2), -len / 2 + T / 2); wall(sideW, T, gap / 2 + sideW / 2, -len / 2 + T / 2);
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) { const post = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, WH + 6, 10), m.hull); post.position.set(sx * (w / 2 - 3), FLOOR_Y + (WH + 6) / 2, sz * (len / 2 - 3)); group.add(post); }
@@ -184,7 +208,10 @@
     const hb = new THREE.Mesh(new THREE.BoxGeometry(w, 40, len), new THREE.MeshBasicMaterial({ visible: false })); hb.position.set(0, FLOOR_Y + 15, 0); group.add(hb); hb.userData = { key: m0.key, expansion: !!m0.expansion }; hitBoxes.push(hb);
     const lab = labelSprite(String(m0.label || m0.key || '').toUpperCase(), m0.state || '', col, lit); const [lx, lz] = polar(a, D + (len / 2) + 26); lab.position.set(lx, FLOOR_Y + 62, lz); g.add(lab);
     // the way in: a band from Helix's ring (or from the walkway, for the branch factories) to the open gap
-    const branch = idx >= 16; band(g, a, branch ? DW + 4 : 132, D - len / 2, 18, C, lit);
+    const branch = idx >= 16, WB = 26, end = D - len / 2 + 3;
+    if (branch) band(g, a, DW + 15, end, WB, C, lit);                                           // off the middle of a walkway side
+    else if (idx >= 8) { band(g, a, 142, VC - 22, WB, C, lit); band(g, a, VC + 22, end, WB, C, lit); }   // through the gap, crossing the walkway at its corner pad
+    else band(g, a, 142, end, WB, C, lit);                                                      // an inner factory: starts at the edge of Helix's ring, not inside it
     return { a, D };
   }
   function rebuild(mods) {
@@ -251,7 +278,7 @@
     if (beam) beam.material.opacity = 0.09 + 0.04 * Math.sin(t * 0.003);
     if (hubGlow) hubGlow.material.opacity = 0.5 + 0.12 * Math.sin(t * 0.002);
     for (let i = 0; i < flames.length; i++) { const f = flames[i], s = 1 + 0.07 * Math.sin(t * 0.03 + i * 1.7) + 0.03 * Math.sin(t * 0.071 + i); f.scale.y = s; f.scale.x = f.scale.z = 1 + 0.03 * Math.sin(t * 0.05 + i * 2.3); }
-    updateRim(t); if (t - crewCheck > 700) { crewCheck = t; syncCrew(); } moveCrew(t);
+    moveHelix(t); updateRim(t); if (t - crewCheck > 700) { crewCheck = t; syncCrew(); } moveCrew(t);
     const pts = octPts();
     if (pts) for (const w of walkers) { const u = w.userData, f = (((u.f0 + u.dir * u.v * t) % 1) + 1) % 1 * 8, k = Math.floor(f) % 8, q = f - Math.floor(f), A = pts[k], B = pts[(k + 1) % 8];
       const dx = B[0] - A[0], dz = B[1] - A[1], L = Math.hypot(dx, dz) || 1; w.position.set(A[0] + dx * q + (-dz / L) * u.off, FLOOR_Y + Math.abs(Math.sin(t * 0.012 + u.f0 * 30)) * 0.8, A[1] + dz * q + (dx / L) * u.off); w.rotation.y = -Math.atan2(dz, dx) * u.dir; }
