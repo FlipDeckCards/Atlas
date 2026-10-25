@@ -12,6 +12,14 @@ STATION_PAGE = r"""<!DOCTYPE html>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
 <title>Aibussol Station</title>
+<link rel="manifest" href="/manifest.webmanifest"/>
+<meta name="theme-color" content="#050508"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-title" content="Helix"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<link rel="apple-touch-icon" href="/crew/icons/apple-touch-icon.png"/>
+<link rel="icon" type="image/png" href="/crew/icons/icon-192.png"/>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
 <style>
   :root { --cyan:#00e5ff; --cyan-dim:#005f6b; --orange:#ff6d00; --green:#00ff88; --red:#ff3344; --violet:#b06cff;
@@ -309,6 +317,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
 <div id="gate"><div class="box"><div class="h" id="gate-h">STATION OFFLINE</div><div id="gate-t"></div></div></div>
 
 <script>
+if ('serviceWorker' in navigator) { window.addEventListener('load', () => { try { navigator.serviceWorker.register('/sw.js'); } catch (e) {} }); }     // lets a phone install Aibussol as an app
 const TOKEN_KEY = 'aibussol_token';
 const token = () => localStorage.getItem(TOKEN_KEY) || '';
 const PROJECT_COLORS = { flipdeck:'#ff6d00', marnyx:'#b06cff', deadzone:'#ff3344', aibussol:'#00e5ff', 'new':'#ff4fb8' };
@@ -1715,7 +1724,7 @@ function drawCore(t) {
   }
   const g = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * 1.8); g.addColorStop(0, 'rgba(0,229,255,0.18)'); g.addColorStop(1, 'rgba(0,229,255,0)');
   ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 1.8, 0, 6.29); ctx.fill();
-  const ring = hallW() + 8 * SC;                         // the deck is as wide as the tubes (floor plus walls)
+  const ring = hallW() + 14 * SC;                        // the deck is a little wider than the tubes (floor plus walls) so the crew has room to walk
   // deck ring (where the crew walks) with an armored rim
   ctx.fillStyle = '#132636'; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.29); ctx.fill();
   ctx.strokeStyle = 'rgba(150,190,210,0.5)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.29); ctx.stroke();

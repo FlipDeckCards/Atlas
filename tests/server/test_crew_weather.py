@@ -105,3 +105,25 @@ def test_cue_plans_events_with_search_and_the_forecast_and_cannot_send_book_or_p
     w.engine.client_factory = _factory()[0]
     out, _ = run(w.engine._tool({"user_id": "u", "mission_id": "m", "id": "t", "role": "event", "_transcript": []}, {"id": "m"}, "get_weather", {"place": "Los Angeles, CA"}))
     assert "Weather for Los Angeles" in out
+
+
+def test_aibussol_is_installable_as_a_phone_app():
+    from unittest.mock import MagicMock
+
+    from fastapi.testclient import TestClient
+
+    from openjarvis.server.app import create_app
+
+    c = TestClient(create_app(MagicMock(), "m", api_key="k", require_auth=True), raise_server_exceptions=False)
+    m = c.get("/manifest.webmanifest")
+    assert m.status_code == 200 and m.json()["start_url"] == "/station" and m.json()["display"] == "standalone"
+    assert {i["sizes"] for i in m.json()["icons"]} == {"192x192", "512x512"}
+    for icon in m.json()["icons"]:
+        r = c.get(icon["src"])
+        assert r.status_code == 200 and r.headers["content-type"] == "image/png"
+    assert c.get("/crew/icons/apple-touch-icon.png").status_code == 200 and c.get("/crew/icons/nope.png").status_code == 404
+    sw = c.get("/sw.js")
+    assert sw.status_code == 200 and "fetch" in sw.text and "javascript" in sw.headers["content-type"]
+    assert c.get("/crew/bots.png").status_code == 200                                     # the sprite sheet route still wins its own path
+    page = c.get("/station").text
+    assert 'rel="manifest"' in page and "apple-touch-icon" in page and "serviceWorker.register('/sw.js')" in page
