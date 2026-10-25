@@ -983,11 +983,12 @@ function guideBox(kind) {
   const g = S.guides[kind], box = mk('div', 'pnl');
   box.append(mk('div', 'pnl-t', g.label));
   g.steps.forEach((t, i) => box.append(linkText(mk('div', 'dim'), (g.steps.length > 1 ? (i + 1) + '. ' : '') + t)));
-  const inp = mk(kind === 'rules' ? 'textarea' : 'input'); inp.placeholder = g.field; inp.style.marginTop = '8px';
-  if (kind !== 'rules') inp.type = 'text';
+  const inp = mk(kind === 'rules' || kind === 'google_play' ? 'textarea' : 'input'); inp.placeholder = g.field; inp.style.marginTop = '8px';
+  if (kind !== 'rules' && kind !== 'google_play') inp.type = 'text';
   if (kind === 'rules') { inp.value = S.house_rules || ''; inp.maxLength = 2000; }
   if (kind === 'phone') { const a = new Uint8Array(6); crypto.getRandomValues(a); inp.value = 'https://ntfy.sh/aibussol-' + Array.from(a, x => x.toString(16).padStart(2, '0')).join(''); }
-  if (kind === 'stripe' || kind === 'github') inp.autocomplete = 'off';
+  if (kind === 'stripe' || kind === 'github' || kind === 'google_play') inp.autocomplete = 'off';
+  if (kind === 'google_play') inp.maxLength = 4000;
   box.append(inp);
   let ex = null;
   if (g.extra) { ex = mk('input'); ex.type = 'text'; ex.placeholder = g.extra; ex.style.marginTop = '6px'; box.append(ex); }

@@ -577,12 +577,16 @@ class CrewEngine:
         if await self.is_owner(user_id):
             from openjarvis.server.crew import tenant
 
-            key = await tenant.get(self.store, user_id, "marnyx_key")       # pasted on the Station (Connections → Marnyx)
-            if not key:
-                return self.env
             import os
 
-            return dict(os.environ if self.env is None else self.env, MARNYX_API_KEY=key)
+            extra = {}
+            for secret, var in (("marnyx_key", "MARNYX_API_KEY"), ("play_key", "GOOGLE_PLAY_KEY"), ("play_apps", "GOOGLE_PLAY_APPS")):   # pasted on the Station (Connections)
+                v = await tenant.get(self.store, user_id, secret)
+                if v:
+                    extra[var] = v
+            if not extra:
+                return self.env
+            return dict(os.environ if self.env is None else self.env, **extra)
         from openjarvis.server.crew import tenant
 
         name = ""

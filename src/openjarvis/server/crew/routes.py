@@ -316,7 +316,7 @@ async def crew_state(request: Request):
     st["connections"] = await conns.status(engine.store, uid, envx)
     if not owner:
         # a subscriber's own connections, each with its guided steps
-        for kind in ("stripe", "github", "marnyx"):
+        for kind in ("stripe", "github", "marnyx", "google_play"):
             st["connections"][kind].update(guide=kind, setup="" if st["connections"][kind]["connected"] else "Connect it step by step.")
         phone = bool(await tenant.get(engine.store, uid, "notify_url"))
         st["connections"]["phone"] = {"connected": phone, "built": True, "label": "Phone alerts and briefs", "actions": [], "guide": "phone",
@@ -334,7 +334,8 @@ async def crew_state(request: Request):
     if owner:
         # the owner's keys live on Render, except Marnyx, which is pasted once on the Station like a subscriber's
         st["connections"]["marnyx"].update(guide="marnyx")
-        st["guides"] = {"marnyx": guide.GUIDES["marnyx"]}
+        st["connections"]["google_play"].update(guide="google_play", setup="" if st["connections"]["google_play"]["connected"] else "Connect it step by step.")
+        st["guides"] = {"marnyx": guide.GUIDES["marnyx"], "google_play": guide.GUIDES["google_play"]}
     st["businesses"] = await tenant.businesses(engine.store, uid) if not owner else await owner_businesses(engine, uid)
     if not owner:
         st["products"] = await engine.products_for(uid, st["businesses"])
@@ -416,7 +417,7 @@ class BusinessIn(BaseModel):
 
 @router.post("/api/crew/connect/{kind}")
 async def crew_connect(kind: str, body: ConnectIn, request: Request):
-    if kind not in ("stripe", "github", "phone", "rules", "marnyx"):
+    if kind not in ("stripe", "github", "phone", "rules", "marnyx", "google_play"):
         return JSONResponse({"detail": "Unknown connection."}, status_code=404)
     g = await _gate(request)
     if isinstance(g, JSONResponse):
@@ -424,7 +425,7 @@ async def crew_connect(kind: str, body: ConnectIn, request: Request):
     uid, engine = g
     from openjarvis.server.crew import guide
 
-    if await engine.is_owner(uid) and kind != "marnyx":
+    if await engine.is_owner(uid) and kind not in ("marnyx", "google_play"):
         return JSONResponse({"detail": "The owner's connections are set on Render (Atlas → Environment)."}, status_code=409)
     hit = hardening.enforce({"chat_user": uid})
     if hit:
@@ -452,7 +453,7 @@ async def crew_connect_off(kind: str, request: Request):
     uid, engine = g
     from openjarvis.server.crew import guide
 
-    if await engine.is_owner(uid) and kind != "marnyx":
+    if await engine.is_owner(uid) and kind not in ("marnyx", "google_play"):
         return JSONResponse({"detail": "The owner's connections are set on Render."}, status_code=409)
     try:
         await guide.disconnect(engine.store, uid, kind)
