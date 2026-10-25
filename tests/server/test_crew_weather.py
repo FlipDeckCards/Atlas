@@ -205,7 +205,7 @@ def test_3d_walkways_are_wide_with_clean_junction_pads_and_helixs_model_loads_wh
 
     js = (Path(__file__).resolve().parents[2] / "src" / "openjarvis" / "server" / "crew" / "assets" / "station3d.js").read_text()
     assert "const OW = 30, PAD = 27;" in js and "band(g, a, 142, end, WB, C, lit)" in js and "VC + 22" in js        # wide walkways, spokes start at the hub ring's edge, cut around the corner pads
-    assert "loadHelix()" in js and "'/crew/helix.glb?v=1'" in js and "const HELIX_H = 84" in js and "holo.visible = false" in js
+    assert "loadHelix()" in js and "'/crew/helix.glb?v=2'" in js and "const HELIX_H = 84" in js and "holo.visible = false" in js
     c = TestClient(create_app(MagicMock(), "m", api_key="k", require_auth=True), raise_server_exceptions=False)
     three = c.get("/crew/three.min.js")
     assert three.status_code == 200 and b"GLTFLoader" in three.content                                        # the bundle carries the model loader
@@ -225,3 +225,13 @@ def test_3d_crew_use_their_robot_artwork_at_one_size_and_helix_is_her_real_model
     glb = (crew / "assets" / "helix.glb").read_bytes()
     assert glb[:4] == b"glTF" and len(glb) < 4_000_000                                                                   # her model, slimmed from 26 MB so a phone can load it
     assert any(getattr(r, "path", "") == "/crew/helix.glb" for r in routes.router.routes)
+
+
+def test_3d_files_are_cache_busted_and_the_ring_thruster_touches_the_keel():
+    from pathlib import Path
+
+    from openjarvis.server.crew.station import STATION_PAGE
+
+    js = (Path(__file__).resolve().parents[2] / "src" / "openjarvis" / "server" / "crew" / "assets" / "station3d.js").read_text()
+    assert "/crew/three.min.js?v=3" in STATION_PAGE and "/crew/station3d.js?v=3" in STATION_PAGE          # a changed bundle must not be served from a day-old cache
+    assert "T.position.y = -272" in js and "'/crew/helix.glb?v=2'" in js

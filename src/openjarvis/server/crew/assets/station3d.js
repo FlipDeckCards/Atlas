@@ -111,7 +111,7 @@
       e.position.set(Math.cos(a) * (RD + 50), -22, Math.sin(a) * (RD + 50)); e.rotation.y = -a; add(e);
     }
     // the ring thruster under the keel: a fat ring on four struts with sixteen small nozzles, each with its own flame
-    { const T = new THREE.Group(); T.position.y = -294;
+    { const T = new THREE.Group(); T.position.y = -272;                         // raised so the ring and its four struts meet the underside of the keel (bottom at -294)
       const ringE = new THREE.Mesh(new THREE.TorusGeometry(170, 34, 14, 64), m.hull); ringE.rotation.x = Math.PI / 2; ringE.position.y = -50; T.add(ringE);
       const ringG = new THREE.Mesh(new THREE.TorusGeometry(170, 7, 10, 64), m.gold); ringG.rotation.x = Math.PI / 2; ringG.position.y = -50; T.add(ringG);
       for (let i = 0; i < 4; i++) { const a2 = i / 4 * 6.283 + 0.785, st = new THREE.Mesh(new THREE.BoxGeometry(150, 12, 20), m.hullD); st.position.set(Math.cos(a2) * 100, -22, Math.sin(a2) * 100); st.rotation.y = -a2; T.add(st); }
@@ -170,7 +170,7 @@
   const HELIX_H = 84; let helix = null, mixer = null, lastT = 0;
   function loadHelix() {
     if (!THREE.GLTFLoader) return;
-    new THREE.GLTFLoader().load('/crew/helix.glb?v=1', (gltf) => {
+    new THREE.GLTFLoader().load('/crew/helix.glb?v=2', (gltf) => {
       const obj = gltf.scene, box = new THREE.Box3().setFromObject(obj), size = box.getSize(new THREE.Vector3()), k = HELIX_H / Math.max(0.001, size.y), pivot = new THREE.Group(), inner = new THREE.Group();
       obj.scale.setScalar(k); box.setFromObject(obj); obj.position.set(-(box.min.x + box.max.x) / 2, -box.min.y, -(box.min.z + box.max.z) / 2); inner.add(obj); pivot.add(inner);
       obj.traverse(o => { if (o.isMesh) { o.frustumCulled = false; if (o.material) { o.material.envMapIntensity = 1.2; } } });
@@ -252,6 +252,7 @@
     const rimL = new THREE.DirectionalLight(0x6a8cff, 1.1); rimL.position.set(-900, 350, 700); scene.add(rimL);
     const fill = new THREE.DirectionalLight(0xffffff, 0.5); fill.position.set(0, 500, 900); scene.add(fill);
     const glow = new THREE.PointLight(0x9fe8ff, 1.0, 1400, 1.6); glow.position.set(0, 160, 0); scene.add(glow);
+    const below = new THREE.DirectionalLight(0x9db8ff, 1.5); below.position.set(300, -900, 500); scene.add(below);                  // a cold light from underneath so the keel and thruster show
     buildStructure();
     // drag to look around, wheel or pinch to zoom, tap a factory to select it
     let down = null, pinch = null;
