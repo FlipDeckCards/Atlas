@@ -145,3 +145,10 @@ def test_the_station_page_has_the_16_outer_slots_branch_routes_and_lit_junctions
         assert part in STATION_PAGE
     assert "setLineDash([6 * SC, 6 * SC]); ctx.strokeStyle = alpha(col, 0.3" not in STATION_PAGE      # open bays are no longer dashed outlines
     assert tenant.MAX_BUSINESSES == 17                                                                  # 4 inner + 16 outer slots, less the owner's fixed three
+
+
+def test_the_station_has_a_planet_and_twenty_walkway_walkers():
+    from openjarvis.server.crew.station import STATION_PAGE
+
+    assert "function drawPlanet(t)" in STATION_PAGE and "  drawPlanet(t);\n  drawMiniStation(t, dt);" in STATION_PAGE
+    assert "Array.from({ length: 20 }, (_, i) => WALK_ROLES[i % WALK_ROLES.length])" in STATION_PAGE
