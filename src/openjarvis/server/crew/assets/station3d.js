@@ -5,7 +5,7 @@
   const THREE = window.THREE;
   const RD = 660, HD = 380, FLOOR_Y = 10, R_IN = 306, R_OUT = 540, DW = 412, VC = DW / Math.cos(Math.PI / 8);
   let renderer = null, scene = null, camera = null, canvas = null, stage = null, opts = null, running = false, built = false, raf = 0, ro = null;
-  let facGroup = null, sig = '', hitBoxes = [], selRing = null, walkers = [], holo = null, beam = null, flames = [], hubGlow = null, lastInteract = 0;
+  let rootG = null, hubCrew = [], crewSig = '', crewCheck = 0, winMesh = null, facGroup = null, sig = '', hitBoxes = [], selRing = null, walkers = [], holo = null, beam = null, flames = [], hubGlow = null, lastInteract = 0;
   const cam = { az: 0.44, el: 0.42, dist: 1, zoom: 1, ly: -230 };
   const T0 = performance.now();
 
@@ -56,7 +56,7 @@
 
   // ── the fixed structure: base, boosters, ring thruster, walkways, hub, dome ──
   function buildStructure() {
-    const m = mats(), G = new THREE.Group(); scene.add(G);
+    const m = mats(), G = new THREE.Group(); scene.add(G); rootG = G;
     const add = (o) => { G.add(o); return o; };
     const deck = add(new THREE.Mesh(new THREE.CylinderGeometry(RD + 6, RD + 6, 14, 72), new THREE.MeshStandardMaterial({ color: 0x0d1624, metalness: 0.5, roughness: 0.6 }))); deck.position.y = -7;
     const skirt = add(new THREE.Mesh(new THREE.CylinderGeometry(RD + 52, RD + 78, 70, 72), m.hull)); skirt.position.y = -49;
@@ -65,8 +65,8 @@
     for (const [r, y, c] of [[RD + 64, -30, 0xd9b25c], [RD + 80, -90, 0x7fe9ff], [RD * 0.78, -200, 0x7fe9ff]]) { const t = new THREE.Mesh(new THREE.TorusGeometry(r, 4, 8, 96), c === 0xd9b25c ? m.gold : new THREE.MeshBasicMaterial({ color: c })); t.rotation.x = Math.PI / 2; t.position.y = y; add(t); }
     const ringB = add(new THREE.Mesh(new THREE.TorusGeometry(RD + 6, 9, 10, 96), m.gold)); ringB.rotation.x = Math.PI / 2; ringB.position.y = 6;
     const baseGlow = add(new THREE.Mesh(new THREE.TorusGeometry(RD + 6, 5, 8, 120), new THREE.MeshBasicMaterial({ color: 0x4fb8ff }))); baseGlow.rotation.x = Math.PI / 2; baseGlow.position.y = 17;
-    const win = new THREE.InstancedMesh(new THREE.BoxGeometry(5, 14, 12), new THREE.MeshBasicMaterial({ color: 0xffe9b8 }), 72), mm = new THREE.Matrix4(), qq = new THREE.Quaternion();
-    for (let i = 0; i < 72; i++) { const a = i / 72 * 6.283; qq.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -a); mm.compose(new THREE.Vector3(Math.cos(a) * (RD + 66), -49, Math.sin(a) * (RD + 66)), qq, new THREE.Vector3(1, 1, 1)); win.setMatrixAt(i, mm); }
+    const win = new THREE.InstancedMesh(new THREE.BoxGeometry(5, 14, 12), new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }), 72), mm = new THREE.Matrix4(), qq = new THREE.Quaternion(); winMesh = win;
+    for (let i = 0; i < 72; i++) { const a = i / 72 * 6.283; qq.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -a); mm.compose(new THREE.Vector3(Math.cos(a) * (RD + 66), -49, Math.sin(a) * (RD + 66)), qq, new THREE.Vector3(1, 1, 1)); win.setMatrixAt(i, mm); win.setColorAt(i, new THREE.Color(0x00e5ff)); }
     add(win);
     // eight booster engines on gimbal knuckles, flames pointing down
     for (let i = 0; i < 8; i++) {
@@ -111,17 +111,17 @@
     G.userData.oct = pts;
     // the dome: glass plus a geodesic hexagon frame (the dual of an icosphere)
     const dome = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 32, 0, Math.PI * 2, 0, Math.PI / 2), m.glass); dome.scale.set(RD, HD, RD); dome.renderOrder = 3; G.add(dome);
-    const ico = new THREE.IcosahedronGeometry(1, 3).toNonIndexed(), pos = ico.attributes.position, faces = [], emap = new Map(), key = (v) => v.map(n => Math.round(n * 1e4)).join(',');
+    const ico = new THREE.IcosahedronGeometry(1, 1).toNonIndexed(), pos = ico.attributes.position, faces = [], emap = new Map(), key = (v) => v.map(n => Math.round(n * 1e4)).join(',');
     for (let f = 0; f < pos.count / 3; f++) { const vs = [0, 1, 2].map(k => new THREE.Vector3(pos.getX(f * 3 + k), pos.getY(f * 3 + k), pos.getZ(f * 3 + k)));
       faces.push(vs.reduce((acc, v) => acc.add(v), new THREE.Vector3()).divideScalar(3).normalize());
       for (let k = 0; k < 3; k++) { const A = vs[k], B = vs[(k + 1) % 3], ek = [key([A.x, A.y, A.z]), key([B.x, B.y, B.z])].sort().join('|'); (emap.get(ek) || emap.set(ek, []).get(ek)).push(f); } }
     const struts = []; emap.forEach(fs => { if (fs.length === 2) { const A = faces[fs[0]], B = faces[fs[1]]; if (A.y >= -0.02 && B.y >= -0.02) struts.push([A, B]); } });
     const E = (v) => new THREE.Vector3(v.x * RD, Math.max(0, v.y) * HD, v.z * RD), m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
     const inst = new THREE.InstancedMesh(new THREE.CylinderGeometry(1, 1, 1, 6), m.hullD, struts.length);
-    struts.forEach(([A, B], i) => { const P = E(A), Q = E(B), d = Q.clone().sub(P), len = d.length(); q.setFromUnitVectors(up, d.normalize()); m4.compose(P.clone().add(Q).multiplyScalar(0.5), q, new THREE.Vector3(3.6, len, 3.6)); inst.setMatrixAt(i, m4); });
+    struts.forEach(([A, B], i) => { const P = E(A), Q = E(B), d = Q.clone().sub(P), len = d.length(); q.setFromUnitVectors(up, d.normalize()); m4.compose(P.clone().add(Q).multiplyScalar(0.5), q, new THREE.Vector3(4.6, len, 4.6)); inst.setMatrixAt(i, m4); });
     inst.renderOrder = 4; G.add(inst);
     const nodes = new Map(); struts.forEach(([A, B]) => { for (const v of [A, B]) nodes.set(key([v.x, v.y, v.z]), v); });
-    const ni = new THREE.InstancedMesh(new THREE.SphereGeometry(5.2, 8, 6), m.gold, nodes.size); let ci = 0; nodes.forEach(v => { m4.makeTranslation(...E(v).toArray()); ni.setMatrixAt(ci++, m4); }); ni.renderOrder = 4; G.add(ni);
+    const ni = new THREE.InstancedMesh(new THREE.SphereGeometry(7, 10, 8), m.gold, nodes.size); let ci = 0; nodes.forEach(v => { m4.makeTranslation(...E(v).toArray()); ni.setMatrixAt(ci++, m4); }); ni.renderOrder = 4; G.add(ni);
     // Helix: a glowing hologram standing in the middle of the hub, always turned towards the viewer, over a projector ring and a beam
     const beamM = new THREE.Mesh(new THREE.CylinderGeometry(52, 66, 190, 32, 1, true), new THREE.MeshBasicMaterial({ color: 0x7fe9ff, transparent: true, opacity: 0.1, side: THREE.DoubleSide, depthWrite: false })); beamM.position.y = FLOOR_Y + 105; beamM.renderOrder = 6; G.add(beamM); beam = beamM;
     for (const [r, y] of [[60, FLOOR_Y + 26], [48, FLOOR_Y + 66], [36, FLOOR_Y + 106], [28, FLOOR_Y + 146]]) { const t = new THREE.Mesh(new THREE.TorusGeometry(r, 1.4, 6, 40), new THREE.MeshBasicMaterial({ color: 0x7fe9ff, transparent: true, opacity: 0.6 })); t.rotation.x = Math.PI / 2; t.position.y = y; t.renderOrder = 6; G.add(t); }
@@ -138,7 +138,7 @@
     for (let i = 0; i < 20; i++) { const col = new THREE.Color(RC[i % 10]), gw = new THREE.Group();
       const body = new THREE.Mesh(new THREE.CapsuleGeometry(3.6, 7, 3, 8), new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.45, roughness: 0.5 })); body.position.y = 8.5; gw.add(body);
       const head = new THREE.Mesh(new THREE.SphereGeometry(4, 10, 8), new THREE.MeshStandardMaterial({ color: 0xe8f0f6, roughness: 0.35 })); head.position.y = 18; gw.add(head);
-      gw.userData = { f0: i / 20, dir: i % 3 === 0 ? -1 : 1, v: 0.000012 + (i % 5) * 0.0000045, off: (i % 2 ? 4 : -4) };
+      gw.userData = { f0: i / 20, dir: i % 3 === 0 ? -1 : 1, v: 0.0000055 + (i % 5) * 0.000002, off: (i % 2 ? 4 : -4) };
       add(gw); walkers.push(gw); }
     facGroup = new THREE.Group(); G.add(facGroup);
     selRing = new THREE.Mesh(new THREE.TorusGeometry(1, 0.03, 6, 48), new THREE.MeshBasicMaterial({ color: 0xffffff })); selRing.rotation.x = Math.PI / 2; selRing.visible = false; G.add(selRing);
@@ -251,6 +251,7 @@
     if (beam) beam.material.opacity = 0.09 + 0.04 * Math.sin(t * 0.003);
     if (hubGlow) hubGlow.material.opacity = 0.5 + 0.12 * Math.sin(t * 0.002);
     for (let i = 0; i < flames.length; i++) { const f = flames[i], s = 1 + 0.07 * Math.sin(t * 0.03 + i * 1.7) + 0.03 * Math.sin(t * 0.071 + i); f.scale.y = s; f.scale.x = f.scale.z = 1 + 0.03 * Math.sin(t * 0.05 + i * 2.3); }
+    updateRim(t); if (t - crewCheck > 700) { crewCheck = t; syncCrew(); } moveCrew(t);
     const pts = octPts();
     if (pts) for (const w of walkers) { const u = w.userData, f = (((u.f0 + u.dir * u.v * t) % 1) + 1) % 1 * 8, k = Math.floor(f) % 8, q = f - Math.floor(f), A = pts[k], B = pts[(k + 1) % 8];
       const dx = B[0] - A[0], dz = B[1] - A[1], L = Math.hypot(dx, dz) || 1; w.position.set(A[0] + dx * q + (-dz / L) * u.off, FLOOR_Y + Math.abs(Math.sin(t * 0.012 + u.f0 * 30)) * 0.8, A[1] + dz * q + (dx / L) * u.off); w.rotation.y = -Math.atan2(dz, dx) * u.dir; }
@@ -259,6 +260,26 @@
     if (selRing) { const key = sel.startsWith('f:') ? sel.slice(2) : '', s = slots && slots[key]; if (s) { const [x, z] = polar(s.a, s.D); selRing.visible = true; selRing.position.set(x, FLOOR_Y + 2, z); selRing.scale.setScalar(86); selRing.material.opacity = 1; selRing.material.color.setHSL((t * 0.0004) % 1, 0.9, 0.7); } else selRing.visible = false; }
     renderer.render(scene, camera);
   }
+  const RIM = [0x00e5ff, 0xff6d00, 0xb06cff, 0x00ff99, 0xff4fb8, 0xffe600, 0x6b8cff, 0xff3344], rimC = new THREE.Color();
+  const hash01 = (a, b) => { const v = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return v - Math.floor(v); };
+  function updateRim(t) {                                                // each light has its own colour, rhythm and on/off pattern, plus a slow chase of light round the rim
+    if (!winMesh) return; for (let i = 0; i < 72; i++) { const period = 500 + hash01(i, 1) * 1900, step = Math.floor(t / period + hash01(i, 2) * 40), on = hash01(i, step % 91 + 3) > 0.22;
+      const chase = Math.max(0, Math.cos(t * 0.0007 - i / 72 * 6.283 * 2)), k = on ? 0.55 + 0.45 * Math.sin(t * (0.002 + hash01(i, 5) * 0.004) + i) + 0.4 * chase : 0.06 + 0.35 * chase;
+      rimC.setHex(RIM[Math.floor(hash01(i, step % 53 + 9) * RIM.length) % RIM.length]).multiplyScalar(Math.min(1.2, k)); winMesh.setColorAt(i, rimC); }
+    winMesh.instanceColor.needsUpdate = true; }
+  function syncCrew() {                                                  // the crew with nothing to do walk Helix's own ring, as they do on the flat map
+    const roster = opts && opts.getRoster ? opts.getRoster() : [], idle = roster.filter(a => a.role !== 'lead' && !a.working && !a.waiting), s2 = idle.map(a => a.role).join(',');
+    if (s2 === crewSig || !rootG) return; crewSig = s2;
+    for (const f of hubCrew) { rootG.remove(f); f.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); } hubCrew = [];
+    idle.forEach((a, i) => { const col = new THREE.Color((opts.roleColors && opts.roleColors[a.role]) || '#ffffff'), g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CapsuleGeometry(4.6, 9, 3, 8), new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.5, roughness: 0.5 })); body.position.y = 10.5; g.add(body);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(5.2, 10, 8), new THREE.MeshStandardMaterial({ color: 0xe8f0f6, roughness: 0.35 })); head.position.y = 22.5; g.add(head);
+      g.scale.setScalar(1.5); const R = (k) => hash01(i + 1, k);
+      g.userData = { a0: i / Math.max(1, idle.length) * 6.283 + R(2) * 0.4, dir: R(1) < 0.5 ? -1 : 1, v: 0.000018 + R(3) * 0.000028, sw: 0.25 + R(4) * 0.4, wv: 0.00008 + R(5) * 0.00012, ph: R(6) * 6.28, lane: 84 + R(7) * 40, lv: 0.0001 + R(8) * 0.0002, lp: R(9) * 6.28 };
+      rootG.add(g); hubCrew.push(g); }); }
+  function moveCrew(t) { for (const g of hubCrew) { const u = g.userData, ang = u.a0 + u.dir * (u.v * t + u.sw * Math.sin(u.wv * t + u.ph)), r = u.lane + 8 * Math.sin(u.lv * t + u.lp), px = Math.cos(ang) * r, pz = Math.sin(ang) * r;
+      const ang2 = u.a0 + u.dir * (u.v * (t + 40) + u.sw * Math.sin(u.wv * (t + 40) + u.ph)), r2 = u.lane + 8 * Math.sin(u.lv * (t + 40) + u.lp), qx = Math.cos(ang2) * r2, qz = Math.sin(ang2) * r2, moving = Math.hypot(qx - px, qz - pz) > 0.012;
+      g.position.set(px, FLOOR_Y + (moving ? Math.abs(Math.sin(t * 0.012 + u.a0 * 9)) * 1.2 : 0), pz); if (moving) g.rotation.y = -Math.atan2(qz - pz, qx - px) + Math.PI / 2; } }
   let _oct = null; function octPts() { if (_oct) return _oct; const g = scene.children.find(c => c.userData && c.userData.oct); if (g) _oct = g.userData.oct; return _oct; }
 
   window.Station3D = {
