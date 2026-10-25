@@ -5,7 +5,7 @@
   const THREE = window.THREE;
   const RD = 660, HD = 380, FLOOR_Y = 10, R_IN = 306, R_OUT = 540, DW = 412, VC = DW / Math.cos(Math.PI / 8);
   let renderer = null, scene = null, camera = null, canvas = null, stage = null, opts = null, running = false, built = false, raf = 0, ro = null;
-  let trayAgents = [], rootG = null, hubCrew = [], crewSig = '', crewCheck = 0, winMesh = null, facGroup = null, sig = '', hitBoxes = [], selRing = null, walkers = [], holo = null, flames = [], lastInteract = 0;
+  let boostPivots = [], actions = null, launchS = null, boost = 1, trayAgents = [], rootG = null, hubCrew = [], crewSig = '', crewCheck = 0, winMesh = null, facGroup = null, sig = '', hitBoxes = [], selRing = null, walkers = [], holo = null, flames = [], lastInteract = 0;
   const cam = { az: 0.44, el: 0.42, dist: 1, zoom: 1, ly: -230 };
   const T0 = performance.now();
   const hash01 = (a, b) => { const v = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return v - Math.floor(v); };
@@ -40,7 +40,7 @@
   }
   function moveSurges(t) { for (const list of [surges, surgesFixed]) for (const s of list) s.t.offset.x = ((s.o + s.dir * 0.00045 * t) % 1 + 1) % 1; }
   // ── the crew, drawn with their own robot artwork: a camera-facing sprite cut from the sprite sheet (bots.png). Every agent is the same size. ──
-  const AGENT_H = 85, SHEET_COLS = 17;                                        // 2.5 times the size they were (34); Helix is still about twice their height
+  const AGENT_H = 60, SHEET_COLS = 17;                                        // 1.75 times the size they were (34); Helix is still about twice their height
   let sheet = null, sheetState = 0; const cellCache = new Map(), spriteList = [];
   function loadSheet() { if (sheetState) return; sheetState = 1; const im = new Image(); im.onload = () => { sheet = im; sheetState = 2; spriteList.forEach(sp => paintAgent(sp, 0)); }; im.onerror = () => { sheetState = 3; }; im.src = (opts && opts.botUrl) || '/crew/bots.png'; }
   function cellTex(row, col) {
@@ -108,7 +108,7 @@
       const strut = new THREE.Mesh(new THREE.BoxGeometry(80, 18, 26), m.hullD); strut.position.set(40, 0, 0); e.add(strut);
       const knuckle = new THREE.Mesh(new THREE.SphereGeometry(30, 20, 14), m.gold); knuckle.position.set(90, 0, 0); e.add(knuckle);
       for (const rot of [[Math.PI / 2, 0, 0], [0, 0, 0]]) { const c = new THREE.Mesh(new THREE.TorusGeometry(34, 3.2, 8, 28), m.hull); c.rotation.set(...rot); c.position.set(90, 0, 0); e.add(c); }
-      const pivot = new THREE.Group(); pivot.position.set(90, 0, 0); pivot.rotation.z = 0.2; e.add(pivot);
+      const pivot = new THREE.Group(); boostPivots.push(pivot); pivot.position.set(90, 0, 0); pivot.rotation.z = 0.2; e.add(pivot);
       const socket = new THREE.Mesh(new THREE.CylinderGeometry(24, 30, 26, 18), m.hullD); socket.position.y = -34; pivot.add(socket);
       const body = new THREE.Mesh(new THREE.CylinderGeometry(32, 36, 130, 22), m.hull); body.position.y = -112; pivot.add(body);
       for (const y of [-64, -112, -160]) { const ring = new THREE.Mesh(new THREE.TorusGeometry(36, 3, 8, 24), y === -112 ? m.gold : m.hullD); ring.rotation.x = Math.PI / 2; ring.position.y = y; pivot.add(ring); }
@@ -177,7 +177,8 @@
     new THREE.GLTFLoader().load('/crew/helix.glb?v=3', (gltf) => {
       const obj = gltf.scene, pivot = new THREE.Group(), inner = new THREE.Group();
       // a rigged model's size is only right once a frame of its animation is applied, so measure after that
-      let clip = null; if (gltf.animations && gltf.animations.length) { clip = gltf.animations.find(c => /walking_woman/i.test(c.name)) || gltf.animations.find(c => /walk/i.test(c.name)) || gltf.animations[0]; mixer = new THREE.AnimationMixer(obj); const act = mixer.clipAction(clip); act.play(); act.timeScale = 0.45; mixer.update(0.05); }
+      let clip = null; if (gltf.animations && gltf.animations.length) { clip = gltf.animations.find(c => /walking_woman/i.test(c.name)) || gltf.animations.find(c => /walk/i.test(c.name)) || gltf.animations[0]; mixer = new THREE.AnimationMixer(obj); const act = mixer.clipAction(clip); act.play(); act.timeScale = 0.45; mixer.update(0.05);
+        const flipClip = gltf.animations.find(c => /backflip/i.test(c.name)); actions = { walk: act, flip: flipClip ? mixer.clipAction(flipClip) : null }; }
       obj.updateMatrixWorld(true);
       const box = new THREE.Box3().setFromObject(obj, true), size = box.getSize(new THREE.Vector3()), k = HELIX_H / Math.max(0.001, size.y);
       obj.scale.setScalar(k); obj.updateMatrixWorld(true); box.setFromObject(obj, true); obj.position.set(-(box.min.x + box.max.x) / 2, -box.min.y, -(box.min.z + box.max.z) / 2); inner.add(obj); pivot.add(inner);
@@ -187,10 +188,50 @@
       if (holo) holo.visible = false;
     }, undefined, () => { /* no model: the hologram stays */ });
   }
-  function moveHelix(t) {                                                            // she stands in the middle of the hub, turning to look at whoever is looking at her
+  const hw = { x: 0, z: 0, tx: 0, tz: 0, ready: false };                              // where she is on the hub and where she is heading
+  function moveHelix(t) {                                                            // she strolls the centre and the ring; for take-off she comes back to the middle first
     if (!helix) return; const dt = Math.min(0.1, (t - lastT) / 1000); lastT = t; if (mixer) mixer.update(dt);
-    const want = Math.atan2(camera.position.x, camera.position.z); let d = want - faceAng; d = Math.atan2(Math.sin(d), Math.cos(d)); faceAng += d * Math.min(1, dt * 2.2); helix.rotation.y = faceAng;
+    let want = null, speed = 26;
+    if (launchS !== null) {                                                          // called for take-off: straight back to the centre, then face the camera for the flip
+      hw.tx = 0; hw.tz = 0; speed = 70;
+      if (Math.hypot(hw.x, hw.z) < 2) want = Math.atan2(camera.position.x, camera.position.z);
+    } else if (!hw.ready || Math.hypot(hw.tx - hw.x, hw.tz - hw.z) < 4) {           // pick the next spot to stroll to: anywhere from the middle out to the ring
+      const a = Math.random() * 6.283185, r = Math.random() < 0.25 ? Math.random() * 40 : 70 + Math.random() * 56; hw.tx = Math.cos(a) * r; hw.tz = Math.sin(a) * r; hw.ready = true;
+    }
+    const dx = hw.tx - hw.x, dz = hw.tz - hw.z, dist = Math.hypot(dx, dz);
+    if (dist > 1) { const st = Math.min(dist, speed * dt); hw.x += dx / dist * st; hw.z += dz / dist * st; if (want === null) want = Math.atan2(dx, dz); }
+    if (want === null) want = faceAng;
+    let d = want - faceAng; d = Math.atan2(Math.sin(d), Math.cos(d)); faceAng += d * Math.min(1, dt * (launchS !== null ? 6 : 4)); helix.rotation.y = faceAng;
+    helix.position.set(hw.x, FLOOR_Y + 14, hw.z);
+    if (actions && launchS === null && actions.walk) actions.walk.timeScale = 0.8;
     if (!helix.userData.animated) helix.userData.inner.rotation.z = 0.04 * Math.sin(t * 0.0025);
+  }
+  // ── take-off: Helix does a backflip and calls it, the side thrusters swing round, the whole station spins clockwise and rockets off into deep space, then comes back ──
+  const LAUNCH_S = 11.6, ease3 = (x) => x < 0 ? 0 : x > 1 ? 1 : x * x * (3 - 2 * x), eIn = (x) => { x = Math.max(0, Math.min(1, x)); return x * x * x; }, eOut = (x) => { x = Math.max(0, Math.min(1, x)); return 1 - Math.pow(1 - x, 3); };
+  const _away = new THREE.Vector3();
+  function startLaunch() {
+    if (launchS !== null || !running || document.hidden) return false;
+    launchS = { t0: performance.now(), flipped: false, said: false, flipAt: Math.min(2.2, Math.hypot(hw.x, hw.z) / 70 + 0.4) };
+    if (opts && opts.onLaunch) opts.onLaunch();
+    return true;
+  }
+  function stepLaunch() {
+    if (launchS === null) return; const s = (performance.now() - launchS.t0) / 1000;
+    if (s >= LAUNCH_S) {                                                           // landed: everything back exactly as it was
+      launchS = null; boost = 1; rootG.position.set(0, 0, 0); rootG.rotation.y = 0; boostPivots.forEach(p => { p.rotation.set(0, 0, 0.2); });
+      if (actions && actions.flip) { actions.walk.reset().play(); actions.walk.timeScale = 0.45; actions.flip.stop(); } return; }
+    if (actions && actions.flip && !launchS.flipped && !launchS.said && s >= launchS.flipAt) { const f = actions.flip; f.reset(); f.setLoop(THREE.LoopOnce, 1); f.clampWhenFinished = true; f.timeScale = 1; f.play(); actions.walk.crossFadeTo(f, 0.2, false); launchS.flipped = true; launchS.said = true; }
+    if (actions && actions.flip && launchS.flipped && s > launchS.flipAt + 2.3) { launchS.flipped = false; actions.walk.reset(); actions.walk.timeScale = 0.45; actions.walk.play(); actions.flip.crossFadeTo(actions.walk, 0.3, false); }
+    // the side thrusters swing round on their knuckles, then lock pointing straight down for the burn, then relax again on the way back
+    const sw = (s - 1.5) / 2.0, back = ease3((s - 10.2) / 1.2);
+    const ang = s < 1.5 ? 0.2 : sw < 1 ? 0.2 + (-0.1 - 0.2) * ease3(sw) + 0.65 * Math.sin(sw * Math.PI * 2) : -0.1 + (0.2 + 0.1) * back;
+    boostPivots.forEach((p, i) => { p.rotation.z = ang; p.rotation.x = s < 1.5 || s > 11 ? 0 : 0.35 * Math.sin(Math.min(1, sw) * Math.PI * 2 + i); });
+    boost = 1 + 1.7 * ease3((s - 3.0) / 1.4) * (1 - ease3((s - 10.2) / 1.2));    // the flames grow as the engines catch
+    // a clockwise spin (seen from above), slow to start, fastest in flight, slow to stop; three full turns in all so it ends exactly where it began
+    rootG.rotation.y = -6.283185 * 3 * (ease3((s - 3.0) / 7.8));
+    // up and away, away from the viewer into deep space; a pause far out; then back, braking
+    const out = eIn((s - 4.8) / 2.4) * (1 - eOut((s - 8.3) / 2.6));
+    _away.set(-camera.position.x, 0, -camera.position.z).normalize(); rootG.position.set(_away.x * 7800 * out, 2400 * out, _away.z * 7800 * out);
   }
   // ── the factories: open work trays and the walkway bands to them; rebuilt when the modules change ──
   function band(g, a, r0, r1, wid, col, lit, dir) {
@@ -247,7 +288,7 @@
     canvas = document.createElement('canvas'); canvas.id = 'cv3d'; canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab'; stage.appendChild(canvas);
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2)); renderer.setClearColor(0x000000, 0); renderer.outputEncoding = THREE.sRGBEncoding; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.0;
-    scene = new THREE.Scene(); camera = new THREE.PerspectiveCamera(30, 1, 10, 12000);
+    scene = new THREE.Scene(); camera = new THREE.PerspectiveCamera(30, 1, 10, 30000);
     { const pm = new THREE.PMREMGenerator(renderer), es = new THREE.Scene();
       const g = tex(512, 256, (c, w, h) => { const gr = c.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, '#7a96d8'); gr.addColorStop(0.45, '#262d54'); gr.addColorStop(0.5, '#8a6aa8'); gr.addColorStop(0.58, '#141728'); gr.addColorStop(1, '#07080f'); c.fillStyle = gr; c.fillRect(0, 0, w, h); });
       es.add(new THREE.Mesh(new THREE.SphereGeometry(50, 24, 12), new THREE.MeshBasicMaterial({ map: g, side: THREE.BackSide })));
@@ -286,7 +327,8 @@
   const ray = new THREE.Raycaster(), v2 = new THREE.Vector2();
   function pick(e) {
     const r = canvas.getBoundingClientRect(); v2.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1); ray.setFromCamera(v2, camera);
-    if (holo) { const h = ray.intersectObject(holo, false); if (h.length && opts && opts.onSelect) { opts.onSelect('hub'); return; } }
+    if (helix) { const h = ray.intersectObject(helix, true); if (h.length && opts && opts.onHelix) { opts.onHelix(); return; } }
+    if (holo && holo.visible) { const h = ray.intersectObject(holo, false); if (h.length && opts && opts.onSelect) { opts.onSelect('hub'); return; } }
     const hits = ray.intersectObjects(hitBoxes, false); if (hits.length && opts && opts.onSelect) { const u = hits[0].object.userData; opts.onSelect(u.expansion ? 'open' : u.key, u); }
   }
 
@@ -297,8 +339,8 @@
     const d = cam.dist * cam.zoom, ce = Math.cos(cam.el);
     camera.position.set(Math.sin(cam.az) * d * ce, Math.sin(cam.el) * d + cam.ly * 0.2, Math.cos(cam.az) * d * ce); camera.lookAt(0, cam.ly, 0);
     if (holo) holo.rotation.y = Math.atan2(camera.position.x, camera.position.z);
-    for (let i = 0; i < flames.length; i++) { const f = flames[i], s = 1 + 0.07 * Math.sin(t * 0.03 + i * 1.7) + 0.03 * Math.sin(t * 0.071 + i); f.scale.y = s; f.scale.x = f.scale.z = 1 + 0.03 * Math.sin(t * 0.05 + i * 2.3); }
-    moveHelix(t); moveSurges(t); updateRim(t); if (t - crewCheck > 700) { crewCheck = t; syncCrew(); } moveCrew(t);
+    for (let i = 0; i < flames.length; i++) { const f = flames[i], s = 1 + 0.07 * Math.sin(t * 0.03 + i * 1.7) + 0.03 * Math.sin(t * 0.071 + i); f.scale.y = s * boost; f.scale.x = f.scale.z = 1 + 0.03 * Math.sin(t * 0.05 + i * 2.3); }
+    moveHelix(t); moveSurges(t); stepLaunch(); updateRim(t); if (t - crewCheck > 700) { crewCheck = t; syncCrew(); } moveCrew(t);
     const pts = octPts();
     if (pts) for (const w of walkers) { const u = w.userData, f = (((u.f0 + u.dir * u.v * t) % 1) + 1) % 1 * 8, k = Math.floor(f) % 8, q = f - Math.floor(f), A = pts[k], B = pts[(k + 1) % 8];
       const dx = B[0] - A[0], dz = B[1] - A[1], L = Math.hypot(dx, dz) || 1; w.position.set(A[0] + dx * q + (-dz / L) * u.off, FLOOR_Y + Math.abs(Math.sin(t * 0.012 + u.f0 * 30)) * 0.8, A[1] + dz * q + (dx / L) * u.off); faceAgent(w, dx / L * u.dir, dz / L * u.dir, t, true); }
@@ -328,6 +370,7 @@
 
   window.Station3D = {
     start(stageEl, o) { stage = stageEl; opts = o || {}; if (!renderer) setup(); canvas.style.display = 'block'; running = true; lastInteract = 0; resize(); if (!raf) frame(); },
+    launch() { return startLaunch(); },
     look(o) { Object.assign(cam, o || {}); lastInteract = performance.now(); },
     stop() { running = false; if (canvas) canvas.style.display = 'none'; },
     update(mods) {
