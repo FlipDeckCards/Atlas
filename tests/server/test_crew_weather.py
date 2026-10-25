@@ -159,3 +159,10 @@ def test_on_a_phone_the_station_fills_its_box_and_the_desktop_sizing_is_untouche
 
     assert "Math.min(W, H) / (2 * 382.5) * 0.95" in STATION_PAGE
     assert "SC = Math.max(0.34, Math.min(1.25, Math.min(dw / 1060, dh / 800), Math.min(W / 1060, H / 800)));" in STATION_PAGE   # the desktop line, as it was
+
+
+def test_every_name_plate_is_the_size_of_helix_business_except_the_expansion_bays():
+    from openjarvis.server.crew.station import STATION_PAGE
+
+    assert "ctx.measureText('HELIX BUSINESS…').width + 18 * SC + 6" in STATION_PAGE
+    assert "const pw = m.expansion ? Math.max(nw, sw) + 18 * SC + 6 : fixedW" in STATION_PAGE

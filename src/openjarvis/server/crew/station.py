@@ -1781,9 +1781,11 @@ function drawWaiting(m, t) {
 // a name plate just outside each module's outer end, always upright, plus the module's status line in its middle
 function drawPlate(m, t) {
   const fs = Math.max(8, 11 * SC), fs2 = Math.max(7, 9 * SC);
-  ctx.font = '700 ' + fs + 'px Orbitron, monospace'; const name = fitText((m.isNew ? '◆ ' : '') + m.label, 190 * SC + 20), nw = ctx.measureText(name).width;
+  // every plate is the size of Helix Business's (long names are shortened to fit); only the Expansion Bays, whose names are longer, size to their text
+  ctx.font = '700 ' + fs + 'px Orbitron, monospace'; const fixedW = ctx.measureText('HELIX BUSINESS…').width + 18 * SC + 6;
+  const name = fitText((m.isNew ? '◆ ' : '') + m.label, m.expansion ? 190 * SC + 20 : fixedW - 18 * SC - 6), nw = ctx.measureText(name).width;
   ctx.font = fs2 + 'px Share Tech Mono, monospace'; const st = m.state || '', sw = ctx.measureText(st).width;
-  const pw = Math.max(nw, sw) + 18 * SC + 6, ph = fs + fs2 + 12 * SC;
+  const pw = m.expansion ? Math.max(nw, sw) + 18 * SC + 6 : fixedW, ph = fs + fs2 + 12 * SC;
   // the plate lies flat against the factory's outer end, centred on it, turned with the factory so the name always faces Helix, whatever angle the ring has turned to
   ctx.save(); ctx.translate(m.cx, m.cy); ctx.rotate(m.rot); ctx.translate(0, -m.h / 2 - 5 * SC - ph / 2);
   const ox = 0, x = -pw / 2, y = -ph / 2;
