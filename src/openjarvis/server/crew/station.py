@@ -1233,10 +1233,11 @@ function fillBay(b) {
   b.planning = current.some(m => m.status === 'planning');
   b.title = current.length ? (current[0].title || current[0].goal) : '';
   b.state = b.tasks.some(t => t.status === 'waiting') ? 'NEEDS YOU' : b.tasks.some(t => t.status === 'running') ? 'WORKING'
-    : b.planning ? 'PLANNING' : current.length ? 'QUEUED' : b.missions.length ? 'DONE' : 'IDLE';
+    : b.planning ? 'PLANNING' : current.length ? 'QUEUED' : 'IDLE';              // finished work is just idle: nothing running here
+  if (b.state === 'IDLE') b.powered = true;                                     // an idle factory stays lit and its tube keeps flowing
   // the product itself: LIVE or DOWN from the server's check of its site, shown whenever no crew is working there
   const site = S && S.products ? S.products[b.key] : null;
-  if (site && (b.state === 'IDLE' || b.state === 'DONE')) {
+  if (site && b.state === 'IDLE') {
     b.state = site.live ? 'LIVE' : 'DOWN';
     b.powered = !!site.live;
     b.idleText = site.live ? 'LIVE · STANDING BY' : 'SITE NOT ANSWERING';
@@ -1542,7 +1543,7 @@ function modLive(m) { return !!m.powered || m.tasks.some(k => k.status === 'runn
 // a docking tube: straight from Helix's core into the middle of the module's inner wall
 function drawSpoke(m, t) {
   const site = S && S.products ? S.products[m.key] : null;               // a live product site keeps its tube flowing too
-  const live = m.tasks.some(k => k.status === 'running') || (m.platform && m.powered) || !!(site && site.live);
+  const live = m.tasks.some(k => k.status === 'running') || (m.platform && m.powered) || !!(site && site.live) || m.state === 'IDLE';
   const col = m.color, hw = hallW() / 2, wall = 4 * SC;
   const r1 = core.r + 3, r2 = m.D - m.h / 2 + 2, ux = m.ux, uy = m.uy, nx = -uy, ny = ux;
   const P = (r, o) => [core.x + ux * r + nx * o, core.y + uy * r + ny * o];
@@ -1692,7 +1693,7 @@ function drawPlate(m, t) {
   ctx.textAlign = 'center';
   ctx.font = '700 ' + fs + 'px Orbitron, monospace'; ctx.fillStyle = m.color; ctx.fillText(name, ox, y + 5 * SC + fs);
   ctx.font = fs2 + 'px Share Tech Mono, monospace';
-  ctx.fillStyle = st === 'DOWN' ? '#ff3344' : st === 'NEEDS YOU' || st === 'OFFLINE' ? '#ff8a2a' : st === 'WORKING' || st === 'ONLINE' || st === 'LIVE' ? '#00ff99' : 'rgba(142,207,224,0.65)';
+  ctx.fillStyle = st === 'DOWN' ? '#ff3344' : st === 'NEEDS YOU' || st === 'OFFLINE' || st === 'IDLE' ? '#ff8a2a' : st === 'WORKING' || st === 'ONLINE' || st === 'LIVE' ? '#00ff99' : 'rgba(142,207,224,0.65)';
   ctx.fillText(st, ox, y + 7 * SC + fs + fs2);
   ctx.restore();
 }
