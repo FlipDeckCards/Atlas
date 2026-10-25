@@ -34,6 +34,28 @@ GOAL = (
 )
 
 
+REVIEWS_GOAL = (
+    "Reply to this week's Google Play reviews. Echo first runs google_play.list_reviews (no package, so every connected app). For EACH review that has "
+    "no reply yet, Echo writes a short reply (at most 350 characters, no links): thank them and name the specific thing they said; for a complaint be "
+    "sincere and offer to help, never defensive, never promise a fix, a date or a refund you cannot guarantee; for 4 and 5 stars keep it warm and brief. "
+    "Echo then calls google_play.reply_review once per review with the package, the exact review_id and the reply: every reply is a PUBLIC post, so each "
+    "one waits for Michael's approval. Skip reviews that already have a reply. If there are no reviews without a reply, say so and finish. Budget $1."
+)
+
+
+def reviews_schedule(env=None):
+    """(weekday, hour, minute) in Los Angeles time for the weekly review replies: CREW_WEEKLY_REVIEWS, default 'mon 09:00' ('off' disables)."""
+    raw = ((os.environ if env is None else env).get("CREW_WEEKLY_REVIEWS") or "mon 09:00").strip().lower()
+    if raw in ("off", "0", "false", "no"):
+        return None
+    try:
+        day, hm = raw.split()
+        h, m = (int(x) for x in hm.split(":"))
+        return DAYS.index(day[:3]), h, m
+    except (ValueError, IndexError):
+        return 0, 9, 0
+
+
 def social_mode(env=None) -> str:
     """'approve' (default): the drafted week waits for Michael's one Approve tap; 'auto_pause': it approves itself after a hold, unless declined."""
     raw = ((os.environ if env is None else env).get("CREW_SOCIAL_MODE") or "approve").strip().lower()
@@ -150,8 +172,42 @@ class WeeklySocial:
         await self.engine.store.add_event(uid, "ops", f"Helix asked for approval of {total} drafted posts ({parts}).")
         return q["id"]
 
+    async def maybe_reviews(self, la) -> Optional[str]:
+        """Once a week, after the set time, while Google Play is connected: the crew drafts a reply to each unanswered review (each waits for Approve)."""
+        sch = reviews_schedule(self.env)
+        if sch is None:
+            return None
+        day, h, m = sch
+        if (la.weekday(), la.hour, la.minute) < (day, h, m):
+            return None
+        uid = await self.herald.owner_id()
+        if not uid:
+            return None
+        week = (la - dt.timedelta(days=la.weekday())).date()
+        mark = f"weekly_reviews:{week.isoformat()}"
+        if mark == getattr(self, "_reviews_done", "") or await self.engine.store.get_secret(uid, mark):
+            self._reviews_done = mark
+            return None
+        from openjarvis.server.crew import connections as conns
+
+        if not conns.play_key(await self.engine.env_for(uid)):
+            return None
+        await self.engine.store.set_secret(uid, mark, self.now().isoformat())
+        self._reviews_done = mark
+        try:
+            m_ = await self.engine.start_mission(uid, REVIEWS_GOAL, 1.0)
+        except Exception:
+            logger.exception("weekly review replies could not start")
+            return None
+        return m_["id"]
+
     async def maybe_run(self) -> Optional[str]:
         """Called every crew tick. Starts this week's plan once, after the set time. Returns the mission id when it starts one."""
+        if self.herald is not None:
+            try:
+                await self.maybe_reviews(brief_content.la_time(self.now()))
+            except Exception:
+                logger.exception("weekly reviews check failed")
         sch = schedule(self.env)
         if self.herald is None:
             return None

@@ -112,6 +112,9 @@ ACTIONS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "google_play": {
         "list_reviews": {"risk": "read", "about": "Recent Google Play reviews (stars, text, date) for one of the owner's apps; newest first.",
                          "args": {"package": "app package name, e.g. com.flipdeckllc.flipdeckcards (omit for every connected app)", "limit": "1-20, default 10"}},
+        "reply_review": {"risk": "checkpoint", "about": "Post a PUBLIC reply to one Google Play review as the developer. The owner approves each reply first. Max 350 characters, "
+                                                        "warm and honest, no promises you cannot keep, no links.",
+                         "args": {"package": "app package name", "review_id": "the id shown by list_reviews", "reply_text": "the reply (max 350 characters)"}},
     },
     "app_store": {},
 }
@@ -215,6 +218,9 @@ def describe_action(platform: str, action: str, args: Dict[str, Any]) -> str:
     if platform == "google" and action == "gmail_send":
         to, subj, body = _mail_args(args)
         return f'Send this email from your Gmail to {to}. Subject: "{subj}"\n{_clip_text(body, 1200)}'
+    if platform == "google_play" and action == "reply_review":
+        return (f'Post this PUBLIC reply to a Google Play review of {_clip(args.get("package"), 80)} (review {_clip(args.get("review_id"), 60)}): '
+                f'"{_clip(args.get("reply_text"), 350)}"')
     if platform == "marnyx" and action == "approve_posts":
         return f'Approve every held draft for {_clip(args.get("business"), 60)} in Marnyx so each is published at its posting time.'
     if platform == "marnyx" and action == "send_email":
@@ -335,11 +341,51 @@ async def play_reviews(c: httpx.AsyncClient, token: str, package: str, limit: in
     return _ok(r, "Google Play").get("reviews") or []
 
 
+def _review_row(rv: Dict[str, Any]) -> Dict[str, Any]:
+    """One Play review flattened: id, stars, text, when, and whether the developer has already replied."""
+    cs = rv.get("comments") or []
+    uc = ((cs[0] if cs else {}).get("userComment") or {})
+    replied = any((c or {}).get("developerComment") for c in cs[1:])
+    secs = int((uc.get("lastModified") or {}).get("seconds") or 0)
+    return {"id": str(rv.get("reviewId") or ""), "stars": int(uc.get("starRating") or 0), "text": _clip(uc.get("text"), 400),
+            "when": dt.datetime.fromtimestamp(secs, dt.timezone.utc), "replied": replied}
+
+
+async def play_week(env, cf: "ClientFactory") -> Dict[str, Any]:
+    """The last week's reviews (Google only returns that much) for every connected app: counts, average stars, and the ones still unanswered."""
+    out: Dict[str, Any] = {"apps": {}, "new": 0, "stars": 0, "unanswered": 0}
+    async with cf() as c:
+        token = await play_access_token(play_key(env), c)
+        for pkg in play_apps(env)[:6]:
+            rows = [_review_row(r) for r in await play_reviews(c, token, pkg, 20)]
+            out["apps"][pkg] = rows
+            out["new"] += len(rows)
+            out["stars"] += sum(r["stars"] for r in rows)
+            out["unanswered"] += sum(1 for r in rows if not r["replied"])
+    return out
+
+
 async def _play(action: str, args: Dict[str, Any], *, env, cf: "ClientFactory") -> str:
-    if action != "list_reviews":
+    if action not in ("list_reviews", "reply_review"):
         raise ConnectionError_(f"google_play.{action} is not an available action.")
+    pkg_re = r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+"
+    if action == "reply_review":
+        pkg, rid, text = str(args.get("package") or "").strip(), str(args.get("review_id") or "").strip(), " ".join(str(args.get("reply_text") or "").split())
+        if pkg not in play_apps(env) or not re.fullmatch(pkg_re, pkg):
+            raise ConnectionError_("That is not one of the connected Google Play apps.")
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{8,120}", rid):
+            raise ConnectionError_("Give the review_id exactly as list_reviews shows it.")
+        if not text or len(text) > 350:
+            raise ConnectionError_("A Google Play reply must be 1 to 350 characters.")
+        async with cf() as c:
+            token = await play_access_token(play_key(env), c)
+            r = await c.post(f"{PLAY_API}/{pkg}/reviews/{rid}:reply", json={"replyText": text}, headers={"Authorization": f"Bearer {token}"})
+            if r.status_code in (401, 403):
+                raise ConnectionError_("Play Console has not given this key permission to reply to reviews. Add Reply to reviews for the service account in Users and permissions.")
+            _ok(r, "Google Play")
+        return f"Replied on Google Play to review {rid} of {pkg}."
     pkgs = [str(args["package"]).strip()] if str(args.get("package") or "").strip() else play_apps(env)
-    if not pkgs or any(not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+", p) for p in pkgs):
+    if not pkgs or any(not re.fullmatch(pkg_re, p) for p in pkgs):
         raise ConnectionError_("Give the app's package name, for example com.flipdeckllc.flipdeckcards.")
     try:
         limit = int(args.get("limit") or 10)
@@ -349,12 +395,10 @@ async def _play(action: str, args: Dict[str, Any], *, env, cf: "ClientFactory") 
     async with cf() as c:
         token = await play_access_token(play_key(env), c)
         for pkg in pkgs[:6]:
-            revs = await play_reviews(c, token, pkg, limit)
-            out.append(f"{pkg}: " + ("no recent reviews." if not revs else ""))
-            for rv in revs[:limit]:
-                uc = ((rv.get("comments") or [{}])[0].get("userComment") or {})
-                when = dt.datetime.fromtimestamp(int((uc.get("lastModified") or {}).get("seconds") or 0), dt.timezone.utc).strftime("%Y-%m-%d")
-                out.append(f"- {uc.get('starRating', '?')}/5 on {when}: {_clip(uc.get('text'), 300)}")
+            rows = sorted((_review_row(r) for r in await play_reviews(c, token, pkg, limit)), key=lambda r: r["when"], reverse=True)
+            out.append(f"{pkg}: " + ("no reviews in the last week." if not rows else ""))
+            for r in rows[:limit]:
+                out.append(f"- id={r['id']} {r['stars']}/5 on {r['when']:%Y-%m-%d}" + (" (already replied)" if r["replied"] else " (no reply yet)") + f": {r['text']}")
     return "\n".join(out)
 
 

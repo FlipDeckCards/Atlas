@@ -85,6 +85,18 @@ async def product_numbers(env) -> List[str]:
     return out
 
 
+def play_line(week: Optional[Dict[str, Any]], err: str = "") -> str:
+    """One short weekly line about Google Play reviews (Google only returns the last week's), or why it could not be read."""
+    if err:
+        return f"- Google Play: could not read reviews ({err})."
+    n = int((week or {}).get("new") or 0)
+    if not n:
+        return "- Google Play: no new reviews this week."
+    avg = (week["stars"] or 0) / n
+    need = int(week.get("unanswered") or 0)
+    return f"- Google Play: {n} new review{'s' if n != 1 else ''} this week, {avg:.1f} stars" + (f", {need} need a reply." if need else ", all answered.")
+
+
 def enabled(env=None) -> bool:
     e = os.environ if env is None else env
     return str(e.get("HERALD_ENABLED", "true")).strip().lower() not in ("0", "false", "no", "off")
@@ -250,6 +262,17 @@ class Herald:
             glance += await self.numbers_fn(env)
         except Exception:
             logger.exception("herald: product numbers failed")
+        la = brief_content.la_time(self.now())
+        if period == "morning" and la.weekday() == 0:                                   # Monday's morning brief: the week's Google Play reviews
+            try:
+                from openjarvis.server.crew import connections as conns
+
+                envx = await self.engine.env_for(uid) if uid else env
+                if conns.play_key(envx):
+                    glance.append(play_line(await conns.play_week(envx, self.engine.client_factory or conns._default_client)))
+            except Exception as exc:
+                logger.warning("herald: google play line failed: %s", type(exc).__name__)
+                glance.append(play_line(None, type(exc).__name__))
         try:
             questions = await self.engine.store.list_questions(uid, "open") if uid else []
         except Exception:

@@ -23,6 +23,12 @@ NIGHT_LA = dt.datetime(2026, 10, 22, 6, 0, tzinfo=dt.timezone.utc)      # 23:00 
 ENV = {"CREW_ENABLED": "true", "CREW_DAILY_CAP_USD": "5", "CREW_MISSION_BUDGET_USD": "1", "CREW_MISSION_REPORTS": "off"}
 
 
+def brief_la(t):
+    from openjarvis.server import brief_content
+
+    return brief_content.la_time(t)
+
+
 def run(coro):
     return asyncio.run(coro)
 
@@ -1210,6 +1216,26 @@ class TestMarnyx:
         assert run(early.maybe_run()) is None
         off = world({"tasks": []}, {}, env={}, now=sunday_6pm)
         assert run(WeeklySocial(off.engine, H(), env={}, now=lambda: sunday_6pm).maybe_run()) is None   # Marnyx not connected
+
+    def test_the_weekly_review_replies_start_once_a_week_while_google_play_is_connected(self):
+        from openjarvis.server.crew.weekly import WeeklySocial
+
+        monday_10am = dt.datetime(2026, 10, 26, 17, 0, tzinfo=dt.timezone.utc)    # Mon Oct 26, 10 AM in Los Angeles (after the 9 AM default)
+        w = world({"tasks": [{"title": "Reply", "role": "social", "brief": "b"}]}, {"Reply": [resp(calls=[("finish", {"summary": "ok"})])]},
+                  env={"GOOGLE_PLAY_KEY": "{}", "GOOGLE_PLAY_APPS": "com.example.app"}, now=monday_10am)
+
+        class H:
+            async def owner_id(self):
+                return UID
+        wk = WeeklySocial(w.engine, H(), env={}, now=lambda: monday_10am)
+        mid = run(wk.maybe_reviews(brief_la(monday_10am)))
+        assert mid and "Google Play reviews" in run(w.store.get_mission(mid))["goal"]
+        assert run(wk.maybe_reviews(brief_la(monday_10am))) is None                  # once per week
+        monday_8am = monday_10am - dt.timedelta(hours=2)
+        fresh = world({"tasks": []}, {}, env={"GOOGLE_PLAY_KEY": "{}", "GOOGLE_PLAY_APPS": "com.example.app"}, now=monday_8am)
+        assert run(WeeklySocial(fresh.engine, H(), env={}, now=lambda: monday_8am).maybe_reviews(brief_la(monday_8am))) is None   # before 9 AM: not yet
+        off = world({"tasks": []}, {}, env={}, now=monday_10am)
+        assert run(WeeklySocial(off.engine, H(), env={}, now=lambda: monday_10am).maybe_reviews(brief_la(monday_10am))) is None   # not connected
 
 
 def test_a_task_out_of_steps_wraps_up_instead_of_failing():
