@@ -300,9 +300,12 @@ async def crew_plan():
 
 
 OWNER_BUSINESSES = (
-    {"key": "flipdeck", "name": "FlipDeck", "url": "https://flipdeckcards.com", "color": "#ff6d00"},
-    {"key": "marnyx", "name": "Marnyx", "url": "https://marnyx.onrender.com", "color": "#b06cff"},
-    {"key": "deadzone", "name": "Deadzone", "url": "https://cybervoid-6tbo.onrender.com", "color": "#ff3344"})
+    {"key": "flipdeck", "name": "FlipDeck", "url": "https://flipdeckcards.com", "color": "#ff6d00",
+     "description": "FlipDeck sells trading-card flip decks and related products through its own website."},
+    {"key": "marnyx", "name": "Marnyx", "url": "https://marnyx.onrender.com", "color": "#b06cff",
+     "description": "Marnyx is an autonomous marketing app that drafts and publishes social posts for small businesses."},
+    {"key": "deadzone", "name": "Deadzone", "url": "https://cybervoid-6tbo.onrender.com", "color": "#ff3344",
+     "description": "Deadzone is a mobile game studio project, with its backend and iOS build kept here."})
 OWNER_FIXED_KEYS = {b["key"] for b in OWNER_BUSINESSES}
 
 
@@ -465,6 +468,7 @@ class BusinessIn(BaseModel):
     name: str = Field(..., min_length=2, max_length=40)
     url: str = Field("", max_length=200)
     color: str = Field("", max_length=7)
+    description: str = Field("", max_length=300)
 
 
 @router.post("/api/crew/connect/{kind}")
@@ -568,7 +572,7 @@ async def crew_business_add(body: BusinessIn, request: Request):
     if tenant.slug(body.name) in OWNER_FIXED_KEYS:
         return JSONResponse({"detail": "That business is already on the Station."}, status_code=409)
     try:
-        items = await tenant.add_business(engine.store, uid, body.name, body.url, body.color)
+        items = await tenant.add_business(engine.store, uid, body.name, body.url, body.color, body.description)
     except ValueError as exc:
         return _err(exc)
     await engine.store.add_event(uid, "business", f"Added {body.name.strip()} to the Station.")

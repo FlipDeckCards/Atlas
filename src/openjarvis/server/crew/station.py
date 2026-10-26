@@ -835,6 +835,7 @@ function factorySec(key) {
   if (!b) { s.append(mk('div', 'dim', 'That factory is gone.')); return s; }
   const l = mk('div', 'lbl'); l.append(mk('span', null, 'Factory'), mk('span', 'tag', b.state)); s.append(l);
   const h = mk('div', 'h', b.label); h.style.color = b.color; s.append(h);
+  const about = bizAbout(key); if (about) s.append(mk('div', 'dim', about));
   if (b.platform) {
     const c = S.connections && S.connections[key];
     const cr = mk('div', 'row'); cr.style.cursor = 'pointer'; cr.onclick = () => { selected = 'links'; renderSide(true); };
@@ -1196,6 +1197,20 @@ if (HELIX_ON_DECK) loadArt('helix-views.png', im => { ART.helixViews = im; });  
 // the businesses on this Station: the owner's products, or a subscriber's own (from the server)
 function prods() {
   return (S && S.businesses ? S.businesses : []).map(b => ({ key: b.key, label: String(b.name).toUpperCase(), color: b.color || '#ff4fb8', url: b.url || '' }));
+}
+// One sentence on what each business is, shown when its row in All businesses is clicked. A business you add carries its own (S.businesses[].description).
+const ABOUT = {
+  flipdeck: 'FlipDeck sells trading-card flip decks and related products through its own website.',
+  marnyx: 'Marnyx is an autonomous marketing app that drafts and publishes social posts for small businesses.',
+  deadzone: 'Deadzone is a mobile game studio project, with its backend and iOS build kept here.',
+  aibussol: 'Aibussol is this Station: the AI hub where Helix and the crew run your businesses.',
+  etsy: 'Etsy is the marketplace where your handmade and digital listings are sold.',
+  google_play: 'Google Play is the store where your Android apps and games are published.',
+  app_store: 'The App Store is where your iPhone and iPad apps are published.'
+};
+function bizAbout(k) {
+  const b = S && S.businesses ? S.businesses.find(x => x.key === k) : null;
+  return (b && b.description) || ABOUT[k] || '';
 }
 function bizName(k) {
   const b = S && S.businesses ? S.businesses.find(x => x.key === k) : null;

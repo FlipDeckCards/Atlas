@@ -243,7 +243,8 @@ CREW_TOOLS: List[Dict[str, Any]] = [
         "description": "Add a business to the All businesses box on the Station (its name, and optionally its website and a color); it also gets its own factory branch around the center of the Station. Nothing is spent and nothing is published; the user can remove it.",
         "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "The business name, as the user said it."},
                                                         "url": {"type": "string", "description": "Its website, if given."},
-                                                        "color": {"type": "string", "description": "A hex color like #00e5ff, if given."}}, "required": ["name"]}}},
+                                                        "color": {"type": "string", "description": "A hex color like #00e5ff, if given."},
+                                                        "description": {"type": "string", "description": "One sentence on what the business does, shown when its row is clicked. Write it from what the user said; leave it out if you do not know."}}, "required": ["name"]}}},
     {"type": "function", "function": {
         "name": "rename_business",
         "description": "Change the display name of a business you added (its numbers stay with it). The FlipDeck, Marnyx and Deadzone rows cannot be renamed.",
@@ -630,7 +631,7 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
             name_ = _clip(args.get("name"), 40)
             if tenant.slug(name_) in OWNER_FIXED_KEYS_HELIX:
                 return f'"{name_}" is already on the Station.'
-            items = await tenant.add_business(eng.store, ctx.user_id, name_, _clip(args.get("url"), 200), _clip(args.get("color"), 9))
+            items = await tenant.add_business(eng.store, ctx.user_id, name_, _clip(args.get("url"), 200), _clip(args.get("color"), 9), _clip(args.get("description"), 300))
             eng.drop_products_cache(ctx.user_id)
             await eng.store.add_event(ctx.user_id, "business", f"Added {name_} to the Station (by Helix).")
             return f'Added "{name_}" to the All businesses box on the Station. It has {len(items)} business(es) you added.'

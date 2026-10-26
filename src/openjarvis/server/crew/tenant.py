@@ -103,10 +103,25 @@ async def businesses(store, user_id: str) -> List[Dict[str, Any]]:
         items = json.loads(raw) if raw else []
     except ValueError:
         items = []
-    return [b for b in items if isinstance(b, dict) and b.get("key")][:MAX_BUSINESSES]
+    out = [b for b in items if isinstance(b, dict) and b.get("key")][:MAX_BUSINESSES]
+    for b in out:
+        b["description"] = clean_description(b.get("description")) or default_description(b.get("name"), b.get("url"))   # older records get one too
+    return out
 
 
-async def add_business(store, user_id: str, name: str, url: str = "", color: str = "") -> List[Dict[str, Any]]:
+def clean_description(text: Any) -> str:
+    """One sentence, no markup, at most 200 characters."""
+    t = " ".join(re.sub(r"<[^>]*>", " ", str(text or "")).split())
+    m = re.match(r"(.+?[.!?])(\s|$)", t)
+    return (m.group(1) if m else t)[:200]
+
+
+def default_description(name: Any, url: Any = "") -> str:
+    host = re.sub(r"^https?://|/.*$", "", str(url or ""))
+    return f"{name} is a business on your Station" + (f" ({host})." if host else ".")
+
+
+async def add_business(store, user_id: str, name: str, url: str = "", color: str = "", description: str = "") -> List[Dict[str, Any]]:
     name = " ".join(str(name or "").split())[:40]
     if len(name) < 2:
         raise ValueError("Give the business a name.")
@@ -121,7 +136,8 @@ async def add_business(store, user_id: str, name: str, url: str = "", color: str
         raise ValueError("You already have a business with that name.")
     if not re.fullmatch(r"#[0-9a-fA-F]{6}", color or ""):
         color = PALETTE[len(items) % len(PALETTE)]
-    items.append({"key": key, "name": name, "url": url, "color": color})
+    items.append({"key": key, "name": name, "url": url, "color": color,
+                  "description": clean_description(description) or default_description(name, url)})
     await store.set_secret(user_id, "businesses", json.dumps(items))
     return items
 
