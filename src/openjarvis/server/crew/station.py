@@ -324,7 +324,7 @@ const TOKEN_KEY = 'aibussol_token';
 const token = () => localStorage.getItem(TOKEN_KEY) || '';
 const PROJECT_COLORS = { flipdeck:'#ff6d00', marnyx:'#b06cff', deadzone:'#ff3344', aibussol:'#00e5ff', 'new':'#ff4fb8' };
 const ROLE_COLORS = { lead:'#00e5ff', researcher:'#5ad1ff', builder:'#4dffc3', writer:'#ffc14d', designer:'#ff7ad9', operator:'#ff6d00', reviewer:'#c8ff4d', briefer:'#eef3ff', workbench:'#a970ff',
-  marketer:'#ff3d6e', social:'#ffe600', support:'#6b8cff', analyst:'#00c2a8', qa:'#ff9a3d', finance:'#2bd96b', weather:'#7fc8ff', travel:'#ffb38a', event:'#d9a0ff', trader:'#7dff6b', composer:'#ff8fd0', nft:'#8f7bff', screenwriter:'#ffd98f' };
+  marketer:'#ff3d6e', social:'#ffe600', support:'#6b8cff', analyst:'#00c2a8', qa:'#ff9a3d', finance:'#2bd96b', weather:'#7fc8ff', travel:'#ffb38a', event:'#d9a0ff', trader:'#c2b280', composer:'#e056fd', nft:'#5f6bff', screenwriter:'#ff7a45' };
 const STATUS_COLORS = { queued:'#2a5060', running:'#00e5ff', waiting:'#ff6d00', done:'#00ff88', failed:'#ff3344', cancelled:'#2a3a44' };
 let S = null, selected = 'hub', lastDraw = 0, pollTimer = null;
 
@@ -1182,9 +1182,9 @@ const bots = new Map();
 const helixImg = new Image(); let helixReady = false;
 helixImg.onload = () => { helixReady = true; }; helixImg.src = '/crew/helix.jpg';
 // the crew: Michael's robot model, rendered per role (front, facing right, facing left) into one sheet: crew/assets/bots.png
-const BOT_VER = '43f50d8b';   // changes whenever bots.png changes, so browsers never mix an old sheet with new code
+const BOT_VER = '0bdfeda0';   // changes whenever bots.png changes, so browsers never mix an old sheet with new code
 const BOT_ROWS = ['lead', 'researcher', 'builder', 'writer', 'designer', 'operator', 'reviewer', 'briefer', 'workbench',
-                  'marketer', 'social', 'support', 'analyst', 'qa', 'finance', 'weather', 'travel', 'event'], BOT_CELL = 64;
+                  'marketer', 'social', 'support', 'analyst', 'qa', 'finance', 'weather', 'travel', 'event', 'trader', 'composer', 'nft', 'screenwriter'], BOT_CELL = 64;
 // sheet columns: 0 standing (front), then 4 walk frames each for front, back, right, left
 const BOT_DIRS = { front: 0, back: 1, right: 2, left: 3 };
 function dirOf(dx, dy, prev) { if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return prev || 'front'; return Math.abs(dx) >= Math.abs(dy) * 0.8 ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'front' : 'back'); }
@@ -1929,7 +1929,7 @@ function drawCore(t) {
 
 // the outer walkway: an octagon (corners on the tubes) as wide as Helix's own deck. Its walkers are only for looks; crew with work still
 // walk the tube from Helix's deck to their own factory, inner or outer.
-const WALK_ROLES = ['researcher', 'writer', 'designer', 'marketer', 'social', 'support', 'analyst', 'qa', 'finance', 'weather', 'travel', 'event'];
+const WALK_ROLES = ['researcher', 'writer', 'designer', 'marketer', 'social', 'support', 'analyst', 'qa', 'finance', 'weather', 'travel', 'event', 'trader', 'composer', 'nft', 'screenwriter'];
 function drawWalkway(t) {
   if (!walkway) return;
   const base = DRIFT.angle + SPIN.cur, pts = [];

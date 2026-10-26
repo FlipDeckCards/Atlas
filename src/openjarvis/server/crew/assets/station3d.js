@@ -161,7 +161,7 @@
       holo.userData.hub = true; };
     img.src = '/crew/helix.jpg';
     // the crew walking the octagon (for looks); working crew stand in their trays
-    const WALK = ['researcher', 'writer', 'designer', 'marketer', 'social', 'support', 'analyst', 'qa', 'finance', 'weather', 'travel', 'event', 'builder', 'operator', 'reviewer', 'briefer', 'workbench', 'researcher', 'writer', 'designer'];
+    const WALK = ['researcher', 'writer', 'designer', 'marketer', 'social', 'support', 'analyst', 'qa', 'finance', 'weather', 'travel', 'event', 'trader', 'composer', 'nft', 'screenwriter', 'builder', 'operator', 'reviewer', 'briefer', 'workbench', 'researcher', 'writer', 'designer'];
     for (let i = 0; i < 20; i++) { const gw = makeAgent(WALK[i]);
       gw.userData.f0 = i / 20; gw.userData.dir = i % 3 === 0 ? -1 : 1; gw.userData.v = 0.0000055 + (i % 5) * 0.000002; gw.userData.off = (i % 2 ? 4 : -4);
       add(gw); walkers.push(gw); }
