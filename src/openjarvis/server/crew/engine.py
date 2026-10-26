@@ -99,6 +99,18 @@ ROLES: Dict[str, Dict[str, str]] = {
     "event": {"name": "Cue", "model": "agent", "about": "Event planning with Claude: launch parties, pop-ups, meetups, giveaways, livestreams and parties. Writes the plan (timeline, budget, guest list, checklist, run-of-show), researches venues and vendors with web_search, checks the forecast for the date with get_weather, and drafts invitation text. Plans only: it cannot send invites, book or pay.",
                "can": "Event plans, budgets, timelines, checklists, run-of-show, venue and vendor research, forecast check, invitation drafts",
                "cannot": "Send invitations, book venues, pay anyone or add anything to a calendar; you do those from its plan"},
+    "trader": {"name": "Quant", "model": "agent", "about": "Markets with Claude, modelled on multi-agent trading frameworks (TradingAgents): researches a stock or crypto with web_search, then writes a structured case: fundamentals, news and sentiment, technicals, a bull case and a bear case, risks, and a position-size and stop-loss proposal. Not a licensed advisor. It has no broker access: any trade it recommends is a proposal you place yourself, and a live order would only ever run after your Approve.",
+               "can": "Research a ticker or coin, bull and bear cases, risk checks, trade proposals with size and stop, paper-trade logs as files",
+               "cannot": "Place any order, hold broker keys or give licensed financial advice; a live trade needs your own Approve and your own broker"},
+    "composer": {"name": "Lyra", "model": "agent", "about": "Music writing with Claude: song concepts, lyrics, chord progressions, melodies and arrangements, plus ready-to-use prompts for music generators. Saves lead sheets and lyrics as text, ABC notation or MIDI-ready note lists. Researches genre references with web_search.",
+                 "can": "Lyrics, chord charts, melodies in ABC notation, arrangements, music-generator prompts, release notes",
+                 "cannot": "Upload or release anything, or record audio itself"},
+    "nft": {"name": "Mint", "model": "agent", "about": "NFT creation with Claude: collection concepts, trait and rarity tables, art direction, artwork with generate_image (saved to the media library) and ERC-721/1155 metadata JSON for each token. Checks marketplace rules and licensing with web_search. Creates files only: it never holds a wallet or keys, and minting or listing happens only from your own wallet after your Approve.",
+            "can": "Collection concepts, trait and rarity tables, artwork, token metadata JSON, mint and listing checklists, licensing notes",
+            "cannot": "Hold wallet keys, mint, list or sell anything; that is done from your own wallet after your Approve"},
+    "screenwriter": {"name": "Reel", "model": "agent", "about": "Script writing with Claude: loglines, treatments, beat sheets, character sheets and full scripts in screenplay format for films, shorts, series and ads. Saves each act or scene as its own file. Researches reference material with web_search.",
+                     "can": "Loglines, treatments, beat sheets, character bibles, screenplay-format scripts, series outlines, ad scripts",
+                     "cannot": "Pitch, send or register anything on your behalf"},
     "reviewer": {"name": "Lens", "model": "agent", "about": "Checks the crew's work before it reaches Michael: reads every deliverable, fact-checks with web_search, and sends a task back once with request_changes when it is wrong or incomplete. Saves a short review.",
                  "can": "Read every deliverable, fact-check on the web, send work back once for fixes, write the review",
                  "cannot": "Change the work itself or approve anything for you"},
@@ -255,8 +267,8 @@ _REVIEW_TOOL = {"type": "function", "function": {
     "parameters": {"type": "object", "properties": {"task_number": {"type": "integer"}, "notes": {"type": "string"}}, "required": ["task_number", "notes"]}}}
 
 LIMITS = {"make_book": 6, "edit_image": 8, "inspect_image": 12, "repo_checks": 10, "web_search": 12, "generate_image": 16, "make_design_files": 10, "repo_commit": 10, "check_site": 20, "business_numbers": 3, "get_weather": 8}
-SEARCHERS = ("researcher", "reviewer", "marketer", "social", "support", "analyst", "qa", "finance", "travel", "event")
-IMAGERS = ("designer", "marketer", "social")
+SEARCHERS = ("researcher", "reviewer", "marketer", "social", "support", "analyst", "qa", "finance", "travel", "event", "trader", "composer", "nft", "screenwriter")
+IMAGERS = ("designer", "marketer", "social", "nft")
 READERS = ("support", "analyst", "finance")                # read-only platform access
 PUBLISHERS = ("social", "marketer")                       # Marnyx posts and email (each an approval); everything else read-only
 REVIEW_MARK = "REVIEW: changes requested."
@@ -370,6 +382,8 @@ def tools_for(role: str) -> List[Dict[str, Any]]:
         extra.append(_READ_CONNECTION_TOOL)
     if role in PUBLISHERS:
         extra.append(_MARNYX_TOOL)
+    if role in ("trader", "composer", "nft", "screenwriter"):
+        extra.append(_SEARCH_TOOL)
     if role in ("analyst", "finance"):
         extra.append(_NUMBERS_TOOL)
     if role in ("weather", "travel", "event"):

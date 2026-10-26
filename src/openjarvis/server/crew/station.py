@@ -324,7 +324,7 @@ const TOKEN_KEY = 'aibussol_token';
 const token = () => localStorage.getItem(TOKEN_KEY) || '';
 const PROJECT_COLORS = { flipdeck:'#ff6d00', marnyx:'#b06cff', deadzone:'#ff3344', aibussol:'#00e5ff', 'new':'#ff4fb8' };
 const ROLE_COLORS = { lead:'#00e5ff', researcher:'#5ad1ff', builder:'#4dffc3', writer:'#ffc14d', designer:'#ff7ad9', operator:'#ff6d00', reviewer:'#c8ff4d', briefer:'#eef3ff', workbench:'#a970ff',
-  marketer:'#ff3d6e', social:'#ffe600', support:'#6b8cff', analyst:'#00c2a8', qa:'#ff9a3d', finance:'#2bd96b', weather:'#7fc8ff', travel:'#ffb38a', event:'#d9a0ff' };
+  marketer:'#ff3d6e', social:'#ffe600', support:'#6b8cff', analyst:'#00c2a8', qa:'#ff9a3d', finance:'#2bd96b', weather:'#7fc8ff', travel:'#ffb38a', event:'#d9a0ff', trader:'#7dff6b', composer:'#ff8fd0', nft:'#8f7bff', screenwriter:'#ffd98f' };
 const STATUS_COLORS = { queued:'#2a5060', running:'#00e5ff', waiting:'#ff6d00', done:'#00ff88', failed:'#ff3344', cancelled:'#2a3a44' };
 let S = null, selected = 'hub', lastDraw = 0, pollTimer = null;
 
@@ -378,6 +378,10 @@ const LAND_CREW = [
   ['weather', 'Gale', 'Weather', 'The forecast for any place, in plain words'],
   ['travel', 'Jet', 'Travel', 'Trip plans, budgets and packing lists'],
   ['event', 'Cue', 'Events', 'Event plans, timelines, budgets and invitation drafts'],
+  ['trader', 'Quant', 'Markets', 'Stock and crypto research, risk checks and trade proposals'],
+  ['composer', 'Lyra', 'Music', 'Lyrics, chords, melodies and arrangements'],
+  ['nft', 'Mint', 'NFTs', 'Collection art, traits and token metadata'],
+  ['screenwriter', 'Reel', 'Scripts', 'Treatments, beat sheets and screenplays'],
 ];
 let landed = false;
 async function landing() {
