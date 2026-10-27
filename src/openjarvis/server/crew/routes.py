@@ -684,6 +684,27 @@ def output_response(o: Dict[str, Any]) -> Response:
     return Response(o["content"], media_type="text/plain; charset=utf-8", headers=head)
 
 
+class EngineIn(BaseModel):
+    mode: str = Field(..., max_length=10)
+
+
+@router.post("/api/crew/helix-engine")
+async def crew_helix_engine(body: EngineIn, request: Request):
+    """Pick the engine Helix thinks on from the roster: auto, haiku or sonnet. Owner only."""
+    g = await _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    if not await engine.is_owner(uid):
+        return JSONResponse({"detail": "Only the owner picks Helix's engine."}, status_code=403)
+    try:
+        mode = await engine.set_helix_mode(uid, body.mode.strip().lower())
+    except ValueError as exc:
+        return _err(exc)
+    await engine.store.add_event(uid, "settings", f"Helix engine set to {mode}.")
+    return {"mode": mode}
+
+
 class CreditIn(BaseModel):
     balance_usd: float = Field(..., ge=0, le=1_000_000)
     warn_usd: Optional[float] = Field(None, ge=0, le=1_000_000)

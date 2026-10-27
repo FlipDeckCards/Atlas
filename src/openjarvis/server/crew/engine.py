@@ -571,6 +571,27 @@ class CrewEngine:
         """The model for a tier (helix, agent, code, writing, lookup, default); an unconfigured tier falls back to the writing model."""
         return self.models.get(tier) or self.models["writing"]
 
+    HELIX_MODES = ("auto", "haiku", "sonnet")
+
+    async def helix_mode(self, user_id: str) -> str:
+        """Which engine Helix thinks on, as picked in the roster: auto (short everyday chat on the light model, work on the strong one),
+        haiku (always the light model) or sonnet (always the strong one)."""
+        try:
+            v = (await self.store.get_secret(user_id, "helix_engine") or "auto").strip().lower()
+        except Exception:
+            v = "auto"
+        return v if v in self.HELIX_MODES else "auto"
+
+    async def set_helix_mode(self, user_id: str, mode: str) -> str:
+        if mode not in self.HELIX_MODES:
+            raise ValueError("Pick auto, haiku or sonnet.")
+        await self.store.set_secret(user_id, "helix_engine", mode)
+        return mode
+
+    def helix_plan_model(self, mode: str) -> str:
+        """The model that plans a mission: the strong one, unless the roster is set to haiku."""
+        return self.model_for("helix_light") if mode == "haiku" and self.models.get("helix_light") else self.model_for("helix")
+
     def _fallback_models(self, model: str) -> List[str]:
         """Where a task goes when its model is down, rate limited or not accepted: the cheap agent model, then the older writing model."""
         return [m for m in dict.fromkeys([self.model_for("agent"), self.models["writing"]]) if m and m != model]
@@ -948,7 +969,7 @@ class CrewEngine:
                     {"role": "user", "content": m["goal"] + await self._attached_for_planner(mission_id)}]
             cost, plan = 0.0, None
             for attempt in range(2):
-                resp = await self.acompletion(model=self.model_for("helix"), max_tokens=PLANNER_MAX_TOKENS, messages=msgs)
+                resp = await self.acompletion(model=self.helix_plan_model(await self.helix_mode(uid)), max_tokens=PLANNER_MAX_TOKENS, messages=msgs)
                 cost += await self._charge(uid, mission_id, "", resp)
                 text = resp.choices[0].message.content or ""
                 plan = parse_plan(text, max_tasks(self.env))
@@ -2459,7 +2480,10 @@ class CrewEngine:
                            "status_text": ("making a brief" if hs["busy"] else ("next brief " + hs["next_label"] if hs["enabled"] else "schedule off")) +
                                           (" · last " + last["period"] + (" sent" if last["ok"] else " failed") if last else ""),
                            "herald": True})
-        roster.insert(0, {"role": "lead", "name": "Helix", "model": hardening.display_name(self.model_for("helix")),
+        mode = await self.helix_mode(user_id)
+        strong, light = hardening.display_name(self.model_for("helix")), hardening.display_name(self.model_for("helix_light"))
+        shown = {"haiku": light, "sonnet": strong}.get(mode, strong)
+        roster.insert(0, {"role": "lead", "name": "Helix", "model": shown, "engine_mode": mode, "engine_choices": {"auto": f"{light} chat, {strong} work", "haiku": light, "sonnet": strong},
                           "can": "Talks with you, plans each goal into tasks, assigns the crew, brings you their questions and approvals",
                           "cannot": "Approve checkpoints for you or spend past your limits", "working": len(self._plans), "waiting": 0, "done": 0})
         return {

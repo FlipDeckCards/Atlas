@@ -57,11 +57,17 @@ _WORK_WORDS = ("mission", "error", "deploy", "github", "render", "log", "stall",
                "deadzone", "document", "file", "task", "agent", "crew", "design", "research", "remember", "forget", "start", "stop", "cancel", "pause", "resume", "retry")
 
 
-def helix_model(message: str, has_files: bool, cfg: Optional[dict] = None) -> tuple:
-    """Helix's own model: the strong one for work, the light one for short everyday chat. -> (model id, display name, color)."""
+def helix_model(message: str, has_files: bool, cfg: Optional[dict] = None, mode: str = "auto") -> tuple:
+    """Helix's own model: the strong one for work, the light one for short everyday chat. -> (model id, display name, color).
+    mode is the roster choice: "auto" (the rule above), "haiku" (always the light model) or "sonnet" (always the strong one)."""
     cfg = cfg or hardening.model_config()
     msg = str(message or "").lower()
-    light = (not has_files) and len(msg) <= 140 and not any(w in msg for w in _WORK_WORDS) and cfg.get("helix_light")
+    if mode == "haiku" and cfg.get("helix_light"):
+        light = True
+    elif mode == "sonnet":
+        light = False
+    else:
+        light = (not has_files) and len(msg) <= 140 and not any(w in msg for w in _WORK_WORDS) and cfg.get("helix_light")
     mid = cfg["helix_light"] if light else cfg["helix"]
     return mid, hardening.display_name(mid), "cyan" if light else "orange"
 
@@ -1825,7 +1831,7 @@ async def chat(req: ChatRequest, request: Request):
     # the crew (owner accounts, CREW_ENABLED): a yes to a read-back mission start is handled here, with no model call
     crew_ctx = await crew_helix.ctx_for(request)
     if crew_ctx is not None:                      # Helix leading the crew thinks on Claude: the stronger model for work, the light one for short chat
-        model_id, model_display, model_color = helix_model(req.message, has_files)
+        model_id, model_display, model_color = helix_model(req.message, has_files, mode=await crew_ctx.engine.helix_mode(crew_ctx.user_id))
     if crew_ctx is not None:
         for doc_name, doc_text in docs:
             crew_helix.remember_document(crew_ctx.user_id, doc_name, doc_text)

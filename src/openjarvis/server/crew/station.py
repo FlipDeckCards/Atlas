@@ -877,6 +877,16 @@ function rosterSec() {
       const det = mk('div', 'agent-det');
       det.append(mk('div', 'agent-k', 'Does'), mk('div', 'agent-can', a.can), mk('div', 'agent-k', 'Limits'), mk('div', 'agent-cannot', a.cannot),
                  mk('div', 'agent-k', 'Model'), mk('div', 'agent-cannot', a.model || '—'));
+      if (a.role === 'lead' && a.engine_choices && isOwner()) {
+        det.append(mk('div', 'agent-k', 'Engine'));
+        const row = mk('div'); row.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;margin-top:4px';
+        [['auto', 'AUTO'], ['haiku', 'HAIKU'], ['sonnet', 'SONNET']].forEach(([m, label]) => {
+          const b = mk('button', 'b', label); b.title = a.engine_choices[m]; if (a.engine_mode === m) { b.style.background = 'var(--cyan)'; b.style.color = '#001018'; }
+          b.onclick = async (ev) => { ev.stopPropagation(); await api('/api/crew/helix-engine', 'POST', { mode: m }); refresh(); };
+          row.append(b);
+        });
+        det.append(row, mk('div', 'agent-cannot', 'Auto: ' + a.engine_choices.auto + '. Haiku: always the cheaper model. Sonnet: always the stronger one. Mission planning uses Sonnet unless Haiku is picked.'));
+      }
       if (a.herald) {
         const go = mk('button', 'b', a.working ? 'Making a brief…' : 'Send a brief now'); go.style.marginTop = '8px'; go.disabled = !!a.working;
         go.onclick = async (ev) => {
