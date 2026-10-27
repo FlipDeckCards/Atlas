@@ -51,10 +51,12 @@ Talk like a capable person who works with Michael, not like a machine. Use natur
 
 
 # words that mean real work: Helix thinks on the stronger model for these; short everyday chat without them runs on the light one
-_WORK_WORDS = ("mission", "error", "deploy", "github", "render", "log", "stall", "fail", "fix", "bug", "code", "build", "plan", "why", "how ", "diagnos", "investigat",
-               "check", "find", "look", "write", "create", "add ", "remove", "rename", "change", "update", "explain", "analy", "compar", "report", "budget", "approv",
-               "redeploy", "rollback", "restart", "connect", "set up", "setup", "business", "factory", "product", "price", "stripe", "etsy", "marnyx", "flipdeck",
-               "deadzone", "document", "file", "task", "agent", "crew", "design", "research", "remember", "forget", "start", "stop", "cancel", "pause", "resume", "retry")
+# (the everyday words "why", "how ", "log", "check", "find", "look", "add ", "change", "update", "start", "stop", "product" and "price" are left out: they
+# sent ordinary chat to the strong model. Real work still carries one of the words below, or is long, or has a file.)
+_WORK_WORDS = ("mission", "error", "deploy", "github", "render", "stall", "fail", "fix", "bug", "code", "build", "plan", "diagnos", "investigat",
+               "write", "create", "remove", "rename", "explain", "analy", "compar", "report", "budget", "approv",
+               "redeploy", "rollback", "restart", "connect", "set up", "setup", "business", "factory", "stripe", "etsy", "marnyx", "flipdeck",
+               "deadzone", "document", "file", "task", "agent", "crew", "design", "research", "remember", "forget", "cancel", "pause", "resume", "retry")
 
 
 def helix_model(message: str, has_files: bool, cfg: Optional[dict] = None, mode: str = "auto") -> tuple:

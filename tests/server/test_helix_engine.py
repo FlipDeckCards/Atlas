@@ -14,7 +14,10 @@ def _run(c):
 
 
 def test_auto_keeps_the_existing_rule_and_the_choices_force_a_model():
-    assert atlas_ui.helix_model("hey, how is it going", False, CFG)[0] == "claude-sonnet-5-5"      # "how " counts as work
+    for chat in ("hey, how is it going", "what time is it", "why is the sky blue", "what's the weather like"):
+        assert atlas_ui.helix_model(chat, False, CFG)[0] == "claude-haiku-5-5"                  # everyday chat is light now
+    for work in ("fix the failing deploy", "start a mission to write the listing", "x" * 200):
+        assert atlas_ui.helix_model(work, False, CFG)[0] == "claude-sonnet-5-5"
     assert atlas_ui.helix_model("good morning", False, CFG)[0] == "claude-haiku-5-5"
     assert atlas_ui.helix_model("good morning", False, CFG, mode="sonnet")[0] == "claude-sonnet-5-5"
     assert atlas_ui.helix_model("start the mission and fix the build", True, CFG, mode="haiku")[0] == "claude-haiku-5-5"
