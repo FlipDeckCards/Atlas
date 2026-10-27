@@ -24,6 +24,12 @@ MANUAL = {"anthropic": "Anthropic (Claude)", "google": "Google (Gemini)"}
 LABELS = {**MANUAL, "elevenlabs": "ElevenLabs voice"}
 DEFAULT_WARN_USD = 10.0
 ELEVEN_WARN_FRACTION = 0.15
+# where to add credit: each label in the Station's box opens its own billing page
+TOPUP_URLS = {
+    "anthropic": "https://console.anthropic.com/settings/billing",
+    "google": "https://console.cloud.google.com/billing",
+    "elevenlabs": "https://elevenlabs.io/app/subscription",
+}
 ELEVEN_URL = "https://api.elevenlabs.io/v1/user/subscription"
 
 
@@ -106,7 +112,7 @@ async def report(store, uid: str, env, pool=None, client_factory=None, now: Opti
 
     eleven = await elevenlabs(env, client_factory)
     item: Dict[str, Any] = {"key": "elevenlabs", "label": LABELS["elevenlabs"], "kind": "live", "unit": "chars", "left": None, "total": None,
-                            "low": False, "as_of": _iso(now), "resets": "", "note": eleven["note"]}
+                            "low": False, "as_of": _iso(now), "resets": "", "note": eleven["note"], "topup_url": TOPUP_URLS["elevenlabs"]}
     if eleven["ok"]:
         left = max(0, eleven["limit"] - eleven["used"])
         item.update(left=left, total=eleven["limit"], resets=eleven["resets"],
@@ -116,7 +122,7 @@ async def report(store, uid: str, env, pool=None, client_factory=None, now: Opti
     for name in ("anthropic", "google"):
         rec = await _saved(store, uid, name)
         it = {"key": name, "label": LABELS[name], "kind": "manual", "unit": "usd", "left": None, "total": None, "low": False,
-              "as_of": rec.get("set_at", ""), "warn_usd": rec.get("warn_usd", DEFAULT_WARN_USD), "estimated": False,
+              "as_of": rec.get("set_at", ""), "topup_url": TOPUP_URLS[name], "warn_usd": rec.get("warn_usd", DEFAULT_WARN_USD), "estimated": False,
               "note": "" if rec else "Not set. Type the balance from the billing page."}
         if rec:
             bal = float(rec.get("balance_usd") or 0)

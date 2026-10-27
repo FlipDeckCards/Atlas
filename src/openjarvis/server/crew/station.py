@@ -588,7 +588,9 @@ function creditsRows(s) {
                              : 'Resets ' + (c.resets ? new Date(c.resets).toLocaleDateString() : 'monthly') + '.';
     } else if (c.kind === 'manual') v = 'SET';
     const val = mk('span', 'v' + (c.low ? ' o' : (c.left != null ? ' g' : '')), v);
-    r.append(mk('span', 'k', c.label.split(' ')[0]), val); r.title = tip;
+    const name = c.topup_url ? mk('a', 'k', c.label.split(' ')[0]) : mk('span', 'k', c.label.split(' ')[0]);
+    if (c.topup_url) { name.href = c.topup_url; name.target = '_blank'; name.rel = 'noopener noreferrer'; name.title = 'Open the ' + c.label + ' top-up page'; name.style.textDecoration = 'underline'; name.style.cursor = 'pointer'; name.onclick = (e) => e.stopPropagation(); }
+    r.append(name, val); r.title = tip;
     if (c.kind === 'manual') {
       r.style.cursor = 'pointer';
       r.onclick = async () => {

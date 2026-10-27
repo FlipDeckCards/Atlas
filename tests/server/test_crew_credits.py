@@ -80,3 +80,10 @@ def test_only_anthropic_and_google_can_be_typed_in():
     except ValueError:
         return
     raise AssertionError("elevenlabs is read live, not typed")
+
+
+def test_each_row_carries_its_own_top_up_page():
+    rep = _run(credits.report(MemoryCrewStore(), "u1", {}, client_factory=_client(), now=NOW))
+    urls = {i["key"]: i["topup_url"] for i in rep["items"]}
+    assert urls["anthropic"].startswith("https://console.anthropic.com/") and urls["elevenlabs"].startswith("https://elevenlabs.io/")
+    assert urls["google"].startswith("https://console.cloud.google.com/")
