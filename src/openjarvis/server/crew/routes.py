@@ -684,6 +684,46 @@ def output_response(o: Dict[str, Any]) -> Response:
     return Response(o["content"], media_type="text/plain; charset=utf-8", headers=head)
 
 
+class CreditIn(BaseModel):
+    balance_usd: float = Field(..., ge=0, le=1_000_000)
+    warn_usd: Optional[float] = Field(None, ge=0, le=1_000_000)
+
+
+@router.get("/api/crew/credits")
+async def crew_credits(request: Request):
+    """Credits left on the paid AI APIs for the System Vitals box (crew/credits.py). Owner only."""
+    g = await _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    if not await engine.is_owner(uid):
+        return JSONResponse({"detail": "Credits are shown to the owner only."}, status_code=403)
+    from openjarvis.server.crew import credits
+
+    pool = getattr(getattr(request.app.state, "session_store", None), "_pool", None)
+    return await credits.report(engine.store, uid, await engine.env_for(uid), pool=pool)
+
+
+@router.post("/api/crew/credits/{name}")
+async def crew_credits_set(name: str, body: CreditIn, request: Request):
+    """Save the balance read off the Anthropic or Google billing page."""
+    g = await _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    if not await engine.is_owner(uid):
+        return JSONResponse({"detail": "Credits are shown to the owner only."}, status_code=403)
+    import datetime as dt
+
+    from openjarvis.server.crew import credits
+
+    try:
+        rec = await credits.save_balance(engine.store, uid, name, body.balance_usd, body.warn_usd, dt.datetime.now(dt.timezone.utc))
+    except ValueError as exc:
+        return _err(exc)
+    return {"saved": rec}
+
+
 @router.post("/api/crew/settings")
 async def crew_settings(body: SettingsIn, request: Request):
     g = await _gate(request)

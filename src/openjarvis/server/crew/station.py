@@ -458,6 +458,7 @@ function boot() {
   if (booted || !token()) return;
   booted = true;
   refresh(); loadChat(true); loadFinance(); loadLibrary(); refreshSubscription(); checkBriefs();
+  loadCredits(); setInterval(loadCredits, 300000);                  // credits left, every 5 minutes
 }
 
 async function refresh() {
@@ -564,7 +565,44 @@ function vitalsSec() {
   row('Crew', S ? S.running + ' running · ' + queued + ' queued' : '—');
   row('Media', LIB.on ? 'on' : 'off', LIB.on ? 'g' : '');
   row('Session', hh + ':' + mm);
+  creditsRows(s);
   return s;
+}
+
+// credits left on the paid APIs (owner only): ElevenLabs live; Anthropic and Google from the balance typed in (click one to update it)
+let CREDITS = null;
+async function loadCredits() {
+  const r = await api('/api/crew/credits').catch(() => null);
+  CREDITS = r && r.ok && r.data && r.data.items ? r.data.items : null;
+  const box = document.getElementById('vitals-box'); if (box) box.replaceChildren(vitalsSec());
+}
+function creditsRows(s) {
+  if (!CREDITS) return;
+  s.append(mk('div', 'lbl', 'Credits left'));
+  for (const c of CREDITS) {
+    const r = mk('div', 'vit');
+    let v = '—', tip = c.note || '';
+    if (c.left != null) {
+      v = c.unit === 'usd' ? (c.estimated ? '~' : '') + money(c.left) : Math.round(c.left / 1000).toLocaleString() + 'k chars';
+      tip = c.unit === 'usd' ? (c.estimated ? 'Estimate: the balance you entered ' + ago(c.as_of) + ' minus what this app tracked since. ' : 'As entered ' + ago(c.as_of) + '. ') + 'Click to update.'
+                             : 'Resets ' + (c.resets ? new Date(c.resets).toLocaleDateString() : 'monthly') + '.';
+    } else if (c.kind === 'manual') v = 'SET';
+    const val = mk('span', 'v' + (c.low ? ' o' : (c.left != null ? ' g' : '')), v);
+    r.append(mk('span', 'k', c.label.split(' ')[0]), val); r.title = tip;
+    if (c.kind === 'manual') {
+      r.style.cursor = 'pointer';
+      r.onclick = async () => {
+        const a = prompt(c.label + ': what does the billing page show as your balance, in dollars?', c.total != null ? c.total : '');
+        if (a == null) return; const n = parseFloat(String(a).replace(/[$,\s]/g, ''));
+        if (!isFinite(n) || n < 0) { alert('Type a number like 25 or 25.50.'); return; }
+        const w = prompt('Warn me when it drops to (dollars):', c.warn_usd != null ? c.warn_usd : 10); if (w == null) return;
+        const wn = parseFloat(String(w).replace(/[$,\s]/g, ''));
+        await api('/api/crew/credits/' + c.key, 'POST', { balance_usd: n, warn_usd: isFinite(wn) && wn >= 0 ? wn : null }); loadCredits();
+      };
+    }
+    s.append(r);
+    if (c.unit === 'chars' && c.total) { const bar = mk('div', 'bar'); const i = mk('i', c.low ? 'hot' : ''); i.style.width = Math.max(2, Math.round(100 * c.left / c.total)) + '%'; bar.append(i); s.append(bar); }
+  }
 }
 
 // ── media library (below the crew) and its viewer (right panel) ──
