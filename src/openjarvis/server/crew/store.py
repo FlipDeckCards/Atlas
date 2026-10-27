@@ -333,6 +333,17 @@ class CrewStore:
                                     "GROUP BY mission_id", user_id, since)
         return {r["mission_id"]: float(r["usd"]) for r in rows}
 
+    async def cost_rows(self, user_id: str, since) -> List[Dict[str, Any]]:
+        """Priced events since a moment, grouped by day, kind, the task's role and mission: [{day, kind, role, mission_id, title, n, usd}]."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT e.created_at::date AS day, e.kind, COALESCE(t.role, '') AS role, e.mission_id, COALESCE(m.title, '') AS title, "
+                "COUNT(*) AS n, COALESCE(SUM(e.cost_usd), 0) AS usd FROM crew_events e "
+                "LEFT JOIN crew_tasks t ON t.id = e.task_id LEFT JOIN crew_missions m ON m.id = e.mission_id "
+                "WHERE e.user_id = $1 AND e.created_at >= $2 AND e.cost_usd > 0 GROUP BY 1, 2, 3, 4, 5", user_id, since)
+        return [{"day": str(r["day"]), "kind": r["kind"], "role": r["role"], "mission_id": r["mission_id"], "title": r["title"],
+                 "n": int(r["n"]), "usd": float(r["usd"])} for r in rows]
+
     async def list_events(self, user_id: str, mission_id: str = "", limit: int = 60) -> List[Dict[str, Any]]:
         async with self._pool.acquire() as conn:
             if mission_id:
@@ -561,6 +572,19 @@ class MemoryCrewStore:
             if e["user_id"] == user_id and e["created_at"] >= since:
                 out[e["mission_id"]] = out.get(e["mission_id"], 0.0) + float(e["cost_usd"])
         return out
+
+    async def cost_rows(self, user_id, since):
+        acc: Dict[Any, Dict[str, Any]] = {}
+        for e in self.events:
+            if e["user_id"] != user_id or e["created_at"] < since or float(e["cost_usd"]) <= 0:
+                continue
+            role = (self.tasks.get(e["task_id"]) or {}).get("role", "")
+            title = (self.missions.get(e["mission_id"]) or {}).get("title", "")
+            k = (str(e["created_at"].date()), e["kind"], role, e["mission_id"], title)
+            r = acc.setdefault(k, {"day": k[0], "kind": k[1], "role": k[2], "mission_id": k[3], "title": k[4], "n": 0, "usd": 0.0})
+            r["n"] += 1
+            r["usd"] += float(e["cost_usd"])
+        return list(acc.values())
 
     async def list_events(self, user_id, mission_id="", limit=60):
         rows = [e for e in reversed(self.events) if e["user_id"] == user_id and (not mission_id or e["mission_id"] == mission_id)]

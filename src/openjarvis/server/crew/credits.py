@@ -16,6 +16,8 @@ from typing import Any, Dict, Optional
 
 import httpx
 
+from openjarvis.server.crew.finance import REAL_SPEND_ROWS
+
 logger = logging.getLogger(__name__)
 
 MANUAL = {"anthropic": "Anthropic (Claude)", "google": "Google (Gemini)"}
@@ -90,7 +92,7 @@ async def spent_since(store, uid: str, pool, since: dt.datetime) -> float:
     if pool is not None:
         try:
             async with pool.acquire() as conn:
-                row = await conn.fetchrow("SELECT COALESCE(SUM(usd), 0) AS usd FROM daily_spend WHERE day >= $1", since.date())
+                row = await conn.fetchrow("SELECT COALESCE(SUM(usd), 0) AS usd FROM daily_spend WHERE day >= $1 AND " + REAL_SPEND_ROWS, since.date())
             total += float(row["usd"])
         except Exception:
             logger.exception("helix spend unavailable")

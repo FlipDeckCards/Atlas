@@ -704,6 +704,23 @@ async def crew_credits(request: Request):
     return await credits.report(engine.store, uid, await engine.env_for(uid), pool=pool)
 
 
+@router.get("/api/crew/spend")
+async def crew_spend(request: Request, days: int = 30):
+    """Where the AI money went over the last N days (crew/spend.py). Owner only."""
+    g = await _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    if not await engine.is_owner(uid):
+        return JSONResponse({"detail": "The spend breakdown is shown to the owner only."}, status_code=403)
+    from openjarvis.server.crew import engine as eng_mod
+    from openjarvis.server.crew import spend
+
+    pool = getattr(getattr(request.app.state, "session_store", None), "_pool", None)
+    names = {k: v.get("name", k) for k, v in eng_mod.ROLES.items()}
+    return await spend.report(engine.store, uid, pool=pool, env=await engine.env_for(uid), role_names=names, days=max(1, min(int(days), 90)))
+
+
 @router.post("/api/crew/credits/{name}")
 async def crew_credits_set(name: str, body: CreditIn, request: Request):
     """Save the balance read off the Anthropic or Google billing page."""

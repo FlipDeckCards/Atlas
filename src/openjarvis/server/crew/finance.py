@@ -29,6 +29,9 @@ STRIPE_API = "https://api.stripe.com/v1"
 KNOWN = ("flipdeck", "marnyx", "deadzone", "aibussol")
 CACHE_S = 300
 MAX_PAGES = 10
+# daily_spend also holds two things that are not money spent: the media total kept a second time under "media:__all__" (every image and
+# sound is added to the person's own row AND to that one), and the "brief_listen:" counters (1.0 per Listen, a count, not dollars).
+REAL_SPEND_ROWS = "user_id <> 'media:__all__' AND user_id NOT LIKE 'brief_listen:%'"
 
 
 def _env(env: Optional[Mapping[str, str]]) -> Mapping[str, str]:
@@ -150,7 +153,7 @@ class Finance:
         try:
             async with self.pool.acquire() as conn:
                 row = await conn.fetchrow("SELECT COALESCE(SUM(usd) FILTER (WHERE day = current_date), 0) AS today, "
-                                          "COALESCE(SUM(usd) FILTER (WHERE day > current_date - 30), 0) AS d30 FROM daily_spend")
+                                          "COALESCE(SUM(usd) FILTER (WHERE day > current_date - 30), 0) AS d30 FROM daily_spend WHERE " + REAL_SPEND_ROWS)
             return {"today": float(row["today"]), "d30": float(row["d30"])}
         except Exception:
             logger.exception("helix spend unavailable")

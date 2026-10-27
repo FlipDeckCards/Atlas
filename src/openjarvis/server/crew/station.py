@@ -603,6 +603,30 @@ function creditsRows(s) {
     s.append(r);
     if (c.unit === 'chars' && c.total) { const bar = mk('div', 'bar'); const i = mk('i', c.low ? 'hot' : ''); i.style.width = Math.max(2, Math.round(100 * c.left / c.total)) + '%'; bar.append(i); s.append(bar); }
   }
+  const sp = mk('div', 'vit'); sp.style.cursor = 'pointer'; sp.append(mk('span', 'k', 'Where it went'), mk('span', 'v', 'open')); sp.onclick = showSpend; s.append(sp);
+}
+
+// every penny of tracked AI spend, last 30 days: by role, step kind, mission and day (owner only)
+async function showSpend() {
+  const r = await api('/api/crew/spend?days=30').catch(() => null);
+  if (!r || !r.ok) { alert('The spend breakdown could not be loaded.'); return; }
+  const d = r.data, box = mk('div'), card = mk('div');
+  box.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+  card.style.cssText = 'background:#06121a;border:1px solid var(--cyan);max-width:640px;width:100%;max-height:88vh;overflow:auto;padding:16px;font-size:12px;line-height:1.7;color:var(--text)';
+  const head = (t) => { const h = mk('div', 'lbl', t); h.style.marginTop = '12px'; card.append(h); };
+  const line = (a, b, c) => { const l = mk('div', 'vit'); l.append(mk('span', 'k', a), mk('span', 'v', b)); if (c) l.title = c; card.append(l); };
+  card.append(mk('div', 'lbl', 'Where the AI money went  ·  last ' + d.days + ' days'));
+  line('Total tracked', money(d.total_ai));
+  line('Crew work', money(d.crew.total)); line('Helix chat + voice', money(d.helix.chat_voice)); line('Images + sound', money(d.helix.media));
+  head('Crew, by role'); d.crew.by_role.forEach(x => line(x.name + '  ·  ' + x.n + ' steps', money(x.usd)));
+  head('Crew, by kind of step'); d.crew.by_kind.forEach(x => line(x.name + '  ·  ' + x.n, money(x.usd)));
+  head('Top missions'); d.crew.by_mission.forEach(x => line(String(x.name).slice(0, 44) + '  ·  ' + x.n, money(x.usd)));
+  head('By day'); d.by_day.slice(0, 14).forEach(x => line(x.day, money(x.usd)));
+  const fx = Object.entries(d.fixed_monthly || {}); if (fx.length) { head('Fixed monthly (CREW_FIXED_COSTS)'); fx.forEach(([k, v]) => line(k, money(v) + '/mo')); }
+  const n = mk('div', 'dim', d.note); n.style.marginTop = '12px'; card.append(n);
+  const close = mk('button', 'b', 'CLOSE'); close.style.marginTop = '12px'; close.onclick = () => box.remove(); card.append(close);
+  box.onclick = (e) => { if (e.target === box) box.remove(); };
+  box.append(card); document.body.append(box);
 }
 
 // ── media library (below the crew) and its viewer (right panel) ──
