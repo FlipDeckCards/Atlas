@@ -1477,6 +1477,13 @@ function fillBay(b) {
     : b.planning ? 'PLANNING' : current.length ? 'QUEUED' : 'IDLE';              // finished work is just idle: nothing running here
   if (b.state === 'IDLE') b.powered = true;                                     // an idle factory stays lit and its tube keeps flowing
   // the product itself: LIVE or DOWN from the server's check of its site, shown whenever no crew is working there
+  // the trading desk: its own state (from the desk's heartbeat), not the crew's
+  if (b.key === 'polymarket' && b.state === 'IDLE') {
+    loadDesk();
+    const ds = DESK && !DESK.error ? DESK : null, st = ds ? (ds.status || {}) : {};
+    b.state = !ds ? 'IDLE' : !ds.running ? 'DOWN' : (st.paused || st.kill) ? 'PAUSED' : st.mode === 'live' ? 'LIVE TRADING' : 'PAPER TRADING';
+    b.powered = !!(ds && ds.running && !st.kill);
+  }
   const site = S && S.products ? S.products[b.key] : null;
   if (site && b.state === 'IDLE') {
     b.state = site.live ? 'LIVE' : 'DOWN';
@@ -1877,7 +1884,7 @@ function routeAt(rt, d) {                                  // [x, y, dx, dy] aft
 // a docking tube: straight from Helix's core into the middle of the module's inner wall (a branch factory's starts at its walkway side)
 function drawSpoke(m, t) {
   const site = S && S.products ? S.products[m.key] : null;               // a live product site keeps its tube flowing too
-  const live = m.tasks.some(k => k.status === 'running') || (m.platform && m.powered) || !!(site && site.live) || m.state === 'IDLE';
+  const live = m.tasks.some(k => k.status === 'running') || (m.platform && m.powered) || (m.key === 'polymarket' && m.powered) || !!(site && site.live) || m.state === 'IDLE';
   const col = m.color, hw = hallW() / 2, wall = 4 * SC;
   const r1 = m.branch && walkway ? walkway.dW : core.r + 3, r2 = m.D - m.h / 2 + 2, ux = m.ux, uy = m.uy, nx = -uy, ny = ux;
   const P = (r, o) => [core.x + ux * r + nx * o, core.y + uy * r + ny * o];
@@ -2023,7 +2030,7 @@ function drawPlate(m, t) {
   ctx.textAlign = 'center';
   ctx.font = '700 ' + nfs + 'px Orbitron, monospace'; ctx.fillStyle = m.color; ctx.fillText(name, ox, y + 5 * SC + fs - (fs - nfs) * 0.4);
   ctx.font = fs2 + 'px Share Tech Mono, monospace';
-  ctx.fillStyle = st === 'COMING SOON' ? '#ff2d95' : st === 'DOWN' ? '#ff3344' : st === 'NEEDS YOU' || st === 'OFFLINE' || st === 'IDLE' ? '#ff8a2a' : st === 'WORKING' || st === 'ONLINE' || st === 'LIVE' ? '#00ff99' : 'rgba(142,207,224,0.65)';
+  ctx.fillStyle = st === 'COMING SOON' ? '#ff2d95' : st === 'DOWN' ? '#ff3344' : st === 'NEEDS YOU' || st === 'OFFLINE' || st === 'IDLE' || st === 'PAUSED' ? '#ff8a2a' : st === 'WORKING' || st === 'ONLINE' || st === 'LIVE' || st === 'PAPER TRADING' || st === 'LIVE TRADING' ? '#00ff99' : 'rgba(142,207,224,0.65)';
   ctx.fillText(st, ox, y + 7 * SC + fs + fs2);
   ctx.restore();
 }
