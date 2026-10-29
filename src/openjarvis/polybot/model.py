@@ -89,21 +89,32 @@ class PriceTape:
         return (max(vals) - min(vals)) if len(vals) >= 2 else 0.0
 
 
-def fair_up(tape: PriceTape, now: int, window_end: int, price_to_beat: float, sigma: float, vol_mult: float = 1.0) -> Optional[float]:
-    """Probability the window settles Up. None when there is not enough data to say."""
+def fair_up(tape: PriceTape, now: int, window_end: int, price_to_beat: float, sigma: float, vol_mult: float = 1.0,
+            drift_beta: float = 0.0, drift_lookback_s: int = 30) -> Optional[float]:
+    """Probability the window settles Up. None when there is not enough data to say.
+
+    drift_beta (v1.3): BTC's index keeps going the way it just went. Measured over 117 five-minute windows (10 hours of BRTI),
+    a move over the last 30 seconds continued to the close 61-66% of the time, by roughly as much again (regression slope
+    0.6-1.3). So the expected close is shifted by drift_beta x (the last 30 seconds' move); for the part of the closing average
+    already known, only the seconds still to come carry it."""
     s = tape.at(now)
     if s is None or not sigma or sigma <= 0 or not price_to_beat:
         return None
+    drift = 0.0
+    if drift_beta:
+        s0 = tape.at(now - drift_lookback_s, back=5)
+        if s0 is not None:
+            drift = drift_beta * (s - s0)
     sd1 = sigma * vol_mult
     first = window_end - AVG_S
     if now < first:
-        mean = s
+        mean = s + drift
         var = sd1 * sd1 * ((first - now) + AVG_S / 3.0)
     elif now < window_end:
         k = now - first
         known = (tape.average(first, now - 1) or s) * k if k > 0 else 0.0
         m = window_end - now
-        mean = (known + m * s) / AVG_S
+        mean = (known + m * (s + drift)) / AVG_S
         var = sd1 * sd1 * (m ** 3) / (3.0 * AVG_S * AVG_S)
     else:
         close = tape.average(first, window_end - 1)

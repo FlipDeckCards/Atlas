@@ -309,7 +309,8 @@ class Desk:
             if now >= self.rs.cooldown_until:
                 self.log("info", f"BTC moved ${self.tape.moved(int(now), self.base.jump_window_s):.0f} in {self.base.jump_window_s:.0f}s: quotes pulled.")
             self.rs.cooldown_until = now + self.base.cooldown_s
-        self.fair_model = (model.fair_up(self.tape, int(now), int(w.end), w.price_to_beat, self.sigma or 0.0, self.cfg.vol_mult)
+        self.fair_model = (model.fair_up(self.tape, int(now), int(w.end), w.price_to_beat, self.sigma or 0.0, self.cfg.vol_mult,
+                                         drift_beta=self.cfg.drift_beta, drift_lookback_s=int(self.cfg.momentum_s))
                            if w and w.price_to_beat else None)
         self.mid = brain.market_mid(b.best_bid, b.best_ask) if b else None
         self.fair = brain.blend(self.fair_model, self.mid, self.cfg.model_weight)

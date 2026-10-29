@@ -478,3 +478,14 @@ def test_quotes_size_by_confidence():
     strong = strategy.quotes(0.75, Book(0.40, 0.60), Inventory(), lim, budget_left=50, can_down=False, sizing=sz)[0]
     assert weak.price == strong.price == 0.41 and strong.cost > weak.cost
     assert strong.cost <= sz.window_cap(lim) + 1e-9
+
+
+
+def test_drift_moves_fair_value_with_the_recent_run():
+    prices = [80000.0] * 3600 + [80000.0 - 1.0 * i for i in range(31)]      # BTC slid $30 in the last 30 seconds
+    t, s = tape_from(prices)
+    now = s + len(prices) - 1
+    plain = model.fair_up(t, now, now + 200, 79975.0, sigma=2.0)
+    drift = model.fair_up(t, now, now + 200, 79975.0, sigma=2.0, drift_beta=0.7, drift_lookback_s=30)
+    assert drift < plain                                                  # a falling BTC makes Up worth less
+    assert model.fair_up(t, now, now + 200, 79975.0, sigma=2.0, drift_beta=0.0) == plain

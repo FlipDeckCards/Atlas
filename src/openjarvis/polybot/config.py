@@ -65,7 +65,8 @@ class Config:
     cooldown_s: float = 10.0            # and stay out this long afterwards
     vol_mult: float = 1.25              # widen the model's uncertainty (fat tails): checked against history in tests/backtests
     model_weight: float = 0.4           # v1.1: fair value = this much model + the rest the market's own mid price
-    momentum_s: float = 45.0            # v1.1: look back this far for a run in BTC ...
+    drift_beta: float = 0.7             # v1.3: the last 30 s of BTC's move is expected to carry on this much (measured 0.6-1.3)
+    momentum_s: float = 30.0            # v1.1 (30 s since v1.3, where the effect was measured): look back this far for a run ...
     momentum_z: float = 0.6             # ... and do not buy against a move bigger than this many standard deviations (0 = off)
     max_fills_per_side: int = 1         # v1.1: stop adding to a side in a window after this many fills (0 = no limit)
     learn: bool = True                  # v1.1: demand extra edge while the last 20 windows are losing
@@ -111,7 +112,8 @@ def from_env(env: Optional[Mapping[str, str]] = None) -> Config:
         jump_usd=_f(e, "POLYBOT_JUMP_USD", 25.0, 1.0),
         vol_mult=_f(e, "POLYBOT_VOL_MULT", 1.25, 0.5, 5.0),
         model_weight=_f(e, "POLYBOT_MODEL_WEIGHT", 0.4, 0.0, 1.0),
-        momentum_s=_f(e, "POLYBOT_MOMENTUM_SECONDS", 45.0, 5.0, 600.0),
+        momentum_s=_f(e, "POLYBOT_MOMENTUM_SECONDS", 30.0, 5.0, 600.0),
+        drift_beta=_f(e, "POLYBOT_DRIFT_BETA", 0.7, 0.0, 3.0),
         momentum_z=_f(e, "POLYBOT_MOMENTUM_Z", 0.6, 0.0, 10.0),
         max_fills_per_side=int(_f(e, "POLYBOT_MAX_FILLS_PER_SIDE", 1, 0, 100)),
         learn=(e.get("POLYBOT_LEARN") or "true").strip().lower() in _TRUE,
