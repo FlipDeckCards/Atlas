@@ -741,3 +741,27 @@ def test_one_sided_risk_is_small_and_pairs_are_built_in_steps():
 def test_pair_first_defaults():
     cfg = from_env({})
     assert cfg.unpaired_pct == 10.0 and cfg.open_cutoff_s == 90.0 and cfg.max_fills_per_side == 8
+
+
+def test_position_mismatch_stops_the_desk():
+    """Earlier versions held far more than they recorded (a +$16.23 window on a $7.50 budget). Two checks in a row showing
+    Polymarket holding more than the desk booked stop trading until the owner pauses and resumes."""
+    from openjarvis.polybot.desk import Desk, Window
+
+    d = Desk(replace(from_env({}), mode="live"), None, MemStore())
+    pushed = []
+
+    async def push(t, x):
+        pushed.append(t)
+    d.push = push
+    w = Window(slug="cpc-btc-updown-5m-x", start=0, end=300, price_to_beat=1.0)
+    w.inv.up_qty, w.inv.up_cost = 5.0, 2.5
+    d.open_windows[w.slug] = w
+    ok = {w.slug: {"cost": {"value": "2.60", "currency": "USD"}}}
+    big = {w.slug: {"cost": {"value": "9.00", "currency": "USD"}}}
+    run(d.check_positions(ok, 1.0))
+    assert d.guard is None
+    run(d.check_positions(big, 2.0))
+    assert d.guard is None                                                    # once could be a fill mid-sync
+    run(d.check_positions(big, 3.0))
+    assert d.guard and "$9.00" in d.guard and pushed

@@ -81,6 +81,8 @@ class Desk:
         self._stopping = False
         self.instance = ""                                   # set by the runner: which copy wrote the status
         self.version_start: Optional[float] = None           # real account value (live) when this strategy version started
+        self.guard: Optional[str] = None                     # v1.8: set when Polymarket holds more than the desk recorded; blocks trading
+        self._mismatch: Dict[str, int] = {}                  # consecutive mismatched checks per window (a fill may be mid-sync once)
 
     # ── helpers ───────────────────────────────────────────────────────────────────────
     def log(self, level: str, text: str) -> None:
@@ -108,7 +110,11 @@ class Desk:
             logger.exception("control row unreadable; keeping the last settings")
             return
         new = apply_control(self.base, ctrl)
+        was_paused = self.rs.paused
         self.rs.paused, self.rs.kill = bool(ctrl.get("paused")), bool(ctrl.get("kill"))
+        if self.guard and was_paused and not self.rs.paused:          # the owner looked, paused and resumed: trade again
+            self.log("info", "Resumed by the owner after the position check; trading again.")
+            self.guard = None
         if str(ctrl.get("mode") or "paper") == "live" and new.mode != "live":
             self.reason = "Live was approved, but the worker is not allowed to trade live (set POLYBOT_ALLOW_LIVE=true and the API keys)."
         if new.mode != self.cfg.mode:
@@ -272,13 +278,14 @@ class Desk:
 
     async def refresh_positions(self, now: float) -> None:
         """Live only: contracts held from an earlier run (or bought by hand) still count against the bankroll until they expire."""
-        if self.cfg.mode != "live" or not self._due("positions", 300.0, now):
+        if self.cfg.mode != "live" or not self._due("positions", 15.0, now):
             return
         try:
             pos = await self.c.positions()
         except PMError as exc:
             self.log("warn", f"Positions unreadable: {exc}")
             return
+        await self.check_positions(pos or {}, now)
         ext = 0.0
         for slug, p in (pos or {}).items():
             if slug in self.open_windows or p.get("expired"):
@@ -286,6 +293,30 @@ class Desk:
             if f"-{self.base.asset}-updown-" in slug:
                 ext += abs(money(p.get("cost")) or 0.0)
         self.external_at_risk = round(ext, 2)
+
+    async def check_positions(self, pos: Dict[str, Any], now: float) -> None:
+        """v1.8 safety check: what Polymarket says the desk paid in each open window must match what the desk recorded.
+        Earlier versions sometimes held far more than they knew (orders that filled after a cancel), which made windows of
+        +$16 and -$4 on a $7.50 budget. If that happens again the desk stops trading, cancels its orders and alerts the owner."""
+        if self.guard:
+            return
+        for slug, w in list(self.open_windows.items()):
+            p = pos.get(slug)
+            if not p or p.get("expired"):
+                continue
+            real = abs(money(p.get("cost")) or 0.0)
+            booked = w.inv.spent
+            if real <= booked + max(1.0, 0.25 * booked):
+                self._mismatch.pop(slug, None)
+                continue
+            self._mismatch[slug] = self._mismatch.get(slug, 0) + 1
+            if self._mismatch[slug] >= 2:
+                self.guard = (f"Stopped: Polymarket shows ${real:.2f} in this window but the desk recorded ${booked:.2f}. "
+                              "Tap Pause, then Resume, to trade again after checking.")
+                self.log("warn", self.guard)
+                await self.broker.cancel_all(now)
+                await self.push("Desk stopped: position mismatch", self.guard)
+                return
 
     # ── one second of work ────────────────────────────────────────────────────────────
     async def step(self) -> None:
@@ -331,7 +362,9 @@ class Desk:
         self.mid = brain.market_mid(b.best_bid, b.best_ask) if b else None
         self.fair = brain.blend(self.fair_model, self.mid, self.cfg.model_weight)
         self.momentum = brain.momentum_z(self.tape, int(now), int(self.cfg.momentum_s), self.sigma)
-        if w is None and not (self.rs.kill or self.rs.paused):
+        if self.guard and not (self.rs.kill or self.rs.paused):
+            reason = self.guard
+        elif w is None and not (self.rs.kill or self.rs.paused):
             reason = "Between windows: waiting for the next 5-minute market to open."
         else:
             reason = None
