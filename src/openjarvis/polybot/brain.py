@@ -22,7 +22,7 @@ from typing import Deque, Dict, List, Optional, Tuple
 
 from openjarvis.polybot.model import PriceTape
 
-STRATEGY_VERSION = "1.8"           # 1.8: at most 20% of the window budget on one side until it is paired; pairs are built in steps
+STRATEGY_VERSION = "1.8"           # 1.8: pair-first: at most 10% of the window unpaired, no new legs in the last 90 s, pairs built in steps
 
 
 def market_mid(best_bid: Optional[float], best_ask: Optional[float]) -> Optional[float]:

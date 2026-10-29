@@ -350,6 +350,11 @@ class Desk:
             fills = (self.open_windows.get(w.slug) or w).fills
             can_up = can_up and brain.can_add(fills, "up", self.cfg.max_fills_per_side)
             can_down = can_down and brain.can_add(fills, "down", self.cfg.max_fills_per_side)
+            if w.end - now < self.cfg.open_cutoff_s:                 # late in the window: only buy what completes a pair
+                can_up = can_up and inv.down_qty > inv.up_qty + 1e-9
+                can_down = can_down and inv.up_qty > inv.down_qty + 1e-9
+                if not (can_up or can_down):
+                    why = why or "Last 90 seconds: only completing pairs, nothing new."
             extra = self.learner.extra_edge if self.cfg.learn else 0.0
             lim = replace(self.cfg.limits, min_edge=round(self.cfg.limits.min_edge + extra, 3))
             equity = self.equity()
@@ -358,7 +363,7 @@ class Desk:
             want = strategy.quotes(self.fair, strategy.Book(b.best_bid, b.best_ask, w.tick, w.min_qty), inv, lim, budget_left=budget,
                                    can_up=can_up, can_down=can_down, sizing=sizing,
                                    min_cost=self.cfg.min_buy_price, max_cost=self.cfg.max_buy_price,
-                                   unpaired_usd=max(0.5, sizing.window_cap(self.cfg.limits) * self.cfg.unpaired_pct / 100.0)
+                                   unpaired_usd=max(0.25, sizing.window_cap(self.cfg.limits) * self.cfg.unpaired_pct / 100.0)
                                    ) if (can_up or can_down) else []
             if want:
                 reason = "Quoting" + (f" (one side only: {why})" if why else ".")

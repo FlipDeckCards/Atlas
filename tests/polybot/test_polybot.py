@@ -735,3 +735,9 @@ def test_one_sided_risk_is_small_and_pairs_are_built_in_steps():
     more = [q for q in strategy.quotes(0.62, Book(0.40, 0.60), paired, lim, budget_left=100, sizing=sz, unpaired_usd=1.5) if q.side == "up"]
     assert more and more[0].cost <= 1.5 + 1e-9                                  # once paired, the next step opens again
     assert strategy._unpaired_room(1.5, 0.5, 5.0, 2.0, 0.01) == 0.0              # already $1.50 unpaired: no more on that side
+
+
+
+def test_pair_first_defaults():
+    cfg = from_env({})
+    assert cfg.unpaired_pct == 10.0 and cfg.open_cutoff_s == 90.0 and cfg.max_fills_per_side == 8
