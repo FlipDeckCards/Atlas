@@ -692,3 +692,29 @@ def test_a_replaced_order_that_already_filled_is_not_doubled():
     assert c.n == 1                                                                # no second order while the cancel is unresolved
     fills = run(b.sync(None, now=2.0))
     assert sum(f.qty for f in fills) == 7.0 and b.closing == {}                    # the fill is found; now the side is known to be full
+
+
+def test_a_closed_market_is_not_an_api_error():
+    """Live 3:20-3:30: the desk kept asking for the book of the market that had just closed; 404 x5 pulled every quote."""
+    from openjarvis.polybot.client import PMError
+    from openjarvis.polybot.desk import Desk
+
+    t0 = int(dt.datetime(2026, 10, 28, 18, 0, tzinfo=dt.timezone.utc).timestamp())
+    ex = FakeExchange(t0)
+    real_book = ex.book
+
+    async def book(slug):
+        if ex.now >= ex.we:
+            raise PMError(f'market with slug "{slug}" not found', 404)
+        return await real_book(slug)
+    ex.book = book
+
+    async def sleep(_):
+        ex.now += 1
+
+    store = MemStore()
+    ex.now = t0 - 5
+    d = Desk(from_env({}), ex, store, clock=lambda: float(ex.now), sleep=sleep)
+    run(d.run(max_steps=330))
+    texts = " ".join(e["text"] for e in store.events)
+    assert "API errors in a row" not in texts and "EXIT (settled)" in texts

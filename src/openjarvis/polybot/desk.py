@@ -77,7 +77,7 @@ class Desk:
         self.external_at_risk = 0.0
         self.stats = {"day": "", "fills": 0, "windows": 0, "wins": 0}
         self.hour_pnl = 0.0
-        self._t = {"control": 0.0, "flush": 0.0, "markets": 0.0, "market": 0.0, "sigma": 0.0, "positions": 0.0, "hour": 0.0}
+        self._t = {"control": 0.0, "flush": 0.0, "markets": 0.0, "markets_fast": 0.0, "market": 0.0, "sigma": 0.0, "positions": 0.0, "hour": 0.0}
         self._stopping = False
         self.instance = ""                                   # set by the runner: which copy wrote the status
 
@@ -147,7 +147,13 @@ class Desk:
                 if k:
                     w.price_to_beat = round(k, 2)
             return
-        if not self._due("markets", 10.0, now) and w is not None:
+        # the window just ended: look for the next one every 2 seconds instead of waiting 10, and stop using the old one
+        ended = w is not None and now >= w.end
+        if ended:
+            self.window = w = None
+        if not self._due("markets", 2.0 if (ended or w is None) else 10.0, now) and w is not None:
+            return
+        if w is None and not ended and not self._due("markets_fast", 2.0, now):
             return
         ms = await self.c.markets(categories=["crypto"], active=True, closed=False)
         live = [x for x in (window_from_market(m) for m in ms if is_series(m, self.base.asset, self.base.horizon)) if x and x.start <= now < x.end]
@@ -165,7 +171,13 @@ class Desk:
         if not self.window:
             self.book = None
             return
-        self.book = BookView.parse(await self.c.book(self.window.slug), now)
+        try:
+            self.book = BookView.parse(await self.c.book(self.window.slug), now)
+        except PMError as exc:
+            if exc.status == 404:                       # the market closed and is gone: not an error, move on to the next window
+                self.window, self.book = None, None
+                return
+            raise
 
     # ── fills and settlement ──────────────────────────────────────────────────────────
     def _book_fill(self, f: Fill) -> None:
