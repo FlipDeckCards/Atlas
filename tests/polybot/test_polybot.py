@@ -489,3 +489,17 @@ def test_drift_moves_fair_value_with_the_recent_run():
     drift = model.fair_up(t, now, now + 200, 79975.0, sigma=2.0, drift_beta=0.7, drift_lookback_s=30)
     assert drift < plain                                                  # a falling BTC makes Up worth less
     assert model.fair_up(t, now, now + 200, 79975.0, sigma=2.0, drift_beta=0.0) == plain
+
+
+
+def test_second_side_only_when_the_pair_costs_under_a_dollar():
+    held_up = Inventory(up_qty=2.0, up_cost=1.20)            # Up bought at 60c
+    # the model has turned bearish: on its own it would buy Down at long 0.45 (Down costs 55c): pair 1.15, a locked loss
+    qs = strategy.quotes(0.40, Book(0.40, 0.70), held_up, LIM, budget_left=50)
+    downs = [q for q in qs if q.side == "down"]
+    assert all(1.0 - q.price + 0.60 <= 0.97 + 1e-9 for q in downs)
+    held_down = Inventory(down_qty=2.0, down_cost=1.30)      # Down bought at 65c
+    ups = [q for q in strategy.quotes(0.80, Book(0.20, 0.60), held_down, LIM, budget_left=50) if q.side == "up"]
+    assert all(q.price + 0.65 <= 0.97 + 1e-9 for q in ups)
+    pair = Inventory(up_qty=2.0, up_cost=1.20, down_qty=2.0, down_cost=0.70)   # 60c + 35c = 95c per pair
+    assert pair.worst_case > 0                                 # a completed pair under $1 profits whichever way BTC goes

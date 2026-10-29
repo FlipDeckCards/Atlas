@@ -113,7 +113,7 @@ class Sizing:
 
 
 def quotes(fair: float, book: Book, inv: Inventory, limits: Limits, *, budget_left: float, can_up: bool = True,
-           can_down: bool = True, sizing: Optional[Sizing] = None) -> List[Quote]:
+           can_down: bool = True, sizing: Optional[Sizing] = None, pair_margin: float = 0.03) -> List[Quote]:
     """The orders the desk wants resting right now in this window (possibly none)."""
     out: List[Quote] = []
     t = book.tick
@@ -130,6 +130,8 @@ def quotes(fair: float, book: Book, inv: Inventory, limits: Limits, *, budget_le
             p = min(p, _floor(book.best_bid + t, t))         # one tick better than the best bid is enough to lead
         if book.best_ask is not None:
             p = min(p, _floor(book.best_ask - t, t))         # never cross
+        if inv.down_qty > 0 and pair_margin is not None:      # v1.4: Up + the Down already held must cost under $1 - margin
+            p = min(p, _floor(1.0 - inv.down_cost / inv.down_qty - pair_margin, t))
         if lo <= p <= hi:
             usd = sizing.order_usd(fair, p, limits) if sizing else limits.max_order_usd
             q = _qty(min(usd, window_left), p, book.min_qty)
@@ -144,6 +146,8 @@ def quotes(fair: float, book: Book, inv: Inventory, limits: Limits, *, budget_le
             p = max(p, _ceil(book.best_ask - t, t))
         if book.best_bid is not None:
             p = max(p, _ceil(book.best_bid + t, t))
+        if inv.up_qty > 0 and pair_margin is not None:        # v1.4: Down (costs 1 - p) + the Up already held under $1 - margin
+            p = max(p, _ceil(inv.up_cost / inv.up_qty + pair_margin, t))
         if lo <= p <= hi:
             usd = sizing.order_usd(1.0 - fair, 1.0 - p, limits) if sizing else limits.max_order_usd
             q = _qty(min(usd, window_left), 1.0 - p, book.min_qty)
