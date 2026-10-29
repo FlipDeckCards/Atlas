@@ -248,10 +248,14 @@ class Desk:
             self.log("trade", text)
             if w.mode == "live":
                 await self.push("Desk settled", text)
-            if risk.day_limit(self.cfg, self.rs) > 0 and self.rs.day_pnl <= -risk.day_limit(self.cfg, self.rs):
-                msg = f"Daily loss limit hit (${-self.rs.day_pnl:.2f}). The desk stops quoting until midnight Los Angeles time."
-                self.log("warn", msg)
-                await self.push("Desk stopped for today", msg)
+            dl = risk.day_limit(self.cfg, self.rs)
+            if dl > 0 and self.rs.day_pnl <= -dl and self.rs.day_pnl - pnl > -dl:          # only the moment it is crossed
+                if self.cfg.mode == "live":
+                    msg = f"Daily loss limit hit (${-self.rs.day_pnl:.2f} of ${dl:.2f}). The desk stops quoting until midnight Los Angeles time."
+                    self.log("warn", msg)
+                    await self.push("Desk stopped for today", msg)
+                else:
+                    self.log("info", f"Paper: the daily stop (${dl:.2f}) would have ended a live day here; paper keeps trading to collect data.")
 
     async def refresh_positions(self, now: float) -> None:
         """Live only: contracts held from an earlier run (or bought by hand) still count against the bankroll until they expire."""

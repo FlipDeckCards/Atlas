@@ -61,7 +61,7 @@ def blocked(cfg: Config, rs: RiskState, *, now: float, data_age_s: float, book_a
     if rs.paused:
         return "Paused from Aibussol."
     dl = day_limit(cfg, rs)
-    if dl > 0 and rs.day_pnl <= -dl:
+    if cfg.mode == "live" and dl > 0 and rs.day_pnl <= -dl:          # paper keeps collecting data past the stop (it only notes it)
         return f"Daily loss limit reached (${-rs.day_pnl:.2f} of ${dl:.2f}); back tomorrow."
     if in_maintenance(now):
         return "Polymarket US weekly maintenance (Thursday 6-8 AM ET)."
@@ -91,5 +91,7 @@ def budget_left(cfg: Config, rs: RiskState, balance: Optional[float]) -> float:
     room = cfg.limits.bankroll_usd - rs.at_risk - rs.resting
     if cfg.mode == "live" and balance is not None:
         room = min(room, balance - 0.5)
+    if cfg.mode != "live":
+        return max(0.0, room)
     loss_room = day_limit(cfg, rs) + rs.day_pnl - rs.at_risk - rs.resting     # never be able to lose past the daily limit
     return max(0.0, min(room, loss_room))
