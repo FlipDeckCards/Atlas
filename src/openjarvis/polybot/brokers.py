@@ -183,7 +183,7 @@ class LiveBroker:
     """Real post-only orders. Fills are read back from the exchange (open orders, then each order's final state)."""
 
     mode = "live"
-    SYNC_EVERY_S = 2.0
+    SYNC_EVERY_S = 1.0
 
     def __init__(self, client) -> None:
         self.c = client
@@ -222,6 +222,10 @@ class LiveBroker:
         for side, q in sides.items():
             if side in self.resting:
                 continue
+            if any(r.quote.side == side for r in self.closing.values()):
+                # a cancelled order on this side may have filled before the cancel landed: place nothing new on this side
+                # until its final state is read back (the live 2:40 / 2:45 windows doubled up exactly this way)
+                continue
             try:
                 oid = await self.c.place(slug, side, q.price, q.qty)
             except PMError as exc:
@@ -245,7 +249,7 @@ class LiveBroker:
         self.resting = {}
 
     async def sync(self, book: Optional[BookView], now: float) -> List[Fill]:
-        if now - self._last_sync < self.SYNC_EVERY_S or not (self.resting or self.closing):
+        if not (self.resting or self.closing) or (now - self._last_sync < self.SYNC_EVERY_S and not self.closing):
             return []
         self._last_sync = now
         fills: List[Fill] = []

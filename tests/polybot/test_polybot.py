@@ -659,3 +659,36 @@ def test_the_first_side_always_leaves_room_to_complete_the_pair():
     assert second and second[0].qty == first.qty                               # the matching side is always affordable
     total = first.cost + second[0].cost
     assert total <= 7.5 + 1e-9 and first.qty - total > 0                       # a full pair: profit whichever way BTC goes
+
+
+
+def test_a_replaced_order_that_already_filled_is_not_doubled():
+    """Live 2:40 / 2:45: the bot replaced an order that had already filled (it had not seen the fill yet), the new order filled too."""
+    from openjarvis.polybot.brokers import LiveBroker
+
+    class C:
+        def __init__(self):
+            self.orders, self.n = {}, 0
+
+        async def place(self, slug, side, price, qty):
+            self.n += 1
+            self.orders[f"o{self.n}"] = {"id": f"o{self.n}", "state": "ORDER_STATE_NEW", "cumQuantity": 0.0, "quantity": qty}
+            return f"o{self.n}"
+
+        async def cancel(self, oid, slug):
+            pass                                             # too late: it already filled
+
+        async def open_orders(self, slugs=None):
+            return [o for o in self.orders.values() if o["state"] == "ORDER_STATE_NEW"]
+
+        async def order(self, oid):
+            return self.orders[oid]
+
+    c = C()
+    b = LiveBroker(c)
+    run(b.set_quotes("s", [Quote("up", 0.45, 7.0)], now=1.0))
+    c.orders["o1"].update(state="ORDER_STATE_FILLED", cumQuantity=7.0)          # fills on the exchange, unseen by the bot
+    run(b.set_quotes("s", [Quote("up", 0.48, 7.0)], now=1.5))                     # the bot re-prices (2+ ticks)
+    assert c.n == 1                                                                # no second order while the cancel is unresolved
+    fills = run(b.sync(None, now=2.0))
+    assert sum(f.qty for f in fills) == 7.0 and b.closing == {}                    # the fill is found; now the side is known to be full
