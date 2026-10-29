@@ -444,7 +444,10 @@ class Desk:
             "balance": self.balance, "day": self.rs.day, "day_pnl": round(self.rs.day_pnl, 2),
             "day_start": self.rs.day_start, "day_limit": risk.day_limit(self.cfg, self.rs), "at_risk": round(self.rs.at_risk, 2),
             "today": dict(self.stats),
-            "open_windows": [{"slug": x.slug, "end": x.end, "up_qty": x.inv.up_qty, "down_qty": x.inv.down_qty, "paid": round(x.inv.spent, 2)}
+            "open_windows": [{"slug": x.slug, "start": x.start, "end": x.end, "price_to_beat": x.price_to_beat, "tick": x.tick,
+                              "min_qty": x.min_qty, "title": x.title, "mode": x.mode, "fills": dict(x.fills),
+                              "up_qty": x.inv.up_qty, "up_cost": x.inv.up_cost, "down_qty": x.inv.down_qty,
+                              "down_cost": x.inv.down_cost, "paid": round(x.inv.spent, 2)}
                              for x in self.open_windows.values()],
         }
 
@@ -482,6 +485,7 @@ class Desk:
             self.learner.load(prev.get("learner"))
         if prev.get("strategy") == brain.STRATEGY_VERSION and prev.get("version_start") is not None:
             self.version_start = float(prev["version_start"])
+        self.restore_windows(prev.get("open_windows"), now)
         await self.load_index(now, backfill=True)
         self.log("info", f"Desk started in {self.cfg.mode.upper()} mode on {self.base.asset.upper()} {self.base.horizon} Up/Down.")
         steps = 0
@@ -517,6 +521,25 @@ class Desk:
                 logger.exception("final cancel failed")
             self.log("info", "Desk stopped; resting orders cancelled.")
             await self.flush(self.clock())
+
+    def restore_windows(self, rows, now: float) -> None:
+        """Windows that still held contracts when the last copy stopped (a deploy mid-window) are settled by this copy, so
+        their result lands on the scoreboard instead of vanishing (the 4:20 PM window on Oct 29 was lost that way)."""
+        for r in rows or []:
+            try:
+                if r.get("mode") != self.cfg.mode or r["slug"] in self.open_windows or now > float(r["end"]) + 3600:
+                    continue
+                w = Window(slug=r["slug"], start=float(r["start"]), end=float(r["end"]), price_to_beat=r.get("price_to_beat"),
+                           tick=float(r.get("tick") or 0.01), min_qty=float(r.get("min_qty") or 0.01), title=r.get("title") or "",
+                           mode=r["mode"], fills={k: int(v) for k, v in (r.get("fills") or {}).items()})
+                w.inv.up_qty, w.inv.up_cost = float(r["up_qty"]), float(r["up_cost"])
+                w.inv.down_qty, w.inv.down_cost = float(r["down_qty"]), float(r["down_cost"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if w.inv.spent > 0:
+                self.open_windows[w.slug] = w
+                self.recent[w.slug] = w
+                self.log("info", f"Picked up the {w.slug} window from the last run (${w.inv.spent:.2f} in it); it settles here.")
 
     def stop(self) -> None:
         self._stopping = True

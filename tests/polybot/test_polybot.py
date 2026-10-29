@@ -765,3 +765,21 @@ def test_position_mismatch_stops_the_desk():
     assert d.guard is None                                                    # once could be a fill mid-sync
     run(d.check_positions(big, 3.0))
     assert d.guard and "$9.00" in d.guard and pushed
+
+
+def test_a_restart_mid_window_keeps_the_window():
+    """A deploy at 4:19 PM stopped the desk with contracts in the 4:20 window; the next copy never settled it."""
+    from openjarvis.polybot.desk import Desk, Window
+
+    a = Desk(replace(from_env({}), mode="live"), None, MemStore())
+    w = Window(slug="cpc-btc-updown-5m-y", start=0.0, end=300.0, price_to_beat=78698.77, mode="live")
+    w.inv.up_qty, w.inv.up_cost, w.inv.down_qty, w.inv.down_cost = 2.0, 1.36, 1.5, 0.25
+    a.open_windows[w.slug] = w
+    rows = a.status(250.0)["open_windows"]
+    b = Desk(replace(from_env({}), mode="live"), None, MemStore())
+    b.restore_windows(json.loads(json.dumps(rows)), 260.0)
+    got = b.open_windows[w.slug]
+    assert got.inv.up_cost == 1.36 and got.inv.down_qty == 1.5 and got.price_to_beat == 78698.77
+    p = Desk(from_env({}), None, MemStore())                                  # a paper copy leaves live windows alone
+    p.restore_windows(rows, 260.0)
+    assert not p.open_windows
