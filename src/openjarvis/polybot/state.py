@@ -1,0 +1,150 @@
+"""Where the desk keeps its record: the same Postgres database as Aibussol (DATABASE_URL), or JSON files for a local paper run.
+
+Tables (created on first run):
+  polybot_kv       'status' (written by the desk: mode, balance, what it is doing and why) and 'control' (written by Aibussol:
+                   mode, paused, kill, limits). The desk never writes 'control'; Aibussol never writes 'status'.
+  polybot_fills    every fill, paper or live
+  polybot_windows  every window the desk traded, with what it paid, how it settled and its P&L
+  polybot_events   plain-language log lines (entries, settlements, risk stops), newest read by Helix
+Writes are buffered and flushed every POLYBOT_FLUSH_SECONDS, so the database is not touched every second.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import json
+import os
+from typing import Any, Dict, List, Optional
+
+DDL = """
+CREATE TABLE IF NOT EXISTS polybot_kv (key TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS polybot_fills (
+  id BIGSERIAL PRIMARY KEY, ts TIMESTAMPTZ NOT NULL, mode TEXT NOT NULL, slug TEXT NOT NULL, side TEXT NOT NULL,
+  price DOUBLE PRECISION NOT NULL, qty DOUBLE PRECISION NOT NULL, cost DOUBLE PRECISION NOT NULL, fair DOUBLE PRECISION, order_id TEXT);
+CREATE INDEX IF NOT EXISTS polybot_fills_ts ON polybot_fills (ts);
+CREATE TABLE IF NOT EXISTS polybot_windows (
+  slug TEXT NOT NULL, mode TEXT NOT NULL, window_start TIMESTAMPTZ, window_end TIMESTAMPTZ, price_to_beat DOUBLE PRECISION,
+  close_price DOUBLE PRECISION, up BOOLEAN, up_qty DOUBLE PRECISION, up_cost DOUBLE PRECISION, down_qty DOUBLE PRECISION,
+  down_cost DOUBLE PRECISION, pnl DOUBLE PRECISION, settled_at TIMESTAMPTZ, PRIMARY KEY (slug, mode));
+CREATE INDEX IF NOT EXISTS polybot_windows_settled ON polybot_windows (settled_at);
+CREATE TABLE IF NOT EXISTS polybot_events (id BIGSERIAL PRIMARY KEY, ts TIMESTAMPTZ NOT NULL DEFAULT now(), level TEXT NOT NULL, text TEXT NOT NULL);
+"""
+
+
+def _t(ts: Optional[float]) -> Optional[dt.datetime]:
+    return dt.datetime.fromtimestamp(ts, dt.timezone.utc) if ts else None
+
+
+class Ledger:
+    """Buffers fills, windows and events, and flushes them in one go."""
+
+    def __init__(self) -> None:
+        self.fills: List[Dict[str, Any]] = []
+        self.windows: Dict[str, Dict[str, Any]] = {}
+        self.events: List[Dict[str, Any]] = []
+
+    def fill(self, mode: str, f, fair: Optional[float]) -> None:
+        self.fills.append({"ts": f.ts, "mode": mode, "slug": f.slug, "side": f.side, "price": f.price, "qty": f.qty, "cost": f.cost,
+                           "fair": fair, "order_id": f.order_id})
+
+    def window(self, row: Dict[str, Any]) -> None:
+        self.windows[f'{row["slug"]}|{row["mode"]}'] = row
+
+    def event(self, level: str, text: str, ts: float) -> None:
+        self.events.append({"ts": ts, "level": level, "text": text[:500]})
+
+    def take(self):
+        out = (self.fills, list(self.windows.values()), self.events)
+        self.fills, self.windows, self.events = [], {}, []
+        return out
+
+
+class PgStore:
+    def __init__(self, pool) -> None:
+        self.pool = pool
+
+    @classmethod
+    async def connect(cls, dsn: str) -> "PgStore":
+        import asyncpg
+
+        pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2)
+        s = cls(pool)
+        async with pool.acquire() as c:
+            await c.execute(DDL)
+        return s
+
+    async def get(self, key: str) -> Dict[str, Any]:
+        async with self.pool.acquire() as c:
+            v = await c.fetchval("SELECT value FROM polybot_kv WHERE key = $1", key)
+        if isinstance(v, str):
+            try:
+                v = json.loads(v)
+            except ValueError:
+                v = {}
+        return v if isinstance(v, dict) else {}
+
+    async def put(self, key: str, value: Dict[str, Any]) -> None:
+        async with self.pool.acquire() as c:
+            await c.execute("INSERT INTO polybot_kv (key, value, updated_at) VALUES ($1, $2::jsonb, now()) "
+                            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()", key, json.dumps(value))
+
+    async def flush(self, ledger: Ledger) -> None:
+        fills, windows, events = ledger.take()
+        if not (fills or windows or events):
+            return
+        async with self.pool.acquire() as c:
+            async with c.transaction():
+                if fills:
+                    await c.executemany("INSERT INTO polybot_fills (ts, mode, slug, side, price, qty, cost, fair, order_id) "
+                                        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+                                        [(_t(f["ts"]), f["mode"], f["slug"], f["side"], f["price"], f["qty"], f["cost"], f["fair"], f["order_id"]) for f in fills])
+                for w in windows:
+                    await c.execute(
+                        "INSERT INTO polybot_windows (slug, mode, window_start, window_end, price_to_beat, close_price, up, up_qty, up_cost, "
+                        "down_qty, down_cost, pnl, settled_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT (slug, mode) DO UPDATE SET "
+                        "close_price = EXCLUDED.close_price, up = EXCLUDED.up, up_qty = EXCLUDED.up_qty, up_cost = EXCLUDED.up_cost, "
+                        "down_qty = EXCLUDED.down_qty, down_cost = EXCLUDED.down_cost, pnl = EXCLUDED.pnl, settled_at = EXCLUDED.settled_at",
+                        w["slug"], w["mode"], _t(w["window_start"]), _t(w["window_end"]), w["price_to_beat"], w.get("close_price"), w.get("up"),
+                        w["up_qty"], w["up_cost"], w["down_qty"], w["down_cost"], w.get("pnl"), _t(w.get("settled_at")))
+                if events:
+                    await c.executemany("INSERT INTO polybot_events (ts, level, text) VALUES ($1,$2,$3)",
+                                        [(_t(e["ts"]), e["level"], e["text"]) for e in events])
+
+    async def close(self) -> None:
+        await self.pool.close()
+
+
+class FileStore:
+    """JSON files in a folder: enough for a local paper run (`python -m openjarvis.polybot run` with no DATABASE_URL)."""
+
+    def __init__(self, folder: str) -> None:
+        self.folder = folder
+        os.makedirs(folder, exist_ok=True)
+
+    def _path(self, name: str) -> str:
+        return os.path.join(self.folder, name)
+
+    async def get(self, key: str) -> Dict[str, Any]:
+        try:
+            with open(self._path(f"{key}.json")) as fh:
+                v = json.load(fh)
+            return v if isinstance(v, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    async def put(self, key: str, value: Dict[str, Any]) -> None:
+        tmp = self._path(f"{key}.json.tmp")
+        with open(tmp, "w") as fh:
+            json.dump(value, fh, indent=1, default=str)
+        os.replace(tmp, self._path(f"{key}.json"))
+
+    async def flush(self, ledger: Ledger) -> None:
+        fills, windows, events = ledger.take()
+        for name, rows in (("fills.jsonl", fills), ("windows.jsonl", windows), ("events.jsonl", events)):
+            if rows:
+                with open(self._path(name), "a") as fh:
+                    for r in rows:
+                        fh.write(json.dumps(r, default=str) + "\n")
+
+    async def close(self) -> None:
+        return None

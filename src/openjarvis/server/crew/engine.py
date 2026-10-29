@@ -2383,6 +2383,12 @@ class CrewEngine:
             elif kind == "google_calendar":
                 result = await conns.run("google", "calendar_add", {k: act.get(k) for k in ("title", "start", "end", "minutes", "location", "notes")}, store=self.store,
                                          user_id=user_id, env=envx, client_factory=self.client_factory)
+            elif kind == "desk_control":
+                from openjarvis.server.crew import desk
+
+                if getattr(self, "pool", None) is None:
+                    raise ValueError("the desk's database is not reachable")
+                result = await desk.apply_approved(self.pool, act.get("set") or {})
             elif kind == "marnyx_approve":
                 outs = []
                 for name in act.get("businesses") or []:                 # goes back into Marnyx and approves every held draft of each brand

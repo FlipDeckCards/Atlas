@@ -164,9 +164,9 @@ SETUP_STEPS = [
     ("stripe", "Stripe", "In Stripe, open Developers, then API keys, and copy your secret key. Paste it into the Stripe box in the Connections panel.", "https://dashboard.stripe.com/apikeys"),
     ("workbench", "your PC (Rig)", "Run the Workbench helper on the computer that has your project. The Connections panel shows the command to copy.", ""),
 ]
-CHANGES_STATION = {"add_business", "rename_business", "remove_business", "rename_mission", "add_task", "edit_task", "retry_task",
+CHANGES_STATION = {"trading_desk_control", "add_business", "rename_business", "remove_business", "rename_mission", "add_task", "edit_task", "retry_task",
                    "attach_document", "attach_image", "build_book", "cancel_mission", "render_redeploy", "render_restart", "render_rollback", "pause_mission", "resume_mission", "answer_crew_question"}     # tools after which the Station must redraw
-OWNER_FIXED_KEYS_HELIX = {"flipdeck", "marnyx", "deadzone"}   # the owner's rows that are not stored (see routes.OWNER_BUSINESSES)
+OWNER_FIXED_KEYS_HELIX = {"flipdeck", "marnyx", "deadzone", "polymarket"}   # the owner's rows that are not stored (see routes.OWNER_BUSINESSES)
 
 CREW_TOOLS: List[Dict[str, Any]] = [
     {"type": "function", "function": {
@@ -174,6 +174,20 @@ CREW_TOOLS: List[Dict[str, Any]] = [
         "description": "Start a crew mission: Helix plans the goal into tasks and agents (Claude, Gemini) work them in parallel. Costs money, so the system asks the user to confirm first.",
         "parameters": {"type": "object", "properties": {"goal": {"type": "string", "description": "The whole goal in the user's words, with any details he gave. Documents he attached in chat go to the mission automatically."},
                                                         "budget_usd": {"type": "number", "description": "Only if the user named a budget."}}, "required": ["goal"]}}},
+    {"type": "function", "function": {
+        "name": "trading_desk",
+        "description": "The Polymarket Desk (the BTC Up/Down trading bot on the Station): whether it is running, paper or live, what it is doing now, "
+                       "its scoreboard (win rate, total profit, trades; paper and live kept apart), limits and latest log. Owner only.",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "trading_desk_control",
+        "description": "Change the Polymarket Desk. pause / resume / flatten (kill switch: cancel every order) / paper happen at once. "
+                       "go_live and set_limits that loosen any limit put an Approve card on his inbox: they never happen until he taps Approve. "
+                       "set_limits takes any of bankroll_usd, max_window_usd, max_order_usd, daily_loss_usd, min_edge.",
+        "parameters": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["pause", "resume", "flatten", "paper", "go_live", "set_limits"]},
+            "bankroll_usd": {"type": "number"}, "max_window_usd": {"type": "number"}, "max_order_usd": {"type": "number"},
+            "daily_loss_usd": {"type": "number"}, "min_edge": {"type": "number"}}, "required": ["action"]}}},
     {"type": "function", "function": {
         "name": "crew_status",
         "description": "What the crew is doing: missions, tasks, open questions and checkpoints (with ids), spend.",
@@ -492,6 +506,28 @@ async def _ops_request(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
         return "Could not request that right now."
 
 
+async def _desk(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
+    """The Polymarket Desk: read its scoreboard, or flip its switches. Live and looser limits only ever become Approve cards."""
+    from openjarvis.server.crew import desk
+
+    eng = ctx.engine
+    if not await eng.is_owner(ctx.user_id):
+        return "The trading desk is the owner's only."
+    pool = getattr(eng, "pool", None)
+    if pool is None:
+        return "The desk's database is not reachable right now."
+    if name == "trading_desk":
+        return desk.status_text(await desk.summary(pool, trade_limit=10))
+    lim = {k: args.get(k) for k in desk.LIMIT_FIELDS if args.get(k) is not None}
+    out = await desk.control(pool, str(args.get("action") or ""), lim)
+    if "done" in out:
+        await eng.store.add_event(ctx.user_id, "ops", f"Polymarket Desk: {out['done']}")
+        return out["done"]
+    await eng.store.add_question("", "", ctx.user_id, "ops", out["needs_approval"], ["Approve", "Decline"], out["action"])
+    return ("NOT DONE YET. I put this on the Helix inbox as an Approve card: " + out["needs_approval"]
+            + " Tell him to tap Approve there, or say approve; I cannot approve it myself.")
+
+
 async def _dev(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
     """Read-only looks at GitHub and Render with the user's own connections; anything wrong comes back as a plain sentence."""
     from openjarvis.server.crew import devtools, github as gh
@@ -574,6 +610,9 @@ async def system_addendum(ctx: CrewCtx) -> str:
          "until you can state the root cause in plain words with the file and line of the cause. Never say you looked at something unless a tool result shows it. "
          "To fix it, call start_mission with a goal that names the repo, the exact cause and the change wanted; Forge commits to a crew/ branch and the merge waits "
          "for his Approve tap. After a merge, check render_deploys to confirm the deploy went live and report it. "
+         "The Polymarket Desk is his BTC Up/Down trading bot (a separate worker; plain code trades, you supervise): use trading_desk for how it is "
+         "doing and say the paper and live numbers separately, never mixing them; use trading_desk_control to pause, resume, flatten or go back to paper. "
+         "Going live or loosening a limit only ever becomes an Approve card. Never call paper profit real money, and do not promise returns. "
          "When someone asks to set up or connect things, call next_setup_step and walk them through one step at a time; never ask for a key or password in chat.")
     s += OPERATING + await memory_text(ctx)
     if await ctx.engine.is_owner(ctx.user_id):
@@ -613,6 +652,8 @@ async def execute(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
             return f"NOT STARTED YET. Waiting for the user's confirmation. Tell them the crew will plan and work this with a ${budget:.2f} budget, and ask them to reply 'yes'."
         if name == "crew_status":
             return await status_text(ctx)
+        if name in ("trading_desk", "trading_desk_control"):
+            return await _desk(ctx, name, args)
         if name in ("render_redeploy", "render_restart", "render_rollback"):
             return await _ops_request(ctx, name, args)
         if name == "remember":

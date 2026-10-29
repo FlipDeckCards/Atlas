@@ -305,12 +305,14 @@ OWNER_BUSINESSES = (
     {"key": "marnyx", "name": "Marnyx", "url": "https://marnyx.onrender.com", "color": "#b06cff",
      "description": "Marnyx is an autonomous marketing app that drafts and publishes social posts for small businesses."},
     {"key": "deadzone", "name": "Deadzone", "url": "https://cybervoid-6tbo.onrender.com", "color": "#ff3344",
-     "description": "Deadzone is a mobile game studio project, with its backend and iOS build kept here."})
+     "description": "Deadzone is a mobile game studio project, with its backend and iOS build kept here."},
+    {"key": "polymarket", "name": "Polymarket Desk", "url": "https://polymarket.us", "color": "#00e5ff",
+     "description": "Polymarket Desk is a trading bot that makes markets in Polymarket US's 5-minute BTC Up/Down contracts."})
 OWNER_FIXED_KEYS = {b["key"] for b in OWNER_BUSINESSES}
 
 
 async def owner_businesses(engine, uid: str):
-    """The owner's rows on the Station: the fixed three, then any business Helix or the owner added."""
+    """The owner's rows on the Station: the fixed four, then any business Helix or the owner added."""
     from openjarvis.server.crew import tenant
 
     stored = await tenant.businesses(engine.store, uid)
@@ -436,8 +438,16 @@ async def crew_finance(request: Request):
     fin = getattr(request.app.state, "crew_finance", None)
     if fin is None:
         fin = request.app.state.crew_finance = Finance(engine.store, pool=pool)
-    keys = list(KNOWN) + [factory_key(m["project"], m["title"], m["goal"], m["id"]) for m in missions]
-    out = await fin.report(uid, missions, keys)
+    keys = list(KNOWN) + ["polymarket"] + [factory_key(m["project"], m["title"], m["goal"], m["id"]) for m in missions]
+    trading = None
+    if pool is not None:
+        try:
+            from openjarvis.server.crew import desk
+
+            trading = {"polymarket": await desk.live_pnl(pool)}               # live trading profit only; paper never counts as money
+        except Exception:
+            logger.exception("desk P&L unavailable")
+    out = await fin.report(uid, missions, keys, trading=trading)
     out["products"] = engine.products
     from openjarvis.server.crew.product_stats import ProductStats
 
@@ -454,6 +464,51 @@ async def crew_finance(request: Request):
     except Exception:
         logger.exception("aibussol stats unavailable")
         out["aibussol_stats"] = None
+    return out
+
+
+# ── the Polymarket Desk (owner only): scoreboard, trade log, pause / resume ───────────────────────────
+
+class DeskControlIn(BaseModel):
+    action: str = Field(..., max_length=20)
+
+
+async def _desk_gate(request: Request):
+    g = await _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    if not await engine.is_owner(uid):
+        return JSONResponse({"detail": "Owner only."}, status_code=403)
+    pool = getattr(getattr(request.app.state, "session_store", None), "_pool", None) or getattr(engine, "pool", None)
+    if pool is None:
+        return JSONResponse({"detail": "No database."}, status_code=503)
+    return uid, engine, pool
+
+
+@router.get("/api/crew/desk")
+async def crew_desk(request: Request, limit: int = 50):
+    """The desk's scoreboard (win rate, total profit, trades; paper and live kept apart), its trade log and its latest status."""
+    g = await _desk_gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    from openjarvis.server.crew import desk
+
+    return await desk.summary(g[2], trade_limit=max(1, min(limit, 500)))
+
+
+@router.post("/api/crew/desk/control")
+async def crew_desk_control(body: DeskControlIn, request: Request):
+    """Pause, resume, kill or back to paper from the Station. Going live is never done here: it is an Approve card from Helix."""
+    g = await _desk_gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    from openjarvis.server.crew import desk
+
+    if body.action not in ("pause", "resume", "flatten", "paper"):
+        return JSONResponse({"detail": "Ask Helix to take the desk live; it puts an Approve card on your inbox."}, status_code=400)
+    out = await desk.control(g[2], body.action)
+    await g[1].store.add_event(g[0], "ops", f"Polymarket Desk: {out['done']}")
     return out
 
 

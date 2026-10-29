@@ -134,6 +134,11 @@ STATION_PAGE = r"""<!DOCTYPE html>
   .pnl-table { margin:8px 0; font-size:11px; }
   .pnl-row { display:grid; grid-template-columns:1.6fr 1fr 1fr 1fr 1fr; gap:6px; padding:5px 0; border-bottom:1px solid rgba(0,229,255,0.05); align-items:center; }
   .pnl-row span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .desk-big { font-size:22px; margin-top:2px; }
+  .desk-tabs { display:flex; gap:6px; margin:6px 0; }
+  .desk-tabs button { flex:1; }
+  .desk-tabs button.on { border-color:var(--cyan, #00e5ff); color:var(--cyan, #00e5ff); }
+  .desk-fill { font-size:10px; color:var(--text-dim); padding:2px 0 2px 14px; }
   .pnl-row.hd { font-size:9px; letter-spacing:1px; color:var(--text-dim); text-transform:uppercase; }
   .pnl-note { font-size:10px; color:var(--text-dim); margin-top:5px; line-height:1.5; opacity:0.8; }
   .msg { font-size:11px; min-height:14px; margin-top:6px; color:var(--green); overflow-wrap:anywhere; }
@@ -914,6 +919,7 @@ function factorySec(key) {
   const l = mk('div', 'lbl'); l.append(mk('span', null, 'Factory'), mk('span', 'tag', b.state)); s.append(l);
   const h = mk('div', 'h', b.label); h.style.color = b.color; s.append(h);
   const about = bizAbout(key); if (about) s.append(mk('div', 'dim', about));
+  if (key === 'polymarket') s.append(deskSec());
   if (b.platform) {
     const c = S.connections && S.connections[key];
     const cr = mk('div', 'row'); cr.style.cursor = 'pointer'; cr.onclick = () => { selected = 'links'; renderSide(true); };
@@ -961,6 +967,109 @@ function factorySec(key) {
 
 const CATALOG_KEYS = ['etsy', 'stripe', 'google_play', 'app_store', 'deadzone'];
 const CATALOG_TITLE = { etsy: 'Listings in the shop', stripe: 'Products on Stripe', google_play: 'Apps on Google Play', app_store: 'Apps on the App Store', deadzone: 'Games on the Deadzone site' };
+// ── the Polymarket Desk: scoreboard (win rate, total profit, trades), switches and the full trade log ──
+let DESK = null, DESK_AT = 0, DESK_LOADING = false, DESK_VIEW = '', DESK_OPEN = {};
+function loadDesk(force) {
+  if (DESK_LOADING || (!force && Date.now() - DESK_AT < 15000)) return;
+  DESK_LOADING = true;
+  api('/api/crew/desk?limit=100').then(r => { DESK = r.ok ? r.data : { error: (r.data && r.data.detail) || 'The desk could not be loaded.' }; DESK_AT = Date.now(); DESK_LOADING = false;
+    if (selected === 'f:polymarket') renderSide(); }).catch(() => { DESK_LOADING = false; });
+}
+function signed(v) { v = Number(v || 0); return (v < 0 ? '-' : '+') + money(Math.abs(v)); }
+function pnlColor(v) { return Number(v || 0) < 0 ? '#ff3344' : '#00ff99'; }
+function deskCurve(points) {
+  const NS = 'http://www.w3.org/2000/svg', w = 300, h = 54;
+  const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h); svg.style.width = '100%'; svg.style.height = h + 'px';
+  if (!points || points.length < 2) return svg;
+  const ys = points.map(p => p[1]).concat([0]), lo = Math.min(...ys), hi = Math.max(...ys), span = (hi - lo) || 1;
+  const Y = v => h - 4 - (v - lo) / span * (h - 8), X = i => i / (points.length - 1) * w;
+  const zero = document.createElementNS(NS, 'line'); zero.setAttribute('x1', 0); zero.setAttribute('x2', w); zero.setAttribute('y1', Y(0)); zero.setAttribute('y2', Y(0));
+  zero.setAttribute('stroke', 'rgba(0,229,255,0.25)'); zero.setAttribute('stroke-dasharray', '3 3'); svg.append(zero);
+  const path = document.createElementNS(NS, 'polyline'); path.setAttribute('fill', 'none'); path.setAttribute('stroke-width', '1.6');
+  path.setAttribute('stroke', points[points.length - 1][1] < 0 ? '#ff3344' : '#00ff99');
+  path.setAttribute('points', points.map((p, i) => X(i).toFixed(1) + ',' + Y(p[1]).toFixed(1)).join(' ')); svg.append(path);
+  return svg;
+}
+function deskSec() {
+  loadDesk();
+  const s = mk('div'); s.style.marginTop = '10px';
+  if (!DESK) { s.append(mk('div', 'dim', 'Loading the desk…')); return s; }
+  if (DESK.error) { s.append(mk('div', 'dim', DESK.error)); return s; }
+  const st = DESK.status || {};
+  // live state
+  const sr = mk('div', 'row'); const dot = mk('span', 'dot'); dot.style.background = DESK.running ? (st.paused || st.kill ? '#ffd23f' : '#00ff88') : '#ff3344';
+  sr.append(dot, mk('span', 'grow', DESK.running ? (st.reason || '') : (st.heartbeat ? 'The trading worker stopped reporting.' : 'The trading worker is not running yet.')),
+            mk('span', 'tag', (st.mode || 'paper').toUpperCase()));
+  s.append(sr);
+  if (st.window) s.append(mk('div', 'dim', 'Window ' + new Date(st.window.end * 1000).toLocaleTimeString() + ' close · beat ' + (st.window.price_to_beat ? money(st.window.price_to_beat) : '…')
+      + ' · BTC ' + (st.index && st.index.price ? money(st.index.price) : '…') + ' · fair Up ' + (st.fair_up != null ? (st.fair_up * 100).toFixed(0) + '%' : '…')
+      + ' · at risk ' + money(st.at_risk) + (st.balance != null ? ' · buying power ' + money(st.balance) : '')));
+  // scoreboard
+  const sc = DESK.score || {};
+  if (!DESK_VIEW) DESK_VIEW = (sc.live && sc.live.all && sc.live.all.trades) || st.mode === 'live' ? 'live' : 'paper';
+  const tabs = mk('div', 'desk-tabs');
+  ['live', 'paper'].forEach(m => { const b = mk('button', 'b' + (DESK_VIEW === m ? ' on' : ''), m === 'live' ? 'LIVE (real money)' : 'PAPER (simulated)');
+    b.onclick = () => { DESK_VIEW = m; renderSide(); }; tabs.append(b); });
+  s.append(tabs);
+  const v = sc[DESK_VIEW] || {}, a = v.all || {}, t = v.today || {}, d7 = v.d7 || {};
+  const box = mk('div', 'pnl'); box.append(mk('div', 'pnl-t', 'Strategy scoreboard · ' + DESK_VIEW + (DESK_VIEW === 'paper' ? ' (not real money)' : '')));
+  const grid = mk('div', 'pnl-g');
+  const cell = (label, val, color, big) => { const c = mk('div', 'pnl-c'); c.append(mk('div', 'pnl-l', label)); const x = mk('div', 'pnl-v' + (big ? ' desk-big' : ''), val); if (color) x.style.color = color; c.append(x); grid.append(c); };
+  cell('Success rate', a.win_rate == null ? '—' : a.win_rate + '%', a.win_rate == null ? null : (a.win_rate >= 50 ? '#00ff99' : '#ffd23f'), true);
+  cell('Total profit', signed(a.profit), pnlColor(a.profit), true);
+  cell('Trades', String(a.trades || 0), null, true);
+  cell('Today', signed(t.profit) + ' · ' + (t.trades || 0), pnlColor(t.profit));
+  cell('Last 7 days', signed(d7.profit) + ' · ' + (d7.trades || 0), pnlColor(d7.profit));
+  cell('Return on staked', a.return_pct == null ? '—' : a.return_pct + '%', a.return_pct == null ? null : pnlColor(a.return_pct));
+  cell('Won / lost', (a.wins || 0) + ' / ' + (a.losses || 0)); cell('Staked', money(a.staked)); cell('Fills', String(v.fills || 0));
+  cell('Best window', signed(a.best), a.best ? '#00ff99' : null); cell('Worst window', signed(a.worst), a.worst < 0 ? '#ff3344' : null);
+  box.append(grid);
+  if (v.curve && v.curve.length > 1) { box.append(mk('div', 'pnl-l', 'Running profit')); box.append(deskCurve(v.curve)); }
+  s.append(box);
+  // switches (going live is an Approve card from Helix, never a button here)
+  const ctl = mk('div', 'desk-tabs');
+  const act = (label, action, cls) => { const b = mk('button', 'b' + (cls ? ' ' + cls : ''), label);
+    b.onclick = async () => { b.disabled = true; const r = await api('/api/crew/desk/control', 'POST', { action }); b.disabled = false;
+      if (!r.ok) alert((r.data && r.data.detail) || 'Could not do that.'); loadDesk(true); }; ctl.append(b); };
+  if (st.paused || st.kill) act('Resume', 'resume'); else act('Pause', 'pause');
+  act('Kill switch', 'flatten', 'no');
+  if ((st.mode || 'paper') === 'live') act('Back to paper', 'paper');
+  s.append(ctl);
+  if ((st.mode || 'paper') !== 'live') s.append(mk('div', 'dim', 'To trade real money, ask Helix to take the desk live: it puts an Approve card on your inbox.'));
+  const lim = DESK.limits || {};
+  s.append(mk('div', 'dim', 'Limits: bankroll ' + money(lim.bankroll_usd) + ' · per window ' + money(lim.max_window_usd) + ' · per order ' + money(lim.max_order_usd)
+    + ' · daily loss ' + money(lim.daily_loss_usd) + ' · min edge ' + Number(lim.min_edge || 0).toFixed(2)));
+  // trade log: every window traded, tap for each fill
+  const tl = mk('div', 'lbl'); tl.style.marginTop = '12px'; tl.append(mk('span', null, 'Trade log · ' + DESK_VIEW));
+  const rf = mk('span', 'tag', '↻'); rf.style.cursor = 'pointer'; rf.onclick = () => loadDesk(true); tl.append(rf); s.append(tl);
+  const rows = (DESK.trades || {})[DESK_VIEW] || [];
+  if (!rows.length) s.append(mk('div', 'dim', 'No trades yet.'));
+  else {
+    const tb = mk('div', 'pnl-table');
+    const hd = mk('div', 'pnl-row hd'); ['Window', 'Held', 'Paid', 'Result', 'P&L'].forEach(x => hd.append(mk('span', null, x))); tb.append(hd);
+    rows.forEach(r => {
+      const row = mk('div', 'pnl-row'); row.style.cursor = 'pointer';
+      const held = (r.up_qty ? 'Up ' + Number(r.up_qty).toFixed(2) : '') + (r.up_qty && r.down_qty ? ' · ' : '') + (r.down_qty ? 'Dn ' + Number(r.down_qty).toFixed(2) : '');
+      row.append(mk('span', null, r.window_end ? new Date(r.window_end).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : r.slug),
+                 mk('span', null, held || '—'), mk('span', null, money(r.paid)), mk('span', null, r.result || 'open'));
+      const p = mk('span', null, r.pnl == null ? '…' : signed(r.pnl)); if (r.pnl != null) p.style.color = pnlColor(r.pnl); row.append(p);
+      row.onclick = () => { DESK_OPEN[r.slug] = !DESK_OPEN[r.slug]; renderSide(); };
+      tb.append(row);
+      if (DESK_OPEN[r.slug]) {
+        tb.append(mk('div', 'desk-fill', (r.window_end ? new Date(r.window_end).toLocaleString() + ' close · ' : '') + 'beat ' + (r.price_to_beat ? money(r.price_to_beat) : '?') + ' · close ' + (r.close_price ? money(r.close_price) : '?') + ' · ' + r.slug));
+        (r.fills || []).forEach(f => tb.append(mk('div', 'desk-fill', new Date(f.ts).toLocaleTimeString() + ' · bought ' + (f.side === 'up' ? 'UP' : 'DOWN') + ' ' + Number(f.qty).toFixed(2)
+          + ' @ $' + (f.side === 'up' ? Number(f.price) : 1 - Number(f.price)).toFixed(2) + ' = ' + money(f.cost) + (f.fair != null ? ' · fair Up then ' + (f.fair * 100).toFixed(0) + '%' : ''))));
+      }
+    });
+    s.append(tb);
+  }
+  const ev = DESK.events || [];
+  if (ev.length) {
+    const el = mk('div', 'lbl'); el.style.marginTop = '12px'; el.textContent = 'Desk log'; s.append(el);
+    ev.slice(0, 8).forEach(e => s.append(mk('div', 'desk-fill', new Date(e.ts).toLocaleTimeString() + ' · ' + e.text)));
+  }
+  return s;
+}
 const CAT = {};
 function loadCatalog(key, force) {
   const c = CAT[key];

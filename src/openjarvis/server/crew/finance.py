@@ -159,9 +159,12 @@ class Finance:
             logger.exception("helix spend unavailable")
             return {"today": 0.0, "d30": 0.0}
 
-    async def report(self, user_id: str, missions: List[Dict[str, Any]], factory_keys: List[str], owner: bool = True) -> Dict[str, Any]:
+    async def report(self, user_id: str, missions: List[Dict[str, Any]], factory_keys: List[str], owner: bool = True,
+                     trading: Optional[Dict[str, Dict[str, float]]] = None) -> Dict[str, Any]:
         """P&L per factory and in total. factory_keys: the factories the Station shows (every key gets a row).
-        owner=False (a subscriber): only their own Stripe and their crew's spend; no Aibussol row, no hosting, no Helix-wide spend."""
+        owner=False (a subscriber): only their own Stripe and their crew's spend; no Aibussol row, no hosting, no Helix-wide spend.
+        trading: realised LIVE trading profit per factory ({"polymarket": {"today": x, "d30": y}}), counted as that factory's revenue
+        (a losing day is negative revenue)."""
         now = self.now()
         known = tuple(k for k in factory_keys if not str(k).startswith("new:"))
         mkey = {m["id"]: factory_key(m.get("project", ""), m.get("title", ""), m.get("goal", ""), m["id"], known) for m in missions}
@@ -196,6 +199,10 @@ class Finance:
             row(app)["mrr"] += usd
         for app, n in stripe["subs"].items():
             row(app)["subscribers"] += n
+        for k, v in (trading or {}).items():
+            row(k)["revenue_today"] += float(v.get("today") or 0)
+            row(k)["revenue_30d"] += float(v.get("d30") or 0)
+            row(k)["trading"] = True
         if owner:
             rows["aibussol"]["ai_cost_today"] = helix["today"]
             rows["aibussol"]["ai_cost_30d"] = helix["d30"]
