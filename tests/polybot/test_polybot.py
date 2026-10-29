@@ -180,16 +180,28 @@ def test_risk_stops():
     cfg = from_env({})
     assert _blocked(cfg, risk.RiskState()) is None
     assert "Kill" in _blocked(cfg, risk.RiskState(kill=True))
-    assert "Daily loss" in _blocked(cfg, risk.RiskState(day_pnl=-10.0))
+    assert "Daily loss" in _blocked(cfg, risk.RiskState(day_pnl=-7.5))
     assert "stale" in _blocked(cfg, risk.RiskState(), data_age_s=10)
     assert "close" in _blocked(cfg, risk.RiskState(), secs_to_end=10)
     assert "not open" in _blocked(cfg, risk.RiskState(), market_open=False)
 
 
 def test_budget_never_allows_losing_past_the_daily_limit():
-    cfg = from_env({})
+    cfg = from_env({"POLYBOT_DAILY_LOSS_PCT": "0"})                          # flat $10
     assert risk.budget_left(cfg, risk.RiskState(day_pnl=-8.0, at_risk=1.0), None) == pytest.approx(1.0)
     assert risk.budget_left(cfg, risk.RiskState(), None) == pytest.approx(10.0)
+
+
+def test_daily_stop_is_15_percent_of_the_days_starting_balance():
+    cfg = from_env({})
+    assert risk.day_limit(cfg, risk.RiskState(day_start=50.0)) == pytest.approx(7.5)
+    assert risk.day_limit(cfg, risk.RiskState(day_start=80.0)) == pytest.approx(12.0)      # grows with the account
+    assert risk.budget_left(cfg, risk.RiskState(day_start=50.0), None) == pytest.approx(7.5)
+    assert "Daily loss" in _blocked(cfg, risk.RiskState(day_start=50.0, day_pnl=-7.5))
+    assert _blocked(cfg, risk.RiskState(day_start=50.0, day_pnl=-7.0)) is None
+    rs = risk.RiskState(day="2000-01-01", day_pnl=-3, day_start=40)
+    rs.roll(dt.datetime(2026, 10, 29, 12, tzinfo=risk.LA).timestamp())                    # a new day starts fresh
+    assert rs.day_pnl == 0 and rs.day_start is None
 
 
 # ── paper fills ─────────────────────────────────────────────────────────────────────────

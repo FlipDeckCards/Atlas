@@ -22,7 +22,7 @@ from openjarvis.polybot.state import DDL
 KEY = "polymarket"
 BUSINESS = {"key": KEY, "name": "Polymarket Desk", "url": "https://polymarket.us", "color": "#00e5ff",
             "description": "Polymarket Desk is a trading bot that makes markets in Polymarket US's 5-minute BTC Up/Down contracts."}
-LIMIT_FIELDS = ("bankroll_usd", "max_window_usd", "max_order_usd", "daily_loss_usd", "min_edge")
+LIMIT_FIELDS = ("bankroll_usd", "max_window_usd", "max_order_usd", "daily_loss_usd", "daily_loss_pct", "min_edge")
 _READY: Dict[int, bool] = {}
 
 
@@ -164,6 +164,8 @@ def status_text(s: Dict[str, Any]) -> str:
         if w:
             lines.append(f"Window {w.get('slug')}: price to beat {w.get('price_to_beat')}, BTC index {((st.get('index') or {}).get('price'))}, "
                          f"fair value of Up {st.get('fair_up')}, book {st.get('book')}, resting {st.get('resting')}.")
+        if st.get("day_start") is not None:
+            lines.append(f"Today started with ${st['day_start']:.2f}; today's loss limit is ${st.get('day_limit') or 0:.2f}.")
         lines.append(f"At risk now ${st.get('at_risk', 0):.2f}; today's P&L {st.get('day_pnl', 0):+.2f}"
                      + (f"; buying power ${st['balance']:.2f}" if st.get("balance") is not None else "") + ".")
         if str((s["control"] or {}).get("mode")) == "live" and st.get("mode") != "live":
@@ -178,7 +180,7 @@ def status_text(s: Dict[str, Any]) -> str:
         else:
             lines.append(f"{mode.upper()} scoreboard: no settled trades yet.")
     lines.append(f"Limits: bankroll ${lim['bankroll_usd']:.2f}, per window ${lim['max_window_usd']:.2f}, per order ${lim['max_order_usd']:.2f}, "
-                 f"daily loss ${lim['daily_loss_usd']:.2f}, min edge {lim['min_edge']:.2f}.")
+                 f"daily stop {_stop_text(lim)}, min edge {lim['min_edge']:.2f}.")
     recent = [e["text"] for e in s["events"][:6]]
     if recent:
         lines.append("Latest log: " + " | ".join(recent))
@@ -220,7 +222,7 @@ async def control(pool, action: str, limits: Optional[Dict[str, Any]] = None) ->
     if action == "go_live":
         lim = current_limits(ctl)
         return {"needs_approval": (f"Switch the Polymarket Desk to LIVE trading with real money: bankroll ${lim.bankroll_usd:.2f}, at most "
-                                   f"${lim.max_window_usd:.2f} per 5-minute window, daily loss limit ${lim.daily_loss_usd:.2f}."),
+                                   f"${lim.max_window_usd:.2f} per 5-minute window, and it stops for the day after losing {_stop_text(lim.__dict__)}."),
                 "action": {"type": "desk_control", "set": {"mode": "live"}}}
     if action == "set_limits":
         new = requested_limits(ctl, limits or {})
@@ -235,7 +237,12 @@ async def control(pool, action: str, limits: Optional[Dict[str, Any]] = None) ->
 
 def _lim_text(l: Limits) -> str:
     return (f"bankroll ${l.bankroll_usd:.2f}, per window ${l.max_window_usd:.2f}, per order ${l.max_order_usd:.2f}, "
-            f"daily loss ${l.daily_loss_usd:.2f}, min edge {l.min_edge:.2f}")
+            f"daily stop {_stop_text(l.__dict__)}, min edge {l.min_edge:.2f}")
+
+
+def _stop_text(lim: Dict[str, Any]) -> str:
+    pct = float(lim.get("daily_loss_pct") or 0)
+    return f"{pct:g}% of the day's starting balance" if pct > 0 else f"${float(lim.get('daily_loss_usd') or 0):.2f}"
 
 
 async def apply_approved(pool, setting: Dict[str, Any]) -> str:

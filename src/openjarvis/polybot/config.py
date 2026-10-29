@@ -29,13 +29,15 @@ class Limits:
     bankroll_usd: float = 50.0          # the most the desk may ever have at risk in total (also capped by the account's buying power)
     max_window_usd: float = 5.0         # the most it may pay into one window (Up and Down together)
     max_order_usd: float = 2.0          # the size of one resting order
-    daily_loss_usd: float = 10.0        # stop for the rest of the Los Angeles day after losing this much
+    daily_loss_usd: float = 10.0        # used only when daily_loss_pct is 0: a flat dollar stop for the Los Angeles day
+    daily_loss_pct: float = 15.0        # stop for the rest of the day after losing this % of the day's starting balance (0 = use the flat $)
     min_edge: float = 0.04              # only buy at least this far (in dollars per contract) better than fair value
 
     def tighter_than(self, other: "Limits") -> bool:
         """True when every rule is at least as strict as `other` (so it can apply without an Approve)."""
         return (self.bankroll_usd <= other.bankroll_usd and self.max_window_usd <= other.max_window_usd
                 and self.max_order_usd <= other.max_order_usd and self.daily_loss_usd <= other.daily_loss_usd
+                and (other.daily_loss_pct == 0 or 0 < self.daily_loss_pct <= other.daily_loss_pct)
                 and self.min_edge >= other.min_edge)
 
     def clean(self) -> "Limits":
@@ -43,6 +45,7 @@ class Limits:
                       max_window_usd=round(min(max(self.max_window_usd, 0.0), self.bankroll_usd or 0.0), 2),
                       max_order_usd=round(min(max(self.max_order_usd, 0.0), self.max_window_usd or 0.0), 2),
                       daily_loss_usd=round(min(max(self.daily_loss_usd, 0.0), self.bankroll_usd or 0.0), 2),
+                      daily_loss_pct=round(min(max(self.daily_loss_pct, 0.0), 100.0), 2),
                       min_edge=round(min(max(self.min_edge, 0.01), 0.40), 3))
 
 
@@ -85,6 +88,7 @@ def from_env(env: Optional[Mapping[str, str]] = None) -> Config:
                  max_window_usd=_f(e, "POLYBOT_MAX_WINDOW_USD", 5.0, 0.0),
                  max_order_usd=_f(e, "POLYBOT_MAX_ORDER_USD", 2.0, 0.0),
                  daily_loss_usd=_f(e, "POLYBOT_DAILY_LOSS_USD", 10.0, 0.0),
+                 daily_loss_pct=_f(e, "POLYBOT_DAILY_LOSS_PCT", 15.0, 0.0, 100.0),
                  min_edge=_f(e, "POLYBOT_MIN_EDGE", 0.04, 0.01, 0.40)).clean()
     horizon = (e.get("POLYBOT_HORIZON") or "5m").strip().lower()
     return Config(

@@ -1038,7 +1038,8 @@ function deskSec() {
   if ((st.mode || 'paper') !== 'live') s.append(mk('div', 'dim', 'To trade real money, ask Helix to take the desk live: it puts an Approve card on your inbox.'));
   const lim = DESK.limits || {};
   s.append(mk('div', 'dim', 'Limits: bankroll ' + money(lim.bankroll_usd) + ' · per window ' + money(lim.max_window_usd) + ' · per order ' + money(lim.max_order_usd)
-    + ' · daily loss ' + money(lim.daily_loss_usd) + ' · min edge ' + Number(lim.min_edge || 0).toFixed(2)));
+    + ' · daily stop ' + (lim.daily_loss_pct > 0 ? lim.daily_loss_pct + '% of the day\'s start' + (st.day_limit != null ? ' (' + money(st.day_limit) + ' today)' : '') : money(lim.daily_loss_usd))
+    + ' · min edge ' + Number(lim.min_edge || 0).toFixed(2)));
   // trade log: every window traded, tap for each fill
   const tl = mk('div', 'lbl'); tl.style.marginTop = '12px'; tl.append(mk('span', null, 'Trade log · ' + DESK_VIEW));
   const rf = mk('span', 'tag', '↻'); rf.style.cursor = 'pointer'; rf.onclick = () => loadDesk(true); tl.append(rf); s.append(tl);

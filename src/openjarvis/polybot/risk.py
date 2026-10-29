@@ -30,6 +30,7 @@ def in_maintenance(ts: float) -> bool:
 class RiskState:
     day: str = ""
     day_pnl: float = 0.0            # settled P&L since midnight Los Angeles
+    day_start: Optional[float] = None   # the balance the day started with (live: buying power + money in open windows; paper: bankroll)
     at_risk: float = 0.0            # paid into windows not yet settled
     resting: float = 0.0            # what resting orders would cost if all filled
     cooldown_until: float = 0.0
@@ -40,7 +41,16 @@ class RiskState:
     def roll(self, now: float) -> None:
         d = la_day(now)
         if d != self.day:
-            self.day, self.day_pnl = d, 0.0
+            self.day, self.day_pnl, self.day_start = d, 0.0, None
+
+
+def day_limit(cfg: Config, rs: RiskState) -> float:
+    """Today's loss limit in dollars: daily_loss_pct of the day's starting balance, or the flat daily_loss_usd when the % is 0."""
+    lim = cfg.limits
+    if lim.daily_loss_pct > 0:
+        start = rs.day_start if rs.day_start is not None else lim.bankroll_usd
+        return round(max(0.0, start) * lim.daily_loss_pct / 100.0, 2)
+    return lim.daily_loss_usd
 
 
 def blocked(cfg: Config, rs: RiskState, *, now: float, data_age_s: float, book_age_s: float, market_open: bool,
@@ -50,8 +60,9 @@ def blocked(cfg: Config, rs: RiskState, *, now: float, data_age_s: float, book_a
         return "Kill switch is on."
     if rs.paused:
         return "Paused from Aibussol."
-    if lim.daily_loss_usd > 0 and rs.day_pnl <= -lim.daily_loss_usd:
-        return f"Daily loss limit reached (${-rs.day_pnl:.2f} of ${lim.daily_loss_usd:.2f}); back tomorrow."
+    dl = day_limit(cfg, rs)
+    if dl > 0 and rs.day_pnl <= -dl:
+        return f"Daily loss limit reached (${-rs.day_pnl:.2f} of ${dl:.2f}); back tomorrow."
     if in_maintenance(now):
         return "Polymarket US weekly maintenance (Thursday 6-8 AM ET)."
     if rs.errors_in_row >= 5:
@@ -80,5 +91,5 @@ def budget_left(cfg: Config, rs: RiskState, balance: Optional[float]) -> float:
     room = cfg.limits.bankroll_usd - rs.at_risk - rs.resting
     if cfg.mode == "live" and balance is not None:
         room = min(room, balance - 0.5)
-    loss_room = cfg.limits.daily_loss_usd + rs.day_pnl - rs.at_risk - rs.resting     # never be able to lose past the daily limit
+    loss_room = day_limit(cfg, rs) + rs.day_pnl - rs.at_risk - rs.resting     # never be able to lose past the daily limit
     return max(0.0, min(room, loss_room))

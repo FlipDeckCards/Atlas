@@ -112,8 +112,10 @@ class Desk:
                 except PMError as exc:
                     self.log("warn", f"Could not clear old orders: {exc}")
             self.log("info", f"Mode is now {new.mode.upper()}.")
+            self.rs.day_start = None                                  # a new mode starts its own day from its own balance
+            self.rs.day_pnl = 0.0
             await self.push("Polymarket Desk", f"Mode switched to {new.mode.upper()}. Bankroll ${new.limits.bankroll_usd:.2f}, "
-                                               f"daily loss limit ${new.limits.daily_loss_usd:.2f}.")
+                                               f"daily stop at {new.limits.daily_loss_pct:g}% of the day's starting balance.")
         if new.limits != self.cfg.limits:
             self.log("info", f"Limits now: bankroll ${new.limits.bankroll_usd:.2f}, per window ${new.limits.max_window_usd:.2f}, "
                              f"per order ${new.limits.max_order_usd:.2f}, daily loss ${new.limits.daily_loss_usd:.2f}, min edge {new.limits.min_edge:.2f}.")
@@ -222,7 +224,7 @@ class Desk:
             self.log("trade", text)
             if w.mode == "live":
                 await self.push("Desk settled", text)
-            if self.cfg.limits.daily_loss_usd > 0 and self.rs.day_pnl <= -self.cfg.limits.daily_loss_usd:
+            if risk.day_limit(self.cfg, self.rs) > 0 and self.rs.day_pnl <= -risk.day_limit(self.cfg, self.rs):
                 msg = f"Daily loss limit hit (${-self.rs.day_pnl:.2f}). The desk stops quoting until midnight Los Angeles time."
                 self.log("warn", msg)
                 await self.push("Desk stopped for today", msg)
@@ -264,6 +266,13 @@ class Desk:
             self.balance = await self.broker.balance()
 
         self.rs.at_risk = round(sum(w.inv.spent for w in self.open_windows.values()) + self.external_at_risk, 4)
+        if self.rs.day_start is None:
+            if self.cfg.mode == "live":
+                if self.balance is not None:
+                    self.rs.day_start = round(self.balance + self.rs.at_risk, 2)
+                    self.log("info", f"Day starts with ${self.rs.day_start:.2f}; today's loss limit is ${risk.day_limit(self.cfg, self.rs):.2f}.")
+            else:
+                self.rs.day_start = self.cfg.limits.bankroll_usd
         self.rs.resting = round(self.broker.resting_cost, 4)
         w, b = self.window, self.book
         last = self.tape.last()
@@ -306,7 +315,8 @@ class Desk:
             "fair_up": round(self.fair, 4) if self.fair is not None else None,
             "book": ({"bid": b.best_bid, "ask": b.best_ask, "state": b.state} if b else None),
             "resting": [{"side": r.quote.side, "price": r.quote.price, "qty": r.left} for r in self.broker.resting.values()],
-            "balance": self.balance, "day": self.rs.day, "day_pnl": round(self.rs.day_pnl, 2), "at_risk": round(self.rs.at_risk, 2),
+            "balance": self.balance, "day": self.rs.day, "day_pnl": round(self.rs.day_pnl, 2),
+            "day_start": self.rs.day_start, "day_limit": risk.day_limit(self.cfg, self.rs), "at_risk": round(self.rs.at_risk, 2),
             "today": dict(self.stats),
             "open_windows": [{"slug": x.slug, "end": x.end, "up_qty": x.inv.up_qty, "down_qty": x.inv.down_qty, "paid": round(x.inv.spent, 2)}
                              for x in self.open_windows.values()],
@@ -333,6 +343,15 @@ class Desk:
         self._t["hour"] = now
         await self.read_control(now)
         self._t["control"] = now
+        try:
+            prev = await self.store.get("status")
+        except Exception:
+            prev = {}
+        self.rs.roll(now)
+        if prev.get("day") == self.rs.day and prev.get("mode") == self.cfg.mode:
+            self.rs.day_pnl = float(prev.get("day_pnl") or 0.0)
+            if prev.get("day_start") is not None:
+                self.rs.day_start = float(prev["day_start"])
         await self.load_index(now, backfill=True)
         self.log("info", f"Desk started in {self.cfg.mode.upper()} mode on {self.base.asset.upper()} {self.base.horizon} Up/Down.")
         steps = 0
