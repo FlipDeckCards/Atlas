@@ -1040,7 +1040,7 @@ function deskSec() {
   s.append(ctl);
   if ((st.mode || 'paper') !== 'live') s.append(mk('div', 'dim', 'To trade real money, ask Helix to take the desk live: it puts an Approve card on your inbox.'));
   const lim = DESK.limits || {};
-  s.append(mk('div', 'dim', 'Limits: bankroll ' + money(lim.bankroll_usd) + ' · bets sized by confidence, up to 5% of the day\'s balance per window (ceiling ' + money(lim.max_window_usd) + ')'
+  s.append(mk('div', 'dim', 'Limits: bankroll ' + money(lim.bankroll_usd) + ' · bets sized by confidence, up to ' + (st.window_pct || 7.5) + '% of the current balance per window' + (st.window_cap != null ? ' (' + money(st.window_cap) + ' now)' : '')
     + ' · daily stop ' + (lim.daily_loss_pct > 0 ? lim.daily_loss_pct + '% of the day\'s start' + (st.day_limit != null ? ' (' + money(st.day_limit) + ' today)' : '') : money(lim.daily_loss_usd))
     + ' · min edge ' + Number(lim.min_edge || 0).toFixed(2)));
   // trade log: every window traded, tap for each fill

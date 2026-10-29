@@ -332,8 +332,8 @@ class Desk:
             can_down = can_down and brain.can_add(fills, "down", self.cfg.max_fills_per_side)
             extra = self.learner.extra_edge if self.cfg.learn else 0.0
             lim = replace(self.cfg.limits, min_edge=round(self.cfg.limits.min_edge + extra, 3))
-            equity = self.rs.day_start if self.rs.day_start is not None else self.cfg.limits.bankroll_usd
-            sizing = strategy.Sizing(equity=min(equity, self.cfg.limits.bankroll_usd) if self.cfg.mode == "paper" else equity,
+            equity = self.equity()
+            sizing = strategy.Sizing(equity=equity,
                                      kelly_fraction=self.cfg.kelly_fraction, window_pct=self.cfg.window_pct, min_order_usd=self.cfg.min_order_usd)
             want = strategy.quotes(self.fair, strategy.Book(b.best_bid, b.best_ask, w.tick, w.min_qty), inv, lim, budget_left=budget,
                                    can_up=can_up, can_down=can_down, sizing=sizing,
@@ -353,6 +353,14 @@ class Desk:
         self.reason = reason
         self.rs.errors_in_row = 0
 
+    def equity(self) -> float:
+        """The account's value right now, for sizing: live = buying power + what is in open windows; paper = the simulated
+        starting balance plus today's simulated P&L."""
+        if self.cfg.mode == "live" and self.balance is not None:
+            return round(max(0.0, self.balance + self.rs.at_risk), 2)
+        start = self.rs.day_start if self.rs.day_start is not None else self.cfg.limits.bankroll_usd
+        return round(max(0.0, start + self.rs.day_pnl), 2)
+
     def status(self, now: float) -> Dict[str, Any]:
         w, b = self.window, self.book
         last = self.tape.last()
@@ -370,6 +378,8 @@ class Desk:
             "book": ({"bid": b.best_bid, "ask": b.best_ask, "state": b.state} if b else None),
             "resting": [{"side": r.quote.side, "price": r.quote.price, "qty": r.left} for r in self.broker.resting.values()],
             "rejects": list(getattr(self.broker, "rejects", []))[-5:],
+            "equity": self.equity(), "window_pct": self.cfg.window_pct,
+            "window_cap": strategy.Sizing(equity=self.equity(), window_pct=self.cfg.window_pct).window_cap(self.cfg.limits),
             "balance": self.balance, "day": self.rs.day, "day_pnl": round(self.rs.day_pnl, 2),
             "day_start": self.rs.day_start, "day_limit": risk.day_limit(self.cfg, self.rs), "at_risk": round(self.rs.at_risk, 2),
             "today": dict(self.stats),

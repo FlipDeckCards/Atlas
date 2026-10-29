@@ -467,7 +467,7 @@ def test_bet_size_follows_the_edge():
     big = sz.order_usd(0.60, 0.40, lim)                                    # 20c edge
     assert 0.25 <= small < big <= 2.5
     assert sz.order_usd(0.40, 0.40, lim) == 0.0                            # no edge, no bet
-    assert strategy.Sizing(equity=500.0).window_cap(lim) == 5.0            # grows with the account, up to the hard ceiling
+    assert strategy.Sizing(equity=500.0).window_cap(lim) == 25.0           # grows with the account
     assert strategy.Sizing(equity=20.0).window_cap(lim) == 1.0             # and shrinks after losses
 
 
@@ -616,10 +616,32 @@ def test_a_full_live_window_places_fills_settles_and_alerts():
     assert ex.n >= 1 and store.fills and all(f["mode"] == "live" for f in store.fills)
     w = [x for x in store.windows if x["mode"] == "live"]
     assert len(w) == 1 and w[0]["up"] is True and w[0]["pnl"] > 0
-    assert w[0]["up_cost"] + w[0]["down_cost"] <= 2.5 + 1e-9                   # 5% of the $50 day start
+    assert w[0]["up_cost"] + w[0]["down_cost"] <= 3.75 + 1e-9                  # 7.5% of the $50 balance
+    assert store.kv["status"]["window_pct"] == 7.5
     titles = [t for t, _ in pushes]
     assert "Desk entry" in titles and "Desk settled" in titles                 # an alert for the entry and for the exit
     entry = next(x for t, x in pushes if t == "Desk entry")
     assert "strike" in entry and "expires" in entry and "max loss" in entry and "target" in entry
     assert ex.cancels < 60                                                     # no cancel/replace every second
     assert store.kv["status"]["day_start"] == 50.0 and store.kv["status"]["day_limit"] == 7.5
+
+
+
+def test_bet_cap_follows_the_current_balance():
+    lim = from_env({}).limits
+    assert from_env({}).window_pct == 7.5
+    assert strategy.Sizing(equity=50.0, window_pct=7.5).window_cap(lim) == 3.75
+    assert strategy.Sizing(equity=80.0, window_pct=7.5).window_cap(lim) == 6.0      # after a good run
+    assert strategy.Sizing(equity=40.0, window_pct=7.5).window_cap(lim) == 3.0      # after a bad one
+
+
+
+def test_live_sizing_uses_buying_power_plus_money_in_open_windows():
+    from openjarvis.polybot.desk import Desk
+
+    d = Desk(replace(from_env({}), mode="live"), None, MemStore())
+    d.balance, d.rs.at_risk = 60.0, 5.0
+    assert d.equity() == 65.0
+    p = Desk(from_env({}), None, MemStore())                                  # paper: $50 plus today's simulated P&L
+    p.rs.day_start, p.rs.day_pnl = 50.0, 4.0
+    assert p.equity() == 54.0
