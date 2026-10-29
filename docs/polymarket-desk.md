@@ -2,7 +2,7 @@
 
 A fair-value market maker for Polymarket US's **BTC Up/Down 5-minute** contracts. It shows up in Aibussol as the **Polymarket Desk** factory on the Station.
 
-- **The worker** (`src/openjarvis/polybot`) trades. It is plain code with no AI in the trading loop. It runs as its own Render background worker.
+- **The worker** (`src/openjarvis/polybot`) trades. It is plain code with no AI in the trading loop. It runs inside Aibussol's own server.
 - **Aibussol** (`server/crew/desk.py`) watches the worker and holds its switches. The Station factory panel shows a scoreboard (success rate, total profit, trades, today, 7 days, return on staked, running-profit chart), a trade log you can tap open to see every fill, and Pause / Resume / Kill switch buttons. Helix has the `trading_desk` and `trading_desk_control` tools.
 
 ## How it trades
@@ -40,20 +40,15 @@ Loosening any limit also needs an Approve. Tightening applies at once.
 
 ## Setup
 
-1. **Polymarket US account.** In the Polymarket US app, finish identity verification and deposit the money you want to trade, e.g. $50.
-2. **API key.** At polymarket.us/developer, create an API key. Copy the **Key ID** and the **Secret key**; the secret is shown only once. Paste them only into Render, never into a chat.
-3. **Merge this branch** into `main`. Atlas auto-deploys, and the Station gets the Polymarket Desk factory.
-4. **Create the worker** on Render: New → Background Worker, same repo `FlipDeckCards/Atlas`, branch `main`, region Oregon, Starter plan.
-   - Build command: `pip install asyncpg "httpx>=0.23,<0.28" "cryptography>=43" python-dotenv`
-   - Start command: `cd src && python -m openjarvis.polybot run`
-   - Environment:
-     - `DATABASE_URL`: the same value as the Atlas web service
-     - `CREW_NOTIFY_URL`: the same ntfy topic as Atlas, for phone alerts
-     - `POLYMARKET_KEY_ID`, `POLYMARKET_SECRET_KEY`
-     - `POLYBOT_ALLOW_LIVE`: leave **unset** (paper) until the paper results justify going live
-     - Optional: `POLYBOT_BANKROLL_USD=50`, `POLYBOT_MAX_WINDOW_USD=5`, `POLYBOT_MAX_ORDER_USD=2`, `POLYBOT_DAILY_LOSS_USD=10`, `POLYBOT_MIN_EDGE=0.04`
-5. **Check it.** In the worker's Shell, run `cd src && python -m openjarvis.polybot check`. It reads the index and the markets and does a signed balance read. It trades nothing.
-6. **Let it paper trade.** Watch the scoreboard. Going live is a deliberate step: set `POLYBOT_ALLOW_LIVE=true` on the worker, then ask Helix to take the desk live and tap Approve.
+The desk runs **inside Aibussol** (the Atlas web service), next to Helix and the crew. It starts on every deploy, in paper mode, with nothing to set up. A Postgres advisory lock plus a heartbeat check make sure only one copy ever trades, including while a deploy overlaps old and new instances. Set `POLYBOT_IN_APP=false` to turn it off there; `python -m openjarvis.polybot run` then runs it as a separate worker using the same lock.
+
+Paper needs nothing. Before going live:
+
+1. **Polymarket US account.** In the Polymarket US app, finish identity verification and deposit the bankroll, e.g. $50.
+2. **API key.** At polymarket.us/developer, create an API key. Put the Key ID and Secret on the **Atlas** service in Render as `POLYMARKET_KEY_ID` and `POLYMARKET_SECRET_KEY`. Never paste them into a chat.
+3. Optional limits on Atlas: `POLYBOT_BANKROLL_USD=50`, `POLYBOT_MAX_WINDOW_USD=5`, `POLYBOT_MAX_ORDER_USD=2`, `POLYBOT_DAILY_LOSS_USD=10`, `POLYBOT_MIN_EDGE=0.04`.
+4. **Check the keys.** In the Atlas Shell, run `cd src && python -m openjarvis.polybot check`. It trades nothing.
+5. **Go live** only when the paper scoreboard justifies it: set `POLYBOT_ALLOW_LIVE=true` on Atlas, then ask Helix to take the desk live and tap **Approve**.
 
 ## Commands
 

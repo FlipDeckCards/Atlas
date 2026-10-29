@@ -32,15 +32,9 @@ async def _store(cfg):
 
 
 def _notifier(url: str):
-    if not url:
-        return None
+    from openjarvis.polybot.runtime import ntfy_pusher
 
-    async def push(title: str, text: str) -> None:
-        import httpx
-
-        async with httpx.AsyncClient(timeout=10) as c:
-            await c.post(url, content=text[:1000].encode("utf-8"), headers={"Title": title.encode("ascii", "ignore").decode()[:120] or "Desk"})
-    return push
+    return ntfy_pusher(url)
 
 
 async def _run() -> int:
@@ -49,10 +43,29 @@ async def _run() -> int:
     from openjarvis.polybot.desk import Desk
 
     cfg = from_env()
+    loop = asyncio.get_running_loop()
+    if cfg.database_url:
+        # with a database: the same single-copy runner Aibussol uses (it waits if the desk is already running inside Aibussol)
+        import asyncpg
+
+        from openjarvis.polybot.runtime import Runner
+
+        pool = await asyncpg.create_pool(cfg.database_url, min_size=1, max_size=3)
+        runner = Runner(cfg, pool)
+        stop = asyncio.Event()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                loop.add_signal_handler(sig, stop.set)
+            except (NotImplementedError, RuntimeError):
+                pass
+        runner.start()
+        await stop.wait()
+        await runner.stop()
+        await pool.close()
+        return 0
     store = await _store(cfg)
     client = PolymarketUS(cfg.key_id, cfg.secret_key)
     desk = Desk(cfg, client, store, notify=_notifier(cfg.notify_url))
-    loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:
             loop.add_signal_handler(sig, desk.stop)          # Render sends SIGTERM on deploys: cancel orders, then exit

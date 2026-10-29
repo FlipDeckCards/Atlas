@@ -72,6 +72,7 @@ class Desk:
         self.hour_pnl = 0.0
         self._t = {"control": 0.0, "flush": 0.0, "markets": 0.0, "market": 0.0, "sigma": 0.0, "positions": 0.0, "hour": 0.0}
         self._stopping = False
+        self.instance = ""                                   # set by the runner: which copy wrote the status
 
     # ── helpers ───────────────────────────────────────────────────────────────────────
     def log(self, level: str, text: str) -> None:
@@ -297,7 +298,7 @@ class Desk:
         w, b = self.window, self.book
         last = self.tape.last()
         return {
-            "version": VERSION, "heartbeat": now, "mode": self.cfg.mode, "allow_live": self.base.allow_live, "has_keys": bool(self.base.key_id and self.base.secret_key),
+            "version": VERSION, "heartbeat": now, "instance": self.instance, "stopped": self._stopping, "mode": self.cfg.mode, "allow_live": self.base.allow_live, "has_keys": bool(self.base.key_id and self.base.secret_key),
             "series": f"{self.base.asset.upper()} {self.base.horizon} Up/Down", "reason": self.reason,
             "paused": self.rs.paused, "kill": self.rs.kill, "limits": self.cfg.limits.__dict__,
             "index": {"price": last[1] if last else None, "ts": last[0] if last else None},

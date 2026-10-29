@@ -364,6 +364,38 @@ def create_app(
         except Exception:
             logger.exception("crew engine did not start; the rest of Aibussol runs normally")
 
+    @app.on_event("startup")
+    async def _startup_desk() -> None:
+        # the Polymarket Desk (openjarvis/polybot) runs inside Aibussol: paper trading by default; live only with POLYBOT_ALLOW_LIVE=true
+        # AND Michael's Approve tap. POLYBOT_IN_APP=false turns it off here (e.g. to run it as a separate worker instead).
+        import os
+
+        if (os.environ.get("POLYBOT_IN_APP") or "true").strip().lower() in ("0", "false", "no", "off"):
+            return
+        dsn = (os.environ.get("DATABASE_URL") or "").strip()
+        if not dsn or getattr(app.state, "desk_runner", None) is not None:
+            return
+        try:
+            import asyncpg
+
+            from openjarvis.polybot.config import from_env
+            from openjarvis.polybot.runtime import Runner
+
+            pool = await asyncpg.create_pool(dsn, min_size=1, max_size=3)      # its own small pool: never starves the app's
+            runner = Runner(from_env(), pool)
+            runner.start()
+            app.state.desk_pool, app.state.desk_runner = pool, runner
+            logger.info("Polymarket Desk started inside Aibussol")
+        except Exception:
+            logger.exception("Polymarket Desk did not start; the rest of Aibussol runs normally")
+
+    @app.on_event("shutdown")
+    async def _shutdown_desk() -> None:
+        runner = getattr(app.state, "desk_runner", None)
+        if runner is not None:
+            await runner.stop()                      # cancels its resting orders first
+            await app.state.desk_pool.close()
+
     @app.on_event("shutdown")
     async def _shutdown_crew() -> None:
         engine = getattr(app.state, "crew_engine", None)
