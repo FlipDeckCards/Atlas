@@ -22,7 +22,7 @@ from typing import Deque, Dict, List, Optional, Tuple
 
 from openjarvis.polybot.model import PriceTape
 
-STRATEGY_VERSION = "1.5"           # 1.5: matched pair sizes, buys only between 15c and 80c
+STRATEGY_VERSION = "1.6"           # 1.6: a side never holds more contracts than the window budget in dollars, so every pair can be completed
 
 
 def market_mid(best_bid: Optional[float], best_ask: Optional[float]) -> Optional[float]:

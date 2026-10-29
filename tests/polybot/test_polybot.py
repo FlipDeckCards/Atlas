@@ -473,8 +473,8 @@ def test_bet_size_follows_the_edge():
 
 def test_quotes_size_by_confidence():
     lim = from_env({}).limits
-    sz = strategy.Sizing(equity=50.0)
-    weak = strategy.quotes(0.50, Book(0.40, 0.60), Inventory(), lim, budget_left=50, can_down=False, sizing=sz)[0]
+    sz = strategy.Sizing(equity=100.0, window_pct=7.5)                        # the live account: $7.50 a window
+    weak = strategy.quotes(0.45, Book(0.40, 0.60), Inventory(), lim, budget_left=50, can_down=False, sizing=sz)[0]
     strong = strategy.quotes(0.75, Book(0.40, 0.60), Inventory(), lim, budget_left=50, can_down=False, sizing=sz)[0]
     assert weak.price == strong.price == 0.41 and strong.cost > weak.cost
     assert strong.cost <= sz.window_cap(lim) + 1e-9
@@ -645,3 +645,17 @@ def test_live_sizing_uses_buying_power_plus_money_in_open_windows():
     p = Desk(from_env({}), None, MemStore())                                  # paper: $50 plus today's simulated P&L
     p.rs.day_start, p.rs.day_pnl = 50.0, 4.0
     assert p.equity() == 54.0
+
+
+
+def test_the_first_side_always_leaves_room_to_complete_the_pair():
+    """Live 2:05 / 2:15: Down filled big first, the budget left could only buy half as many Up; BTC went Up; -$2.69 and -$2.00."""
+    lim = from_env({}).limits
+    sz = strategy.Sizing(equity=100.0, window_pct=7.5)                        # $7.50 a window
+    first = [q for q in strategy.quotes(0.30, Book(0.40, 0.56), Inventory(), lim, budget_left=100, sizing=sz) if q.side == "down"][0]
+    assert first.qty <= 7.5                                                    # at most as many contracts as the window has dollars
+    held = Inventory(down_qty=first.qty, down_cost=first.cost)
+    second = [q for q in strategy.quotes(0.30, Book(0.20, 0.56), held, lim, budget_left=100, sizing=sz) if q.side == "up"]
+    assert second and second[0].qty == first.qty                               # the matching side is always affordable
+    total = first.cost + second[0].cost
+    assert total <= 7.5 + 1e-9 and first.qty - total > 0                       # a full pair: profit whichever way BTC goes

@@ -80,6 +80,14 @@ def _qty(usd: float, cost_per: float, min_qty: float) -> float:
     return round(q, 6) if q >= min_qty else 0.0
 
 
+def _contracts_room(cap_usd: float, held: float, min_qty: float) -> float:
+    """v1.6: a side may hold at most `cap_usd` contracts. A completed pair costs under $1 a contract, so whatever the first side
+    holds, the window's budget can always buy the matching second side (the live losses at 2:05 and 2:15 were pairs that could
+    not be completed because the first side had used most of the budget)."""
+    room = cap_usd - held
+    return round(math.floor(room / min_qty + 1e-9) * min_qty, 6) if room >= min_qty else 0.0
+
+
 def skew_edge(inv: Inventory, side: str, limits: Limits) -> float:
     """Extra edge demanded to add to a side that is already heavier than the other (dollars per contract)."""
     heavy = (inv.up_qty - inv.down_qty) if side == "up" else (inv.down_qty - inv.up_qty)
@@ -138,6 +146,7 @@ def quotes(fair: float, book: Book, inv: Inventory, limits: Limits, *, budget_le
             q = _qty(min(usd, window_left), p, book.min_qty)
             if inv.down_qty > inv.up_qty:                                     # v1.5: complete the pair exactly, no leftover
                 q = min(round(inv.down_qty - inv.up_qty, 2), _qty(window_left, p, book.min_qty))
+            q = min(q, _contracts_room(cap, inv.up_qty, book.min_qty))         # v1.6: never more contracts a side than the window's dollars
             if q > 0:
                 out.append(Quote("up", p, q))
                 window_left -= q * p
@@ -156,6 +165,7 @@ def quotes(fair: float, book: Book, inv: Inventory, limits: Limits, *, budget_le
             q = _qty(min(usd, window_left), 1.0 - p, book.min_qty)
             if inv.up_qty > inv.down_qty:
                 q = min(round(inv.up_qty - inv.down_qty, 2), _qty(window_left, 1.0 - p, book.min_qty))
+            q = min(q, _contracts_room(cap, inv.down_qty, book.min_qty))
             if q > 0:
                 out.append(Quote("down", p, q))
     return out
