@@ -1067,6 +1067,19 @@ function deskSec() {
     });
     s.append(tb);
   }
+  // what makes money and what loses it: every settled fill, cut by the conditions it happened in
+  const an = DESK.analysis;
+  if (an && DESK_VIEW === an.mode) {
+    const al = mk('div', 'lbl'); al.style.marginTop = '12px'; al.textContent = 'What wins and what loses · ' + an.fills + ' settled fills'; s.append(al);
+    if (an.fills < 30) s.append(mk('div', 'dim', 'Needs at least 30 settled fills before these cuts mean anything.'));
+    else Object.values(an.groups || {}).forEach(rows => {
+      const tb = mk('div', 'pnl-table');
+      rows.forEach(r => { const row = mk('div', 'pnl-row'); row.append(mk('span', null, r.condition), mk('span', null, r.fills + ' fills'),
+        mk('span', null, r.win_rate + '% won'), mk('span', null, (r.per_contract >= 0 ? '+' : '') + (r.per_contract * 100).toFixed(1) + 'c/ct'));
+        const p = mk('span', null, signed(r.profit)); p.style.color = pnlColor(r.profit); row.append(p); tb.append(row); });
+      s.append(tb);
+    });
+  }
   const ev = DESK.events || [];
   if (ev.length) {
     const el = mk('div', 'lbl'); el.style.marginTop = '12px'; el.textContent = 'Desk log'; s.append(el);

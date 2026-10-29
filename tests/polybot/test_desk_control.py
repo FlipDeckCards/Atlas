@@ -88,3 +88,34 @@ def test_status_text_keeps_paper_and_live_apart():
     t = desk.status_text(s)
     assert "PAPER scoreboard (strategy v" in t and "10 windows traded, win rate 60.0%, total profit +3.20" in t
     assert "LIVE scoreboard: no settled trades yet." in t
+
+
+def test_analysis_cuts_profit_by_condition():
+    rows = [
+        # an Up bought cheap while BTC was falling (lost), and one with BTC rising (won)
+        {"side": "up", "price": 0.30, "qty": 2.0, "cost": 0.6, "features": json.dumps({"edge": 0.05, "momentum_z": -1.0, "secs_left": 200}), "up": False},
+        {"side": "up", "price": 0.40, "qty": 1.0, "cost": 0.4, "features": json.dumps({"edge": 0.08, "momentum_z": 0.9, "secs_left": 100}), "up": True},
+        # a Down at long price 0.70 (costs 0.30) while BTC was falling: moving with the bet (won)
+        {"side": "down", "price": 0.70, "qty": 1.0, "cost": 0.3, "features": json.dumps({"edge": 0.12, "momentum_z": -0.8, "secs_left": 40}), "up": False},
+    ] * 10
+
+    class C(FakeConn):
+        async def fetch(self, sql, *a):
+            return rows
+
+    class P(FakePool):
+        def acquire(self):
+            class Ctx:
+                async def __aenter__(s):
+                    return C(self.kv)
+
+                async def __aexit__(s, *a):
+                    return False
+            return Ctx()
+
+    desk._READY.clear()
+    a = run(desk.analysis(P(), "paper"))
+    mom = {r["condition"]: r for r in a["groups"]["momentum_with"]}
+    assert mom["BTC moving against the bet"]["win_rate"] == 0.0 and mom["BTC moving against the bet"]["per_contract"] == pytest.approx(-0.30)
+    assert mom["BTC moving with the bet"]["win_rate"] == 100.0
+    assert "30 settled fills" in desk.analysis_text(a)

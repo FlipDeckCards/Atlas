@@ -128,6 +128,55 @@ async def trades(pool, mode: str, limit: int = 50, version: str = STRATEGY_VERSI
     return out
 
 
+BUCKETS = {
+    # feature: [(label, low, high)] - which conditions a fill happened in
+    "edge": [("edge under 3c", -9, 0.03), ("edge 3-6c", 0.03, 0.06), ("edge 6-10c", 0.06, 0.10), ("edge over 10c", 0.10, 9)],
+    "momentum_with": [("BTC moving against the bet", -99, -0.3), ("BTC flat", -0.3, 0.3), ("BTC moving with the bet", 0.3, 99)],
+    "secs_left": [("over 3 min left", 180, 9999), ("1-3 min left", 60, 180), ("last minute", -1, 60)],
+    "cost": [("bought under 30c", 0, 0.30), ("bought 30-70c", 0.30, 0.70), ("bought over 70c", 0.70, 1.01)],
+}
+
+
+async def analysis(pool, mode: str = "paper", version: str = STRATEGY_VERSION) -> Dict[str, Any]:
+    """Every settled fill, cut by the conditions it happened in: how often that kind of trade won and what it made per contract.
+    This is how the desk's rules get tuned: keep the conditions that make money, cut the ones that lose it."""
+    await _ensure(pool)
+    async with pool.acquire() as c:
+        rows = await c.fetch(
+            f"SELECT f.side, f.price, f.qty, f.cost, f.features, w.up FROM polybot_fills f JOIN polybot_windows w ON w.slug = f.slug AND w.mode = f.mode "
+            f"WHERE f.mode = $1 AND coalesce(f.version, '1.0') = $2 AND w.up IS NOT NULL", mode, version)
+    trades = []
+    for r in rows:
+        feat = _j(r["features"])
+        cost_per = r["price"] if r["side"] == "up" else 1.0 - r["price"]
+        won = bool(r["up"]) if r["side"] == "up" else not bool(r["up"])
+        mz = feat.get("momentum_z")
+        trades.append({"won": won, "qty": float(r["qty"]), "pnl": float(r["qty"]) * ((1.0 if won else 0.0) - cost_per),
+                       "edge": feat.get("edge"), "secs_left": feat.get("secs_left"), "cost": cost_per,
+                       "momentum_with": None if mz is None else (mz if r["side"] == "up" else -mz)})
+    out: Dict[str, Any] = {"mode": mode, "version": version, "fills": len(trades), "groups": {}}
+    for feat, buckets in BUCKETS.items():
+        rows_out = []
+        for label, lo, hi in buckets:
+            g = [t for t in trades if t.get(feat) is not None and lo <= t[feat] < hi]
+            if not g:
+                continue
+            rows_out.append({"condition": label, "fills": len(g), "win_rate": round(100.0 * sum(t["won"] for t in g) / len(g), 1),
+                             "profit": round(sum(t["pnl"] for t in g), 2),
+                             "per_contract": round(sum(t["pnl"] for t in g) / max(1e-9, sum(t["qty"] for t in g)), 3)})
+        out["groups"][feat] = rows_out
+    return out
+
+
+def analysis_text(a: Dict[str, Any]) -> str:
+    if a["fills"] < 30:
+        return f"Trade analysis ({a['mode']}, v{a['version']}): only {a['fills']} settled fills so far; at least 30 are needed before the cuts mean anything."
+    lines = [f"Trade analysis ({a['mode']}, v{a['version']}, {a['fills']} settled fills): profit per contract by condition"]
+    for rows in a["groups"].values():
+        lines.append("  " + "; ".join(f"{r['condition']}: {r['fills']} fills, won {r['win_rate']}%, {r['per_contract']:+.3f}/contract ({r['profit']:+.2f})" for r in rows))
+    return "\n".join(lines)
+
+
 async def events(pool, limit: int = 30) -> List[Dict[str, Any]]:
     await _ensure(pool)
     async with pool.acquire() as c:
@@ -143,7 +192,8 @@ async def summary(pool, *, trade_limit: int = 50) -> Dict[str, Any]:
             "limits": current_limits(control).__dict__,
             "score": {"paper": await scoreboard(pool, "paper"), "live": await scoreboard(pool, "live")},
             "trades": {"paper": await trades(pool, "paper", trade_limit), "live": await trades(pool, "live", trade_limit)},
-            "events": await events(pool, 30), "mode": mode, "strategy": STRATEGY_VERSION}
+            "events": await events(pool, 30), "mode": mode, "strategy": STRATEGY_VERSION,
+            "analysis": await analysis(pool, "live" if mode == "live" else "paper")}
 
 
 async def live_pnl(pool) -> Dict[str, float]:
@@ -195,6 +245,8 @@ def status_text(s: Dict[str, Any]) -> str:
             lines.append(f"{mode.upper()} scoreboard: no settled trades yet.")
     lines.append(f"Limits: bankroll ${lim['bankroll_usd']:.2f}, per window ${lim['max_window_usd']:.2f}, per order ${lim['max_order_usd']:.2f}, "
                  f"daily stop {_stop_text(lim)}, min edge {lim['min_edge']:.2f}.")
+    if s.get("analysis"):
+        lines.append(analysis_text(s["analysis"]))
     recent = [e["text"] for e in s["events"][:6]]
     if recent:
         lines.append("Latest log: " + " | ".join(recent))

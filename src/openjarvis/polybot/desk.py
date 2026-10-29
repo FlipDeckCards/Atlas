@@ -182,7 +182,21 @@ class Desk:
         else:
             w.inv.down_qty += f.qty
             w.inv.down_cost += f.cost
-        self.ledger.fill(self.cfg.mode, f, self.fair)
+        b = self.book
+        cost_per = f.price if f.side == "up" else 1.0 - f.price
+        fair_side = None if self.fair is None else (self.fair if f.side == "up" else 1.0 - self.fair)
+        self.ledger.fill(self.cfg.mode, f, self.fair, {
+            # what the desk saw at the moment of the fill, so results can be cut by condition later
+            "model": None if self.fair_model is None else round(self.fair_model, 4),
+            "mid": None if self.mid is None else round(self.mid, 4),
+            "momentum_z": round(self.momentum, 2),
+            "secs_left": round(w.end - f.ts, 1),
+            "edge": None if fair_side is None else round(fair_side - cost_per, 4),          # fair value of the side bought minus its cost
+            "model_vs_market": None if self.fair_model is None or self.mid is None else round(self.fair_model - self.mid, 4),
+            "spread": None if not b or b.best_bid is None or b.best_ask is None else round(b.best_ask - b.best_bid, 4),
+            "extra_edge": self.learner.extra_edge if self.cfg.learn else 0.0,
+            "sigma": None if self.sigma is None else round(self.sigma, 3),
+        })
         self.stats["fills"] += 1
 
     async def on_fills(self, fills: List[Fill]) -> None:

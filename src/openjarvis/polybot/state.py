@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS polybot_windows (
 CREATE INDEX IF NOT EXISTS polybot_windows_settled ON polybot_windows (settled_at);
 ALTER TABLE polybot_fills ADD COLUMN IF NOT EXISTS version TEXT;
 ALTER TABLE polybot_windows ADD COLUMN IF NOT EXISTS version TEXT;
+ALTER TABLE polybot_fills ADD COLUMN IF NOT EXISTS features JSONB;
 CREATE TABLE IF NOT EXISTS polybot_events (id BIGSERIAL PRIMARY KEY, ts TIMESTAMPTZ NOT NULL DEFAULT now(), level TEXT NOT NULL, text TEXT NOT NULL);
 """
 
@@ -45,11 +46,11 @@ class Ledger:
         self.windows: Dict[str, Dict[str, Any]] = {}
         self.events: List[Dict[str, Any]] = []
 
-    def fill(self, mode: str, f, fair: Optional[float]) -> None:
+    def fill(self, mode: str, f, fair: Optional[float], features: Optional[Dict[str, Any]] = None) -> None:
         from openjarvis.polybot.brain import STRATEGY_VERSION
 
         self.fills.append({"version": STRATEGY_VERSION, "ts": f.ts, "mode": mode, "slug": f.slug, "side": f.side, "price": f.price, "qty": f.qty, "cost": f.cost,
-                           "fair": fair, "order_id": f.order_id})
+                           "fair": fair, "order_id": f.order_id, "features": features or {}})
 
     def window(self, row: Dict[str, Any]) -> None:
         from openjarvis.polybot.brain import STRATEGY_VERSION
@@ -102,9 +103,10 @@ class PgStore:
         async with self.pool.acquire() as c:
             async with c.transaction():
                 if fills:
-                    await c.executemany("INSERT INTO polybot_fills (ts, mode, slug, side, price, qty, cost, fair, order_id, version) "
-                                        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
-                                        [(_t(f["ts"]), f["mode"], f["slug"], f["side"], f["price"], f["qty"], f["cost"], f["fair"], f["order_id"], f.get("version")) for f in fills])
+                    await c.executemany("INSERT INTO polybot_fills (ts, mode, slug, side, price, qty, cost, fair, order_id, version, features) "
+                                        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)",
+                                        [(_t(f["ts"]), f["mode"], f["slug"], f["side"], f["price"], f["qty"], f["cost"], f["fair"], f["order_id"], f.get("version"),
+                                          json.dumps(f.get("features") or {})) for f in fills])
                 for w in windows:
                     await c.execute(
                         "INSERT INTO polybot_windows (slug, mode, window_start, window_end, price_to_beat, close_price, up, up_qty, up_cost, "
