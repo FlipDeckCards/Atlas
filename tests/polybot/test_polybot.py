@@ -459,6 +459,22 @@ def test_learner_demands_more_edge_while_losing():
     assert lr2.rolling_return == pytest.approx(lr.rolling_return)
 
 
-def test_v11_defaults_are_small():
+def test_bet_size_follows_the_edge():
     lim = from_env({}).limits
-    assert (lim.max_window_usd, lim.max_order_usd, lim.daily_loss_pct) == (1.0, 0.5, 15.0)
+    sz = strategy.Sizing(equity=50.0)
+    assert sz.window_cap(lim) == 2.5                                       # 5% of $50
+    small = sz.order_usd(0.45, 0.40, lim)                                  # 5c edge on a 40c contract
+    big = sz.order_usd(0.60, 0.40, lim)                                    # 20c edge
+    assert 0.25 <= small < big <= 2.5
+    assert sz.order_usd(0.40, 0.40, lim) == 0.0                            # no edge, no bet
+    assert strategy.Sizing(equity=500.0).window_cap(lim) == 5.0            # grows with the account, up to the hard ceiling
+    assert strategy.Sizing(equity=20.0).window_cap(lim) == 1.0             # and shrinks after losses
+
+
+def test_quotes_size_by_confidence():
+    lim = from_env({}).limits
+    sz = strategy.Sizing(equity=50.0)
+    weak = strategy.quotes(0.50, Book(0.40, 0.60), Inventory(), lim, budget_left=50, can_down=False, sizing=sz)[0]
+    strong = strategy.quotes(0.75, Book(0.40, 0.60), Inventory(), lim, budget_left=50, can_down=False, sizing=sz)[0]
+    assert weak.price == strong.price == 0.41 and strong.cost > weak.cost
+    assert strong.cost <= sz.window_cap(lim) + 1e-9

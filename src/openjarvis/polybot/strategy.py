@@ -90,12 +90,35 @@ def skew_edge(inv: Inventory, side: str, limits: Limits) -> float:
     return min(0.10, 0.01 * heavy / per)
 
 
+@dataclass(frozen=True)
+class Sizing:
+    """How much to put on one order (v1.2): quarter-Kelly on the edge, scaled to the account and capped.
+    Kelly for a contract that costs c and pays $1 with probability p: stake fraction f = (p - c) / (1 - c).
+    The desk stakes kelly_fraction x f x equity, at least min_order_usd, at most the order cap; a window holds at most
+    window_pct % of equity (and never more than the hard ceilings in Limits)."""
+    equity: float = 50.0
+    kelly_fraction: float = 0.25
+    window_pct: float = 5.0
+    min_order_usd: float = 0.25
+
+    def window_cap(self, limits: Limits) -> float:
+        return round(min(limits.max_window_usd, max(0.0, self.equity) * self.window_pct / 100.0), 2)
+
+    def order_usd(self, prob: float, cost: float, limits: Limits) -> float:
+        if cost <= 0 or cost >= 1 or prob <= cost:
+            return 0.0
+        f = (prob - cost) / (1.0 - cost)
+        usd = self.kelly_fraction * f * max(0.0, self.equity)
+        return round(min(max(usd, self.min_order_usd), limits.max_order_usd, self.window_cap(limits)), 2)
+
+
 def quotes(fair: float, book: Book, inv: Inventory, limits: Limits, *, budget_left: float, can_up: bool = True,
-           can_down: bool = True) -> List[Quote]:
+           can_down: bool = True, sizing: Optional[Sizing] = None) -> List[Quote]:
     """The orders the desk wants resting right now in this window (possibly none)."""
     out: List[Quote] = []
     t = book.tick
-    window_left = max(0.0, min(limits.max_window_usd - inv.spent, budget_left))
+    cap = sizing.window_cap(limits) if sizing else limits.max_window_usd
+    window_left = max(0.0, min(cap - inv.spent, budget_left))
     if window_left < 0.05 or fair is None:
         return out
     lo, hi = max(t, 0.01), min(1.0 - t, 0.99)
@@ -108,7 +131,8 @@ def quotes(fair: float, book: Book, inv: Inventory, limits: Limits, *, budget_le
         if book.best_ask is not None:
             p = min(p, _floor(book.best_ask - t, t))         # never cross
         if lo <= p <= hi:
-            q = _qty(min(limits.max_order_usd, window_left), p, book.min_qty)
+            usd = sizing.order_usd(fair, p, limits) if sizing else limits.max_order_usd
+            q = _qty(min(usd, window_left), p, book.min_qty)
             if q > 0:
                 out.append(Quote("up", p, q))
                 window_left -= q * p
@@ -121,7 +145,8 @@ def quotes(fair: float, book: Book, inv: Inventory, limits: Limits, *, budget_le
         if book.best_bid is not None:
             p = max(p, _ceil(book.best_bid + t, t))
         if lo <= p <= hi:
-            q = _qty(min(limits.max_order_usd, window_left), 1.0 - p, book.min_qty)
+            usd = sizing.order_usd(1.0 - fair, 1.0 - p, limits) if sizing else limits.max_order_usd
+            q = _qty(min(usd, window_left), 1.0 - p, book.min_qty)
             if q > 0:
                 out.append(Quote("down", p, q))
     return out

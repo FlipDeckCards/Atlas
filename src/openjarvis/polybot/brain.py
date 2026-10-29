@@ -22,7 +22,7 @@ from typing import Deque, Dict, List, Optional, Tuple
 
 from openjarvis.polybot.model import PriceTape
 
-STRATEGY_VERSION = "1.1"
+STRATEGY_VERSION = "1.2"           # 1.2: bet size follows the edge (quarter-Kelly), capped at 5% of the day's balance per window
 
 
 def market_mid(best_bid: Optional[float], best_ask: Optional[float]) -> Optional[float]:

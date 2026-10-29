@@ -331,8 +331,11 @@ class Desk:
             can_down = can_down and brain.can_add(fills, "down", self.cfg.max_fills_per_side)
             extra = self.learner.extra_edge if self.cfg.learn else 0.0
             lim = replace(self.cfg.limits, min_edge=round(self.cfg.limits.min_edge + extra, 3))
+            equity = self.rs.day_start if self.rs.day_start is not None else self.cfg.limits.bankroll_usd
+            sizing = strategy.Sizing(equity=min(equity, self.cfg.limits.bankroll_usd) if self.cfg.mode == "paper" else equity,
+                                     kelly_fraction=self.cfg.kelly_fraction, window_pct=self.cfg.window_pct, min_order_usd=self.cfg.min_order_usd)
             want = strategy.quotes(self.fair, strategy.Book(b.best_bid, b.best_ask, w.tick, w.min_qty), inv, lim, budget_left=budget,
-                                   can_up=can_up, can_down=can_down) if (can_up or can_down) else []
+                                   can_up=can_up, can_down=can_down, sizing=sizing) if (can_up or can_down) else []
             if want:
                 reason = "Quoting" + (f" (one side only: {why})" if why else ".")
             elif why and not (can_up or can_down):

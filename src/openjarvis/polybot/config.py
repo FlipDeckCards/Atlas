@@ -27,8 +27,8 @@ class Limits:
     """The money rules. Every amount is US dollars."""
 
     bankroll_usd: float = 50.0          # the most the desk may ever have at risk in total (also capped by the account's buying power)
-    max_window_usd: float = 1.0         # the most it may pay into one window (Up and Down together)
-    max_order_usd: float = 0.5          # the size of one resting order
+    max_window_usd: float = 5.0         # hard ceiling per window; the real cap is window_pct % of the day's balance (v1.2 sizing)
+    max_order_usd: float = 2.5          # hard ceiling per order; the real size comes from the edge (quarter-Kelly)
     daily_loss_usd: float = 10.0        # used only when daily_loss_pct is 0: a flat dollar stop for the Los Angeles day
     daily_loss_pct: float = 15.0        # stop for the rest of the day after losing this % of the day's starting balance (0 = use the flat $)
     min_edge: float = 0.04              # only buy at least this far (in dollars per contract) better than fair value
@@ -69,6 +69,9 @@ class Config:
     momentum_z: float = 0.6             # ... and do not buy against a move bigger than this many standard deviations (0 = off)
     max_fills_per_side: int = 1         # v1.1: stop adding to a side in a window after this many fills (0 = no limit)
     learn: bool = True                  # v1.1: demand extra edge while the last 20 windows are losing
+    kelly_fraction: float = 0.25        # v1.2: bet size grows with the edge: this fraction of the Kelly stake
+    window_pct: float = 5.0             # v1.2: at most this % of the day's starting balance in one window
+    min_order_usd: float = 0.25         # v1.2: smallest order worth placing
     stale_s: float = 4.0                # data older than this pulls every quote
     tick_s: float = 1.0                 # how often the desk thinks
     flush_s: float = 60.0               # how often state is written to the database
@@ -90,8 +93,8 @@ class Config:
 def from_env(env: Optional[Mapping[str, str]] = None) -> Config:
     e = os.environ if env is None else env
     lim = Limits(bankroll_usd=_f(e, "POLYBOT_BANKROLL_USD", 50.0, 0.0),
-                 max_window_usd=_f(e, "POLYBOT_MAX_WINDOW_USD", 1.0, 0.0),
-                 max_order_usd=_f(e, "POLYBOT_MAX_ORDER_USD", 0.5, 0.0),
+                 max_window_usd=_f(e, "POLYBOT_MAX_WINDOW_USD", 5.0, 0.0),
+                 max_order_usd=_f(e, "POLYBOT_MAX_ORDER_USD", 2.5, 0.0),
                  daily_loss_usd=_f(e, "POLYBOT_DAILY_LOSS_USD", 10.0, 0.0),
                  daily_loss_pct=_f(e, "POLYBOT_DAILY_LOSS_PCT", 15.0, 0.0, 100.0),
                  min_edge=_f(e, "POLYBOT_MIN_EDGE", 0.04, 0.01, 0.40)).clean()
@@ -112,6 +115,9 @@ def from_env(env: Optional[Mapping[str, str]] = None) -> Config:
         momentum_z=_f(e, "POLYBOT_MOMENTUM_Z", 0.6, 0.0, 10.0),
         max_fills_per_side=int(_f(e, "POLYBOT_MAX_FILLS_PER_SIDE", 1, 0, 100)),
         learn=(e.get("POLYBOT_LEARN") or "true").strip().lower() in _TRUE,
+        kelly_fraction=_f(e, "POLYBOT_KELLY_FRACTION", 0.25, 0.0, 1.0),
+        window_pct=_f(e, "POLYBOT_WINDOW_PCT", 5.0, 0.1, 50.0),
+        min_order_usd=_f(e, "POLYBOT_MIN_ORDER_USD", 0.25, 0.01, 1000.0),
         flush_s=_f(e, "POLYBOT_FLUSH_SECONDS", 60.0, 10.0, 3600.0),
         control_s=_f(e, "POLYBOT_CONTROL_SECONDS", 20.0, 5.0, 600.0),
         database_url=(e.get("DATABASE_URL") or "").strip(),
