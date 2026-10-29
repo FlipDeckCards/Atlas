@@ -315,10 +315,14 @@ class Desk:
         self.mid = brain.market_mid(b.best_bid, b.best_ask) if b else None
         self.fair = brain.blend(self.fair_model, self.mid, self.cfg.model_weight)
         self.momentum = brain.momentum_z(self.tape, int(now), int(self.cfg.momentum_s), self.sigma)
-        reason = risk.blocked(self.cfg, self.rs, now=now, data_age_s=data_age, book_age_s=(now - b.ts) if b else 999.0,
+        if w is None and not (self.rs.kill or self.rs.paused):
+            reason = "Between windows: waiting for the next 5-minute market to open."
+        else:
+            reason = None
+        reason = reason or risk.blocked(self.cfg, self.rs, now=now, data_age_s=data_age, book_age_s=(now - b.ts) if b else 999.0,
                               market_open=bool(b and b.state == "MARKET_STATE_OPEN"), secs_since_open=(now - w.start) if w else 0.0,
                               secs_to_end=(w.end - now) if w else 0.0, balance=self.balance)
-        if reason is None and (w is None or not w.price_to_beat):
+        if reason is None and not w.price_to_beat:
             reason = "Waiting for the price to beat."
         if reason is None and self.fair is None:
             reason = "Not enough index history yet to price the window."
