@@ -228,6 +228,10 @@ def status_text(s: Dict[str, Any]) -> str:
                          f"fair value of Up {st.get('fair_up')}, book {st.get('book')}, resting {st.get('resting')}.")
         if st.get("day_start") is not None:
             lines.append(f"Today started with ${st['day_start']:.2f}; today's loss limit is ${st.get('day_limit') or 0:.2f}.")
+        if st.get("account_value") is not None:
+            vs = st.get("version_start")
+            lines.append(f"Real Polymarket account value ${st['account_value']:.2f}" + (f" ({st['account_value'] - vs:+.2f} since strategy v{st.get('strategy')} started at ${vs:.2f})" if vs is not None else "")
+                         + ". Trust this over the scoreboard if they differ.")
         lines.append(f"At risk now ${st.get('at_risk', 0):.2f}; today's P&L {st.get('day_pnl', 0):+.2f}"
                      + (f"; buying power ${st['balance']:.2f}" if st.get("balance") is not None else "") + ".")
         if str((s["control"] or {}).get("mode")) == "live" and st.get("mode") != "live":

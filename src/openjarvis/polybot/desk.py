@@ -80,6 +80,7 @@ class Desk:
         self._t = {"control": 0.0, "flush": 0.0, "markets": 0.0, "markets_fast": 0.0, "market": 0.0, "sigma": 0.0, "positions": 0.0, "hour": 0.0}
         self._stopping = False
         self.instance = ""                                   # set by the runner: which copy wrote the status
+        self.version_start: Optional[float] = None           # real account value (live) when this strategy version started
 
     # ── helpers ───────────────────────────────────────────────────────────────────────
     def log(self, level: str, text: str) -> None:
@@ -306,6 +307,9 @@ class Desk:
             self.balance = await self.broker.balance()
 
         self.rs.at_risk = round(sum(w.inv.spent for w in self.open_windows.values()) + self.external_at_risk, 4)
+        if self.version_start is None and self.cfg.mode == "live" and self.balance is not None:
+            self.version_start = round(self.balance + self.rs.at_risk, 2)
+            self.log("info", f"Strategy v{brain.STRATEGY_VERSION} starts with a real account value of ${self.version_start:.2f}.")
         if self.rs.day_start is None:
             if self.cfg.mode == "live":
                 if self.balance is not None:
@@ -394,7 +398,8 @@ class Desk:
             "book": ({"bid": b.best_bid, "ask": b.best_ask, "state": b.state} if b else None),
             "resting": [{"side": r.quote.side, "price": r.quote.price, "qty": r.left} for r in self.broker.resting.values()],
             "rejects": list(getattr(self.broker, "rejects", []))[-5:],
-            "equity": self.equity(), "window_pct": self.cfg.window_pct,
+            "equity": self.equity(), "window_pct": self.cfg.window_pct, "version_start": self.version_start,
+            "account_value": round(self.balance + self.rs.at_risk, 2) if self.cfg.mode == "live" and self.balance is not None else None,
             "window_cap": strategy.Sizing(equity=self.equity(), window_pct=self.cfg.window_pct).window_cap(self.cfg.limits),
             "balance": self.balance, "day": self.rs.day, "day_pnl": round(self.rs.day_pnl, 2),
             "day_start": self.rs.day_start, "day_limit": risk.day_limit(self.cfg, self.rs), "at_risk": round(self.rs.at_risk, 2),
@@ -435,6 +440,8 @@ class Desk:
                 self.rs.day_start = float(prev["day_start"])
         if prev.get("strategy") == brain.STRATEGY_VERSION and prev.get("mode") == self.cfg.mode:
             self.learner.load(prev.get("learner"))
+        if prev.get("strategy") == brain.STRATEGY_VERSION and prev.get("version_start") is not None:
+            self.version_start = float(prev["version_start"])
         await self.load_index(now, backfill=True)
         self.log("info", f"Desk started in {self.cfg.mode.upper()} mode on {self.base.asset.upper()} {self.base.horizon} Up/Down.")
         steps = 0

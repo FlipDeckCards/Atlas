@@ -1014,6 +1014,13 @@ function deskSec() {
     b.onclick = () => { DESK_VIEW = m; renderSide(); }; tabs.append(b); });
   s.append(tabs);
   const v = sc[DESK_VIEW] || {}, a = v.all || {}, t = v.today || {}, d7 = v.d7 || {};
+  if (DESK_VIEW === 'live' && st.account_value != null) {          // the real money, read from Polymarket: the line that cannot drift
+    const ch = st.version_start != null ? st.account_value - st.version_start : null;
+    const acct = mk('div', 'row'); const at = mk('span', 'grow', 'Polymarket account: ' + money(st.account_value)
+      + (ch != null ? ' (' + signed(ch) + ' since v' + (DESK.strategy || '') + ' started at ' + money(st.version_start) + ')' : ''));
+    if (ch != null) at.style.color = pnlColor(ch);
+    acct.append(at); s.append(acct);
+  }
   const box = mk('div', 'pnl'); box.append(mk('div', 'pnl-t', 'Strategy v' + (v.version || DESK.strategy || '') + ' scoreboard · ' + DESK_VIEW + (DESK_VIEW === 'paper' ? ' (not real money)' : '')));
   const grid = mk('div', 'pnl-g');
   const cell = (label, val, color, big) => { const c = mk('div', 'pnl-c'); c.append(mk('div', 'pnl-l', label)); const x = mk('div', 'pnl-v' + (big ? ' desk-big' : ''), val); if (color) x.style.color = color; c.append(x); grid.append(c); };
