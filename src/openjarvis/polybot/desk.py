@@ -336,7 +336,8 @@ class Desk:
             sizing = strategy.Sizing(equity=min(equity, self.cfg.limits.bankroll_usd) if self.cfg.mode == "paper" else equity,
                                      kelly_fraction=self.cfg.kelly_fraction, window_pct=self.cfg.window_pct, min_order_usd=self.cfg.min_order_usd)
             want = strategy.quotes(self.fair, strategy.Book(b.best_bid, b.best_ask, w.tick, w.min_qty), inv, lim, budget_left=budget,
-                                   can_up=can_up, can_down=can_down, sizing=sizing) if (can_up or can_down) else []
+                                   can_up=can_up, can_down=can_down, sizing=sizing,
+                                   min_cost=self.cfg.min_buy_price, max_cost=self.cfg.max_buy_price) if (can_up or can_down) else []
             if want:
                 reason = "Quoting" + (f" (one side only: {why})" if why else ".")
             elif why and not (can_up or can_down):
@@ -368,6 +369,7 @@ class Desk:
             "rolling_return": round(self.learner.rolling_return, 4) if self.learner.rolling_return is not None else None,
             "book": ({"bid": b.best_bid, "ask": b.best_ask, "state": b.state} if b else None),
             "resting": [{"side": r.quote.side, "price": r.quote.price, "qty": r.left} for r in self.broker.resting.values()],
+            "rejects": list(getattr(self.broker, "rejects", []))[-5:],
             "balance": self.balance, "day": self.rs.day, "day_pnl": round(self.rs.day_pnl, 2),
             "day_start": self.rs.day_start, "day_limit": risk.day_limit(self.cfg, self.rs), "at_risk": round(self.rs.at_risk, 2),
             "today": dict(self.stats),

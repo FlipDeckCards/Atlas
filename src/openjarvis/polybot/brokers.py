@@ -108,6 +108,16 @@ class BookView:
                    last_trade_ts=lt_ts, state=str(md.get("state") or ""), ts=now)
 
 
+def keep(r: "Resting", q: Optional[Quote], tick: float = 0.01) -> bool:
+    """Leave a resting order alone unless it must change: it is now priced past the edge (must move at once), or the better
+    price is 2+ ticks away, or it is bigger than wanted. Avoids cancel/replace every second (queue position, exchange throttles)."""
+    if q is None or q.side != r.quote.side or q.qty < r.left - 1e-9:
+        return False
+    if q.side == "up":                      # a bid: the wanted price is the most it may pay
+        return r.quote.price <= q.price + 1e-9 and q.price - r.quote.price < 2 * tick - 1e-9
+    return r.quote.price >= q.price - 1e-9 and r.quote.price - q.price < 2 * tick - 1e-9
+
+
 class PaperBroker:
     mode = "paper"
 
@@ -127,10 +137,8 @@ class PaperBroker:
         for side in list(self.resting):
             r = self.resting[side]
             q = sides.get(side)
-            if q is None or abs(q.price - r.quote.price) > 1e-9:
+            if not keep(r, q):
                 del self.resting[side]                    # cancelled (a new price is a new order at the back of the queue)
-            elif abs(q.qty - r.left) > 1e-9 and q.qty < r.left:
-                r.quote = Quote(side, r.quote.price, round(r.filled + q.qty, 6))
         for side, q in sides.items():
             if side not in self.resting:
                 self.resting[side] = Resting(q, f"paper-{next(self._ids)}", now)
@@ -184,6 +192,7 @@ class LiveBroker:
         self.closing: Dict[str, Resting] = {}          # cancelled orders whose final fill is not read back yet (order id -> record)
         self._last_sync = 0.0
         self._bal: Optional[float] = None
+        self.rejects: List[str] = []
         self._bal_ts = 0.0
 
     @property
@@ -207,13 +216,21 @@ class LiveBroker:
         for side in list(self.resting):
             r = self.resting[side]
             q = sides.get(side)
-            if q is None or abs(q.price - r.quote.price) > 1e-9 or q.qty < r.left - 1e-9:
+            if not keep(r, q):
                 await self._cancel(r)
                 del self.resting[side]
         for side, q in sides.items():
             if side in self.resting:
                 continue
-            oid = await self.c.place(slug, side, q.price, q.qty)
+            try:
+                oid = await self.c.place(slug, side, q.price, q.qty)
+            except PMError as exc:
+                if exc.status and 400 <= exc.status < 500 and exc.status != 401:   # e.g. post-only would cross, size or tick: skip this quote
+                    self.rejects.append(f"{side} {q.qty:g} @ {q.price:.2f}: {exc}")
+                    self.rejects = self.rejects[-20:]
+                    logger.warning("order rejected: %s", exc)
+                    continue
+                raise
             self.resting[side] = Resting(q, oid, now)
 
     async def cancel_all(self, now: float = 0.0) -> None:

@@ -73,6 +73,8 @@ class Config:
     kelly_fraction: float = 0.25        # v1.2: bet size grows with the edge: this fraction of the Kelly stake
     window_pct: float = 5.0             # v1.2: at most this % of the day's starting balance in one window
     min_order_usd: float = 0.25         # v1.2: smallest order worth placing
+    min_buy_price: float = 0.15         # v1.5: never pay less than this for a side (long shots lost)
+    max_buy_price: float = 0.80         # v1.5: never pay more than this for a side (one miss costs nearly the whole bet)
     stale_s: float = 4.0                # data older than this pulls every quote
     tick_s: float = 1.0                 # how often the desk thinks
     flush_s: float = 60.0               # how often state is written to the database
@@ -120,6 +122,8 @@ def from_env(env: Optional[Mapping[str, str]] = None) -> Config:
         kelly_fraction=_f(e, "POLYBOT_KELLY_FRACTION", 0.25, 0.0, 1.0),
         window_pct=_f(e, "POLYBOT_WINDOW_PCT", 5.0, 0.1, 50.0),
         min_order_usd=_f(e, "POLYBOT_MIN_ORDER_USD", 0.25, 0.01, 1000.0),
+        min_buy_price=_f(e, "POLYBOT_MIN_BUY_PRICE", 0.15, 0.01, 0.99),
+        max_buy_price=_f(e, "POLYBOT_MAX_BUY_PRICE", 0.80, 0.01, 0.99),
         flush_s=_f(e, "POLYBOT_FLUSH_SECONDS", 60.0, 10.0, 3600.0),
         control_s=_f(e, "POLYBOT_CONTROL_SECONDS", 20.0, 5.0, 600.0),
         database_url=(e.get("DATABASE_URL") or "").strip(),

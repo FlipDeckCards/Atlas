@@ -503,3 +503,123 @@ def test_second_side_only_when_the_pair_costs_under_a_dollar():
     assert all(q.price + 0.65 <= 0.97 + 1e-9 for q in ups)
     pair = Inventory(up_qty=2.0, up_cost=1.20, down_qty=2.0, down_cost=0.70)   # 60c + 35c = 95c per pair
     assert pair.worst_case > 0                                 # a completed pair under $1 profits whichever way BTC goes
+
+
+# ── v1.5 ────────────────────────────────────────────────────────────────────────────────
+
+def test_second_side_matches_the_first_sides_size():
+    held = Inventory(up_qty=3.0, up_cost=1.20)                 # 3 Up at 40c
+    downs = [q for q in strategy.quotes(0.40, Book(0.40, 0.70), held, LIM, budget_left=50) if q.side == "down"]
+    assert downs and downs[0].qty == 3.0                       # exactly 3 Down: a complete pair, no leftover
+    pair = Inventory(up_qty=3.0, up_cost=1.20, down_qty=3.0, down_cost=3.0 * (1 - downs[0].price))
+    assert pair.pnl_if(True) > 0 and pair.pnl_if(False) > 0
+
+
+def test_no_long_shots_and_no_expensive_favourites():
+    lim = LIM
+    assert [q for q in strategy.quotes(0.20, Book(0.05, 0.15), Inventory(), lim, budget_left=50, min_cost=0.15, max_cost=0.80)
+            if q.side == "up"] == []                           # Up would cost ~10c
+    downs = [q for q in strategy.quotes(0.10, Book(0.05, 0.15), Inventory(), lim, budget_left=50, min_cost=0.15, max_cost=0.80)
+             if q.side == "down"]
+    assert downs == []                                         # Down would cost ~85c
+
+
+def test_orders_are_not_churned_for_one_tick():
+    from openjarvis.polybot.brokers import Resting, keep
+
+    r = Resting(Quote("up", 0.45, 2.0), "o1", 0.0)
+    assert keep(r, Quote("up", 0.46, 2.0))                     # 1 tick better available: stay put
+    assert not keep(r, Quote("up", 0.47, 2.0))                 # 2 ticks: move
+    assert not keep(r, Quote("up", 0.44, 2.0))                 # now past the edge: move at once
+    d = Resting(Quote("down", 0.60, 2.0), "o2", 0.0)
+    assert keep(d, Quote("down", 0.59, 2.0)) and not keep(d, Quote("down", 0.61, 2.0))
+    assert not keep(r, None)
+
+
+def test_a_rejected_live_order_does_not_stop_the_desk():
+    from openjarvis.polybot.brokers import LiveBroker
+    from openjarvis.polybot.client import PMError
+
+    class C:
+        async def place(self, *a):
+            raise PMError("would cross", 400)
+
+    b = LiveBroker(C())
+    run(b.set_quotes("s", [Quote("up", 0.45, 2.0)], now=1.0))
+    assert b.resting == {} and "would cross" in b.rejects[0]
+
+
+class LiveFake(FakeExchange):
+    """The same window, answering the trading API like Polymarket US: orders rest, fill when the market sweeps through them."""
+
+    def __init__(self, t0):
+        super().__init__(t0)
+        self.orders, self.n, self.cancels, self.cash = {}, 0, 0, 50.0
+
+    async def place(self, slug, side, price, qty):
+        self.n += 1
+        oid = f"o{self.n}"
+        self.orders[oid] = {"id": oid, "marketSlug": slug, "side": side, "price": price, "quantity": qty, "cumQuantity": 0.0, "state": "ORDER_STATE_NEW"}
+        return oid
+
+    def _match(self):
+        if self.ws + 88 <= self.now <= self.ws + 92:                  # the seller sweeping Up down to 0.30
+            for o in self.orders.values():
+                if o["state"] == "ORDER_STATE_NEW" and o["side"] == "up" and o["price"] >= 0.30:
+                    o["cumQuantity"], o["state"], o["avgPx"] = o["quantity"], "ORDER_STATE_FILLED", {"value": f'{o["price"]:.2f}'}
+
+    async def open_orders(self, slugs=None):
+        self._match()
+        return [o for o in self.orders.values() if o["state"] == "ORDER_STATE_NEW"]
+
+    async def order(self, oid):
+        return self.orders[oid]
+
+    async def cancel(self, oid, slug):
+        self.cancels += 1
+        if self.orders[oid]["state"] == "ORDER_STATE_NEW":
+            self.orders[oid]["state"] = "ORDER_STATE_CANCELED"
+
+    async def cancel_all(self, slugs=None):
+        for o in self.orders.values():
+            if o["state"] == "ORDER_STATE_NEW":
+                o["state"] = "ORDER_STATE_CANCELED"
+        return []
+
+    async def buying_power(self):
+        return self.cash
+
+    async def positions(self):
+        return {}
+
+
+def test_a_full_live_window_places_fills_settles_and_alerts():
+    from openjarvis.polybot.desk import Desk
+
+    t0 = int(dt.datetime(2026, 10, 28, 18, 0, tzinfo=dt.timezone.utc).timestamp())
+    ex = LiveFake(t0)
+    store = MemStore({"mode": "live"})
+    pushes = []
+
+    async def notify(title, text):
+        pushes.append((title, text))
+
+    async def sleep(_):
+        ex.now += 1
+
+    cfg = from_env({"POLYBOT_ALLOW_LIVE": "true", "POLYMARKET_KEY_ID": "k", "POLYMARKET_SECRET_KEY": "s"})
+    ex.now = t0 - 5
+    desk = Desk(cfg, ex, store, notify=notify, clock=lambda: float(ex.now), sleep=sleep)
+    run(desk.run(max_steps=330))
+
+    assert store.kv["status"]["mode"] == "live"
+    assert ex.n >= 1 and store.fills and all(f["mode"] == "live" for f in store.fills)
+    w = [x for x in store.windows if x["mode"] == "live"]
+    assert len(w) == 1 and w[0]["up"] is True and w[0]["pnl"] > 0
+    assert w[0]["up_cost"] + w[0]["down_cost"] <= 2.5 + 1e-9                   # 5% of the $50 day start
+    titles = [t for t, _ in pushes]
+    assert "Desk entry" in titles and "Desk settled" in titles                 # an alert for the entry and for the exit
+    entry = next(x for t, x in pushes if t == "Desk entry")
+    assert "strike" in entry and "expires" in entry and "max loss" in entry and "target" in entry
+    assert ex.cancels < 60                                                     # no cancel/replace every second
+    assert store.kv["status"]["day_start"] == 50.0 and store.kv["status"]["day_limit"] == 7.5

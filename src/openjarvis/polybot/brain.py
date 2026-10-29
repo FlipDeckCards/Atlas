@@ -22,7 +22,7 @@ from typing import Deque, Dict, List, Optional, Tuple
 
 from openjarvis.polybot.model import PriceTape
 
-STRATEGY_VERSION = "1.4"           # 1.4: the second side is only bought if the pair costs under $0.97 (locked profit, never a locked loss)
+STRATEGY_VERSION = "1.5"           # 1.5: matched pair sizes, buys only between 15c and 80c
 
 
 def market_mid(best_bid: Optional[float], best_ask: Optional[float]) -> Optional[float]:
