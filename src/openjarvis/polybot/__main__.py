@@ -107,7 +107,14 @@ async def _check() -> int:
         print(f"{cfg.asset.upper()} {cfg.horizon} Up/Down windows listed: {len(ws)}" + (f", e.g. {ws[0].slug}" if ws else ""))
         if cfg.key_id and cfg.secret_key:
             try:
-                print(f"API keys OK. Buying power: ${await c.buying_power()}")
+                raw = await c._req("GET", "/v1/account/balances", auth=True)
+                bal = raw.get("balances") or []
+                print("API keys OK.")
+                if not bal:
+                    print("No cash balance on the account yet (deposit not made or still pending).")
+                for b in bal:
+                    print(f"  {b.get('currency', '?')}: balance {b.get('currentBalance')}, buying power {b.get('buyingPower')}, "
+                          f"open orders {b.get('openOrders')}, unsettled {b.get('unsettledFunds')}, pending credit {b.get('pendingCredit')}")
             except PMError as exc:
                 ok = False
                 print(f"API keys FAILED: {exc}")
