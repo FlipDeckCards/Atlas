@@ -16,6 +16,7 @@ import json
 import time
 from typing import Any, Dict, List, Optional
 
+from openjarvis.polybot.brain import STRATEGY_VERSION
 from openjarvis.polybot.config import Limits, from_env
 from openjarvis.polybot.state import DDL
 
@@ -66,7 +67,10 @@ def current_limits(control: Dict[str, Any]) -> Limits:
     return Limits(**base).clean()
 
 
-async def scoreboard(pool, mode: str, now: Optional[dt.datetime] = None) -> Dict[str, Any]:
+VER = "coalesce(version, '1.0')"
+
+
+async def scoreboard(pool, mode: str, now: Optional[dt.datetime] = None, version: str = STRATEGY_VERSION) -> Dict[str, Any]:
     """Win rate and profit for one mode (paper or live), over all time, the last 7 days and today (Los Angeles)."""
     await _ensure(pool)
     from openjarvis.server.crew.finance import la_midnight
@@ -75,35 +79,39 @@ async def scoreboard(pool, mode: str, now: Optional[dt.datetime] = None) -> Dict
     today, week = la_midnight(now), now - dt.timedelta(days=7)
     q = ("SELECT count(*) AS n, count(*) FILTER (WHERE pnl > 0) AS wins, count(*) FILTER (WHERE pnl < 0) AS losses, "
          "coalesce(sum(pnl), 0) AS pnl, coalesce(sum(up_cost + down_cost), 0) AS staked, coalesce(max(pnl), 0) AS best, "
-         "coalesce(min(pnl), 0) AS worst FROM polybot_windows WHERE mode = $1 AND settled_at IS NOT NULL AND settled_at >= $2")
-    out: Dict[str, Any] = {"mode": mode}
+         "coalesce(min(pnl), 0) AS worst FROM polybot_windows WHERE mode = $1 AND settled_at IS NOT NULL AND settled_at >= $2 "
+         f"AND {VER} = $3")
+    out: Dict[str, Any] = {"mode": mode, "version": version}
     async with pool.acquire() as c:
         for name, since in (("all", dt.datetime(2000, 1, 1, tzinfo=dt.timezone.utc)), ("d7", week), ("today", today)):
-            r = await c.fetchrow(q, mode, since)
+            r = await c.fetchrow(q, mode, since, version)
             n, wins = int(r["n"]), int(r["wins"])
             staked = float(r["staked"])
             out[name] = {"trades": n, "wins": wins, "losses": int(r["losses"]), "win_rate": round(100.0 * wins / n, 1) if n else None,
                          "profit": round(float(r["pnl"]), 2), "staked": round(staked, 2),
                          "return_pct": round(100.0 * float(r["pnl"]) / staked, 1) if staked else None,
                          "best": round(float(r["best"]), 2), "worst": round(float(r["worst"]), 2)}
-        fills = await c.fetchval("SELECT count(*) FROM polybot_fills WHERE mode = $1", mode)
+        fills = await c.fetchval(f"SELECT count(*) FROM polybot_fills WHERE mode = $1 AND {VER} = $2", mode, version)
         # the running total for a small chart: cumulative profit after each settled window (last 200)
-        rows = await c.fetch("SELECT settled_at, pnl FROM polybot_windows WHERE mode = $1 AND settled_at IS NOT NULL "
-                             "ORDER BY settled_at DESC LIMIT 200", mode)
+        rows = await c.fetch(f"SELECT settled_at, pnl FROM polybot_windows WHERE mode = $1 AND settled_at IS NOT NULL AND {VER} = $2 "
+                             "ORDER BY settled_at DESC LIMIT 200", mode, version)
+        older = await c.fetch(f"SELECT {VER} AS v, count(*) AS n, count(*) FILTER (WHERE pnl > 0) AS wins, coalesce(sum(pnl),0) AS pnl "
+                              f"FROM polybot_windows WHERE mode = $1 AND settled_at IS NOT NULL AND {VER} <> $2 GROUP BY 1 ORDER BY 1", mode, version)
     run, curve = 0.0, []
     for r in reversed(rows):
         run += float(r["pnl"] or 0)
         curve.append([r["settled_at"].isoformat(), round(run, 2)])
     out["fills"] = int(fills or 0)
     out["curve"] = curve
+    out["older"] = [{"version": r["v"], "trades": int(r["n"]), "wins": int(r["wins"]), "profit": round(float(r["pnl"]), 2)} for r in older]
     return out
 
 
-async def trades(pool, mode: str, limit: int = 50) -> List[Dict[str, Any]]:
+async def trades(pool, mode: str, limit: int = 50, version: str = STRATEGY_VERSION) -> List[Dict[str, Any]]:
     """The trade log: one row per window traded, with every fill in it (time, side, price, size, cost, fair value at the time)."""
     await _ensure(pool)
     async with pool.acquire() as c:
-        ws = await c.fetch("SELECT * FROM polybot_windows WHERE mode = $1 ORDER BY window_end DESC LIMIT $2", mode, max(1, min(limit, 500)))
+        ws = await c.fetch(f"SELECT * FROM polybot_windows WHERE mode = $1 AND {VER} = $3 ORDER BY window_end DESC LIMIT $2", mode, max(1, min(limit, 500)), version)
         slugs = [w["slug"] for w in ws]
         fs = await c.fetch("SELECT * FROM polybot_fills WHERE mode = $1 AND slug = ANY($2::text[]) ORDER BY ts", mode, slugs) if slugs else []
     by: Dict[str, List[Dict[str, Any]]] = {}
@@ -135,7 +143,7 @@ async def summary(pool, *, trade_limit: int = 50) -> Dict[str, Any]:
             "limits": current_limits(control).__dict__,
             "score": {"paper": await scoreboard(pool, "paper"), "live": await scoreboard(pool, "live")},
             "trades": {"paper": await trades(pool, "paper", trade_limit), "live": await trades(pool, "live", trade_limit)},
-            "events": await events(pool, 30), "mode": mode}
+            "events": await events(pool, 30), "mode": mode, "strategy": STRATEGY_VERSION}
 
 
 async def live_pnl(pool) -> Dict[str, float]:
@@ -160,6 +168,10 @@ def status_text(s: Dict[str, Any]) -> str:
         alive = "running" if s["running"] else f"NOT reporting (last heartbeat {s['heartbeat_age_s']}s ago; the worker may be down)"
         lines.append(f"Desk is {alive}, mode {str(st.get('mode', 'paper')).upper()}{', PAUSED' if st.get('paused') else ''}{', KILL SWITCH ON' if st.get('kill') else ''}. "
                      f"Now: {st.get('reason', '')}")
+        if st.get("fair_model") is not None:
+            lines.append(f"Thinking: model says Up {st['fair_model']:.2f}, market mid {st.get('market_mid')}, trades on {st.get('fair_up')}; "
+                         f"BTC momentum {st.get('momentum_z')} sd; extra edge demanded from recent results {st.get('extra_edge', 0):.2f}"
+                         + (f" (last 20 windows returned {st['rolling_return'] * 100:.1f}%)" if st.get("rolling_return") is not None else "") + ".")
         w = st.get("window") or {}
         if w:
             lines.append(f"Window {w.get('slug')}: price to beat {w.get('price_to_beat')}, BTC index {((st.get('index') or {}).get('price'))}, "
@@ -173,8 +185,10 @@ def status_text(s: Dict[str, Any]) -> str:
     for mode in ("live", "paper"):
         sc = s["score"][mode]
         a, d7, t = sc["all"], sc["d7"], sc["today"]
+        for o in sc.get("older") or []:
+            lines.append(f"{mode.upper()} earlier strategy v{o['version']}: {o['trades']} windows, {o['wins']} won, profit {o['profit']:+.2f} (not in the scoreboard below).")
         if a["trades"]:
-            lines.append(f"{mode.upper()} scoreboard: {a['trades']} windows traded, win rate {a['win_rate']}%, total profit {a['profit']:+.2f} "
+            lines.append(f"{mode.upper()} scoreboard (strategy v{sc.get('version')}): {a['trades']} windows traded, win rate {a['win_rate']}%, total profit {a['profit']:+.2f} "
                          f"on ${a['staked']:.2f} staked ({a['return_pct']}%), best {a['best']:+.2f}, worst {a['worst']:+.2f}; last 7 days {d7['profit']:+.2f} "
                          f"({d7['trades']} windows); today {t['profit']:+.2f} ({t['trades']}). Fills: {sc['fills']}.")
         else:

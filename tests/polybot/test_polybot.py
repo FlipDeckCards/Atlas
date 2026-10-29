@@ -412,3 +412,50 @@ def test_pause_from_aibussol_stops_quoting():
     desk = Desk(from_env({}), ex, store, clock=lambda: float(ex.now), sleep=sleep)
     run(desk.run(max_steps=200))
     assert store.fills == [] and desk.reason.startswith("Paused")
+
+
+# ── strategy v1.1 (brain) ───────────────────────────────────────────────────────────────
+
+from openjarvis.polybot import brain
+
+
+def test_blend_leans_on_the_market():
+    assert brain.blend(0.80, 0.50, 0.4) == pytest.approx(0.62)
+    assert brain.blend(0.80, None, 0.4) is None              # no market price: do not trust the model alone
+    assert brain.blend(0.80, None, 1.0) == 0.80
+
+
+def test_no_buying_up_into_a_falling_btc():
+    prices = [80000.0] * 3600 + [80000.0 - 4 * i for i in range(60)]      # a steady drop over the last minute
+    t, s = tape_from(prices)
+    now = s + len(prices) - 1
+    z = brain.momentum_z(t, now, 45, sigma_per_s=3.0)
+    assert z < -0.6
+    can_up, can_down, why = brain.side_filters(z, 0.6)
+    assert (can_up, can_down) == (False, True) and "falling" in why
+    assert brain.side_filters(0.1, 0.6)[:2] == (True, True)
+
+
+def test_one_bite_per_side():
+    assert brain.can_add({}, "up", 1) and not brain.can_add({"up": 1}, "up", 1) and brain.can_add({"up": 1}, "down", 1)
+    assert brain.can_add({"up": 9}, "up", 0)
+
+
+def test_learner_demands_more_edge_while_losing():
+    lr = brain.Learner()
+    for _ in range(4):
+        lr.add(-1.0, 1.0)
+    assert lr.extra_edge == 0.0                                  # too few windows to judge
+    lr.add(-1.0, 1.0)
+    assert lr.extra_edge == 0.10                                 # -100% return -> capped at +0.10
+    for _ in range(20):
+        lr.add(0.2, 1.0)
+    assert lr.extra_edge == 0.0 and len(lr.history) == 20         # winning again: back to normal
+    lr2 = brain.Learner()
+    lr2.load(lr.dump())
+    assert lr2.rolling_return == pytest.approx(lr.rolling_return)
+
+
+def test_v11_defaults_are_small():
+    lim = from_env({}).limits
+    assert (lim.max_window_usd, lim.max_order_usd, lim.daily_loss_pct) == (1.0, 0.5, 15.0)

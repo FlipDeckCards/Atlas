@@ -86,5 +86,5 @@ def test_status_text_keeps_paper_and_live_apart():
                              "d7": {"profit": 3.2, "trades": 10}, "today": {"profit": 0.5, "trades": 2}, "fills": 20},
                    "live": {"all": {"trades": 0}, "d7": {}, "today": {}, "fills": 0}}}
     t = desk.status_text(s)
-    assert "PAPER scoreboard: 10 windows traded, win rate 60.0%, total profit +3.20" in t
+    assert "PAPER scoreboard (strategy v" in t and "10 windows traded, win rate 60.0%, total profit +3.20" in t
     assert "LIVE scoreboard: no settled trades yet." in t

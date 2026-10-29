@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS polybot_windows (
   close_price DOUBLE PRECISION, up BOOLEAN, up_qty DOUBLE PRECISION, up_cost DOUBLE PRECISION, down_qty DOUBLE PRECISION,
   down_cost DOUBLE PRECISION, pnl DOUBLE PRECISION, settled_at TIMESTAMPTZ, PRIMARY KEY (slug, mode));
 CREATE INDEX IF NOT EXISTS polybot_windows_settled ON polybot_windows (settled_at);
+ALTER TABLE polybot_fills ADD COLUMN IF NOT EXISTS version TEXT;
+ALTER TABLE polybot_windows ADD COLUMN IF NOT EXISTS version TEXT;
 CREATE TABLE IF NOT EXISTS polybot_events (id BIGSERIAL PRIMARY KEY, ts TIMESTAMPTZ NOT NULL DEFAULT now(), level TEXT NOT NULL, text TEXT NOT NULL);
 """
 
@@ -44,10 +46,15 @@ class Ledger:
         self.events: List[Dict[str, Any]] = []
 
     def fill(self, mode: str, f, fair: Optional[float]) -> None:
-        self.fills.append({"ts": f.ts, "mode": mode, "slug": f.slug, "side": f.side, "price": f.price, "qty": f.qty, "cost": f.cost,
+        from openjarvis.polybot.brain import STRATEGY_VERSION
+
+        self.fills.append({"version": STRATEGY_VERSION, "ts": f.ts, "mode": mode, "slug": f.slug, "side": f.side, "price": f.price, "qty": f.qty, "cost": f.cost,
                            "fair": fair, "order_id": f.order_id})
 
     def window(self, row: Dict[str, Any]) -> None:
+        from openjarvis.polybot.brain import STRATEGY_VERSION
+
+        row.setdefault("version", STRATEGY_VERSION)
         self.windows[f'{row["slug"]}|{row["mode"]}'] = row
 
     def event(self, level: str, text: str, ts: float) -> None:
@@ -95,17 +102,17 @@ class PgStore:
         async with self.pool.acquire() as c:
             async with c.transaction():
                 if fills:
-                    await c.executemany("INSERT INTO polybot_fills (ts, mode, slug, side, price, qty, cost, fair, order_id) "
-                                        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-                                        [(_t(f["ts"]), f["mode"], f["slug"], f["side"], f["price"], f["qty"], f["cost"], f["fair"], f["order_id"]) for f in fills])
+                    await c.executemany("INSERT INTO polybot_fills (ts, mode, slug, side, price, qty, cost, fair, order_id, version) "
+                                        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+                                        [(_t(f["ts"]), f["mode"], f["slug"], f["side"], f["price"], f["qty"], f["cost"], f["fair"], f["order_id"], f.get("version")) for f in fills])
                 for w in windows:
                     await c.execute(
                         "INSERT INTO polybot_windows (slug, mode, window_start, window_end, price_to_beat, close_price, up, up_qty, up_cost, "
-                        "down_qty, down_cost, pnl, settled_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT (slug, mode) DO UPDATE SET "
+                        "down_qty, down_cost, pnl, settled_at, version) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT (slug, mode) DO UPDATE SET "
                         "close_price = EXCLUDED.close_price, up = EXCLUDED.up, up_qty = EXCLUDED.up_qty, up_cost = EXCLUDED.up_cost, "
                         "down_qty = EXCLUDED.down_qty, down_cost = EXCLUDED.down_cost, pnl = EXCLUDED.pnl, settled_at = EXCLUDED.settled_at",
                         w["slug"], w["mode"], _t(w["window_start"]), _t(w["window_end"]), w["price_to_beat"], w.get("close_price"), w.get("up"),
-                        w["up_qty"], w["up_cost"], w["down_qty"], w["down_cost"], w.get("pnl"), _t(w.get("settled_at")))
+                        w["up_qty"], w["up_cost"], w["down_qty"], w["down_cost"], w.get("pnl"), _t(w.get("settled_at")), w.get("version"))
                 if events:
                     await c.executemany("INSERT INTO polybot_events (ts, level, text) VALUES ($1,$2,$3)",
                                         [(_t(e["ts"]), e["level"], e["text"]) for e in events])

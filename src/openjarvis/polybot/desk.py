@@ -9,7 +9,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-from openjarvis.polybot import model, risk, strategy
+from dataclasses import replace
+
+from openjarvis.polybot import brain, model, risk, strategy
 from openjarvis.polybot.brokers import BookView, Fill, LiveBroker, PaperBroker, parse_ts
 from openjarvis.polybot.client import PMError, money
 from openjarvis.polybot.config import Config, apply_control
@@ -31,6 +33,7 @@ class Window:
     inv: strategy.Inventory = field(default_factory=strategy.Inventory)
     mode: str = "paper"
     settled: bool = False
+    fills: Dict[str, int] = field(default_factory=dict)       # fills per side in this window (v1.1: one bite per side)
 
 
 def window_from_market(m: Dict[str, Any]) -> Optional[Window]:
@@ -63,7 +66,11 @@ class Desk:
         self.open_windows: Dict[str, Window] = {}            # windows holding contracts, not settled yet
         self.recent: Dict[str, Window] = {}                  # the last few windows seen (a late fill on one still finds it)
         self.book: Optional[BookView] = None
-        self.fair: Optional[float] = None
+        self.fair: Optional[float] = None                    # the fair value traded on (v1.1: model blended with the market)
+        self.fair_model: Optional[float] = None
+        self.mid: Optional[float] = None
+        self.momentum: float = 0.0
+        self.learner = brain.Learner()
         self.sigma: Optional[float] = None
         self.reason: str = "Starting."
         self.balance: Optional[float] = None
@@ -168,6 +175,7 @@ class Desk:
             return
         w.mode = self.cfg.mode
         self.open_windows[w.slug] = w
+        w.fills[f.side] = w.fills.get(f.side, 0) + 1
         if f.side == "up":
             w.inv.up_qty += f.qty
             w.inv.up_cost += f.cost
@@ -215,6 +223,8 @@ class Desk:
             self.hour_pnl += pnl
             self.stats["windows"] += 1
             self.stats["wins"] += 1 if pnl > 0 else 0
+            if w.mode == self.cfg.mode:
+                self.learner.add(pnl, w.inv.spent)
             self.ledger.window({"slug": slug, "mode": w.mode, "window_start": w.start, "window_end": w.end, "price_to_beat": w.price_to_beat,
                                 "close_price": close, "up": up, "up_qty": w.inv.up_qty, "up_cost": round(w.inv.up_cost, 4),
                                 "down_qty": w.inv.down_qty, "down_cost": round(w.inv.down_cost, 4), "pnl": pnl, "settled_at": now})
@@ -281,8 +291,11 @@ class Desk:
             if now >= self.rs.cooldown_until:
                 self.log("info", f"BTC moved ${self.tape.moved(int(now), self.base.jump_window_s):.0f} in {self.base.jump_window_s:.0f}s: quotes pulled.")
             self.rs.cooldown_until = now + self.base.cooldown_s
-        self.fair = (model.fair_up(self.tape, int(now), int(w.end), w.price_to_beat, self.sigma or 0.0, self.cfg.vol_mult)
-                     if w and w.price_to_beat else None)
+        self.fair_model = (model.fair_up(self.tape, int(now), int(w.end), w.price_to_beat, self.sigma or 0.0, self.cfg.vol_mult)
+                           if w and w.price_to_beat else None)
+        self.mid = brain.market_mid(b.best_bid, b.best_ask) if b else None
+        self.fair = brain.blend(self.fair_model, self.mid, self.cfg.model_weight)
+        self.momentum = brain.momentum_z(self.tape, int(now), int(self.cfg.momentum_s), self.sigma)
         reason = risk.blocked(self.cfg, self.rs, now=now, data_age_s=data_age, book_age_s=(now - b.ts) if b else 999.0,
                               market_open=bool(b and b.state == "MARKET_STATE_OPEN"), secs_since_open=(now - w.start) if w else 0.0,
                               secs_to_end=(w.end - now) if w else 0.0, balance=self.balance)
@@ -294,8 +307,22 @@ class Desk:
         if reason is None:
             inv = self.open_windows[w.slug].inv if w.slug in self.open_windows else w.inv
             budget = risk.budget_left(self.cfg, self.rs, self.balance) + self.rs.resting      # its own resting orders do not block themselves
-            want = strategy.quotes(self.fair, strategy.Book(b.best_bid, b.best_ask, w.tick, w.min_qty), inv, self.cfg.limits, budget_left=budget)
-            reason = "Quoting." if want else f"No price is {self.cfg.limits.min_edge:.2f} better than fair value right now."
+            can_up, can_down, why = brain.side_filters(self.momentum, self.cfg.momentum_z)
+            fills = (self.open_windows.get(w.slug) or w).fills
+            can_up = can_up and brain.can_add(fills, "up", self.cfg.max_fills_per_side)
+            can_down = can_down and brain.can_add(fills, "down", self.cfg.max_fills_per_side)
+            extra = self.learner.extra_edge if self.cfg.learn else 0.0
+            lim = replace(self.cfg.limits, min_edge=round(self.cfg.limits.min_edge + extra, 3))
+            want = strategy.quotes(self.fair, strategy.Book(b.best_bid, b.best_ask, w.tick, w.min_qty), inv, lim, budget_left=budget,
+                                   can_up=can_up, can_down=can_down) if (can_up or can_down) else []
+            if want:
+                reason = "Quoting" + (f" (one side only: {why})" if why else ".")
+            elif why and not (can_up or can_down):
+                reason = why
+            elif not (can_up or can_down):
+                reason = "Already filled on both sides this window; holding to settlement."
+            else:
+                reason = (why + " " if why else "") + f"No price is {lim.min_edge:.2f} better than fair value right now."
         if w:
             await self.broker.set_quotes(w.slug, want, now)
         elif self.broker.resting:
@@ -312,7 +339,11 @@ class Desk:
             "paused": self.rs.paused, "kill": self.rs.kill, "limits": self.cfg.limits.__dict__,
             "index": {"price": last[1] if last else None, "ts": last[0] if last else None},
             "window": ({"slug": w.slug, "start": w.start, "end": w.end, "price_to_beat": w.price_to_beat, "title": w.title} if w else None),
-            "fair_up": round(self.fair, 4) if self.fair is not None else None,
+            "fair_up": round(self.fair, 4) if self.fair is not None else None, "strategy": brain.STRATEGY_VERSION,
+            "fair_model": round(self.fair_model, 4) if self.fair_model is not None else None,
+            "market_mid": round(self.mid, 4) if self.mid is not None else None, "momentum_z": round(self.momentum, 2),
+            "extra_edge": self.learner.extra_edge if self.cfg.learn else 0.0, "learner": self.learner.dump(),
+            "rolling_return": round(self.learner.rolling_return, 4) if self.learner.rolling_return is not None else None,
             "book": ({"bid": b.best_bid, "ask": b.best_ask, "state": b.state} if b else None),
             "resting": [{"side": r.quote.side, "price": r.quote.price, "qty": r.left} for r in self.broker.resting.values()],
             "balance": self.balance, "day": self.rs.day, "day_pnl": round(self.rs.day_pnl, 2),
@@ -352,6 +383,8 @@ class Desk:
             self.rs.day_pnl = float(prev.get("day_pnl") or 0.0)
             if prev.get("day_start") is not None:
                 self.rs.day_start = float(prev["day_start"])
+        if prev.get("strategy") == brain.STRATEGY_VERSION and prev.get("mode") == self.cfg.mode:
+            self.learner.load(prev.get("learner"))
         await self.load_index(now, backfill=True)
         self.log("info", f"Desk started in {self.cfg.mode.upper()} mode on {self.base.asset.upper()} {self.base.horizon} Up/Down.")
         steps = 0

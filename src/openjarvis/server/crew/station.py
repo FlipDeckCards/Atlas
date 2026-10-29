@@ -1004,6 +1004,8 @@ function deskSec() {
   if (st.window) s.append(mk('div', 'dim', 'Window ' + new Date(st.window.end * 1000).toLocaleTimeString() + ' close · beat ' + (st.window.price_to_beat ? money(st.window.price_to_beat) : '…')
       + ' · BTC ' + (st.index && st.index.price ? money(st.index.price) : '…') + ' · fair Up ' + (st.fair_up != null ? (st.fair_up * 100).toFixed(0) + '%' : '…')
       + ' · at risk ' + money(st.at_risk) + (st.balance != null ? ' · buying power ' + money(st.balance) : '')));
+  if (st.fair_model != null) s.append(mk('div', 'dim', 'Thinking: model ' + (st.fair_model * 100).toFixed(0) + '% · market ' + (st.market_mid != null ? (st.market_mid * 100).toFixed(0) + '%' : '…')
+      + ' · BTC momentum ' + Number(st.momentum_z || 0).toFixed(1) + ' sd · extra edge from recent results ' + Number(st.extra_edge || 0).toFixed(2)));
   // scoreboard
   const sc = DESK.score || {};
   if (!DESK_VIEW) DESK_VIEW = (sc.live && sc.live.all && sc.live.all.trades) || st.mode === 'live' ? 'live' : 'paper';
@@ -1012,7 +1014,7 @@ function deskSec() {
     b.onclick = () => { DESK_VIEW = m; renderSide(); }; tabs.append(b); });
   s.append(tabs);
   const v = sc[DESK_VIEW] || {}, a = v.all || {}, t = v.today || {}, d7 = v.d7 || {};
-  const box = mk('div', 'pnl'); box.append(mk('div', 'pnl-t', 'Strategy scoreboard · ' + DESK_VIEW + (DESK_VIEW === 'paper' ? ' (not real money)' : '')));
+  const box = mk('div', 'pnl'); box.append(mk('div', 'pnl-t', 'Strategy v' + (v.version || DESK.strategy || '') + ' scoreboard · ' + DESK_VIEW + (DESK_VIEW === 'paper' ? ' (not real money)' : '')));
   const grid = mk('div', 'pnl-g');
   const cell = (label, val, color, big) => { const c = mk('div', 'pnl-c'); c.append(mk('div', 'pnl-l', label)); const x = mk('div', 'pnl-v' + (big ? ' desk-big' : ''), val); if (color) x.style.color = color; c.append(x); grid.append(c); };
   cell('Success rate', a.win_rate == null ? '—' : a.win_rate + '%', a.win_rate == null ? null : (a.win_rate >= 50 ? '#00ff99' : '#ffd23f'), true);
@@ -1025,6 +1027,7 @@ function deskSec() {
   cell('Best window', signed(a.best), a.best ? '#00ff99' : null); cell('Worst window', signed(a.worst), a.worst < 0 ? '#ff3344' : null);
   box.append(grid);
   if (v.curve && v.curve.length > 1) { box.append(mk('div', 'pnl-l', 'Running profit')); box.append(deskCurve(v.curve)); }
+  (v.older || []).forEach(o => box.append(mk('div', 'dim', 'Earlier v' + o.version + ': ' + o.trades + ' trades, ' + o.wins + ' won, ' + signed(o.profit) + ' (not counted above)')));
   s.append(box);
   // switches (going live is an Approve card from Helix, never a button here)
   const ctl = mk('div', 'desk-tabs');
