@@ -357,7 +357,9 @@ class Desk:
                                      kelly_fraction=self.cfg.kelly_fraction, window_pct=self.cfg.window_pct, min_order_usd=self.cfg.min_order_usd)
             want = strategy.quotes(self.fair, strategy.Book(b.best_bid, b.best_ask, w.tick, w.min_qty), inv, lim, budget_left=budget,
                                    can_up=can_up, can_down=can_down, sizing=sizing,
-                                   min_cost=self.cfg.min_buy_price, max_cost=self.cfg.max_buy_price) if (can_up or can_down) else []
+                                   min_cost=self.cfg.min_buy_price, max_cost=self.cfg.max_buy_price,
+                                   unpaired_usd=max(0.5, sizing.window_cap(self.cfg.limits) * self.cfg.unpaired_pct / 100.0)
+                                   ) if (can_up or can_down) else []
             if want:
                 reason = "Quoting" + (f" (one side only: {why})" if why else ".")
             elif why and not (can_up or can_down):
@@ -398,7 +400,7 @@ class Desk:
             "book": ({"bid": b.best_bid, "ask": b.best_ask, "state": b.state} if b else None),
             "resting": [{"side": r.quote.side, "price": r.quote.price, "qty": r.left} for r in self.broker.resting.values()],
             "rejects": list(getattr(self.broker, "rejects", []))[-5:],
-            "equity": self.equity(), "window_pct": self.cfg.window_pct, "version_start": self.version_start,
+            "equity": self.equity(), "window_pct": self.cfg.window_pct, "unpaired_pct": self.cfg.unpaired_pct, "version_start": self.version_start,
             "account_value": round(self.balance + self.rs.at_risk, 2) if self.cfg.mode == "live" and self.balance is not None else None,
             "window_cap": strategy.Sizing(equity=self.equity(), window_pct=self.cfg.window_pct).window_cap(self.cfg.limits),
             "balance": self.balance, "day": self.rs.day, "day_pnl": round(self.rs.day_pnl, 2),

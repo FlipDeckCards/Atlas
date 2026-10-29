@@ -718,3 +718,20 @@ def test_a_closed_market_is_not_an_api_error():
     run(d.run(max_steps=330))
     texts = " ".join(e["text"] for e in store.events)
     assert "API errors in a row" not in texts and "EXIT (settled)" in texts
+
+
+
+def test_one_sided_risk_is_small_and_pairs_are_built_in_steps():
+    """Losses were ~3x the wins: a one-sided bet loses its whole stake, a pair wins a few cents a contract. Cap the one-sided part."""
+    lim = from_env({}).limits
+    sz = strategy.Sizing(equity=100.0, window_pct=7.5)                        # $7.50 a window, $1.50 unpaired
+    first = [q for q in strategy.quotes(0.62, Book(0.40, 0.60), Inventory(), lim, budget_left=100, sizing=sz, unpaired_usd=1.5)
+             if q.side == "up"][0]
+    assert first.cost <= 1.5 + 1e-9                                             # one side alone: at most $1.50 at risk
+    held = Inventory(up_qty=first.qty, up_cost=first.cost)
+    downs = [q for q in strategy.quotes(0.40, Book(0.30, 0.45), held, lim, budget_left=100, sizing=sz, unpaired_usd=1.5) if q.side == "down"]
+    assert downs and downs[0].qty >= first.qty - 1e-9                           # completing the pair is always allowed
+    paired = Inventory(up_qty=first.qty, up_cost=first.cost, down_qty=first.qty, down_cost=first.qty * 0.4)
+    more = [q for q in strategy.quotes(0.62, Book(0.40, 0.60), paired, lim, budget_left=100, sizing=sz, unpaired_usd=1.5) if q.side == "up"]
+    assert more and more[0].cost <= 1.5 + 1e-9                                  # once paired, the next step opens again
+    assert strategy._unpaired_room(1.5, 0.5, 5.0, 2.0, 0.01) == 0.0              # already $1.50 unpaired: no more on that side
