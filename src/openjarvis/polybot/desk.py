@@ -601,8 +601,9 @@ class Desk:
                     if not want and inv.spent <= 0 and self.cfg.directional and self.cfg.mode == "paper" \
                             and self.fair_model is not None and b.best_ask is not None and b.best_bid is not None \
                             and self.cfg.directional_min_secs <= w.end - now <= self.cfg.directional_secs_left:
+                        z = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)
                         pick = directional.decide(self.fair_model, b.best_ask, round(1.0 - b.best_bid, 6),
-                                                  self.shadow.bucket_stats(self.fair_model), self.shadow.bucket_stats(1.0 - self.fair_model))
+                                                  self.shadow.bucket_stats(self.fair_model), self.shadow.bucket_stats(1.0 - self.fair_model), z=z)
                         if pick is not None:
                             side, cost, tier, edge = pick
                             size_here = (b.offers[0][1] if b.offers else 0.0) if side == "up" else (b.bids[0][1] if b.bids else 0.0)

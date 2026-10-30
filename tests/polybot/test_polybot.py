@@ -1017,3 +1017,14 @@ def test_v118_directional_decision_and_calibration():
     s = shadow.Shadow()
     s.calib_add(0.85, None, True)
     assert s.bucket_stats(0.85) == (1, 1) and s.bucket_stats(0.5) == (0, 0)
+
+
+def test_v118_cushion_blocks_thin_leads():
+    from openjarvis.polybot import directional
+    # index $0.10 above the beat with $1 of move still to come (z=0.1): a thin Up lead does not qualify
+    z = directional.cushion_z(100.10, 100.0, 1.0, 1.0)
+    assert abs(z - 0.1) < 1e-9
+    assert directional.decide(0.70, 0.60, 0.45, (3, 1), (0, 0), z=z) is None
+    # a clear cushion (z=1.0) passes
+    assert directional.decide(0.70, 0.60, 0.45, (3, 1), (0, 0), z=1.0)[0] == "up"
+    assert directional.cushion_z(None, 100.0, 1.0, 100.0) is None

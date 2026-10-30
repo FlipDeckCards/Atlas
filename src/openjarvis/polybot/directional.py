@@ -21,14 +21,29 @@ PROVEN_EDGE = 0.03
 EXPLORE_EDGE = 0.05
 
 
+CUSHION_Z = 0.5
+
+
+def cushion_z(index: Optional[float], beat: Optional[float], sigma_per_s: Optional[float], secs_left: float) -> Optional[float]:
+    """How far the index sits past the price to beat, in standard deviations of the move still to come (positive = on Up's side).
+    None when the inputs are missing."""
+    if index is None or beat is None or not sigma_per_s or sigma_per_s <= 0:
+        return None
+    remaining = sigma_per_s * max(1.0, secs_left) ** 0.5
+    return (index - beat) / remaining
+
+
 def decide(prob_up: float, up_cost: Optional[float], down_cost: Optional[float],
-           bucket_up: Tuple[int, int], bucket_down: Tuple[int, int]) -> Optional[Tuple[str, float, str, float]]:
+           bucket_up: Tuple[int, int], bucket_down: Tuple[int, int],
+           z: Optional[float] = None) -> Optional[Tuple[str, float, str, float]]:
     """(side, cost per contract, tier, edge after fees) for the better side, or None.
     bucket_up / bucket_down: (trades, wins) in the calibration bucket of that side's model confidence."""
     best = None
     for side, prob, cost, (n, wins) in (("up", prob_up, up_cost, bucket_up), ("down", 1.0 - prob_up, down_cost, bucket_down)):
         if cost is None or not (0.05 <= cost <= 0.95):
             continue
+        if z is not None and (z if side == "up" else -z) < CUSHION_Z:
+            continue                                  # v1.18: the index is too close to the price to beat on this side
         if n >= PROVEN_N:
             conf, need, tier = setups.wilson_lb(wins, n), PROVEN_EDGE, "proven"
         else:
