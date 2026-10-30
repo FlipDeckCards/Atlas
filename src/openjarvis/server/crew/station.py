@@ -1020,6 +1020,10 @@ function deskSec() {
       + (ch != null ? ' (' + signed(ch) + ' since v' + (DESK.strategy || '') + ' started at ' + money(st.version_start) + ')' : ''));
     if (ch != null) at.style.color = pnlColor(ch);
     acct.append(at); s.append(acct);
+    if (DESK.deposits) {                                            // all-time: what the account is worth minus what went in
+      const all = st.account_value - DESK.deposits, r = mk('div', 'row'), x = mk('span', 'grow', 'All-time: ' + signed(all) + ' on ' + money(DESK.deposits) + ' deposited');
+      x.style.color = pnlColor(all); r.append(x); s.append(r);
+    }
   }
   const box = mk('div', 'pnl'); box.append(mk('div', 'pnl-t', 'Strategy v' + (v.version || DESK.strategy || '') + ' scoreboard · ' + DESK_VIEW + (DESK_VIEW === 'paper' ? ' (not real money)' : '')));
   const grid = mk('div', 'pnl-g');

@@ -192,8 +192,18 @@ async def summary(pool, *, trade_limit: int = 50) -> Dict[str, Any]:
             "limits": current_limits(control).__dict__,
             "score": {"paper": await scoreboard(pool, "paper"), "live": await scoreboard(pool, "live")},
             "trades": {"paper": await trades(pool, "paper", trade_limit), "live": await trades(pool, "live", trade_limit)},
-            "events": await events(pool, 30), "mode": mode, "strategy": STRATEGY_VERSION,
+            "events": await events(pool, 30), "mode": mode, "strategy": STRATEGY_VERSION, "deposits": deposits(),
             "analysis": await analysis(pool, "live" if mode == "live" else "paper")}
+
+
+def deposits() -> Optional[float]:
+    """Money the owner put into Polymarket (POLYBOT_DEPOSITS_USD); all-time profit = account value - this."""
+    import os
+    try:
+        v = float((os.environ.get("POLYBOT_DEPOSITS_USD") or "").strip())
+    except ValueError:
+        return None
+    return v if v > 0 else None
 
 
 async def live_pnl(pool) -> Dict[str, float]:
@@ -231,6 +241,7 @@ def status_text(s: Dict[str, Any]) -> str:
         if st.get("account_value") is not None:
             vs = st.get("version_start")
             lines.append(f"Real Polymarket account value ${st['account_value']:.2f}" + (f" ({st['account_value'] - vs:+.2f} since strategy v{st.get('strategy')} started at ${vs:.2f})" if vs is not None else "")
+                         + (f"; all-time {st['account_value'] - deposits():+.2f} on ${deposits():.2f} deposited" if deposits() else "")
                          + ". Trust this over the scoreboard if they differ.")
         lines.append(f"At risk now ${st.get('at_risk', 0):.2f}; today's P&L {st.get('day_pnl', 0):+.2f}"
                      + (f"; buying power ${st['balance']:.2f}" if st.get("balance") is not None else "") + ".")
