@@ -115,9 +115,25 @@ async def scoreboard(pool, mode: str, now: Optional[dt.datetime] = None, version
         run += float(r["pnl"] or 0)
         curve.append([r["settled_at"].isoformat(), round(run, 2)])
     out["fills"] = int(fills or 0)
+    out["sweeps"] = await sweep_stats(pool, mode, version, asset)
     out["curve"] = curve
     out["older"] = [{"version": r["v"], "trades": int(r["n"]), "wins": int(r["wins"]), "profit": round(float(r["pnl"]), 2)} for r in older]
     return out
+
+
+async def sweep_stats(pool, mode: str, version: str, asset: str) -> Dict[str, Any]:
+    """Closing sweeps on their own: windows with sweep fills, how many of those sweeps won, and what they made."""
+    async with pool.acquire() as c:
+        rows = await c.fetch(
+            "SELECT f.slug, f.side, f.qty, f.cost, w.up FROM polybot_fills f JOIN polybot_windows w ON w.slug = f.slug AND w.mode = f.mode "
+            "WHERE f.mode = $1 AND coalesce(f.version, '1.0') = $2 AND split_part(f.slug, '-', 2) = $3 AND w.up IS NOT NULL "
+            "AND (f.features->>'sweep') = 'true'", mode, version, asset)
+    per: Dict[str, float] = {}
+    for r in rows:
+        won = bool(r["up"]) if r["side"] == "up" else not bool(r["up"])
+        per[r["slug"]] = per.get(r["slug"], 0.0) + float(r["qty"]) * (1.0 if won else 0.0) - float(r["cost"])
+    n, wins = len(per), sum(1 for v in per.values() if v > 0)
+    return {"trades": n, "wins": wins, "win_rate": round(100.0 * wins / n, 1) if n else None, "profit": round(sum(per.values()), 2)}
 
 
 async def trades(pool, mode: str, limit: int = 50, version: str = STRATEGY_VERSION, asset: str = "btc") -> List[Dict[str, Any]]:
@@ -131,6 +147,7 @@ async def trades(pool, mode: str, limit: int = 50, version: str = STRATEGY_VERSI
     by: Dict[str, List[Dict[str, Any]]] = {}
     for f in fs:
         by.setdefault(f["slug"], []).append({"ts": f["ts"].isoformat(), "side": f["side"], "price": f["price"], "qty": f["qty"],
+                                             "sweep": _j(f["features"]).get("sweep") is True if "features" in f.keys() else False,
                                              "cost": round(f["cost"], 2), "fair": round(f["fair"], 3) if f["fair"] is not None else None})
     out = []
     for w in ws:

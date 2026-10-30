@@ -1046,6 +1046,9 @@ function deskSec(key) {
   cell('Best window', signed(a.best), a.best ? '#00ff99' : null); cell('Worst window', signed(a.worst), a.worst < 0 ? '#ff3344' : null);
   box.append(grid);
   if (v.curve && v.curve.length > 1) { box.append(mk('div', 'pnl-l', 'Running profit')); box.append(deskCurve(v.curve)); }
+  const swp = v.sweeps || {};
+  box.append(mk('div', 'dim', 'Sweeps (closing, 75-97c): ' + (swp.trades ? swp.trades + ' trades, ' + swp.wins + ' won (' + swp.win_rate + '%), ' + signed(swp.profit) : 'none yet')
+    + ' · included in the totals above'));
   (v.older || []).forEach(o => box.append(mk('div', 'dim', 'Earlier v' + o.version + ': ' + o.trades + ' trades, ' + o.wins + ' won, ' + signed(o.profit) + ' (not counted above)')));
   s.append(box);
   // switches (going live is an Approve card from Helix, never a button here)
@@ -1074,7 +1077,8 @@ function deskSec(key) {
     rows.forEach(r => {
       const row = mk('div', 'pnl-row'); row.style.cursor = 'pointer';
       const held = (r.up_qty ? 'Up ' + Number(r.up_qty).toFixed(2) : '') + (r.up_qty && r.down_qty ? ' · ' : '') + (r.down_qty ? 'Dn ' + Number(r.down_qty).toFixed(2) : '');
-      row.append(mk('span', null, r.window_end ? new Date(r.window_end).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : r.slug),
+      const isSweep = (r.fills || []).some(f => f.sweep);
+      row.append(mk('span', null, (r.window_end ? new Date(r.window_end).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : r.slug) + (isSweep ? ' [SWEEP]' : '')),
                  mk('span', null, held || '—'), mk('span', null, money(r.paid)), mk('span', null, r.result || 'open'));
       const p = mk('span', null, r.pnl == null ? '…' : signed(r.pnl)); if (r.pnl != null) p.style.color = pnlColor(r.pnl); row.append(p);
       row.onclick = () => { DESK_OPEN[r.slug] = !DESK_OPEN[r.slug]; renderSide(); };
@@ -1082,7 +1086,7 @@ function deskSec(key) {
       if (DESK_OPEN[r.slug]) {
         tb.append(mk('div', 'desk-fill', (r.window_end ? new Date(r.window_end).toLocaleString() + ' close · ' : '') + 'beat ' + (r.price_to_beat ? money(r.price_to_beat) : '?') + ' · close ' + (r.close_price ? money(r.close_price) : '?') + ' · ' + r.slug));
         (r.fills || []).forEach(f => tb.append(mk('div', 'desk-fill', new Date(f.ts).toLocaleTimeString() + ' · bought ' + (f.side === 'up' ? 'UP' : 'DOWN') + ' ' + Number(f.qty).toFixed(2)
-          + ' @ $' + (f.side === 'up' ? Number(f.price) : 1 - Number(f.price)).toFixed(2) + ' = ' + money(f.cost) + (f.fair != null ? ' · fair Up then ' + (f.fair * 100).toFixed(0) + '%' : ''))));
+          + ' @ $' + (f.side === 'up' ? Number(f.price) : 1 - Number(f.price)).toFixed(2) + ' = ' + money(f.cost) + (f.sweep ? ' [SWEEP]' : '') + (f.fair != null ? ' · fair Up then ' + (f.fair * 100).toFixed(0) + '%' : ''))));
       }
     });
     s.append(tb);

@@ -79,6 +79,7 @@ class Desk:
         self._missing = ""
         self._lookup_fail = ""
         self._book404 = ""
+        self._sweeps: set = set()                            # (window, side) a closing sweep is buying
         self.slug_prefix = ""
         self.learner = brain.Learner()
         self.sigma: Optional[float] = None
@@ -274,6 +275,7 @@ class Desk:
             "spread": None if not b or b.best_bid is None or b.best_ask is None else round(b.best_ask - b.best_bid, 4),
             "extra_edge": self.learner.extra_edge if self.cfg.learn else 0.0,
             "sigma": None if self.sigma is None else round(self.sigma, 3),
+            "sweep": (f.slug, f.side) in self._sweeps,                                      # v1.13: bought by a closing sweep
         })
         self.stats["fills"] += 1
 
@@ -285,7 +287,7 @@ class Desk:
             pay = f.price if f.side == "up" else 1 - f.price
             k = f"${w.price_to_beat:,.2f}" if w and w.price_to_beat else "pending"
             end = time.strftime("%H:%M:%S UTC", time.gmtime(w.end)) if w else "?"
-            text = (f"ENTRY {self.cfg.mode.upper()} · {self.name} {self.base.horizon} Up/Down · {side} · strike (price to beat) {k} · "
+            text = (f"ENTRY {self.cfg.mode.upper()}{' [SWEEP]' if (f.slug, f.side) in self._sweeps else ''} · {self.name} {self.base.horizon} Up/Down · {side} · strike (price to beat) {k} · "
                     f"expires {end} · {f.qty:g} contracts at ${pay:.2f} = ${f.cost:.2f} · stop: none, held to settlement (max loss ${f.cost:.2f}) · "
                     f"target: $1.00 per contract (${f.qty:.2f}) · fair value then {self.fair if self.fair is not None else 0:.2f}")
             self.log("trade", text)
@@ -508,6 +510,9 @@ class Desk:
                 decisive = max(self.fair_model, 1.0 - self.fair_model) >= self.cfg.sweep_min_price + self.cfg.sweep_min_edge
                 if sw is not None:
                     want = [sw]
+                    self._sweeps.add((w.slug, sw.side))
+                    if len(self._sweeps) > 50:
+                        self._sweeps = set(list(self._sweeps)[-20:])
                     why = f"Closing sweep: buying {sw.side.upper()} at {sw.cost_per:.2f} (model {max(self.fair_model, 1 - self.fair_model):.0%})."
                 elif decisive:
                     want = [q for q in want if (q.side == "up") == (self.fair_model >= 0.5)]    # never buy the likely loser now
