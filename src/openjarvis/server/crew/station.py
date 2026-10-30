@@ -999,6 +999,11 @@ function deskSec(key) {
   loadDesk(false, A);
   const DESK = DESKS[A];
   const s = mk('div'); s.style.marginTop = '10px';
+  // the three desks (one Polymarket account): jump between them from any of them
+  const sw = mk('div', 'desk-tabs');
+  ['btc', 'eth', 'sol'].forEach(x => { const b = mk('button', 'b' + (x === A ? ' on' : ''), x.toUpperCase() + ' desk');
+    b.onclick = () => { selected = 'f:' + DESK_KEY[x]; renderSide(true); }; sw.append(b); });
+  s.append(sw);
   if (!DESK) { s.append(mk('div', 'dim', 'Loading the desk…')); return s; }
   if (DESK.error) { s.append(mk('div', 'dim', DESK.error)); return s; }
   const st = DESK.status || {};
