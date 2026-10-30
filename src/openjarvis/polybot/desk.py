@@ -162,9 +162,11 @@ class Desk:
             return
         if w is None and not ended and not self._due("markets_fast", 2.0, now):
             return
-        ms = await self.c.markets(categories=["crypto"], active=True, closed=False)
-        live = [x for x in (window_from_market(m) for m in ms if is_series(m, self.base.asset, self.base.horizon)) if x and x.start <= now < x.end]
-        nxt = min(live, key=lambda x: x.end) if live else None
+        nxt = await self.window_by_slug(now)
+        if nxt is None:
+            ms = await self.c.markets(categories=["crypto"], active=True, closed=False)
+            live = [x for x in (window_from_market(m) for m in ms if is_series(m, self.base.asset, self.base.horizon)) if x and x.start <= now < x.end]
+            nxt = min(live, key=lambda x: x.end) if live else None
         if nxt and nxt.slug in self.recent:
             nxt = self.recent[nxt.slug]
         self.window = nxt
@@ -173,6 +175,22 @@ class Desk:
             self.recent[nxt.slug] = nxt
             for old in sorted(self.recent, key=lambda k: self.recent[k].end)[:-6]:
                 self.recent.pop(old, None)
+
+    async def window_by_slug(self, now: float) -> Optional[Window]:
+        """The current 5-minute window looked up by its slug (cpc-btc-updown-5m-YYYY-MM-DD-HHMMz, the window's UTC start).
+        Scanning the whole market list missed windows when the list was long, and the desk sat 'between windows' mid-window."""
+        if self.base.horizon != "5m":
+            return None
+        start = int(now // 300) * 300
+        slug = f"cpc-{self.base.asset}-updown-5m-{time.strftime('%Y-%m-%d-%H%M', time.gmtime(start))}z"
+        if slug in self.recent and self.recent[slug].start <= now < self.recent[slug].end:
+            return self.recent[slug]
+        try:
+            m = await self.c.market(slug)
+        except PMError:
+            return None
+        w = window_from_market(m) if m else None
+        return w if w and w.start <= now < w.end else None
 
     async def load_book(self, now: float) -> None:
         if not self.window:
