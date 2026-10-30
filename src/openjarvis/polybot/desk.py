@@ -12,7 +12,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from dataclasses import replace
 
-from openjarvis.polybot import brain, model, risk, setups, strategy
+from openjarvis.polybot import brain, model, risk, setups, shadow, strategy
 from openjarvis.polybot.brokers import BookView, Fill, LiveBroker, PaperBroker, parse_ts
 from openjarvis.polybot.client import PMError, money
 from openjarvis.polybot.config import Config, apply_control
@@ -83,6 +83,7 @@ class Desk:
         self._ready = False
         self._sweeps: set = set()                            # (window, side) a closing sweep is buying
         self.learner = brain.Learner()
+        self.shadow = shadow.Shadow()                        # v1.15: three hidden shadow strategies (recorded, never traded or shown)
         self.setups = setups.SetupBook()                     # v1.14 learned pair sizing (shadow): record per pair setup
         self._pair_fills: Dict[str, List[Dict[str, Any]]] = {}   # non-sweep fills per open window, to file the pair under its setup
         self.sigma: Optional[float] = None
@@ -363,6 +364,11 @@ class Desk:
             if res is None:
                 continue
             close, up = res
+            self.shadow.settle(slug, up)
+            try:
+                await self.store.put("shadow", self.shadow.to_dict())
+            except Exception:
+                logger.warning("shadow record not saved")
             po = setups.pair_outcome(self._pair_fills.pop(slug, []), up)
             if po is not None and w.mode == "live":
                 self.setups.add(*po)
@@ -487,6 +493,9 @@ class Desk:
         self.mid = brain.market_mid(b.best_bid, b.best_ask) if b else None
         self.fair = brain.blend(self.fair_model, self.mid, self.cfg.model_weight)
         self.momentum = brain.momentum_z(self.tape, int(now), int(self.cfg.momentum_s), self.sigma)
+        if w is not None and w.price_to_beat and b is not None:
+            self.shadow.tick(w.slug, w.end - now, self.fair_model, b.best_ask,
+                             None if b.best_bid is None else round(1.0 - b.best_bid, 6))
         if self.guard and not (self.rs.kill or self.rs.paused):
             reason = self.guard
         elif w is None and not (self.rs.kill or self.rs.paused):
@@ -714,6 +723,10 @@ class Desk:
         self._day_reset_seen = prev.get("day_reset_seen")
         self._ready = True
         await self.load_setups()
+        try:
+            self.shadow.load((await self.store.get("shadow")) or {})
+        except Exception:
+            logger.warning("shadow record unreadable; starting empty")
         await self.load_index(now, backfill=True)
         self.log("info", f"Desk started in {self.cfg.mode.upper()} mode on {self.base.asset.upper()} {self.horizon} Up/Down.")
         steps = 0

@@ -949,3 +949,21 @@ def test_v114_learned_pair_sizing():
         book.add("wide/against/late", -0.30)
     assert book.size("wide/against/late", 10.0) == (5.0, "weak")
     assert setups.version_at_least("1.13", "1.12") and not setups.version_at_least("1.9", "1.12")
+
+
+def test_v115_shadow_strategies():
+    from openjarvis.polybot import shadow
+    assert shadow.decide("edge", 120, 0.60, 0.50, 0.45) == [("up", 0.50)]          # 10c above the ask
+    assert shadow.decide("edge", 30, 0.60, 0.50, 0.45) == []                       # too late for edge
+    assert shadow.decide("pairs", 120, 0.5, 0.45, 0.50) == [("up", 0.45), ("down", 0.50)]   # 95c for the pair
+    assert shadow.decide("pairs", 120, 0.5, 0.50, 0.50) == []                      # 100c: no pair
+    assert shadow.decide("late", 30, 0.93, 0.90, 0.10) == [("up", 0.90)]
+    assert shadow.decide("late", 30, 0.93, 0.97, 0.10) == []                       # 97c: too expensive
+    s = shadow.Shadow()
+    s.tick("w1", 120, 0.60, 0.50, 0.45)                                            # edge fires
+    s.tick("w1", 50, 0.95, 0.90, 0.10)                                             # late fires; edge does not fire twice
+    assert set(s.open["w1"]) == {"edge", "pairs", "late"}          # pairs also qualifies at 95c on the first tick
+    s.settle("w1", up=True)
+    assert s.rec["edge"]["windows"] == 1 and s.rec["edge"]["wins"] == 1 and s.rec["edge"]["profit"] > 0
+    assert s.rec["late"]["wins"] == 1 and s.rec["pairs"]["windows"] == 1 and s.rec["pairs"]["wins"] == 1
+    s2 = shadow.Shadow(); s2.load(s.to_dict()); assert s2.rec["edge"]["wins"] == 1
