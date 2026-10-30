@@ -601,12 +601,14 @@ class Desk:
                                                     b.offers[0][1] if b.offers else 0.0, b.bids[0][1] if b.bids else 0.0,
                                                     budget_usd, sizing.window_cap(self.cfg.limits), w.min_qty, self.cfg.pair_margin) \
                         if inv.spent <= 0 else ([], "Already in this window; holding to settlement.")
-                    if not want and inv.spent <= 0 and self.cfg.directional \
+                    can_up_m, can_down_m, mom_why = brain.side_filters(self.momentum, self.cfg.momentum_z, self.name)
+                    if not want and inv.spent <= 0 and self.cfg.directional and self.cfg.mode == "paper" \
                             and self.fair_model is not None and b.best_ask is not None and b.best_bid is not None \
                             and self.cfg.directional_min_secs <= w.end - now <= self.cfg.directional_secs_left:
                         z = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)
                         pick = directional.decide(self.fair_model, b.best_ask, round(1.0 - b.best_bid, 6),
-                                                  self.shadow.bucket_stats(self.fair_model), self.shadow.bucket_stats(1.0 - self.fair_model), z=z)
+                                                  self.shadow.bucket_stats(self.fair_model), self.shadow.bucket_stats(1.0 - self.fair_model), z=z,
+                                                  up_ok=can_up_m, down_ok=can_down_m)
                         if pick is not None:
                             side, cost, tier, edge, lot_pct = pick
                             size_here = (b.offers[0][1] if b.offers else 0.0) if side == "up" else (b.bids[0][1] if b.bids else 0.0)
@@ -625,7 +627,7 @@ class Desk:
                                                       None if b.best_bid is None else round(1.0 - b.best_bid, 6),
                                                       self.shadow.bucket_stats(self.fair_model or 0.5),
                                                       self.shadow.bucket_stats(1.0 - (self.fair_model or 0.5)), z_now, in_win)
-                        why = (why + " " if why else "") + why_dir
+                        why = (why + " " if why else "") + why_dir + ("" if can_up_m and can_down_m else f" Momentum: {mom_why}")
                 elif not want:
                     why = why or "Finishing the pair (one leg was left open)."
                 if hedge is not None and lopsided and w.slug not in self._dir_pending:

@@ -23,11 +23,11 @@ MIN_CONF = 0.60                 # a side must be at least 60% by the model's own
 
 
 def size_pct(prob: float) -> float:
-    """Lot size as a % of the balance, by the model's own confidence: 60-70% = 5, 71-90% = 10, 91%+ = 15 (0 below 60%)."""
+    """Lot size as a % of the balance, by the model's own confidence: 60-70% = 5, 71-90% = 6, 91%+ = 7 (0 below 60%)."""
     if prob >= 0.91:
-        return 15.0
+        return 7.0
     if prob > 0.70:
-        return 10.0
+        return 6.0
     if prob >= MIN_CONF:
         return 5.0
     return 0.0
@@ -47,7 +47,7 @@ def cushion_z(index: Optional[float], beat: Optional[float], sigma_per_s: Option
 
 def decide(prob_up: float, up_cost: Optional[float], down_cost: Optional[float],
            bucket_up: Tuple[int, int], bucket_down: Tuple[int, int],
-           z: Optional[float] = None) -> Optional[Tuple[str, float, str, float, float]]:
+           z: Optional[float] = None, up_ok: bool = True, down_ok: bool = True) -> Optional[Tuple[str, float, str, float, float]]:
     """(side, cost per contract, tier, edge after fees, lot % of balance) for the better side, or None.
     bucket_up / bucket_down: (trades, wins) in the calibration bucket of that side's model confidence."""
     best = None
@@ -56,6 +56,8 @@ def decide(prob_up: float, up_cost: Optional[float], down_cost: Optional[float],
             continue
         if z is not None and (z if side == "up" else -z) < CUSHION_Z:
             continue                                  # v1.18: the index is too close to the price to beat on this side
+        if not (up_ok if side == "up" else down_ok):
+            continue                                  # v1.18: the recent move is against this side (momentum rule)
         if n >= PROVEN_N:
             conf, need, tier = setups.wilson_lb(wins, n), PROVEN_EDGE, "proven"
         else:

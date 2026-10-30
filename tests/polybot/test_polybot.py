@@ -1061,4 +1061,6 @@ def test_v118_directional_needs_75_percent():
     from openjarvis.polybot import directional
     assert directional.decide(0.55, 0.30, 0.60, (0, 0), (0, 0)) is None          # under 60%: never
     assert directional.decide(0.76, 0.60, 0.40, (0, 0), (0, 0))[0] == "up"        # 76% with an edge: yes
-    assert directional.size_pct(0.65) == 5.0 and directional.size_pct(0.80) == 10.0 and directional.size_pct(0.92) == 15.0
+    assert directional.size_pct(0.65) == 5.0 and directional.size_pct(0.80) == 6.0 and directional.size_pct(0.92) == 7.0
+    # momentum rule: the Up side is blocked, so the Down side is the only one left
+    assert directional.decide(0.20, 0.60, 0.40, (0, 0), (0, 0), up_ok=False, down_ok=True) is None or directional.decide(0.20, 0.60, 0.40, (0, 0), (0, 0), up_ok=False, down_ok=True)[0] == "down"
