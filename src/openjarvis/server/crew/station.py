@@ -919,7 +919,7 @@ function factorySec(key) {
   const l = mk('div', 'lbl'); l.append(mk('span', null, 'Factory'), mk('span', 'tag', b.state)); s.append(l);
   const h = mk('div', 'h', b.label); h.style.color = b.color; s.append(h);
   const about = bizAbout(key); if (about) s.append(mk('div', 'dim', about));
-  if (key === 'polymarket') ['polymarket', 'polymarket-eth', 'polymarket-sol'].forEach(k => s.append(deskSec(k)));   // all three desks, one after another
+  if (key === 'polymarket') { ['polymarket', 'polymarket-eth', 'polymarket-sol'].forEach(k => s.append(deskSec(k))); s.append(deskLogSec()); }   // all three desks, then one log
   if (b.platform) {
     const c = S.connections && S.connections[key];
     const cr = mk('div', 'row'); cr.style.cursor = 'pointer'; cr.onclick = () => { selected = 'links'; renderSide(true); };
@@ -1100,11 +1100,18 @@ function deskSec(key) {
       s.append(tb);
     });
   }
-  const ev = DESK.events || [];
-  if (ev.length) {
-    const el = mk('div', 'lbl'); el.style.marginTop = '12px'; el.textContent = 'Desk log'; s.append(el);
-    ev.slice(0, 8).forEach(e => s.append(mk('div', 'desk-fill', new Date(e.ts).toLocaleTimeString() + ' · ' + e.text)));
-  }
+  return s;
+}
+// one desk log for all three desks, newest first, each line marked with its desk
+function deskLogSec() {
+  const s = mk('div'); s.style.borderTop = '1px solid rgba(0,229,255,0.25)'; s.style.marginTop = '10px';
+  const ev = [];
+  ['btc', 'eth', 'sol'].forEach(a => { const d = DESKS[a]; (d && !d.error ? d.events || [] : []).forEach(e => ev.push(Object.assign({ asset: a }, e))); });
+  ev.sort((x, y) => new Date(y.ts) - new Date(x.ts));
+  const el = mk('div', 'lbl'); el.style.marginTop = '12px'; el.textContent = 'Desk log · all desks'; s.append(el);
+  if (!ev.length) s.append(mk('div', 'dim', 'Nothing logged yet.'));
+  ev.slice(0, 24).forEach(e => { const r = mk('div', 'desk-fill'); const t = mk('span', null, e.asset.toUpperCase() + ' ');
+    t.style.color = ({ btc: '#00e5ff', eth: '#8c8cff', sol: '#14f195' })[e.asset]; r.append(t, document.createTextNode(new Date(e.ts).toLocaleTimeString() + ' · ' + e.text)); s.append(r); });
   return s;
 }
 const CAT = {};
