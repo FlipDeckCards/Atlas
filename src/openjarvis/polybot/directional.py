@@ -19,7 +19,7 @@ from openjarvis.polybot.strategy import taker_fee
 PROVEN_N = 50
 PROVEN_EDGE = 0.03
 EXPLORE_EDGE = 0.05
-MIN_CONF = 0.55                 # never buy a side the model itself calls less likely than not, however cheap it is
+MIN_CONF = 0.75                 # a side must be at least 75% by the model's own number before the desk will buy it, in either tier
 
 
 CUSHION_Z = 0.5

@@ -1055,3 +1055,9 @@ def test_v118_never_buy_a_side_the_model_calls_unlikely():
     # the model says Up 43%: a 35c Up looks like an edge on paper, but the model itself says Up is the less likely outcome
     assert directional.decide(0.43, 0.35, 0.60, (0, 0), (0, 0)) is None or directional.decide(0.43, 0.35, 0.60, (0, 0), (0, 0))[0] != "up"
     assert directional.decide(0.43, 0.35, 0.60, (0, 0), (0, 0)) is None
+
+
+def test_v118_directional_needs_75_percent():
+    from openjarvis.polybot import directional
+    assert directional.decide(0.70, 0.40, 0.60, (0, 0), (0, 0)) is None           # 70% is not enough
+    assert directional.decide(0.76, 0.60, 0.40, (0, 0), (0, 0))[0] == "up"        # 76% with an edge: yes
