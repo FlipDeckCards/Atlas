@@ -851,3 +851,13 @@ def test_v112_an_unpaired_leg_is_hedged_crossing_if_needed():
     assert far and far[0].side == "down" and not far[0].taker                    # too dear to cross: rests at the $1.05 price instead
     win = strategy.quotes(0.90, Book(0.85, 0.88), inv, lim, budget_left=100, sizing=sz, hedge_loss=0.05)
     assert win[0].taker and (1 - win[0].price) + 2.30 / 3.97 < 1.0               # the leg is winning: the hedge locks a profit
+
+
+def test_trading_hours_pacific():
+    import datetime as dt
+    from zoneinfo import ZoneInfo
+    LA = ZoneInfo("America/Los_Angeles")
+    at = lambda h, m: dt.datetime(2026, 10, 30, h, m, tzinfo=LA).timestamp()
+    assert risk.in_hours(at(6, 30), "06:30", "20:30") and risk.in_hours(at(20, 29), "06:30", "20:30")
+    assert not risk.in_hours(at(20, 30), "06:30", "20:30") and not risk.in_hours(at(2, 0), "06:30", "20:30")
+    assert risk.in_hours(at(2, 0), "", "")

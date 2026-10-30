@@ -456,6 +456,11 @@ class Desk:
             fills = (self.open_windows.get(w.slug) or w).fills
             can_up = can_up and brain.can_add(fills, "up", self.cfg.max_fills_per_side)
             can_down = can_down and brain.can_add(fills, "down", self.cfg.max_fills_per_side)
+            if not risk.in_hours(now, self.cfg.trade_start, self.cfg.trade_end):     # v1.13: overnight, only finish what is open
+                can_up = can_up and inv.down_qty > inv.up_qty + 1e-9
+                can_down = can_down and inv.up_qty > inv.down_qty + 1e-9
+                if not (can_up or can_down):
+                    why = why or f"Outside trading hours ({self.cfg.trade_start}-{self.cfg.trade_end} Pacific): no new trades."
             if w.end - now < self.cfg.open_cutoff_s:                 # late in the window: only buy what completes a pair
                 can_up = can_up and inv.down_qty > inv.up_qty + 1e-9
                 can_down = can_down and inv.up_qty > inv.down_qty + 1e-9

@@ -17,6 +17,16 @@ def la_day(ts: float) -> str:
     return dt.datetime.fromtimestamp(ts, LA).strftime("%Y-%m-%d")
 
 
+def in_hours(ts: float, start: str, end: str) -> bool:
+    """Inside the trading hours (Los Angeles time, "HH:MM"); an empty start or end means always."""
+    if not start or not end:
+        return True
+    t = dt.datetime.fromtimestamp(ts, LA)
+    m = t.hour * 60 + t.minute
+    a, b = (int(x.split(":")[0]) * 60 + int(x.split(":")[1]) for x in (start, end))
+    return a <= m < b if a < b else (m >= a or m < b)
+
+
 def in_maintenance(ts: float) -> bool:
     """Polymarket US's weekly maintenance: Thursdays 6:00-8:00 AM Eastern (with 10 minutes' margin either side)."""
     t = dt.datetime.fromtimestamp(ts, ET)
