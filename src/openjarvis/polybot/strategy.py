@@ -242,7 +242,7 @@ def quotes(fair: float, book: Book, inv: Inventory, limits: Limits, *, budget_le
 
 
 def pair_takes(best_bid: Optional[float], best_ask: Optional[float], bid_size: float, ask_size: float, budget_usd: float,
-               window_cap_usd: float, min_qty: float, max_cost: float = 0.97) -> Tuple[List["Quote"], str]:
+               window_cap_usd: float, min_qty: float, margin: float = 0.02) -> Tuple[List["Quote"], str]:
     """v1.16 back to basics: open a pair ONLY by buying both sides at the same moment at the current asks, when the two together
     cost at most max_cost and the book has size on both sides for the whole pair. Nothing rests, so no one-sided leg is opened on
     a hope the other side will fill. Returns (quotes, why)."""
@@ -251,13 +251,15 @@ def pair_takes(best_bid: Optional[float], best_ask: Optional[float], bid_size: f
     up = round(best_ask, 6)
     down = round(1.0 - best_bid, 6)
     pair = up + down
-    if pair > max_cost + 1e-9:
-        return [], f"Both sides cost {pair * 100:.0f}c together (limit {max_cost * 100:.0f}c): no pair this window."
+    fees = taker_fee(up) + taker_fee(down)                 # both legs cross the spread, so both pay the taker fee
+    net = pair + fees
+    if net > 1.0 - margin + 1e-9:                          # the pair pays $1.00 whichever side wins; keep the buffer after fees
+        return [], f"Both sides cost {pair * 100:.1f}c plus {fees * 100:.1f}c fees (must stay under {(1.0 - margin) * 100:.0f}c): no pair."
     usd = min(budget_usd, window_cap_usd)
-    q = _qty(usd, pair, min_qty)
+    q = _qty(usd, net, min_qty)
     q = min(q, math.floor(ask_size / min_qty + 1e-9) * min_qty, math.floor(bid_size / min_qty + 1e-9) * min_qty)
     q = round(q, 6)
     if q < min_qty:
         return [], "Not enough size on both sides at once for a pair."
     return ([Quote("up", up, q, taker=True), Quote("down", round(best_bid, 6), q, taker=True)],
-            f"Opening a pair: buying both sides now for {pair * 100:.0f}c.")
+            f"Opening a pair: buying both sides now for {pair * 100:.0f}c plus {fees * 100:.1f}c fees.")

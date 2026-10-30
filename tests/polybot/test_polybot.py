@@ -985,16 +985,18 @@ def test_v115_book_view_and_calibration():
 
 def test_v116_pairs_only_takes_both_sides_at_once():
     from openjarvis.polybot import strategy
-    # asks 0.47 (up) and 0.50 (down, from a 0.50 bid): 97c together, enough size on both sides
-    q, why = strategy.pair_takes(0.50, 0.47, bid_size=100, ask_size=100, budget_usd=5.0, window_cap_usd=6.0, min_qty=0.01)
+    # asks 0.40 (up) and 0.50 (down, from a 0.50 bid): 90c, about 3.4c of fees: under 98c net, enough size on both sides
+    q, why = strategy.pair_takes(0.50, 0.40, bid_size=100, ask_size=100, budget_usd=5.0, window_cap_usd=6.0, min_qty=0.01)
     assert len(q) == 2 and all(x.taker for x in q)
-    assert {x.side for x in q} == {"up", "down"} and abs(sum(x.cost_per for x in q) - 0.97) < 1e-6
-    assert q[0].qty == q[1].qty and q[0].qty * 0.97 <= 5.0 + 1e-9
-    # both sides together cost more than 97c: no pair, nothing rests
+    assert {x.side for x in q} == {"up", "down"} and abs(sum(x.cost_per for x in q) - 0.90) < 1e-6
+    assert q[0].qty == q[1].qty and q[0].qty * 0.90 <= 5.0 + 1e-9
+    # 47c + 50c = 97c before fees: after ~3.5c of fees it costs more than $1 less the buffer, so no pair
+    assert strategy.pair_takes(0.50, 0.47, 100, 100, 5.0, 6.0, 0.01)[0] == []
+    # 49c + 50c: no pair either
     assert strategy.pair_takes(0.50, 0.49, 100, 100, 5.0, 6.0, 0.01)[0] == []
     # no size on one side: no pair
     assert strategy.pair_takes(0.50, 0.47, bid_size=0.004, ask_size=100, budget_usd=5.0, window_cap_usd=6.0, min_qty=0.01)[0] == []
     # one side of the book empty: nothing
     assert strategy.pair_takes(None, 0.47, 100, 100, 5.0, 6.0, 0.01)[0] == []
     from openjarvis.polybot.config import from_env
-    assert from_env({}).pairs_only is True and from_env({}).pair_max_cost == 0.97
+    assert from_env({}).pairs_only is True and from_env({}).pair_margin == 0.02

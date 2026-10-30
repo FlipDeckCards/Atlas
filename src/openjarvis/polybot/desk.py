@@ -589,7 +589,7 @@ class Desk:
                     budget_usd = min(budget, sizing.window_cap(self.cfg.limits))
                     want, why = strategy.pair_takes(b.best_bid, b.best_ask,
                                                     b.offers[0][1] if b.offers else 0.0, b.bids[0][1] if b.bids else 0.0,
-                                                    budget_usd, sizing.window_cap(self.cfg.limits), w.min_qty, self.cfg.pair_max_cost) \
+                                                    budget_usd, sizing.window_cap(self.cfg.limits), w.min_qty, self.cfg.pair_margin) \
                         if inv.spent <= 0 else ([], "Already in this window; holding to settlement.")
                 elif not want:
                     why = why or "Finishing the pair (one leg was left open)."
@@ -707,7 +707,7 @@ class Desk:
         except Exception:
             logger.exception("pair history unreadable; learned sizing starts empty")
             return
-        floor = "1.16"
+        floor = "1.17"
         by: Dict[str, List[Dict[str, Any]]] = {}
         ups: Dict[str, bool] = {}
         for r in rows:
