@@ -77,6 +77,7 @@ class Desk:
         self.trend: float = 0.0
         self._missing = ""
         self._lookup_fail = ""
+        self._book404 = ""
         self.slug_prefix = ""
         self.learner = brain.Learner()
         self.sigma: Optional[float] = None
@@ -236,6 +237,9 @@ class Desk:
             self.book = BookView.parse(await self.c.book(self.window.slug), now)
         except PMError as exc:
             if exc.status == 404:                       # the market closed and is gone: not an error, move on to the next window
+                if self.window.start <= now < self.window.end - 5 and self._book404 != self.window.slug:
+                    self._book404 = self.window.slug     # the market is listed but has no order book: say so once (that is the cause)
+                    self.log("warn", f"{self.window.slug} is listed but Polymarket has no order book for it yet ({str(exc)[:120]}).")
                 self.window, self.book = None, None
                 return
             raise
@@ -426,7 +430,8 @@ class Desk:
         elif w is None and not (self.rs.kill or self.rs.paused):
             if now % self.span > 30:            # well into a window and still no market: say so (and log it once per window) instead of "between windows"
                 slug = self.slug_for(int(now // self.span) * self.span)
-                reason = f"Cannot find this window's {self.name} market ({slug}); retrying every 2 seconds."
+                reason = (f"Polymarket has no order book yet for this window ({slug}): nobody is trading it; checking every 2 seconds."
+                          if self._book404 == slug else f"Cannot find this window's {self.name} market ({slug}); retrying every 2 seconds.")
                 if self._missing != slug:
                     self._missing = slug
                     self.log("warn", reason)
