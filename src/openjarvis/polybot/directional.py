@@ -1,4 +1,4 @@
-"""v1.18 confident directional trades (PAPER ONLY for now).
+"""v1.18 confident directional trades (live or paper).
 
 The model's number is only trusted as far as the calibration tally says it is. For each side the desk looks at the calibration
 bucket its model confidence falls in:
@@ -6,7 +6,7 @@ bucket its model confidence falls in:
     is bought only if that confidence beats its cost plus taker fee by at least PROVEN_EDGE.
   * exploring: fewer trades than that. Confidence = the raw model number, bought only with a bigger edge (EXPLORE_EDGE), and at
     half size, so the bucket gathers results without much at stake.
-Only one side is bought per window, and only in paper mode.
+Only one side is bought per window. Every directional trade needs the model at 75% or more on its side (MIN_CONF), live or paper.
 """
 
 from __future__ import annotations
