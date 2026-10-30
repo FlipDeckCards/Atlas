@@ -816,3 +816,13 @@ def test_three_desks_keep_apart():
     run(ScopedStore(mem, "eth").put("status", {"x": 1}))
     assert mem.kv["status:eth"] == {"x": 1} and "status" not in mem.kv
     assert from_env({}, asset="sol").asset == "sol"
+
+
+def test_market_address_pattern_is_learned():
+    from openjarvis.polybot.desk import Desk
+
+    d = Desk(from_env({}, asset="eth"), None, MemStore())
+    assert d.slug_for(1761791100).startswith("cpc-eth-updown-5m-")
+    d.learn_prefix("cpceth-eth-updown-5m-2026-10-30-0225z")
+    assert d.slug_for(1761791100) == "cpceth-eth-updown-5m-" + __import__("time").strftime("%Y-%m-%d-%H%M", __import__("time").gmtime(1761791100)) + "z"
+    assert d.status(0.0)["slug_prefix"] == "cpceth-eth-updown-5m-"

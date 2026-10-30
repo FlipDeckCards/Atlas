@@ -75,6 +75,7 @@ class Desk:
         self.trend: float = 0.0
         self._missing = ""
         self._lookup_fail = ""
+        self.slug_prefix = ""
         self.learner = brain.Learner()
         self.sigma: Optional[float] = None
         self.reason: str = "Starting."
@@ -82,7 +83,7 @@ class Desk:
         self.external_at_risk = 0.0
         self.stats = {"day": "", "fills": 0, "windows": 0, "wins": 0}
         self.hour_pnl = 0.0
-        self._t = {"control": 0.0, "flush": 0.0, "markets": 0.0, "markets_fast": 0.0, "market": 0.0, "sigma": 0.0, "positions": 0.0, "hour": 0.0}
+        self._t = {"markets_scan": 0.0, "control": 0.0, "flush": 0.0, "markets": 0.0, "markets_fast": 0.0, "market": 0.0, "sigma": 0.0, "positions": 0.0, "hour": 0.0}
         self._stopping = False
         self.instance = ""                                   # set by the runner: which copy wrote the status
         self.version_start: Optional[float] = None           # real account value (live) when this strategy version started
@@ -168,10 +169,12 @@ class Desk:
         if w is None and not ended and not self._due("markets_fast", 2.0, now):
             return
         nxt = await self.window_by_slug(now)
-        if nxt is None:
-            ms = await self.c.markets(categories=["crypto"], active=True, closed=False)
+        if nxt is None and self._due("markets_scan", 10.0, now):       # the slow full scan: at most every 10 s (three desks hammering it
+            ms = await self.c.markets(categories=["crypto"], active=True, closed=False)          # every 2 s got rate-limited)
             live = [x for x in (window_from_market(m) for m in ms if is_series(m, self.base.asset, self.base.horizon)) if x and x.start <= now < x.end]
             nxt = min(live, key=lambda x: x.end) if live else None
+        if nxt is not None:
+            self.learn_prefix(nxt.slug)
         if nxt and nxt.slug in self.recent:
             nxt = self.recent[nxt.slug]
         self.window = nxt
@@ -187,7 +190,7 @@ class Desk:
         if self.base.horizon != "5m":
             return None
         start = int(now // 300) * 300
-        slug = f"cpc-{self.base.asset}-updown-5m-{time.strftime('%Y-%m-%d-%H%M', time.gmtime(start))}z"
+        slug = self.slug_for(start)
         if slug in self.recent and self.recent[slug].start <= now < self.recent[slug].end:
             return self.recent[slug]
         why = ""
@@ -200,11 +203,27 @@ class Desk:
         except PMError as exc:
             why = str(exc)[:160]
         # the market lookup failed, but every 5-minute window has a known address and time: trade it from its order book; the
-        # price to beat comes from the market when it answers, or from the index itself 30 s in (the same 60-second average)
+        # price to beat comes from the market when it answers, or from the index itself 30 s in (the same 60-second average).
+        # Only once the address pattern is known from a real market (ETH's is cpceth-eth-..., not cpc-eth-...): otherwise scan.
+        if not self.slug_prefix:
+            return None
         if self._lookup_fail != slug:
             self._lookup_fail = slug
             self.log("warn", f"Market lookup for {slug} failed ({why}); trading it from its order book instead.")
         return Window(slug=slug, start=float(start), end=float(start + 300), price_to_beat=None)
+
+    def slug_for(self, start: int) -> str:
+        prefix = self.slug_prefix or f"cpc-{self.base.asset}-updown-5m-"
+        return f"{prefix}{time.strftime('%Y-%m-%d-%H%M', time.gmtime(start))}z"
+
+    def learn_prefix(self, slug: str) -> None:
+        """cpceth-eth-updown-5m-2026-10-30-0225z -> cpceth-eth-updown-5m- (the part before the date)."""
+        parts = slug.split("-")
+        if len(parts) > 4 and parts[-1].endswith("z"):
+            p = "-".join(parts[:-4]) + "-"
+            if p != self.slug_prefix:
+                self.slug_prefix = p
+                self.log("info", f"{self.name} market addresses look like {p}YYYY-MM-DD-HHMMz.")
 
     async def load_book(self, now: float) -> None:
         if not self.window:
@@ -403,7 +422,7 @@ class Desk:
             reason = self.guard
         elif w is None and not (self.rs.kill or self.rs.paused):
             if now % 300 > 30:            # well into a window and still no market: say so (and log it once per window) instead of "between windows"
-                slug = f"cpc-{self.base.asset}-updown-5m-{time.strftime('%Y-%m-%d-%H%M', time.gmtime(int(now // 300) * 300))}z"
+                slug = self.slug_for(int(now // 300) * 300)
                 reason = f"Cannot find this window's {self.name} market ({slug}); retrying every 2 seconds."
                 if self._missing != slug:
                     self._missing = slug
@@ -511,6 +530,7 @@ class Desk:
             "balance": self.balance, "day": self.rs.day, "day_pnl": round(self.rs.day_pnl, 2),
             "day_start": self.rs.day_start, "day_limit": risk.day_limit(self.cfg, self.rs), "at_risk": round(self.rs.at_risk, 2),
             "today": dict(self.stats),
+            "slug_prefix": self.slug_prefix,
             "open_windows": [{"slug": x.slug, "start": x.start, "end": x.end, "price_to_beat": x.price_to_beat, "tick": x.tick,
                               "min_qty": x.min_qty, "title": x.title, "mode": x.mode, "fills": dict(x.fills),
                               "up_qty": x.inv.up_qty, "up_cost": x.inv.up_cost, "down_qty": x.inv.down_qty,
@@ -553,6 +573,8 @@ class Desk:
         if prev.get("strategy") == brain.STRATEGY_VERSION and prev.get("version_start") is not None:
             self.version_start = float(prev["version_start"])
         self.restore_windows(prev.get("open_windows"), now)
+        if isinstance(prev.get("slug_prefix"), str) and prev["slug_prefix"].endswith("-updown-5m-"):
+            self.slug_prefix = prev["slug_prefix"]
         await self.load_index(now, backfill=True)
         self.log("info", f"Desk started in {self.cfg.mode.upper()} mode on {self.base.asset.upper()} {self.base.horizon} Up/Down.")
         steps = 0
