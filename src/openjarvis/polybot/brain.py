@@ -50,14 +50,14 @@ def momentum_z(tape: PriceTape, now: int, lookback_s: int, sigma_per_s: Optional
     return (a - b) / (sigma_per_s * math.sqrt(lookback_s))
 
 
-def side_filters(z: float, threshold: float) -> Tuple[bool, bool, str]:
+def side_filters(z: float, threshold: float, name: str = "BTC") -> Tuple[bool, bool, str]:
     """(can_up, can_down, why) from momentum."""
     if threshold <= 0:
         return True, True, ""
     if z <= -threshold:
-        return False, True, f"BTC is falling ({z:+.1f} sd): not buying Up."
+        return False, True, f"{name} is falling ({z:+.1f} sd): not buying Up."
     if z >= threshold:
-        return True, False, f"BTC is rising ({z:+.1f} sd): not buying Down."
+        return True, False, f"{name} is rising ({z:+.1f} sd): not buying Down."
     return True, True, ""
 
 

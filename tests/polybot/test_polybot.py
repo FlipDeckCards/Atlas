@@ -619,8 +619,8 @@ def test_a_full_live_window_places_fills_settles_and_alerts():
     assert w[0]["up_cost"] + w[0]["down_cost"] <= 3.75 + 1e-9                  # 7.5% of the $50 balance
     assert store.kv["status"]["window_pct"] == 7.5
     titles = [t for t, _ in pushes]
-    assert "Desk entry" in titles and "Desk settled" in titles                 # an alert for the entry and for the exit
-    entry = next(x for t, x in pushes if t == "Desk entry")
+    assert "BTC · Desk entry" in titles and "BTC · Desk settled" in titles                 # an alert for the entry and for the exit
+    entry = next(x for t, x in pushes if t == "BTC · Desk entry")
     assert "strike" in entry and "expires" in entry and "max loss" in entry and "target" in entry
     assert ex.cancels < 60                                                     # no cancel/replace every second
     assert store.kv["status"]["day_start"] == 50.0 and store.kv["status"]["day_limit"] == 7.5
@@ -796,3 +796,18 @@ def test_v19_no_new_pair_on_a_long_shot_but_completing_is_fine():
     qs = strategy.quotes(0.40, Book(0.30, 0.50), inv, lim, budget_left=100, sizing=sz,
                          min_cost=0.15, max_cost=0.80, open_min=0.30, open_max=0.70, unpaired_usd=0.9)
     assert [q for q in qs if q.side == "up"]
+
+
+def test_three_desks_keep_apart():
+    from openjarvis.polybot.config import assets_from_env
+    from openjarvis.polybot.runtime import lock_id
+    from openjarvis.polybot.state import ScopedStore, asset_of, kv_key
+
+    assert assets_from_env({}) == ["btc", "eth", "sol"] and assets_from_env({"POLYBOT_ASSETS": "eth, doge"}) == ["eth"]
+    assert kv_key("status", "btc") == "status" and kv_key("control", "sol") == "control:sol"
+    assert len({lock_id("btc"), lock_id("eth"), lock_id("sol")}) == 3
+    assert asset_of("cpc-eth-updown-5m-2026-10-30-0100z") == "eth"
+    mem = MemStore()
+    run(ScopedStore(mem, "eth").put("status", {"x": 1}))
+    assert mem.kv["status:eth"] == {"x": 1} and "status" not in mem.kv
+    assert from_env({}, asset="sol").asset == "sol"

@@ -378,22 +378,27 @@ def create_app(
         try:
             import asyncpg
 
-            from openjarvis.polybot.config import from_env
+            from openjarvis.polybot.config import assets_from_env, from_env
             from openjarvis.polybot.runtime import Runner
 
-            pool = await asyncpg.create_pool(dsn, min_size=1, max_size=3)      # its own small pool: never starves the app's
-            runner = Runner(from_env(), pool)
-            runner.start()
-            app.state.desk_pool, app.state.desk_runner = pool, runner
-            logger.info("Polymarket Desk started inside Aibussol")
+            assets = assets_from_env()
+            # its own small pool (each desk holds one connection for its lock, plus one to work): never starves the app's
+            pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2 * len(assets) + 1)
+            runners = [Runner(from_env(asset=a), pool) for a in assets]
+            for r in runners:
+                r.start()
+            app.state.desk_pool, app.state.desk_runner, app.state.desk_runners = pool, runners[0], runners
+            logger.info("Polymarket Desks started inside Aibussol: %s", ", ".join(a.upper() for a in assets))
         except Exception:
             logger.exception("Polymarket Desk did not start; the rest of Aibussol runs normally")
 
     @app.on_event("shutdown")
     async def _shutdown_desk() -> None:
-        runner = getattr(app.state, "desk_runner", None)
-        if runner is not None:
-            await runner.stop()                      # cancels its resting orders first
+        runners = getattr(app.state, "desk_runners", None) or []
+        if runners:
+            import asyncio
+
+            await asyncio.gather(*(r.stop() for r in runners), return_exceptions=True)     # each cancels its resting orders first
             await app.state.desk_pool.close()
 
     @app.on_event("shutdown")

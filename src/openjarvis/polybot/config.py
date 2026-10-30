@@ -99,7 +99,18 @@ class Config:
         return replace(self, limits=limits.clean())
 
 
-def from_env(env: Optional[Mapping[str, str]] = None) -> Config:
+ASSETS = ("btc", "eth", "sol")
+
+
+def assets_from_env(env: Optional[Mapping[str, str]] = None) -> list:
+    """POLYBOT_ASSETS: which desks run (default btc,eth,sol). Each desk is its own market, scoreboard and controls."""
+    e = os.environ if env is None else env
+    raw = (e.get("POLYBOT_ASSETS") or ",".join(ASSETS)).lower()
+    out = [a.strip() for a in raw.split(",") if a.strip() in ASSETS]
+    return list(dict.fromkeys(out)) or ["btc"]
+
+
+def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Config:
     e = os.environ if env is None else env
     lim = Limits(bankroll_usd=_f(e, "POLYBOT_BANKROLL_USD", 50.0, 0.0),
                  max_window_usd=_f(e, "POLYBOT_MAX_WINDOW_USD", 50.0, 0.0),
@@ -114,6 +125,7 @@ def from_env(env: Optional[Mapping[str, str]] = None) -> Config:
         key_id=(e.get("POLYMARKET_KEY_ID") or "").strip(),
         secret_key=(e.get("POLYMARKET_SECRET_KEY") or "").strip(),
         horizon=horizon if horizon in ("5m", "15m", "1h") else "5m",
+        asset=(asset or "btc").lower(),
         limits=lim,
         quote_after_open_s=_f(e, "POLYBOT_QUOTE_AFTER_OPEN_S", 20.0, 5.0, 600.0),
         stop_before_end_s=_f(e, "POLYBOT_STOP_BEFORE_END_S", 25.0, 5.0, 600.0),

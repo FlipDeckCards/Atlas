@@ -60,7 +60,8 @@ class Desk:
         self.clock, self.sleep = clock, sleep
         self.tape = model.PriceTape()
         self.rs = risk.RiskState()
-        self.ledger = Ledger()
+        self.ledger = Ledger(base.asset)
+        self.name = base.asset.upper()
         self.broker = PaperBroker()
         self.window: Optional[Window] = None
         self.open_windows: Dict[str, Window] = {}            # windows holding contracts, not settled yet
@@ -93,7 +94,7 @@ class Desk:
     async def push(self, title: str, text: str) -> None:
         if self.notify_fn is not None:
             try:
-                await self.notify_fn(title, text)
+                await self.notify_fn(f"{self.name} · {title}", text)
             except Exception:
                 logger.warning("push failed")
 
@@ -123,7 +124,7 @@ class Desk:
             self.broker = LiveBroker(self.c) if new.mode == "live" else PaperBroker()
             if new.mode == "live":
                 try:
-                    await self.c.cancel_all()                       # nothing left over from an earlier run
+                    await self.cancel_own_orders()                  # nothing left over from an earlier run (this desk's market only)
                 except PMError as exc:
                     self.log("warn", f"Could not clear old orders: {exc}")
             self.log("info", f"Mode is now {new.mode.upper()}.")
@@ -241,11 +242,11 @@ class Desk:
         for f in fills:
             self._book_fill(f)
             w = self.open_windows.get(f.slug)
-            side = "UP (call-like: pays if BTC closes at/above)" if f.side == "up" else "DOWN (put-like: pays if BTC closes below)"
+            side = f"UP (call-like: pays if {self.name} closes at/above)" if f.side == "up" else f"DOWN (put-like: pays if {self.name} closes below)"
             pay = f.price if f.side == "up" else 1 - f.price
             k = f"${w.price_to_beat:,.2f}" if w and w.price_to_beat else "pending"
             end = time.strftime("%H:%M:%S UTC", time.gmtime(w.end)) if w else "?"
-            text = (f"ENTRY {self.cfg.mode.upper()} · BTC {self.base.horizon} Up/Down · {side} · strike (price to beat) {k} · "
+            text = (f"ENTRY {self.cfg.mode.upper()} · {self.name} {self.base.horizon} Up/Down · {side} · strike (price to beat) {k} · "
                     f"expires {end} · {f.qty:g} contracts at ${pay:.2f} = ${f.cost:.2f} · stop: none, held to settlement (max loss ${f.cost:.2f}) · "
                     f"target: $1.00 per contract (${f.qty:.2f}) · fair value then {self.fair if self.fair is not None else 0:.2f}")
             self.log("trade", text)
@@ -280,7 +281,7 @@ class Desk:
             self.ledger.window({"slug": slug, "mode": w.mode, "window_start": w.start, "window_end": w.end, "price_to_beat": w.price_to_beat,
                                 "close_price": close, "up": up, "up_qty": w.inv.up_qty, "up_cost": round(w.inv.up_cost, 4),
                                 "down_qty": w.inv.down_qty, "down_cost": round(w.inv.down_cost, 4), "pnl": pnl, "settled_at": now})
-            text = (f"EXIT (settled) {w.mode.upper()} · {slug} · BTC {'UP' if up else 'DOWN'} (open ${w.price_to_beat:,.2f}"
+            text = (f"EXIT (settled) {w.mode.upper()} · {slug} · {self.name} {'UP' if up else 'DOWN'} (open ${w.price_to_beat:,.2f}"
                     + (f", close ${close:,.2f}" if close else "") + f") · held Up {w.inv.up_qty:g} / Down {w.inv.down_qty:g}, paid ${w.inv.spent:.2f}, "
                     f"got ${payout:.2f} · P&L {'+' if pnl >= 0 else ''}{pnl:.2f} · today {'+' if self.rs.day_pnl >= 0 else ''}{self.rs.day_pnl:.2f}")
             self.log("trade", text)
@@ -309,7 +310,7 @@ class Desk:
         for slug, p in (pos or {}).items():
             if slug in self.open_windows or p.get("expired"):
                 continue
-            if f"-{self.base.asset}-updown-" in slug:
+            if "-updown-" in slug:                       # every desk's open contracts count: they all share one account
                 ext += abs(money(p.get("cost")) or 0.0)
         self.external_at_risk = round(ext, 2)
 
@@ -367,13 +368,16 @@ class Desk:
                     self.log("info", f"Day starts with ${self.rs.day_start:.2f}; today's loss limit is ${risk.day_limit(self.cfg, self.rs):.2f}.")
             else:
                 self.rs.day_start = self.cfg.limits.bankroll_usd
+        if self.cfg.mode == "live" and self.balance is not None and self.rs.day_start is not None:
+            self.rs.real_pnl = round(self.balance + self.rs.at_risk - self.rs.day_start, 2)
         self.rs.resting = round(self.broker.resting_cost, 4)
         w, b = self.window, self.book
         last = self.tape.last()
         data_age = now - last[0] - 1 if last else 999.0
-        if self.tape.moved(int(now), self.base.jump_window_s) >= self.base.jump_usd:
+        jump = self.base.jump_usd * (last[1] / 78000.0 if last else 1.0)          # $25 at BTC $78k; the same % move for ETH and SOL
+        if self.tape.moved(int(now), self.base.jump_window_s) >= jump:
             if now >= self.rs.cooldown_until:
-                self.log("info", f"BTC moved ${self.tape.moved(int(now), self.base.jump_window_s):.0f} in {self.base.jump_window_s:.0f}s: quotes pulled.")
+                self.log("info", f"{self.name} moved ${self.tape.moved(int(now), self.base.jump_window_s):.0f} in {self.base.jump_window_s:.0f}s: quotes pulled.")
             self.rs.cooldown_until = now + self.base.cooldown_s
         self.fair_model = (model.fair_up(self.tape, int(now), int(w.end), w.price_to_beat, self.sigma or 0.0, self.cfg.vol_mult,
                                          drift_beta=self.cfg.drift_beta, drift_lookback_s=int(self.cfg.momentum_s))
@@ -398,7 +402,7 @@ class Desk:
         if reason is None:
             inv = self.open_windows[w.slug].inv if w.slug in self.open_windows else w.inv
             budget = risk.budget_left(self.cfg, self.rs, self.balance) + self.rs.resting      # its own resting orders do not block themselves
-            can_up, can_down, why = brain.side_filters(self.momentum, self.cfg.momentum_z)
+            can_up, can_down, why = brain.side_filters(self.momentum, self.cfg.momentum_z, self.name)
             fills = (self.open_windows.get(w.slug) or w).fills
             can_up = can_up and brain.can_add(fills, "up", self.cfg.max_fills_per_side)
             can_down = can_down and brain.can_add(fills, "down", self.cfg.max_fills_per_side)
@@ -411,10 +415,10 @@ class Desk:
             if self.cfg.trend_z > 0:                                  # v1.10: every v1.8/v1.9 loss was Up bought into a falling BTC
                 if self.trend <= -self.cfg.trend_z and can_up and not inv.down_qty > inv.up_qty + 1e-9:
                     can_up = False
-                    why = why or f"BTC trending down over 15 min ({self.trend:+.1f} sd): no new Up."
+                    why = why or f"{self.name} trending down over 15 min ({self.trend:+.1f} sd): no new Up."
                 if self.trend >= self.cfg.trend_z and can_down and not inv.up_qty > inv.down_qty + 1e-9:
                     can_down = False
-                    why = why or f"BTC trending up over 15 min ({self.trend:+.1f} sd): no new Down."
+                    why = why or f"{self.name} trending up over 15 min ({self.trend:+.1f} sd): no new Down."
             extra = self.learner.extra_edge if self.cfg.learn else 0.0
             lim = replace(self.cfg.limits, min_edge=round(self.cfg.limits.min_edge + extra, 3))
             equity = self.equity()
@@ -549,6 +553,16 @@ class Desk:
                 logger.exception("final cancel failed")
             self.log("info", "Desk stopped; resting orders cancelled.")
             await self.flush(self.clock())
+
+    async def cancel_own_orders(self) -> None:
+        """Cancel this desk's open orders only: the other desks trade the same account."""
+        try:
+            for o in await self.c.open_orders():
+                slug = str(o.get("marketSlug") or o.get("slug") or "")
+                if f"-{self.base.asset}-updown-" in slug and o.get("id"):
+                    await self.c.cancel(str(o["id"]), slug)
+        except PMError as exc:
+            self.log("warn", f"Could not clear old orders: {exc}")
 
     def restore_windows(self, rows, now: float) -> None:
         """Windows that still held contracts when the last copy stopped (a deploy mid-window) are settled by this copy, so

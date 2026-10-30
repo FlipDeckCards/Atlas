@@ -16,7 +16,7 @@ class FakeConn:
 
     async def execute(self, sql, *args):
         if "INSERT INTO polybot_kv" in sql:
-            self.kv["control"] = json.loads(args[0])
+            self.kv[args[1] if len(args) > 1 else "control"] = json.loads(args[0])
 
     async def fetchval(self, sql, *args):
         v = self.kv.get(args[0])
@@ -56,7 +56,7 @@ def test_pause_resume_kill_are_immediate():
 def test_go_live_is_only_ever_an_approve_card():
     p = FakePool()
     out = run(desk.control(p, "go_live"))
-    assert "needs_approval" in out and out["action"] == {"type": "desk_control", "set": {"mode": "live"}}
+    assert "needs_approval" in out and out["action"] == {"type": "desk_control", "asset": "btc", "set": {"mode": "live"}}
     assert p.kv.get("control", {}).get("mode") != "live"
     run(desk.apply_approved(p, out["action"]["set"]))          # what the Approve tap runs
     assert p.kv["control"]["mode"] == "live"
@@ -116,6 +116,16 @@ def test_analysis_cuts_profit_by_condition():
     desk._READY.clear()
     a = run(desk.analysis(P(), "paper"))
     mom = {r["condition"]: r for r in a["groups"]["momentum_with"]}
-    assert mom["BTC moving against the bet"]["win_rate"] == 0.0 and mom["BTC moving against the bet"]["per_contract"] == pytest.approx(-0.30)
-    assert mom["BTC moving with the bet"]["win_rate"] == 100.0
+    assert mom["price moving against the bet"]["win_rate"] == 0.0 and mom["price moving against the bet"]["per_contract"] == pytest.approx(-0.30)
+    assert mom["price moving with the bet"]["win_rate"] == 100.0
     assert "30 settled fills" in desk.analysis_text(a)
+
+
+def test_each_desk_has_its_own_control_row():
+    pool = FakePool()
+    run(desk.control(pool, "pause", asset="eth"))
+    assert pool.kv["control:eth"]["paused"] is True and "control" not in pool.kv
+    out = run(desk.control(pool, "go_live", asset="sol"))
+    assert out["action"]["asset"] == "sol" and "SOL" in out["needs_approval"]
+    run(desk.apply_approved(pool, {"mode": "live"}, "sol"))
+    assert pool.kv["control:sol"]["mode"] == "live" and "control" not in pool.kv

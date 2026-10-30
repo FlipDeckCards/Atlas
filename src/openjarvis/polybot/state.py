@@ -31,7 +31,39 @@ ALTER TABLE polybot_fills ADD COLUMN IF NOT EXISTS version TEXT;
 ALTER TABLE polybot_windows ADD COLUMN IF NOT EXISTS version TEXT;
 ALTER TABLE polybot_fills ADD COLUMN IF NOT EXISTS features JSONB;
 CREATE TABLE IF NOT EXISTS polybot_events (id BIGSERIAL PRIMARY KEY, ts TIMESTAMPTZ NOT NULL DEFAULT now(), level TEXT NOT NULL, text TEXT NOT NULL);
+ALTER TABLE polybot_events ADD COLUMN IF NOT EXISTS asset TEXT;
 """
+
+
+def kv_key(key: str, asset: str = "btc") -> str:
+    """BTC keeps the original keys ('status', 'control'); other desks get their own ('status:eth')."""
+    a = (asset or "btc").lower()
+    return key if a == "btc" else f"{key}:{a}"
+
+
+def asset_of(slug: str) -> str:
+    """cpc-eth-updown-5m-... -> eth"""
+    parts = (slug or "").split("-")
+    return parts[1] if len(parts) > 1 else ""
+
+
+class ScopedStore:
+    """One desk's view of the shared store: its own status and control keys; the ledger tables are shared (rows carry the slug)."""
+
+    def __init__(self, store, asset: str) -> None:
+        self.store, self.asset = store, (asset or "btc").lower()
+
+    async def get(self, key: str):
+        return await self.store.get(kv_key(key, self.asset))
+
+    async def put(self, key: str, value) -> None:
+        await self.store.put(kv_key(key, self.asset), value)
+
+    async def flush(self, ledger) -> None:
+        await self.store.flush(ledger)
+
+    async def close(self) -> None:
+        await self.store.close()
 
 
 def _t(ts: Optional[float]) -> Optional[dt.datetime]:
@@ -41,7 +73,8 @@ def _t(ts: Optional[float]) -> Optional[dt.datetime]:
 class Ledger:
     """Buffers fills, windows and events, and flushes them in one go."""
 
-    def __init__(self) -> None:
+    def __init__(self, asset: str = "btc") -> None:
+        self.asset = asset
         self.fills: List[Dict[str, Any]] = []
         self.windows: Dict[str, Dict[str, Any]] = {}
         self.events: List[Dict[str, Any]] = []
@@ -59,7 +92,7 @@ class Ledger:
         self.windows[f'{row["slug"]}|{row["mode"]}'] = row
 
     def event(self, level: str, text: str, ts: float) -> None:
-        self.events.append({"ts": ts, "level": level, "text": text[:500]})
+        self.events.append({"ts": ts, "level": level, "text": text[:500], "asset": self.asset})
 
     def take(self):
         out = (self.fills, list(self.windows.values()), self.events)
@@ -116,8 +149,8 @@ class PgStore:
                         w["slug"], w["mode"], _t(w["window_start"]), _t(w["window_end"]), w["price_to_beat"], w.get("close_price"), w.get("up"),
                         w["up_qty"], w["up_cost"], w["down_qty"], w["down_cost"], w.get("pnl"), _t(w.get("settled_at")), w.get("version"))
                 if events:
-                    await c.executemany("INSERT INTO polybot_events (ts, level, text) VALUES ($1,$2,$3)",
-                                        [(_t(e["ts"]), e["level"], e["text"]) for e in events])
+                    await c.executemany("INSERT INTO polybot_events (ts, level, text, asset) VALUES ($1,$2,$3,$4)",
+                                        [(_t(e["ts"]), e["level"], e["text"], e.get("asset") or "btc") for e in events])
 
     async def close(self) -> None:
         await self.pool.close()

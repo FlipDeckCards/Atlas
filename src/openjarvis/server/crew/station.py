@@ -919,7 +919,7 @@ function factorySec(key) {
   const l = mk('div', 'lbl'); l.append(mk('span', null, 'Factory'), mk('span', 'tag', b.state)); s.append(l);
   const h = mk('div', 'h', b.label); h.style.color = b.color; s.append(h);
   const about = bizAbout(key); if (about) s.append(mk('div', 'dim', about));
-  if (key === 'polymarket') s.append(deskSec());
+  if (DESK_ASSET[key]) s.append(deskSec(key));
   if (b.platform) {
     const c = S.connections && S.connections[key];
     const cr = mk('div', 'row'); cr.style.cursor = 'pointer'; cr.onclick = () => { selected = 'links'; renderSide(true); };
@@ -968,12 +968,16 @@ function factorySec(key) {
 const CATALOG_KEYS = ['etsy', 'stripe', 'google_play', 'app_store', 'deadzone'];
 const CATALOG_TITLE = { etsy: 'Listings in the shop', stripe: 'Products on Stripe', google_play: 'Apps on Google Play', app_store: 'Apps on the App Store', deadzone: 'Games on the Deadzone site' };
 // ── the Polymarket Desk: scoreboard (win rate, total profit, trades), switches and the full trade log ──
-let DESK = null, DESK_AT = 0, DESK_LOADING = false, DESK_VIEW = '', DESK_OPEN = {};
-function loadDesk(force) {
-  if (DESK_LOADING || (!force && Date.now() - DESK_AT < 15000)) return;
-  DESK_LOADING = true;
-  api('/api/crew/desk?limit=100').then(r => { DESK = r.ok ? r.data : { error: (r.data && r.data.detail) || 'The desk could not be loaded.' }; DESK_AT = Date.now(); DESK_LOADING = false;
-    if (selected === 'f:polymarket') renderSide(); }).catch(() => { DESK_LOADING = false; });
+// three desks (BTC, ETH, SOL), one Polymarket account: each factory key maps to its asset
+const DESK_ASSET = { 'polymarket': 'btc', 'polymarket-eth': 'eth', 'polymarket-sol': 'sol' };
+const DESK_KEY = { btc: 'polymarket', eth: 'polymarket-eth', sol: 'polymarket-sol' };
+let DESKS = {}, DESK_ATS = {}, DESK_LOADINGS = {}, DESK_VIEW = '', DESK_OPEN = {};
+function loadDesk(force, asset) {
+  const a = asset || 'btc';
+  if (DESK_LOADINGS[a] || (!force && Date.now() - (DESK_ATS[a] || 0) < 15000)) return;
+  DESK_LOADINGS[a] = true;
+  api('/api/crew/desk?limit=100&asset=' + a).then(r => { DESKS[a] = r.ok ? r.data : { error: (r.data && r.data.detail) || 'The desk could not be loaded.' }; DESK_ATS[a] = Date.now(); DESK_LOADINGS[a] = false;
+    if (selected === 'f:' + DESK_KEY[a]) renderSide(); }).catch(() => { DESK_LOADINGS[a] = false; });
 }
 function signed(v) { v = Number(v || 0); return (v < 0 ? '-' : '+') + money(Math.abs(v)); }
 function pnlColor(v) { return Number(v || 0) < 0 ? '#ff3344' : '#00ff99'; }
@@ -990,8 +994,10 @@ function deskCurve(points) {
   path.setAttribute('points', points.map((p, i) => X(i).toFixed(1) + ',' + Y(p[1]).toFixed(1)).join(' ')); svg.append(path);
   return svg;
 }
-function deskSec() {
-  loadDesk();
+function deskSec(key) {
+  const A = DESK_ASSET[key] || 'btc', NAME = A.toUpperCase();
+  loadDesk(false, A);
+  const DESK = DESKS[A];
   const s = mk('div'); s.style.marginTop = '10px';
   if (!DESK) { s.append(mk('div', 'dim', 'Loading the desk…')); return s; }
   if (DESK.error) { s.append(mk('div', 'dim', DESK.error)); return s; }
@@ -1002,10 +1008,10 @@ function deskSec() {
             mk('span', 'tag', (st.mode || 'paper').toUpperCase()));
   s.append(sr);
   if (st.window) s.append(mk('div', 'dim', 'Window ' + new Date(st.window.end * 1000).toLocaleTimeString() + ' close · beat ' + (st.window.price_to_beat ? money(st.window.price_to_beat) : '…')
-      + ' · BTC ' + (st.index && st.index.price ? money(st.index.price) : '…') + ' · fair Up ' + (st.fair_up != null ? (st.fair_up * 100).toFixed(0) + '%' : '…')
+      + ' · ' + NAME + ' ' + (st.index && st.index.price ? money(st.index.price) : '…') + ' · fair Up ' + (st.fair_up != null ? (st.fair_up * 100).toFixed(0) + '%' : '…')
       + ' · at risk ' + money(st.at_risk) + (st.balance != null ? ' · buying power ' + money(st.balance) : '')));
   if (st.fair_model != null) s.append(mk('div', 'dim', 'Thinking: model ' + (st.fair_model * 100).toFixed(0) + '% · market ' + (st.market_mid != null ? (st.market_mid * 100).toFixed(0) + '%' : '…')
-      + ' · BTC momentum ' + Number(st.momentum_z || 0).toFixed(1) + ' sd · extra edge from recent results ' + Number(st.extra_edge || 0).toFixed(2)));
+      + ' · ' + NAME + ' momentum ' + Number(st.momentum_z || 0).toFixed(1) + ' sd · 15-min trend ' + Number(st.trend_z || 0).toFixed(1) + ' sd · extra edge from recent results ' + Number(st.extra_edge || 0).toFixed(2)));
   // scoreboard
   const sc = DESK.score || {};
   if (!DESK_VIEW) DESK_VIEW = (sc.live && sc.live.all && sc.live.all.trades) || st.mode === 'live' ? 'live' : 'paper';
@@ -1043,20 +1049,21 @@ function deskSec() {
   // switches (going live is an Approve card from Helix, never a button here)
   const ctl = mk('div', 'desk-tabs');
   const act = (label, action, cls) => { const b = mk('button', 'b' + (cls ? ' ' + cls : ''), label);
-    b.onclick = async () => { b.disabled = true; const r = await api('/api/crew/desk/control', 'POST', { action }); b.disabled = false;
-      if (!r.ok) alert((r.data && r.data.detail) || 'Could not do that.'); loadDesk(true); }; ctl.append(b); };
+    b.onclick = async () => { b.disabled = true; const r = await api('/api/crew/desk/control', 'POST', { action, asset: A }); b.disabled = false;
+      if (!r.ok) alert((r.data && r.data.detail) || 'Could not do that.'); else if (r.data && r.data.done && action === 'go_live') alert(r.data.done);
+      loadDesk(true, A); }; ctl.append(b); };
   if (st.paused || st.kill) act('Resume', 'resume'); else act('Pause', 'pause');
   act('Kill switch', 'flatten', 'no');
-  if ((st.mode || 'paper') === 'live') act('Back to paper', 'paper');
+  if ((st.mode || 'paper') === 'live') act('Back to paper', 'paper'); else act('Go live', 'go_live');
   s.append(ctl);
-  if ((st.mode || 'paper') !== 'live') s.append(mk('div', 'dim', 'To trade real money, ask Helix to take the desk live: it puts an Approve card on your inbox.'));
+  if ((st.mode || 'paper') !== 'live') s.append(mk('div', 'dim', 'Go live puts an Approve card in the Helix inbox; real money only after you tap Approve there.'));
   const lim = DESK.limits || {};
   s.append(mk('div', 'dim', 'Limits: bankroll ' + money(lim.bankroll_usd) + ' · bets sized by confidence, up to ' + (st.window_pct || 7.5) + '% of the current balance per window' + (st.window_cap != null ? ' (' + money(st.window_cap) + ' now)' : '')
     + ' · daily stop ' + (lim.daily_loss_pct > 0 ? lim.daily_loss_pct + '% of the day\'s start' + (st.day_limit != null ? ' (' + money(st.day_limit) + ' today)' : '') : money(lim.daily_loss_usd))
     + ' · min edge ' + Number(lim.min_edge || 0).toFixed(2)));
   // trade log: every window traded, tap for each fill
   const tl = mk('div', 'lbl'); tl.style.marginTop = '12px'; tl.append(mk('span', null, 'Trade log · ' + DESK_VIEW));
-  const rf = mk('span', 'tag', '↻'); rf.style.cursor = 'pointer'; rf.onclick = () => loadDesk(true); tl.append(rf); s.append(tl);
+  const rf = mk('span', 'tag', '↻'); rf.style.cursor = 'pointer'; rf.onclick = () => loadDesk(true, A); tl.append(rf); s.append(tl);
   const rows = (DESK.trades || {})[DESK_VIEW] || [];
   if (!rows.length) s.append(mk('div', 'dim', 'No trades yet.'));
   else {
@@ -1506,9 +1513,9 @@ function fillBay(b) {
   if (b.state === 'IDLE') b.powered = true;                                     // an idle factory stays lit and its tube keeps flowing
   // the product itself: LIVE or DOWN from the server's check of its site, shown whenever no crew is working there
   // the trading desk: its own state (from the desk's heartbeat), not the crew's
-  if (b.key === 'polymarket' && b.state === 'IDLE') {
-    loadDesk();
-    const ds = DESK && !DESK.error ? DESK : null, st = ds ? (ds.status || {}) : {};
+  if (DESK_ASSET[b.key] && b.state === 'IDLE') {
+    loadDesk(false, DESK_ASSET[b.key]);
+    const D = DESKS[DESK_ASSET[b.key]], ds = D && !D.error ? D : null, st = ds ? (ds.status || {}) : {};
     b.state = !ds ? 'IDLE' : !ds.running ? 'DOWN' : (st.paused || st.kill) ? 'PAUSED' : st.mode === 'live' ? 'LIVE TRADING' : 'PAPER TRADING';
     b.powered = !!(ds && ds.running && !st.kill);
   }
@@ -1912,7 +1919,7 @@ function routeAt(rt, d) {                                  // [x, y, dx, dy] aft
 // a docking tube: straight from Helix's core into the middle of the module's inner wall (a branch factory's starts at its walkway side)
 function drawSpoke(m, t) {
   const site = S && S.products ? S.products[m.key] : null;               // a live product site keeps its tube flowing too
-  const live = m.tasks.some(k => k.status === 'running') || (m.platform && m.powered) || (m.key === 'polymarket' && m.powered) || !!(site && site.live) || m.state === 'IDLE';
+  const live = m.tasks.some(k => k.status === 'running') || (m.platform && m.powered) || (DESK_ASSET[m.key] && m.powered) || !!(site && site.live) || m.state === 'IDLE';
   const col = m.color, hw = hallW() / 2, wall = 4 * SC;
   const r1 = m.branch && walkway ? walkway.dW : core.r + 3, r2 = m.D - m.h / 2 + 2, ux = m.ux, uy = m.uy, nx = -uy, ny = ux;
   const P = (r, o) => [core.x + ux * r + nx * o, core.y + uy * r + ny * o];

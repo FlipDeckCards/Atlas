@@ -37,6 +37,7 @@ class RiskState:
     errors_in_row: int = 0
     paused: bool = False
     kill: bool = False
+    real_pnl: Optional[float] = None    # live: the whole account's change today (all desks share it), from Polymarket itself
 
     def roll(self, now: float) -> None:
         d = la_day(now)
@@ -61,6 +62,8 @@ def blocked(cfg: Config, rs: RiskState, *, now: float, data_age_s: float, book_a
     if rs.paused:
         return "Paused from Aibussol."
     dl = day_limit(cfg, rs)
+    if cfg.mode == "live" and dl > 0 and rs.real_pnl is not None and rs.real_pnl <= -dl:      # the shared account: all desks stop
+        return f"Daily loss limit reached on the account (${-rs.real_pnl:.2f} of ${dl:.2f}); back tomorrow."
     if cfg.mode == "live" and dl > 0 and rs.day_pnl <= -dl:          # paper keeps collecting data past the stop (it only notes it)
         return f"Daily loss limit reached (${-rs.day_pnl:.2f} of ${dl:.2f}); back tomorrow."
     if in_maintenance(now):

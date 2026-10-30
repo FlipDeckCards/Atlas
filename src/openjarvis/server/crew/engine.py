@@ -2388,7 +2388,7 @@ class CrewEngine:
 
                 if getattr(self, "pool", None) is None:
                     raise ValueError("the desk's database is not reachable")
-                result = await desk.apply_approved(self.pool, act.get("set") or {})
+                result = await desk.apply_approved(self.pool, act.get("set") or {}, str(act.get("asset") or "btc"))
             elif kind == "marnyx_approve":
                 outs = []
                 for name in act.get("businesses") or []:                 # goes back into Marnyx and approves every held draft of each brand

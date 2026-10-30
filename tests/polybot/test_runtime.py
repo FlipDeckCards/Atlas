@@ -15,7 +15,7 @@ class Conn:
         self.db = db
 
     async def execute(self, sql, *a):
-        if "pg_advisory_unlock_all" in sql:
+        if "pg_advisory_unlock" in sql:
             self.db["locked"] = False
         elif "INSERT INTO polybot_kv" in sql:
             self.db["kv"][a[0]] = json.loads(a[1])
