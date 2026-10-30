@@ -132,4 +132,6 @@ def settle(tape: PriceTape, window_end: int, price_to_beat: float) -> Optional[T
     if tape.coverage(first, window_end - 1) < 0.9:
         return None
     close = tape.average(first, window_end - 1)
-    return (round(close, 2), round(close, 2) >= round(price_to_beat, 2)) if close is not None else None
+    # v1.14: compare at full precision. Rounding both to the cent made nearly every XRP window (~$1.23) a "tie", and ties settle
+    # Up, so the desk booked Up for windows the exchange settled Down (the XRP scoreboard did not match the account).
+    return (round(close, 6), round(close, 6) >= round(price_to_beat, 6)) if close is not None else None

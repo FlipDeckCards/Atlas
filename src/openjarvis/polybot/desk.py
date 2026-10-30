@@ -109,7 +109,7 @@ class Desk:
                 logger.warning("push failed")
 
     def _due(self, name: str, every: float, now: float) -> bool:
-        if now - self._t[name] >= every:
+        if now - self._t.get(name, 0.0) >= every:
             self._t[name] = now
             return True
         return False
@@ -169,7 +169,7 @@ class Desk:
             if w.price_to_beat is None and now - w.start > 30:
                 k = self.tape.average(int(w.start) - 60, int(w.start) - 1)      # the same statistic, from the index itself
                 if k:
-                    w.price_to_beat = round(k, 2)
+                    w.price_to_beat = round(k, 6)                               # v1.14: full precision (XRP is ~$1.23)
             return
         # the window just ended: look for the next one every 2 seconds instead of waiting 10, and stop using the old one
         ended = w is not None and now >= w.end
@@ -326,20 +326,31 @@ class Desk:
         for slug, w in list(self.open_windows.items()):
             if now < w.end + 3 or not w.price_to_beat:
                 continue
-            res = model.settle(self.tape, int(w.end), w.price_to_beat)
-            if res is None:
-                if now > w.end + 120:                                            # index gap: ask the exchange
+            # v1.14: the exchange's own settlement is the truth for live money; the desk's index replay is only the fallback
+            # (and the paper desk's referee). Ask every 10 s; use the index if the exchange has not answered 5 minutes after the close.
+            res = None
+            if w.mode == "live" and now >= w.end + 20 and self._due(f"settle:{slug}", 10.0, now):
+                s = await self.c.settlement(slug)
+                if s is not None and (s >= 0.99 or s <= 0.01):                     # only a final $1 / $0 answer counts
+                    mine = model.settle(self.tape, int(w.end), w.price_to_beat)
+                    res = (mine[0] if mine else None), s >= 0.5
+                    if mine and mine[1] != res[1]:
+                        self.log("warn", f"{slug}: the index replay said {'UP' if mine[1] else 'DOWN'} but the exchange settled "
+                                         f"{'UP' if res[1] else 'DOWN'}; booking the exchange's result.")
+            if res is None and (w.mode != "live" or now > w.end + 300):
+                res = model.settle(self.tape, int(w.end), w.price_to_beat)
+                if res is None and now > w.end + 120:                            # index gap: ask the exchange
                     s = await self.c.settlement(slug)
-                    if s is None:
-                        continue
-                    res = (None, s >= 0.5)
-                else:
-                    continue
+                    if s is not None:
+                        res = (None, s >= 0.5)
+            if res is None:
+                continue
             close, up = res
             payout = w.inv.up_qty if up else w.inv.down_qty
             pnl = round(payout - w.inv.spent, 4)
             w.settled = True
             del self.open_windows[slug]
+            self._t.pop(f"settle:{slug}", None)
             self.rs.roll(now)
             self.rs.day_pnl += pnl
             self.hour_pnl += pnl
@@ -534,7 +545,9 @@ class Desk:
                 cap = max(0.0, equity) * self.cfg.sweep_pct / 100.0
                 sw = strategy.sweep(self.fair_model, self.mid, strategy.Book(b.best_bid, b.best_ask, w.tick, w.min_qty), inv,
                                     cap_usd=cap, budget_left=budget, min_price=self.cfg.sweep_min_price,
-                                    max_price=self.cfg.sweep_max_price, min_edge=self.cfg.sweep_min_edge)
+                                    max_price=self.cfg.sweep_max_price, min_edge=self.cfg.sweep_min_edge,
+                                    gap_bp=(None if not last or not w.price_to_beat else (last[1] - w.price_to_beat) / w.price_to_beat * 1e4),
+                                    min_gap_bp=self.cfg.sweep_min_gap_bp)
                 decisive = max(self.fair_model, 1.0 - self.fair_model) >= self.cfg.sweep_min_price + self.cfg.sweep_min_edge
                 if sw is not None:
                     want = [sw]

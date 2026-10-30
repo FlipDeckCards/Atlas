@@ -74,7 +74,7 @@ class Config:
     max_fills_per_side: int = 8         # fills per side per window (v1.8: pairs are built in steps; the unpaired cap bounds the risk)
     learn: bool = True                  # v1.1: demand extra edge while the last 20 windows are losing
     kelly_fraction: float = 0.25        # v1.2: bet size grows with the edge: this fraction of the Kelly stake
-    window_pct: float = 7.5             # at most this % of the CURRENT account balance in one window (recomputed every window)
+    window_pct: float = 10.0            # at most this % of the CURRENT account balance in one window (recomputed every window)
     min_order_usd: float = 0.25         # v1.2: smallest order worth placing
     unpaired_pct: float = 10.0          # v1.8: at most this % of the window budget riding on one side without its matching pair
     open_cutoff_s: float = 90.0         # v1.8: in the last this-many seconds, only complete pairs; never open a new one-sided leg
@@ -88,6 +88,7 @@ class Config:
     sweep_min_price: float = 0.75       # only buy the likely winner at 75c-97c ...
     sweep_max_price: float = 0.97
     sweep_min_edge: float = 0.03        # ... and only when the model's probability is at least 3c above the price after the fee
+    sweep_min_gap_bp: float = 5.0       # v1.14: ... and the index is at least this many basis points past the price to beat on that side
     open_min_price: float = 0.30        # v1.9: start a new pair only on a side priced 30-70c (the 15-20c long shots never got paired)
     open_max_price: float = 0.70
     min_buy_price: float = 0.15         # v1.5: never pay less than this for a side (long shots lost)
@@ -159,7 +160,7 @@ def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Con
         max_fills_per_side=int(_f(e, "POLYBOT_MAX_FILLS_PER_SIDE", 8, 0, 100)),
         learn=(e.get("POLYBOT_LEARN") or "true").strip().lower() in _TRUE,
         kelly_fraction=_f(e, "POLYBOT_KELLY_FRACTION", 0.25, 0.0, 1.0),
-        window_pct=_f({"v": per("POLYBOT_WINDOW_PCT")}, "v", 7.5, 0.1, 50.0),
+        window_pct=_f({"v": per("POLYBOT_WINDOW_PCT")}, "v", 10.0, 0.1, 50.0),
         min_order_usd=_f(e, "POLYBOT_MIN_ORDER_USD", 0.25, 0.01, 1000.0),
         unpaired_pct=_f(e, "POLYBOT_UNPAIRED_PCT", 10.0, 1.0, 100.0),
         open_cutoff_s=_f(e, "POLYBOT_OPEN_CUTOFF_SECONDS", 90.0, 0.0, 290.0),
@@ -173,6 +174,7 @@ def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Con
         sweep_min_price=_f(e, "POLYBOT_SWEEP_MIN_PRICE", 0.75, 0.5, 0.99),
         sweep_max_price=_f(e, "POLYBOT_SWEEP_MAX_PRICE", 0.97, 0.5, 0.99),
         sweep_min_edge=_f(e, "POLYBOT_SWEEP_MIN_EDGE", 0.03, 0.0, 0.5),
+        sweep_min_gap_bp=_f({"v": per("POLYBOT_SWEEP_MIN_GAP_BP")}, "v", 5.0, 0.0, 500.0),
         open_min_price=_f(e, "POLYBOT_OPEN_MIN_PRICE", 0.30, 0.01, 0.99),
         open_max_price=_f(e, "POLYBOT_OPEN_MAX_PRICE", 0.70, 0.01, 0.99),
         min_buy_price=_f(e, "POLYBOT_MIN_BUY_PRICE", 0.15, 0.01, 0.99),

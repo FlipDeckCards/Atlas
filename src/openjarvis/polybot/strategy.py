@@ -137,7 +137,8 @@ def taker_fee(p: float) -> float:
 
 
 def sweep(prob_up: float, mid: Optional[float], book: Book, inv: Inventory, *, cap_usd: float, budget_left: float,
-          min_price: float = 0.75, max_price: float = 0.97, min_edge: float = 0.03, mid_agree: float = 0.65) -> Optional[Quote]:
+          min_price: float = 0.75, max_price: float = 0.97, min_edge: float = 0.03, mid_agree: float = 0.65,
+          gap_bp: Optional[float] = None, min_gap_bp: float = 0.0) -> Optional[Quote]:
     """v1.13 closing sweep: near the close, buy the side that is likely to win at its asking price, but only when the model's
     probability beats the price by at least min_edge after the taker fee, the market leans the same way, and the price is in
     [min_price, max_price]. Size: the exposure left on that side (beyond what pairs cover) at most cap_usd."""
@@ -146,6 +147,11 @@ def sweep(prob_up: float, mid: Optional[float], book: Book, inv: Inventory, *, c
             continue
         if mid is None or (mid if side == "up" else 1.0 - mid) < mid_agree:
             continue
+        # v1.14: the index must already be clearly on this side of the price to beat (min_gap_bp basis points). A sweep pays ~20c
+        # and loses ~80c, so near-ties are not worth it; and a tie settles Up, so Down needs the index strictly below.
+        if min_gap_bp > 0:
+            if gap_bp is None or (gap_bp if side == "up" else -gap_bp) < min_gap_bp:
+                continue
         if prob - ask - taker_fee(ask) < min_edge:
             continue
         held, other = (inv.up_qty, inv.down_qty) if side == "up" else (inv.down_qty, inv.up_qty)

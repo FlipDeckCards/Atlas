@@ -552,6 +552,9 @@ def test_a_rejected_live_order_does_not_stop_the_desk():
 class LiveFake(FakeExchange):
     """The same window, answering the trading API like Polymarket US: orders rest, fill when the market sweeps through them."""
 
+    async def settlement(self, slug):            # v1.14: live windows settle from the exchange's answer (this window ends Up)
+        return 1.0
+
     def __init__(self, t0):
         super().__init__(t0)
         self.orders, self.n, self.cancels, self.cash = {}, 0, 0, 50.0
@@ -616,8 +619,8 @@ def test_a_full_live_window_places_fills_settles_and_alerts():
     assert ex.n >= 1 and store.fills and all(f["mode"] == "live" for f in store.fills)
     w = [x for x in store.windows if x["mode"] == "live"]
     assert len(w) == 1 and w[0]["up"] is True and w[0]["pnl"] > 0
-    assert w[0]["up_cost"] + w[0]["down_cost"] <= 3.75 + 1e-9                  # 7.5% of the $50 balance
-    assert store.kv["status"]["window_pct"] == 7.5
+    assert w[0]["up_cost"] + w[0]["down_cost"] <= 5.0 + 1e-9                   # 10% of the $50 balance (v1.14)
+    assert store.kv["status"]["window_pct"] == 10.0
     titles = [t for t, _ in pushes]
     assert "BTC · Desk entry" in titles and "BTC · Desk settled" in titles                 # an alert for the entry and for the exit
     entry = next(x for t, x in pushes if t == "BTC · Desk entry")
@@ -629,7 +632,7 @@ def test_a_full_live_window_places_fills_settles_and_alerts():
 
 def test_bet_cap_follows_the_current_balance():
     lim = from_env({}).limits
-    assert from_env({}).window_pct == 7.5
+    assert from_env({}).window_pct == 10.0
     assert strategy.Sizing(equity=50.0, window_pct=7.5).window_cap(lim) == 3.75
     assert strategy.Sizing(equity=80.0, window_pct=7.5).window_cap(lim) == 6.0      # after a good run
     assert strategy.Sizing(equity=40.0, window_pct=7.5).window_cap(lim) == 3.0      # after a bad one
@@ -902,3 +905,18 @@ def test_owner_reset_clears_the_daily_stop():
     d.rs.day_start = 90.27
     run(d.read_control(2.0))                                                  # the same reset is not applied twice
     assert d.rs.day_start == 90.27
+
+
+def test_v114_settle_full_precision_and_sweep_gap():
+    t = model.PriceTape()
+    end = 1_000_000
+    for s in range(end - 60, end):
+        t.add(s, 1.2296)                       # XRP closes a hair below a $1.2300 beat: Down, not a "tie" at $1.23
+    assert model.settle(t, end, 1.2300)[1] is False
+    assert model.settle(t, end, 1.2296)[1] is True        # an exact tie still settles Up
+    inv = strategy.Inventory()
+    b = strategy.Book(0.14, 0.16)                                 # Down asks 86c
+    assert strategy.sweep(0.05, 0.15, b, inv, cap_usd=6.0, budget_left=50, gap_bp=-2.0, min_gap_bp=5.0) is None   # too close
+    assert strategy.sweep(0.05, 0.15, b, inv, cap_usd=6.0, budget_left=50, gap_bp=0.0, min_gap_bp=5.0) is None    # tie: never Down
+    assert strategy.sweep(0.05, 0.15, b, inv, cap_usd=6.0, budget_left=50, gap_bp=-8.0, min_gap_bp=5.0).side == "down"
+    assert strategy.sweep(0.05, 0.15, b, inv, cap_usd=6.0, budget_left=50, gap_bp=None, min_gap_bp=5.0) is None
