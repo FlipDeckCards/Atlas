@@ -1100,8 +1100,8 @@ function deskSec(key) {
       const held = r.pair ? 'Pair' : (r.up_qty || r.down_qty) ? ((r.up_qty || 0) >= (r.down_qty || 0) ? 'Up' : 'Dn') : '—';
       const isSweep = (r.fills || []).some(f => f.sweep);
       // Conf: how sure the model was that the side bought would win, when it bought it (cost-weighted over the window's buys)
-      const cf = mk('span', null, r.pair ? '—' : r.conf != null ? Math.round(r.conf * 100) + '%' : '…');
-      if (r.conf != null && !r.pair) cf.style.color = r.conf >= 0.9 ? '#00ff99' : r.conf >= 0.8 ? '#00e5ff' : 'var(--text-dim)';
+      const cf = mk('span', null, r.conf != null ? Math.round(r.conf * 100) + '%' : (r.result ? 'none' : '…'));
+      if (r.conf != null) cf.style.color = r.conf >= 0.9 ? '#00ff99' : r.conf >= 0.8 ? '#00e5ff' : 'var(--text-dim)';
       row.append(mk('span', null, (r.window_end ? new Date(r.window_end).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : r.slug) + (isSweep ? ' ⚡' : '')),
                  mk('span', null, held), cf, mk('span', null, money(r.paid)), mk('span', null, r.result || 'open'));
       const p = mk('span', null, r.pnl == null ? '…' : signed(r.pnl)); if (r.pnl != null) p.style.color = pnlColor(r.pnl); row.append(p);

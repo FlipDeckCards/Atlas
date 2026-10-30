@@ -179,10 +179,14 @@ async def trades(pool, mode: str, limit: int = 50, version: str = STRATEGY_VERSI
     out = []
     for w in ws:
         uq, dq = float(w["up_qty"] or 0), float(w["down_qty"] or 0)
-        pair = uq > 0 and dq > 0 and min(uq, dq) / max(uq, dq) >= 0.9          # a matched pair wins either way: confidence does not apply
+        pair = uq > 0 and dq > 0 and min(uq, dq) / max(uq, dq) >= 0.9          # a matched pair: it wins either way, but still shows the model's view
         main = "up" if uq >= dq else "down"
-        mf = [f for f in by.get(w["slug"], []) if f["side"] == main and f["conf"] is not None]
-        wconf = None if pair or not mf else round(sum(f["conf"] * f["cost"] for f in mf) / (sum(f["cost"] for f in mf) or 1), 3)
+        wf = [f for f in by.get(w["slug"], []) if f["conf"] is not None and not f["sweep"]]
+        if pair:
+            wconf = wf[0]["conf"] if wf else None                                 # the model's odds on the side the pair opened with
+        else:
+            mf = [f for f in wf if f["side"] == main] or [f for f in by.get(w["slug"], []) if f["side"] == main and f["conf"] is not None]
+            wconf = None if not mf else round(sum(f["conf"] * f["cost"] for f in mf) / (sum(f["cost"] for f in mf) or 1), 3)
         out.append({"slug": w["slug"], "window_start": w["window_start"].isoformat() if w["window_start"] else None,
                     "window_end": w["window_end"].isoformat() if w["window_end"] else None, "price_to_beat": w["price_to_beat"],
                     "close_price": w["close_price"], "result": None if w["up"] is None else ("UP" if w["up"] else "DOWN"),
