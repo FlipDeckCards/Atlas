@@ -93,7 +93,7 @@ def budget_left(cfg: Config, rs: RiskState, balance: Optional[float]) -> float:
     """How much more the desk may commit right now: bankroll minus what is at risk, minus room kept for the daily loss limit."""
     room = cfg.limits.bankroll_usd - rs.at_risk - rs.resting
     if cfg.mode == "live" and balance is not None:
-        room = min(room, balance - 0.5)
+        room = balance - 0.5                  # live: the bankroll is whatever is in the account (buying power left), not a fixed number
     if cfg.mode != "live":
         return max(0.0, room)
     loss_room = day_limit(cfg, rs) + rs.day_pnl - rs.at_risk - rs.resting     # never be able to lose past the daily limit
