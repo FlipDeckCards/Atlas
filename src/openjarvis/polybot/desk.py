@@ -372,6 +372,7 @@ class Desk:
                 continue
             close, up = res
             self.shadow.settle(slug, up)
+            self.shadow.settle_scalp(slug, up)
             if slug in self._dir_pending:
                 self._dir_pending.discard(slug)
                 if w.inv.spent > 0:
@@ -509,6 +510,8 @@ class Desk:
         if w is not None and w.price_to_beat and b is not None:
             self.shadow.tick(w.slug, w.end - now, self.fair_model, b.best_ask,
                              None if b.best_bid is None else round(1.0 - b.best_bid, 6))
+        if w is not None and b is not None:                       # v1.18 shadow scalp: enter cheap trending sides, exit at target/stop
+            self.shadow.scalp_tick(w.slug, w.end - now, b.best_bid, b.best_ask, self.momentum)
         if self.guard and not (self.rs.kill or self.rs.paused):
             reason = self.guard
         elif w is None and not (self.rs.kill or self.rs.paused):

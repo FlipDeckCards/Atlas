@@ -1028,3 +1028,23 @@ def test_v118_cushion_blocks_thin_leads():
     # a clear cushion (z=1.0) passes
     assert directional.decide(0.70, 0.60, 0.45, (3, 1), (0, 0), z=1.0)[0] == "up"
     assert directional.cushion_z(None, 100.0, 1.0, 100.0) is None
+
+
+def test_v118_shadow_scalp_target_and_stop():
+    from openjarvis.polybot import shadow
+    s = shadow.Shadow()
+    s.scalp_tick("w1", 120, 0.63, 0.65, 0.8)               # up ask 65c, trending up: enter at 65c
+    assert s.scalp_stats["entries"] == 1 and "up" in s.scalp_open["w1"]
+    s.scalp_tick("w1", 100, 0.79, 0.81, 0.8)               # bid 79c: not yet
+    assert s.scalp_stats["target"] == 0
+    s.scalp_tick("w1", 90, 0.81, 0.83, 0.8)                # bid 81c >= 65 + 15: target hit
+    assert s.scalp_stats["target"] == 1 and s.scalp_stats["profit"] > 0
+    s.scalp_tick("w2", 120, 0.31, 0.33, -0.8)              # a down entry: down ask 0.69 is out of range -> none
+    assert s.scalp_stats["entries"] == 1
+    s.scalp_tick("w3", 120, 0.63, 0.65, 0.8)               # enter again
+    s.scalp_tick("w3", 100, 0.48, 0.50, 0.8)               # bid 48c <= 65 - 15: stop
+    assert s.scalp_stats["stop"] == 1
+    s.scalp_tick("w4", 120, 0.63, 0.65, 0.8)               # enter, then held to settlement and it loses
+    s.settle_scalp("w4", up=False)
+    assert s.scalp_stats["settled"] == 1
+    t = shadow.Shadow(); t.load(s.to_dict()); assert t.scalp_stats["target"] == 1

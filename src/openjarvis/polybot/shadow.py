@@ -58,8 +58,17 @@ def book_up(bids: Optional[List[tuple]], offers: Optional[List[tuple]], levels: 
     return round(min(0.999, max(0.001, b / (b + o))), 4)
 
 
+SCALP_ENTRY = (0.60, 0.68)      # v1.18 shadow scalp: buy a side priced 60-68c that is trending its way (momentum 0.5 sd+) ...
+SCALP_MOM = 0.5
+SCALP_TARGET = 0.15             # ... sell the moment its bid reaches entry + 15c (target), or cut at entry - 15c (stop)
+SCALP_MIN_SECS = 60             # no new entries in the last minute
+
+
 class Shadow:
     def __init__(self) -> None:
+        self.scalp_stats: Dict[str, float] = {"entries": 0, "target": 0, "stop": 0, "settled": 0, "wins": 0, "profit": 0.0, "staked": 0.0}
+        self.scalp_open: Dict[str, Dict[str, Dict[str, float]]] = {}     # slug -> side -> {entry, cost}
+        self.scalp_done: Dict[str, set] = {}                              # slug -> sides already entered this window
         self.calib: Dict[str, Dict[str, Dict[str, int]]] = {m: {lab: {"n": 0, "wins": 0} for _, _, lab in BUCKETS} for m in ("model", "book")}
         self.rec: Dict[str, Dict[str, float]] = {n: {"windows": 0, "wins": 0, "staked": 0.0, "profit": 0.0} for n in NAMES}
         self.open: Dict[str, Dict[str, List[Tuple[str, float]]]] = {}   # slug -> strategy -> legs taken
@@ -96,6 +105,44 @@ class Shadow:
             cell["n"] += 1
             cell["wins"] += 1 if won else 0
 
+    def _scalp_close(self, slug: str, side: str, pos: Dict[str, float], proceeds: float, how: str) -> None:
+        pnl = round(proceeds - pos["cost"], 4)
+        st = self.scalp_stats
+        st[how] += 1
+        st["profit"] = round(st["profit"] + pnl, 4)
+        st["staked"] = round(st["staked"] + pos["cost"], 4)
+        st["wins"] += 1 if pnl > 0 else 0
+        self.scalp_open.get(slug, {}).pop(side, None)
+
+    def scalp_tick(self, slug: str, secs_left: float, up_bid: Optional[float], up_ask: Optional[float], momentum_z: float) -> None:
+        """One look at the book: enter a side that is cheap and trending its way; exit it at target or stop as soon as the bid says so."""
+        if up_bid is None or up_ask is None:
+            return
+        sides = {"up": (up_ask, up_bid, momentum_z), "down": (1.0 - up_bid, 1.0 - up_ask, -momentum_z)}   # (buy price, sell price, trend)
+        for side, (buy, sell, mom) in sides.items():
+            pos = self.scalp_open.get(slug, {}).get(side)
+            if pos is not None:
+                if sell >= pos["entry"] + SCALP_TARGET:
+                    self._scalp_close(slug, side, pos, sell - taker_fee(sell), "target")
+                elif sell <= pos["entry"] - SCALP_TARGET:
+                    self._scalp_close(slug, side, pos, sell - taker_fee(sell), "stop")
+            elif (secs_left >= SCALP_MIN_SECS and SCALP_ENTRY[0] <= buy <= SCALP_ENTRY[1] and mom >= SCALP_MOM
+                  and side not in self.scalp_done.get(slug, set())):
+                self.scalp_open.setdefault(slug, {})[side] = {"entry": buy, "cost": buy + taker_fee(buy)}
+                self.scalp_done.setdefault(slug, set()).add(side)
+                self.scalp_stats["entries"] += 1
+
+    def settle_scalp(self, slug: str, up: bool) -> None:
+        """Positions still open at the close are held to settlement: the side pays $1 or nothing."""
+        for side, pos in self.scalp_open.pop(slug, {}).items():
+            won = (side == "up") == bool(up)
+            self.scalp_stats["settled"] += 1
+            pnl = round((1.0 if won else 0.0) - pos["cost"], 4)
+            self.scalp_stats["profit"] = round(self.scalp_stats["profit"] + pnl, 4)
+            self.scalp_stats["staked"] = round(self.scalp_stats["staked"] + pos["cost"], 4)
+            self.scalp_stats["wins"] += 1 if pnl > 0 else 0
+        self.scalp_done.pop(slug, None)
+
     def bucket_stats(self, prob: float) -> Tuple[int, int]:
         """(trades, wins) of the calibration bucket that a model confidence falls in."""
         lab = next(l for lo, hi, l in BUCKETS if lo <= prob < hi) if 0.0 <= prob < 1.01 else "90+"
@@ -115,12 +162,15 @@ class Shadow:
                        for _, _, lab in BUCKETS for c in [self.calib[kind][lab]]] for kind in ("model", "book")}
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"rec": self.rec, "calib": self.calib}
+        return {"rec": self.rec, "calib": self.calib, "scalp": self.scalp_stats}
 
     def load(self, d: Optional[Dict[str, Any]]) -> None:
         for n, r in ((d or {}).get("rec") or {}).items():
             if n in self.rec and isinstance(r, dict):
                 self.rec[n] = {k: float(r.get(k, 0) or 0) for k in ("windows", "wins", "staked", "profit")}
+        for k, v in ((d or {}).get("scalp") or {}).items():
+            if k in self.scalp_stats:
+                self.scalp_stats[k] = float(v or 0)
         for kind, rows in ((d or {}).get("calib") or {}).items():
             if kind in self.calib and isinstance(rows, dict):
                 for lab, c in rows.items():
