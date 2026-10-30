@@ -75,6 +75,8 @@ class Config:
     min_order_usd: float = 0.25         # v1.2: smallest order worth placing
     unpaired_pct: float = 10.0          # v1.8: at most this % of the window budget riding on one side without its matching pair
     open_cutoff_s: float = 90.0         # v1.8: in the last this-many seconds, only complete pairs; never open a new one-sided leg
+    open_min_price: float = 0.30        # v1.9: start a new pair only on a side priced 30-70c (the 15-20c long shots never got paired)
+    open_max_price: float = 0.70
     min_buy_price: float = 0.15         # v1.5: never pay less than this for a side (long shots lost)
     max_buy_price: float = 0.80         # v1.5: never pay more than this for a side (one miss costs nearly the whole bet)
     stale_s: float = 4.0                # data older than this pulls every quote
@@ -126,6 +128,8 @@ def from_env(env: Optional[Mapping[str, str]] = None) -> Config:
         min_order_usd=_f(e, "POLYBOT_MIN_ORDER_USD", 0.25, 0.01, 1000.0),
         unpaired_pct=_f(e, "POLYBOT_UNPAIRED_PCT", 10.0, 1.0, 100.0),
         open_cutoff_s=_f(e, "POLYBOT_OPEN_CUTOFF_SECONDS", 90.0, 0.0, 290.0),
+        open_min_price=_f(e, "POLYBOT_OPEN_MIN_PRICE", 0.30, 0.01, 0.99),
+        open_max_price=_f(e, "POLYBOT_OPEN_MAX_PRICE", 0.70, 0.01, 0.99),
         min_buy_price=_f(e, "POLYBOT_MIN_BUY_PRICE", 0.15, 0.01, 0.99),
         max_buy_price=_f(e, "POLYBOT_MAX_BUY_PRICE", 0.80, 0.01, 0.99),
         flush_s=_f(e, "POLYBOT_FLUSH_SECONDS", 60.0, 10.0, 3600.0),

@@ -132,7 +132,8 @@ class Sizing:
 
 def quotes(fair: float, book: Book, inv: Inventory, limits: Limits, *, budget_left: float, can_up: bool = True,
            can_down: bool = True, sizing: Optional[Sizing] = None, pair_margin: float = 0.03,
-           min_cost: float = 0.0, max_cost: float = 1.0, unpaired_usd: Optional[float] = None) -> List[Quote]:
+           min_cost: float = 0.0, max_cost: float = 1.0, unpaired_usd: Optional[float] = None,
+           open_min: float = 0.0, open_max: float = 1.0) -> List[Quote]:
     """The orders the desk wants resting right now in this window (possibly none)."""
     out: List[Quote] = []
     t = book.tick
@@ -151,7 +152,9 @@ def quotes(fair: float, book: Book, inv: Inventory, limits: Limits, *, budget_le
             p = min(p, _floor(book.best_ask - t, t))         # never cross
         if inv.down_qty > 0 and pair_margin is not None:      # v1.4: Up + the Down already held must cost under $1 - margin
             p = min(p, _floor(1.0 - inv.down_cost / inv.down_qty - pair_margin, t))
-        if lo <= p <= hi and min_cost - 1e-9 <= p <= max_cost + 1e-9:          # v1.5: no long shots, no expensive favourites
+        completing = inv.down_qty > inv.up_qty + 1e-9
+        band = (0.0, 1.0) if completing else (max(min_cost, open_min), min(max_cost, open_max))   # v1.9: open only near 50/50
+        if lo <= p <= hi and band[0] - 1e-9 <= p <= band[1] + 1e-9:          # v1.5: no long shots, no expensive favourites
             usd = sizing.order_usd(fair, p, limits) if sizing else limits.max_order_usd
             q = _qty(min(usd, window_left), p, book.min_qty)
             if inv.down_qty > inv.up_qty:                                     # v1.5: complete the pair exactly, no leftover
@@ -172,7 +175,9 @@ def quotes(fair: float, book: Book, inv: Inventory, limits: Limits, *, budget_le
             p = max(p, _ceil(book.best_bid + t, t))
         if inv.up_qty > 0 and pair_margin is not None:        # v1.4: Down (costs 1 - p) + the Up already held under $1 - margin
             p = max(p, _ceil(inv.up_cost / inv.up_qty + pair_margin, t))
-        if lo <= p <= hi and min_cost - 1e-9 <= 1.0 - p <= max_cost + 1e-9:
+        completing = inv.up_qty > inv.down_qty + 1e-9
+        band = (0.0, 1.0) if completing else (max(min_cost, open_min), min(max_cost, open_max))
+        if lo <= p <= hi and band[0] - 1e-9 <= 1.0 - p <= band[1] + 1e-9:
             usd = sizing.order_usd(1.0 - fair, 1.0 - p, limits) if sizing else limits.max_order_usd
             q = _qty(min(usd, window_left), 1.0 - p, book.min_qty)
             if inv.up_qty > inv.down_qty:

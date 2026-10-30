@@ -783,3 +783,16 @@ def test_a_restart_mid_window_keeps_the_window():
     p = Desk(from_env({}), None, MemStore())                                  # a paper copy leaves live windows alone
     p.restore_windows(rows, 260.0)
     assert not p.open_windows
+
+
+def test_v19_no_new_pair_on_a_long_shot_but_completing_is_fine():
+    """Live 4:40 and 5:25: Up bought at 15-20c as the first leg, Down never got cheap enough, both lost ~$0.93."""
+    lim = from_env({}).limits
+    sz = strategy.Sizing(equity=118.0, window_pct=7.5)
+    qs = strategy.quotes(0.25, Book(0.18, 0.22), Inventory(), lim, budget_left=100, sizing=sz,
+                         min_cost=0.15, max_cost=0.80, open_min=0.30, open_max=0.70, unpaired_usd=0.9)
+    assert not [q for q in qs if q.side == "up"]                              # 18c Up as a first leg: not any more
+    inv = Inventory(down_qty=2.0, down_cost=0.60)                              # holding Down at 30c: completing with cheap Up is fine
+    qs = strategy.quotes(0.40, Book(0.30, 0.50), inv, lim, budget_left=100, sizing=sz,
+                         min_cost=0.15, max_cost=0.80, open_min=0.30, open_max=0.70, unpaired_usd=0.9)
+    assert [q for q in qs if q.side == "up"]

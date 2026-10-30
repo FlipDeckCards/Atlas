@@ -414,6 +414,7 @@ class Desk:
             want = strategy.quotes(self.fair, strategy.Book(b.best_bid, b.best_ask, w.tick, w.min_qty), inv, lim, budget_left=budget,
                                    can_up=can_up, can_down=can_down, sizing=sizing,
                                    min_cost=self.cfg.min_buy_price, max_cost=self.cfg.max_buy_price,
+                                   open_min=self.cfg.open_min_price, open_max=self.cfg.open_max_price,
                                    unpaired_usd=max(0.25, sizing.window_cap(self.cfg.limits) * self.cfg.unpaired_pct / 100.0)
                                    ) if (can_up or can_down) else []
             if want:
