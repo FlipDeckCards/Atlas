@@ -4,6 +4,7 @@ and sets its resting quotes. Everything here is plain code; nothing is decided b
 from __future__ import annotations
 
 import asyncio
+import math
 import logging
 import time
 from dataclasses import dataclass, field
@@ -72,6 +73,7 @@ class Desk:
         self.mid: Optional[float] = None
         self.momentum: float = 0.0
         self.trend: float = 0.0
+        self._missing = ""
         self.learner = brain.Learner()
         self.sigma: Optional[float] = None
         self.reason: str = "Starting."
@@ -375,6 +377,8 @@ class Desk:
         last = self.tape.last()
         data_age = now - last[0] - 1 if last else 999.0
         jump = self.base.jump_usd * (last[1] / 78000.0 if last else 1.0)          # $25 at BTC $78k; the same % move for ETH and SOL
+        if self.sigma:                    # ... but never tighter than a 3.5-sd move for this coin (SOL and ETH were pulling quotes on every tick)
+            jump = max(jump, 3.5 * self.sigma * math.sqrt(self.base.jump_window_s))
         if self.tape.moved(int(now), self.base.jump_window_s) >= jump:
             if now >= self.rs.cooldown_until:
                 self.log("info", f"{self.name} moved ${self.tape.moved(int(now), self.base.jump_window_s):.0f} in {self.base.jump_window_s:.0f}s: quotes pulled.")
@@ -388,7 +392,14 @@ class Desk:
         if self.guard and not (self.rs.kill or self.rs.paused):
             reason = self.guard
         elif w is None and not (self.rs.kill or self.rs.paused):
-            reason = "Between windows: waiting for the next 5-minute market to open."
+            if now % 300 > 30:            # well into a window and still no market: say so (and log it once per window) instead of "between windows"
+                slug = f"cpc-{self.base.asset}-updown-5m-{time.strftime('%Y-%m-%d-%H%M', time.gmtime(int(now // 300) * 300))}z"
+                reason = f"Cannot find this window's {self.name} market ({slug}); retrying every 2 seconds."
+                if self._missing != slug:
+                    self._missing = slug
+                    self.log("warn", reason)
+            else:
+                reason = "Between windows: waiting for the next 5-minute market to open."
         else:
             reason = None
         reason = reason or risk.blocked(self.cfg, self.rs, now=now, data_age_s=data_age, book_age_s=(now - b.ts) if b else 999.0,
@@ -397,7 +408,8 @@ class Desk:
         if reason is None and not w.price_to_beat:
             reason = "Waiting for the price to beat."
         if reason is None and self.fair is None:
-            reason = "Not enough index history yet to price the window."
+            reason = ("Not enough index history yet to price the window." if self.fair_model is None
+                      else "The order book is one-sided or empty right now, so there is no market price to check the model against.")
         want: List[strategy.Quote] = []
         if reason is None:
             inv = self.open_windows[w.slug].inv if w.slug in self.open_windows else w.inv
