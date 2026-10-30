@@ -55,6 +55,7 @@ class Quote:
     side: str          # "up" | "down"
     price: float       # long price
     qty: float
+    taker: bool = False   # v1.12: a hedge that crosses the spread (not post-only) to finish a pair before the close
 
     @property
     def cost_per(self) -> float:
@@ -133,7 +134,7 @@ class Sizing:
 def quotes(fair: float, book: Book, inv: Inventory, limits: Limits, *, budget_left: float, can_up: bool = True,
            can_down: bool = True, sizing: Optional[Sizing] = None, pair_margin: float = 0.03,
            min_cost: float = 0.0, max_cost: float = 1.0, unpaired_usd: Optional[float] = None,
-           open_min: float = 0.0, open_max: float = 1.0) -> List[Quote]:
+           open_min: float = 0.0, open_max: float = 1.0, hedge_loss: Optional[float] = None) -> List[Quote]:
     """The orders the desk wants resting right now in this window (possibly none)."""
     out: List[Quote] = []
     t = book.tick
@@ -142,6 +143,25 @@ def quotes(fair: float, book: Book, inv: Inventory, limits: Limits, *, budget_le
     if window_left < 0.05 or fair is None:
         return out
     lo, hi = max(t, 0.01), min(1.0 - t, 0.99)
+
+    # v1.12 hedge: a leg left unpaired too long (or close to the close) is finished now, crossing the spread if it must, as long as
+    # the pair costs at most $1 + hedge_loss. That swaps a coin flip of the whole leg (-$1 to -$2.30 tonight) for a few cents at most,
+    # and when the leg is already winning the other side is cheap, so finishing the pair locks the profit in.
+    if hedge_loss is not None and window_left >= 0.05:
+        if inv.down_qty > inv.up_qty + book.min_qty / 2:
+            p = _floor(1.0 - inv.down_cost / inv.down_qty + hedge_loss, t)
+            if book.best_ask is not None:
+                p = min(p, book.best_ask)
+            q = min(round(inv.down_qty - inv.up_qty, 2), _qty(window_left, p, book.min_qty))
+            if lo <= p <= hi and q > 0:
+                return [Quote("up", p, q, taker=book.best_ask is not None and p >= book.best_ask - 1e-9)]
+        elif inv.up_qty > inv.down_qty + book.min_qty / 2:
+            p = _ceil(inv.up_cost / inv.up_qty - hedge_loss, t)
+            if book.best_bid is not None:
+                p = max(p, book.best_bid)
+            q = min(round(inv.up_qty - inv.down_qty, 2), _qty(window_left, 1.0 - p, book.min_qty))
+            if lo <= p <= hi and q > 0:
+                return [Quote("down", p, q, taker=book.best_bid is not None and p <= book.best_bid + 1e-9)]
 
     if can_up:
         edge = limits.min_edge + skew_edge(inv, "up", limits)

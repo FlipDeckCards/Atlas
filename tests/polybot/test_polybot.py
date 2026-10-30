@@ -384,7 +384,7 @@ def test_a_full_paper_window_fills_settles_and_records():
     async def sleep(_):
         ex.now += 1
 
-    cfg = from_env({"POLYBOT_FLUSH_SECONDS": "30"})
+    cfg = from_env({"POLYBOT_FLUSH_SECONDS": "30", "POLYBOT_HEDGE_MAX_LOSS": "0"})     # this one checks fills and settlement only
     ex.now = t0 - 5
     desk = Desk(cfg, ex, store, notify=notify, clock=lambda: float(ex.now), sleep=sleep)
     run(desk.run(max_steps=330))
@@ -541,7 +541,7 @@ def test_a_rejected_live_order_does_not_stop_the_desk():
     from openjarvis.polybot.client import PMError
 
     class C:
-        async def place(self, *a):
+        async def place(self, *a, **kw):
             raise PMError("would cross", 400)
 
     b = LiveBroker(C())
@@ -556,7 +556,7 @@ class LiveFake(FakeExchange):
         super().__init__(t0)
         self.orders, self.n, self.cancels, self.cash = {}, 0, 0, 50.0
 
-    async def place(self, slug, side, price, qty):
+    async def place(self, slug, side, price, qty, post_only=True):
         self.n += 1
         oid = f"o{self.n}"
         self.orders[oid] = {"id": oid, "marketSlug": slug, "side": side, "price": price, "quantity": qty, "cumQuantity": 0.0, "state": "ORDER_STATE_NEW"}
@@ -675,7 +675,7 @@ def test_a_replaced_order_that_already_filled_is_not_doubled():
         def __init__(self):
             self.orders, self.n = {}, 0
 
-        async def place(self, slug, side, price, qty):
+        async def place(self, slug, side, price, qty, post_only=True):
             self.n += 1
             self.orders[f"o{self.n}"] = {"id": f"o{self.n}", "state": "ORDER_STATE_NEW", "cumQuantity": 0.0, "quantity": qty}
             return f"o{self.n}"
@@ -835,3 +835,19 @@ def test_each_desk_can_have_its_own_window_and_size():
     from openjarvis.polybot.desk import Desk
     d = Desk(b, None, MemStore())
     assert d.span == 900 and d.slug_for(1761791400).startswith("cpc-btc-updown-15m-")
+
+
+
+def test_v112_an_unpaired_leg_is_hedged_crossing_if_needed():
+    """Tonight's 9:45 SOL loss: 3.97 Up at 58c never got its Down and lost $2.30. A hedge buys the Down at the bid (crossing)
+    when Up + Down costs at most $1.05."""
+    lim = from_env({}).limits
+    sz = strategy.Sizing(equity=120.0, window_pct=15)
+    inv = Inventory(up_qty=3.97, up_cost=2.30)
+    qs = strategy.quotes(0.40, Book(0.55, 0.58), inv, lim, budget_left=100, sizing=sz, hedge_loss=0.05)
+    assert len(qs) == 1 and qs[0].side == "down" and qs[0].qty == 3.97 and qs[0].taker
+    assert (1 - qs[0].price) + 2.30 / 3.97 <= 1.05 + 1e-9                     # the pair costs at most $1.05
+    far = strategy.quotes(0.10, Book(0.15, 0.18), inv, lim, budget_left=100, sizing=sz, hedge_loss=0.05)
+    assert far and far[0].side == "down" and not far[0].taker                    # too dear to cross: rests at the $1.05 price instead
+    win = strategy.quotes(0.90, Book(0.85, 0.88), inv, lim, budget_left=100, sizing=sz, hedge_loss=0.05)
+    assert win[0].taker and (1 - win[0].price) + 2.30 / 3.97 < 1.0               # the leg is winning: the hedge locks a profit

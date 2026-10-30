@@ -134,12 +134,12 @@ class PolymarketUS:
             return None
 
     # ── trading (signed) ─────────────────────────────────────────────────────────────
-    async def place(self, slug: str, side: str, long_price: float, qty: float) -> str:
+    async def place(self, slug: str, side: str, long_price: float, qty: float, post_only: bool = True) -> str:
         """A post-only, good-till-cancel limit order. side "up" buys Yes, "down" buys No; the price is ALWAYS the long price."""
         body = {"marketSlug": slug, "type": "ORDER_TYPE_LIMIT",
                 "intent": "ORDER_INTENT_BUY_LONG" if side == "up" else "ORDER_INTENT_BUY_SHORT",
                 "price": {"value": f"{long_price:.2f}", "currency": "USD"}, "quantity": round(qty, 2),
-                "tif": "TIME_IN_FORCE_GOOD_TILL_CANCEL", "participateDontInitiate": True,
+                "tif": "TIME_IN_FORCE_GOOD_TILL_CANCEL", "participateDontInitiate": bool(post_only),
                 "manualOrderIndicator": "MANUAL_ORDER_INDICATOR_AUTOMATIC"}
         d = await self._req("POST", "/v1/orders", body=body, auth=True, tries=1)
         oid = str(d.get("id") or "")

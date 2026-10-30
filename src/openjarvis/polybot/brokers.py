@@ -227,7 +227,7 @@ class LiveBroker:
                 # until its final state is read back (the live 2:40 / 2:45 windows doubled up exactly this way)
                 continue
             try:
-                oid = await self.c.place(slug, side, q.price, q.qty)
+                oid = await self.c.place(slug, side, q.price, q.qty, post_only=not q.taker)
             except PMError as exc:
                 if exc.status and 400 <= exc.status < 500 and exc.status != 401:   # e.g. post-only would cross, size or tick: skip this quote
                     self.rejects.append(f"{side} {q.qty:g} @ {q.price:.2f}: {exc}")

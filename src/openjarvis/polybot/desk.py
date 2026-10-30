@@ -35,6 +35,7 @@ class Window:
     mode: str = "paper"
     settled: bool = False
     fills: Dict[str, int] = field(default_factory=dict)       # fills per side in this window (v1.1: one bite per side)
+    unpaired_since: Optional[float] = None                    # v1.12: when this window last became one-sided
 
 
 def window_from_market(m: Dict[str, Any]) -> Optional[Window]:
@@ -468,6 +469,19 @@ class Desk:
                 if self.trend >= self.cfg.trend_z and can_down and not inv.up_qty > inv.down_qty + 1e-9:
                     can_down = False
                     why = why or f"{self.name} trending up over 15 min ({self.trend:+.1f} sd): no new Down."
+            # v1.12 hedge: a one-sided leg is finished (crossing if needed) once it has waited hedge_after_s, or near the close
+            wobj = self.open_windows.get(w.slug) or w
+            lopsided = abs(inv.up_qty - inv.down_qty) >= w.min_qty
+            if not lopsided:
+                wobj.unpaired_since = None
+            elif wobj.unpaired_since is None:
+                wobj.unpaired_since = now
+            hedge = None
+            if lopsided and self.cfg.hedge_max_loss > 0 and (now - wobj.unpaired_since >= self.cfg.hedge_after_s
+                                                            or w.end - now <= self.cfg.hedge_before_end_s):
+                hedge = self.cfg.hedge_max_loss
+                can_up, can_down = inv.down_qty > inv.up_qty, inv.up_qty > inv.down_qty
+                why = "Finishing the pair (hedge)."
             extra = self.learner.extra_edge if self.cfg.learn else 0.0
             lim = replace(self.cfg.limits, min_edge=round(self.cfg.limits.min_edge + extra, 3))
             equity = self.equity()
@@ -476,7 +490,7 @@ class Desk:
             want = strategy.quotes(self.fair, strategy.Book(b.best_bid, b.best_ask, w.tick, w.min_qty), inv, lim, budget_left=budget,
                                    can_up=can_up, can_down=can_down, sizing=sizing,
                                    min_cost=self.cfg.min_buy_price, max_cost=self.cfg.max_buy_price,
-                                   open_min=self.cfg.open_min_price, open_max=self.cfg.open_max_price,
+                                   open_min=self.cfg.open_min_price, open_max=self.cfg.open_max_price, hedge_loss=hedge,
                                    unpaired_usd=max(0.25, sizing.window_cap(self.cfg.limits) * self.cfg.unpaired_pct / 100.0)
                                    ) if (can_up or can_down) else []
             if want:

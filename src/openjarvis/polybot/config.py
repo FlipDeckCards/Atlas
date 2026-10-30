@@ -77,6 +77,9 @@ class Config:
     min_order_usd: float = 0.25         # v1.2: smallest order worth placing
     unpaired_pct: float = 10.0          # v1.8: at most this % of the window budget riding on one side without its matching pair
     open_cutoff_s: float = 90.0         # v1.8: in the last this-many seconds, only complete pairs; never open a new one-sided leg
+    hedge_after_s: float = 45.0         # v1.12: a leg unpaired this long ...
+    hedge_before_end_s: float = 75.0    # ... or this close to the close is finished at once (crossing the spread if needed) ...
+    hedge_max_loss: float = 0.05        # ... if the pair costs at most $1.05 a contract (0 = hedging off)
     open_min_price: float = 0.30        # v1.9: start a new pair only on a side priced 30-70c (the 15-20c long shots never got paired)
     open_max_price: float = 0.70
     min_buy_price: float = 0.15         # v1.5: never pay less than this for a side (long shots lost)
@@ -151,6 +154,9 @@ def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Con
         min_order_usd=_f(e, "POLYBOT_MIN_ORDER_USD", 0.25, 0.01, 1000.0),
         unpaired_pct=_f(e, "POLYBOT_UNPAIRED_PCT", 10.0, 1.0, 100.0),
         open_cutoff_s=_f(e, "POLYBOT_OPEN_CUTOFF_SECONDS", 90.0, 0.0, 290.0),
+        hedge_after_s=_f(e, "POLYBOT_HEDGE_AFTER_SECONDS", 45.0, 5.0, 3600.0),
+        hedge_before_end_s=_f(e, "POLYBOT_HEDGE_BEFORE_END_SECONDS", 75.0, 30.0, 600.0),
+        hedge_max_loss=_f(e, "POLYBOT_HEDGE_MAX_LOSS", 0.05, 0.0, 0.5),
         open_min_price=_f(e, "POLYBOT_OPEN_MIN_PRICE", 0.30, 0.01, 0.99),
         open_max_price=_f(e, "POLYBOT_OPEN_MAX_PRICE", 0.70, 0.01, 0.99),
         min_buy_price=_f(e, "POLYBOT_MIN_BUY_PRICE", 0.15, 0.01, 0.99),
