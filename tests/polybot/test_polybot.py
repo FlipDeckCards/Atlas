@@ -920,3 +920,10 @@ def test_v114_settle_full_precision_and_sweep_gap():
     assert strategy.sweep(0.05, 0.15, b, inv, cap_usd=6.0, budget_left=50, gap_bp=0.0, min_gap_bp=5.0) is None    # tie: never Down
     assert strategy.sweep(0.05, 0.15, b, inv, cap_usd=6.0, budget_left=50, gap_bp=-8.0, min_gap_bp=5.0).side == "down"
     assert strategy.sweep(0.05, 0.15, b, inv, cap_usd=6.0, budget_left=50, gap_bp=None, min_gap_bp=5.0) is None
+
+
+def test_v114_sweep_seconds_day_and_night():
+    c = from_env({})
+    assert c.sweep_secs_left == 60.0 and c.sweep_secs_left_night == 90.0
+    c = from_env({"POLYBOT_SWEEP_SECONDS_DAY_SOL": "45"}, asset="sol")
+    assert c.sweep_secs_left == 45.0

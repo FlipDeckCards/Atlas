@@ -84,7 +84,9 @@ class Config:
     trade_start: str = "06:30"          # v1.13: new pairs only in these hours (Los Angeles); open legs are still finished and settled
     trade_end: str = "20:30"            # (overnight books are empty, so one side fills and the other never does)
     sweep_pct: float = 5.0              # v1.13 closing sweep: at most this % of the balance on the likely winner near the close (0 = off)
-    sweep_secs_left: float = 90.0       # sweeps run from this many seconds before the close until stop_before_end_s
+    sweep_secs_left: float = 60.0       # sweeps run from this many seconds before the close until stop_before_end_s (trading hours;
+                                        # v1.14: 60 s, inside the closing average, where the result is mostly locked in)
+    sweep_secs_left_night: float = 90.0 # overnight (thin books: the market turns decisive earlier, so start sooner to get filled)
     sweep_min_price: float = 0.75       # only buy the likely winner at 75c-97c ...
     sweep_max_price: float = 0.97
     sweep_min_edge: float = 0.03        # ... and only when the model's probability is at least 3c above the price after the fee
@@ -170,7 +172,8 @@ def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Con
         trade_start=(per("POLYBOT_TRADE_START") or "06:30"),
         trade_end=(per("POLYBOT_TRADE_END") or "20:30"),
         sweep_pct=_f({"v": per("POLYBOT_SWEEP_PCT")}, "v", 5.0, 0.0, 50.0),
-        sweep_secs_left=_f(e, "POLYBOT_SWEEP_SECONDS", 90.0, 30.0, 600.0),
+        sweep_secs_left=_f({"v": per("POLYBOT_SWEEP_SECONDS_DAY")}, "v", 60.0, 30.0, 600.0),
+        sweep_secs_left_night=_f({"v": per("POLYBOT_SWEEP_SECONDS_NIGHT")}, "v", 90.0, 30.0, 600.0),
         sweep_min_price=_f(e, "POLYBOT_SWEEP_MIN_PRICE", 0.75, 0.5, 0.99),
         sweep_max_price=_f(e, "POLYBOT_SWEEP_MAX_PRICE", 0.97, 0.5, 0.99),
         sweep_min_edge=_f(e, "POLYBOT_SWEEP_MIN_EDGE", 0.03, 0.0, 0.5),

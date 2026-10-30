@@ -541,7 +541,9 @@ class Desk:
                                    ) if (can_up or can_down) else []
             # v1.13 closing sweep (all hours): in the last sweep_secs_left seconds, when the model is confident, the desk only buys the
             # likely winner (never the other side, which would undo it) at 75-97c when the model's odds beat the price
-            if self.cfg.sweep_pct > 0 and w.end - now <= self.cfg.sweep_secs_left and self.fair_model is not None:
+            sweep_s = (self.cfg.sweep_secs_left if risk.in_hours(now, self.cfg.trade_start, self.cfg.trade_end)
+                       else self.cfg.sweep_secs_left_night)                     # v1.14: 60 s by day, 90 s overnight
+            if self.cfg.sweep_pct > 0 and w.end - now <= sweep_s and self.fair_model is not None:
                 cap = max(0.0, equity) * self.cfg.sweep_pct / 100.0
                 sw = strategy.sweep(self.fair_model, self.mid, strategy.Book(b.best_bid, b.best_ask, w.tick, w.min_qty), inv,
                                     cap_usd=cap, budget_left=budget, min_price=self.cfg.sweep_min_price,
