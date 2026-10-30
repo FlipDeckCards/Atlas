@@ -19,6 +19,7 @@ from openjarvis.polybot.strategy import taker_fee
 PROVEN_N = 50
 PROVEN_EDGE = 0.03
 EXPLORE_EDGE = 0.05
+MIN_CONF = 0.55                 # never buy a side the model itself calls less likely than not, however cheap it is
 
 
 CUSHION_Z = 0.5
@@ -40,7 +41,7 @@ def decide(prob_up: float, up_cost: Optional[float], down_cost: Optional[float],
     bucket_up / bucket_down: (trades, wins) in the calibration bucket of that side's model confidence."""
     best = None
     for side, prob, cost, (n, wins) in (("up", prob_up, up_cost, bucket_up), ("down", 1.0 - prob_up, down_cost, bucket_down)):
-        if cost is None or not (0.05 <= cost <= 0.95):
+        if cost is None or not (0.05 <= cost <= 0.95) or prob < MIN_CONF:
             continue
         if z is not None and (z if side == "up" else -z) < CUSHION_Z:
             continue                                  # v1.18: the index is too close to the price to beat on this side

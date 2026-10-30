@@ -1048,3 +1048,10 @@ def test_v118_shadow_scalp_target_and_stop():
     s.settle_scalp("w4", up=False)
     assert s.scalp_stats["settled"] == 1
     t = shadow.Shadow(); t.load(s.to_dict()); assert t.scalp_stats["target"] == 1
+
+
+def test_v118_never_buy_a_side_the_model_calls_unlikely():
+    from openjarvis.polybot import directional
+    # the model says Up 43%: a 35c Up looks like an edge on paper, but the model itself says Up is the less likely outcome
+    assert directional.decide(0.43, 0.35, 0.60, (0, 0), (0, 0)) is None or directional.decide(0.43, 0.35, 0.60, (0, 0), (0, 0))[0] != "up"
+    assert directional.decide(0.43, 0.35, 0.60, (0, 0), (0, 0)) is None
