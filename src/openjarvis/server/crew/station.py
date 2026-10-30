@@ -919,7 +919,7 @@ function factorySec(key) {
   const l = mk('div', 'lbl'); l.append(mk('span', null, 'Factory'), mk('span', 'tag', b.state)); s.append(l);
   const h = mk('div', 'h', b.label); h.style.color = b.color; s.append(h);
   const about = bizAbout(key); if (about) s.append(mk('div', 'dim', about));
-  if (key === 'polymarket') { ['polymarket', 'polymarket-eth', 'polymarket-sol'].forEach(k => s.append(deskSec(k))); s.append(deskLogSec()); }   // all three desks, then one log
+  if (key === 'polymarket') { ['polymarket', 'polymarket-eth', 'polymarket-sol', 'polymarket-xrp'].forEach(k => s.append(deskSec(k))); s.append(deskLogSec()); }   // all four desks, then one log
   if (b.platform) {
     const c = S.connections && S.connections[key];
     const cr = mk('div', 'row'); cr.style.cursor = 'pointer'; cr.onclick = () => { selected = 'links'; renderSide(true); };
@@ -969,8 +969,8 @@ const CATALOG_KEYS = ['etsy', 'stripe', 'google_play', 'app_store', 'deadzone'];
 const CATALOG_TITLE = { etsy: 'Listings in the shop', stripe: 'Products on Stripe', google_play: 'Apps on Google Play', app_store: 'Apps on the App Store', deadzone: 'Games on the Deadzone site' };
 // ── the Polymarket Desk: scoreboard (win rate, total profit, trades), switches and the full trade log ──
 // three desks (BTC, ETH, SOL), one Polymarket account: each factory key maps to its asset
-const DESK_ASSET = { 'polymarket': 'btc', 'polymarket-eth': 'eth', 'polymarket-sol': 'sol' };
-const DESK_KEY = { btc: 'polymarket', eth: 'polymarket-eth', sol: 'polymarket-sol' };
+const DESK_ASSET = { 'polymarket': 'btc', 'polymarket-eth': 'eth', 'polymarket-sol': 'sol', 'polymarket-xrp': 'xrp' };
+const DESK_KEY = { btc: 'polymarket', eth: 'polymarket-eth', sol: 'polymarket-sol', xrp: 'polymarket-xrp' };
 let DESKS = {}, DESK_ATS = {}, DESK_LOADINGS = {}, DESK_VIEW = '', DESK_OPEN = {};
 function loadDesk(force, asset) {
   const a = asset || 'btc';
@@ -1000,7 +1000,7 @@ function deskSec(key) {
   const DESK = DESKS[A];
   const s = mk('div'); s.style.marginTop = '10px';
   s.style.borderTop = '1px solid rgba(0,229,255,0.25)'; s.style.paddingTop = '10px';
-  const hd = mk('div', 'h', NAME + ' desk'); hd.style.color = ({ btc: '#00e5ff', eth: '#8c8cff', sol: '#14f195' })[A]; s.append(hd);
+  const hd = mk('div', 'h', NAME + ' desk'); hd.style.color = ({ btc: '#00e5ff', eth: '#8c8cff', sol: '#14f195', xrp: '#ffb347' })[A]; s.append(hd);
   if (!DESK) { s.append(mk('div', 'dim', 'Loading the desk…')); return s; }
   if (DESK.error) { s.append(mk('div', 'dim', DESK.error)); return s; }
   const st = DESK.status || {};
@@ -1106,12 +1106,12 @@ function deskSec(key) {
 function deskLogSec() {
   const s = mk('div'); s.style.borderTop = '1px solid rgba(0,229,255,0.25)'; s.style.marginTop = '10px';
   const ev = [];
-  ['btc', 'eth', 'sol'].forEach(a => { const d = DESKS[a]; (d && !d.error ? d.events || [] : []).forEach(e => ev.push(Object.assign({ asset: a }, e))); });
+  ['btc', 'eth', 'sol', 'xrp'].forEach(a => { const d = DESKS[a]; (d && !d.error ? d.events || [] : []).forEach(e => ev.push(Object.assign({ asset: a }, e))); });
   ev.sort((x, y) => new Date(y.ts) - new Date(x.ts));
   const el = mk('div', 'lbl'); el.style.marginTop = '12px'; el.textContent = 'Desk log · all desks'; s.append(el);
   if (!ev.length) s.append(mk('div', 'dim', 'Nothing logged yet.'));
   ev.slice(0, 24).forEach(e => { const r = mk('div', 'desk-fill'); const t = mk('span', null, e.asset.toUpperCase() + ' ');
-    t.style.color = ({ btc: '#00e5ff', eth: '#8c8cff', sol: '#14f195' })[e.asset]; r.append(t, document.createTextNode(new Date(e.ts).toLocaleTimeString() + ' · ' + e.text)); s.append(r); });
+    t.style.color = ({ btc: '#00e5ff', eth: '#8c8cff', sol: '#14f195', xrp: '#ffb347' })[e.asset]; r.append(t, document.createTextNode(new Date(e.ts).toLocaleTimeString() + ' · ' + e.text)); s.append(r); });
   return s;
 }
 const CAT = {};
@@ -1523,8 +1523,8 @@ function fillBay(b) {
   // the product itself: LIVE or DOWN from the server's check of its site, shown whenever no crew is working there
   // the trading desk: its own state (from the desk's heartbeat), not the crew's
   if (b.key === 'polymarket' && b.state === 'IDLE') {
-    ['btc', 'eth', 'sol'].forEach(a => loadDesk(false, a));
-    const ds = ['btc', 'eth', 'sol'].map(a => DESKS[a]).filter(d => d && !d.error), run = ds.filter(d => d.running), st = d => d.status || {};
+    ['btc', 'eth', 'sol', 'xrp'].forEach(a => loadDesk(false, a));
+    const ds = ['btc', 'eth', 'sol', 'xrp'].map(a => DESKS[a]).filter(d => d && !d.error), run = ds.filter(d => d.running), st = d => d.status || {};
     b.state = !ds.length ? 'IDLE' : !run.length ? 'DOWN' : run.some(d => st(d).mode === 'live' && !st(d).paused && !st(d).kill) ? 'LIVE TRADING'
       : run.every(d => st(d).paused || st(d).kill) ? 'PAUSED' : 'PAPER TRADING';
     b.powered = run.some(d => !st(d).kill);

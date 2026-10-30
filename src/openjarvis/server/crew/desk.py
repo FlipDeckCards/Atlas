@@ -21,10 +21,10 @@ from openjarvis.polybot.config import Limits, from_env
 from openjarvis.polybot.state import DDL, kv_key
 
 KEY = "polymarket"                                   # the BTC desk keeps the original factory key
-KEYS = {"btc": "polymarket", "eth": "polymarket-eth", "sol": "polymarket-sol"}
+KEYS = {"btc": "polymarket", "eth": "polymarket-eth", "sol": "polymarket-sol", "xrp": "polymarket-xrp"}
 ASSET_OF = {v: k for k, v in KEYS.items()}
-NAMES = {"btc": "Polymarket Desk", "eth": "Polymarket ETH Desk", "sol": "Polymarket SOL Desk"}
-COLORS = {"btc": "#00e5ff", "eth": "#8c8cff", "sol": "#14f195"}
+NAMES = {"btc": "Polymarket Desk", "eth": "Polymarket ETH Desk", "sol": "Polymarket SOL Desk", "xrp": "Polymarket XRP Desk"}
+COLORS = {"btc": "#00e5ff", "eth": "#8c8cff", "sol": "#14f195", "xrp": "#ffb347"}
 
 
 def business(asset: str = "btc") -> Dict[str, str]:

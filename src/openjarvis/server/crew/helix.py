@@ -166,7 +166,7 @@ SETUP_STEPS = [
 ]
 CHANGES_STATION = {"trading_desk_control", "add_business", "rename_business", "remove_business", "rename_mission", "add_task", "edit_task", "retry_task",
                    "attach_document", "attach_image", "build_book", "cancel_mission", "render_redeploy", "render_restart", "render_rollback", "pause_mission", "resume_mission", "answer_crew_question"}     # tools after which the Station must redraw
-OWNER_FIXED_KEYS_HELIX = {"flipdeck", "marnyx", "deadzone", "polymarket", "polymarket-eth", "polymarket-sol"}   # the owner's rows that are not stored (see routes.OWNER_BUSINESSES)
+OWNER_FIXED_KEYS_HELIX = {"flipdeck", "marnyx", "deadzone", "polymarket", "polymarket-eth", "polymarket-sol", "polymarket-xrp"}   # the owner's rows that are not stored (see routes.OWNER_BUSINESSES)
 
 CREW_TOOLS: List[Dict[str, Any]] = [
     {"type": "function", "function": {
@@ -176,9 +176,9 @@ CREW_TOOLS: List[Dict[str, Any]] = [
                                                         "budget_usd": {"type": "number", "description": "Only if the user named a budget."}}, "required": ["goal"]}}},
     {"type": "function", "function": {
         "name": "trading_desk",
-        "description": "A Polymarket Desk (5-minute Up/Down trading bots on the Station: btc, eth, sol): whether it is running, paper or live, what it is doing now, "
+        "description": "A Polymarket Desk (5-minute Up/Down trading bots on the Station: btc, eth, sol, xrp): whether it is running, paper or live, what it is doing now, "
                        "its scoreboard (win rate, total profit, trades; paper and live kept apart), limits and latest log. Owner only.",
-        "parameters": {"type": "object", "properties": {"asset": {"type": "string", "enum": ["btc", "eth", "sol"], "description": "Which desk (default btc)."}}}}},
+        "parameters": {"type": "object", "properties": {"asset": {"type": "string", "enum": ["btc", "eth", "sol", "xrp"], "description": "Which desk (default btc)."}}}}},
     {"type": "function", "function": {
         "name": "trading_desk_control",
         "description": "Change the Polymarket Desk. pause / resume / flatten (kill switch: cancel every order) / paper happen at once. "
@@ -186,7 +186,7 @@ CREW_TOOLS: List[Dict[str, Any]] = [
                        "set_limits takes any of bankroll_usd, max_window_usd, max_order_usd, daily_loss_usd, min_edge.",
         "parameters": {"type": "object", "properties": {
             "action": {"type": "string", "enum": ["pause", "resume", "flatten", "paper", "go_live", "set_limits"]},
-            "asset": {"type": "string", "enum": ["btc", "eth", "sol"], "description": "Which desk (default btc)."},
+            "asset": {"type": "string", "enum": ["btc", "eth", "sol", "xrp"], "description": "Which desk (default btc)."},
             "bankroll_usd": {"type": "number"}, "max_window_usd": {"type": "number"}, "max_order_usd": {"type": "number"},
             "daily_loss_usd": {"type": "number"}, "min_edge": {"type": "number"}}, "required": ["action"]}}},
     {"type": "function", "function": {
@@ -614,7 +614,7 @@ async def system_addendum(ctx: CrewCtx) -> str:
          "until you can state the root cause in plain words with the file and line of the cause. Never say you looked at something unless a tool result shows it. "
          "To fix it, call start_mission with a goal that names the repo, the exact cause and the change wanted; Forge commits to a crew/ branch and the merge waits "
          "for his Approve tap. After a merge, check render_deploys to confirm the deploy went live and report it. "
-         "The Polymarket Desks are his three 5-minute Up/Down trading bots, BTC, ETH and SOL, sharing one Polymarket account (plain code trades, you supervise): "
+         "The Polymarket Desks are his four Up/Down trading bots, BTC (15-minute), ETH, SOL and XRP (5-minute), sharing one Polymarket account (plain code trades, you supervise): "
          "use trading_desk with asset btc, eth or sol for how each is "
          "doing and say the paper and live numbers separately, never mixing them; use trading_desk_control to pause, resume, flatten or go back to paper. "
          "Going live or loosening a limit only ever becomes an Approve card. Never call paper profit real money, and do not promise returns. "

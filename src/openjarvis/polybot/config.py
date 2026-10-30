@@ -99,12 +99,12 @@ class Config:
         return replace(self, limits=limits.clean())
 
 
-ASSETS = ("btc", "eth", "sol")
+ASSETS = ("btc", "eth", "sol", "xrp")
 HORIZON_S = {"5m": 300, "15m": 900, "1h": 3600}
 
 
 def assets_from_env(env: Optional[Mapping[str, str]] = None) -> list:
-    """POLYBOT_ASSETS: which desks run (default btc,eth,sol). Each desk is its own market, scoreboard and controls."""
+    """POLYBOT_ASSETS: which desks run (default btc,eth,sol,xrp). Each desk is its own market, scoreboard and controls."""
     e = os.environ if env is None else env
     raw = (e.get("POLYBOT_ASSETS") or ",".join(ASSETS)).lower()
     out = [a.strip() for a in raw.split(",") if a.strip() in ASSETS]
