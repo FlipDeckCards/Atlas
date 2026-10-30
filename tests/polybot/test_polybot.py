@@ -639,9 +639,14 @@ def test_bet_cap_follows_the_current_balance():
 def test_live_sizing_uses_buying_power_plus_money_in_open_windows():
     from openjarvis.polybot.desk import Desk
 
+    from openjarvis.polybot.desk import Window
+
     d = Desk(replace(from_env({}), mode="live"), None, MemStore())
-    d.balance, d.rs.at_risk = 60.0, 5.0
-    assert d.equity() == 65.0
+    w = Window(slug="cpc-btc-updown-5m-z", start=0, end=300, price_to_beat=1.0)
+    w.inv.up_qty, w.inv.up_cost, w.inv.down_qty, w.inv.down_cost = 18.0, 9.0, 8.0, 4.0    # 8 pairs (netted by Polymarket) + 10 Up at 50c
+    d.open_windows[w.slug] = w
+    d.balance = 60.0
+    assert d.equity() == 65.0                                                  # only the unpaired $5 is still out
     p = Desk(from_env({}), None, MemStore())                                  # paper: $50 plus today's simulated P&L
     p.rs.day_start, p.rs.day_pnl = 50.0, 4.0
     assert p.equity() == 54.0

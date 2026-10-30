@@ -359,17 +359,17 @@ class Desk:
 
         self.rs.at_risk = round(sum(w.inv.spent for w in self.open_windows.values()) + self.external_at_risk, 4)
         if self.version_start is None and self.cfg.mode == "live" and self.balance is not None:
-            self.version_start = round(self.balance + self.rs.at_risk, 2)
+            self.version_start = round(self.account_value(), 2)
             self.log("info", f"Strategy v{brain.STRATEGY_VERSION} starts with a real account value of ${self.version_start:.2f}.")
         if self.rs.day_start is None:
             if self.cfg.mode == "live":
                 if self.balance is not None:
-                    self.rs.day_start = round(self.balance + self.rs.at_risk, 2)
+                    self.rs.day_start = round(self.account_value(), 2)
                     self.log("info", f"Day starts with ${self.rs.day_start:.2f}; today's loss limit is ${risk.day_limit(self.cfg, self.rs):.2f}.")
             else:
                 self.rs.day_start = self.cfg.limits.bankroll_usd
         if self.cfg.mode == "live" and self.balance is not None and self.rs.day_start is not None:
-            self.rs.real_pnl = round(self.balance + self.rs.at_risk - self.rs.day_start, 2)
+            self.rs.real_pnl = round(self.account_value() - self.rs.day_start, 2)
         self.rs.resting = round(self.broker.resting_cost, 4)
         w, b = self.window, self.book
         last = self.tape.last()
@@ -445,11 +445,24 @@ class Desk:
         self.reason = reason
         self.rs.errors_in_row = 0
 
+    def account_value(self) -> float:
+        """Live: what the account is worth. Polymarket nets a matched Up + Down pair at once (each pair is worth $1 for sure,
+        so that money is back in buying power straight away); only the unmatched part of a window is still out. Adding everything
+        paid on top of buying power counted the pairs twice (6:08 PM: the Station showed $124.86 while the account was $116)."""
+        unpaired = 0.0
+        for w in self.open_windows.values():
+            i = w.inv
+            if i.up_qty > i.down_qty and i.up_qty > 0:
+                unpaired += (i.up_qty - i.down_qty) * i.up_cost / i.up_qty
+            elif i.down_qty > i.up_qty and i.down_qty > 0:
+                unpaired += (i.down_qty - i.up_qty) * i.down_cost / i.down_qty
+        return (self.balance or 0.0) + unpaired + self.external_at_risk
+
     def equity(self) -> float:
         """The account's value right now, for sizing: live = buying power + what is in open windows; paper = the simulated
         starting balance plus today's simulated P&L."""
         if self.cfg.mode == "live" and self.balance is not None:
-            return round(max(0.0, self.balance + self.rs.at_risk), 2)
+            return round(max(0.0, self.account_value()), 2)
         start = self.rs.day_start if self.rs.day_start is not None else self.cfg.limits.bankroll_usd
         return round(max(0.0, start + self.rs.day_pnl), 2)
 
@@ -471,7 +484,7 @@ class Desk:
             "resting": [{"side": r.quote.side, "price": r.quote.price, "qty": r.left} for r in self.broker.resting.values()],
             "rejects": list(getattr(self.broker, "rejects", []))[-5:],
             "equity": self.equity(), "window_pct": self.cfg.window_pct, "unpaired_pct": self.cfg.unpaired_pct, "version_start": self.version_start,
-            "account_value": round(self.balance + self.rs.at_risk, 2) if self.cfg.mode == "live" and self.balance is not None else None,
+            "account_value": round(self.account_value(), 2) if self.cfg.mode == "live" and self.balance is not None else None,
             "window_cap": strategy.Sizing(equity=self.equity(), window_pct=self.cfg.window_pct).window_cap(self.cfg.limits),
             "balance": self.balance, "day": self.rs.day, "day_pnl": round(self.rs.day_pnl, 2),
             "day_start": self.rs.day_start, "day_limit": risk.day_limit(self.cfg, self.rs), "at_risk": round(self.rs.at_risk, 2),
