@@ -146,16 +146,26 @@ async def trades(pool, mode: str, limit: int = 50, version: str = STRATEGY_VERSI
         fs = await c.fetch("SELECT * FROM polybot_fills WHERE mode = $1 AND slug = ANY($2::text[]) ORDER BY ts", mode, slugs) if slugs else []
     by: Dict[str, List[Dict[str, Any]]] = {}
     for f in fs:
+        feat = _j(f["features"]) if "features" in f.keys() else {}
+        m = feat.get("model")
+        # confidence: the model's probability that the side bought wins, at the moment it was bought
+        conf = None if not isinstance(m, (int, float)) else round(m if f["side"] == "up" else 1.0 - m, 3)
         by.setdefault(f["slug"], []).append({"ts": f["ts"].isoformat(), "side": f["side"], "price": f["price"], "qty": f["qty"],
-                                             "sweep": _j(f["features"]).get("sweep") is True if "features" in f.keys() else False,
+                                             "sweep": feat.get("sweep") is True, "conf": conf,
                                              "cost": round(f["cost"], 2), "fair": round(f["fair"], 3) if f["fair"] is not None else None})
     out = []
     for w in ws:
+        uq, dq = float(w["up_qty"] or 0), float(w["down_qty"] or 0)
+        pair = uq > 0 and dq > 0 and min(uq, dq) / max(uq, dq) >= 0.9          # a matched pair wins either way: confidence does not apply
+        main = "up" if uq >= dq else "down"
+        mf = [f for f in by.get(w["slug"], []) if f["side"] == main and f["conf"] is not None]
+        wconf = None if pair or not mf else round(sum(f["conf"] * f["cost"] for f in mf) / (sum(f["cost"] for f in mf) or 1), 3)
         out.append({"slug": w["slug"], "window_start": w["window_start"].isoformat() if w["window_start"] else None,
                     "window_end": w["window_end"].isoformat() if w["window_end"] else None, "price_to_beat": w["price_to_beat"],
                     "close_price": w["close_price"], "result": None if w["up"] is None else ("UP" if w["up"] else "DOWN"),
                     "up_qty": w["up_qty"], "up_cost": w["up_cost"], "down_qty": w["down_qty"], "down_cost": w["down_cost"],
-                    "paid": round((w["up_cost"] or 0) + (w["down_cost"] or 0), 2), "pnl": w["pnl"], "fills": by.get(w["slug"], [])})
+                    "paid": round((w["up_cost"] or 0) + (w["down_cost"] or 0), 2), "pnl": w["pnl"], "fills": by.get(w["slug"], []),
+                    "pair": pair, "conf": wconf})
     return out
 
 

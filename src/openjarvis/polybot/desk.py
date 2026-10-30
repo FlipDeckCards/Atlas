@@ -320,7 +320,9 @@ class Desk:
             end = time.strftime("%H:%M:%S UTC", time.gmtime(w.end)) if w else "?"
             text = (f"ENTRY {self.cfg.mode.upper()}{' [SWEEP]' if (f.slug, f.side) in self._sweeps else ''} · {self.name} {self.horizon} Up/Down · {side} · strike (price to beat) {k} · "
                     f"expires {end} · {f.qty:g} contracts at ${pay:.2f} = ${f.cost:.2f} · stop: none, held to settlement (max loss ${f.cost:.2f}) · "
-                    f"target: $1.00 per contract (${f.qty:.2f}) · fair value then {self.fair if self.fair is not None else 0:.2f}")
+                    f"target: $1.00 per contract (${f.qty:.2f}) · fair value then {self.fair if self.fair is not None else 0:.2f}"
+                    + ("" if self.fair_model is None else
+                       f" · confidence {(self.fair_model if f.side == 'up' else 1 - self.fair_model):.0%} (model's odds this side wins)"))
             self.log("trade", text)
             if self.cfg.mode == "live":
                 await self.push("Desk entry", text)

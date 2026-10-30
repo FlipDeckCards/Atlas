@@ -139,6 +139,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
   .desk-tabs button { flex:1; }
   .desk-tabs button.on { border-color:var(--cyan, #00e5ff); color:var(--cyan, #00e5ff); }
   .desk-fill { font-size:10px; color:var(--text-dim); padding:2px 0 2px 14px; }
+  .pnl-row.conf { grid-template-columns:1.3fr 0.7fr 0.7fr 1fr 1fr 1fr; }
   .pnl-row.hd { font-size:9px; letter-spacing:1px; color:var(--text-dim); text-transform:uppercase; }
   .pnl-note { font-size:10px; color:var(--text-dim); margin-top:5px; line-height:1.5; opacity:0.8; }
   .msg { font-size:11px; min-height:14px; margin-top:6px; color:var(--green); overflow-wrap:anywhere; }
@@ -1087,20 +1088,24 @@ function deskSec(key) {
   if (!rows.length) s.append(mk('div', 'dim', 'No trades yet.'));
   else {
     const tb = mk('div', 'pnl-table');
-    const hd = mk('div', 'pnl-row hd'); ['Window', 'Held', 'Paid', 'Result', 'P&L'].forEach(x => hd.append(mk('span', null, x))); tb.append(hd);
+    const hd = mk('div', 'pnl-row conf hd'); ['Window', 'Held', 'Conf', 'Paid', 'Result', 'P&L'].forEach(x => hd.append(mk('span', null, x))); tb.append(hd);
     rows.forEach(r => {
-      const row = mk('div', 'pnl-row'); row.style.cursor = 'pointer';
-      const held = (r.up_qty ? 'Up ' + Number(r.up_qty).toFixed(2) : '') + (r.up_qty && r.down_qty ? ' · ' : '') + (r.down_qty ? 'Dn ' + Number(r.down_qty).toFixed(2) : '');
+      const row = mk('div', 'pnl-row conf'); row.style.cursor = 'pointer';
+      // Held: the side the window rides on (Pair = matched Up + Down, wins either way); contract counts are in the tap-open detail
+      const held = r.pair ? 'Pair' : (r.up_qty || r.down_qty) ? ((r.up_qty || 0) >= (r.down_qty || 0) ? 'Up' : 'Dn') : '—';
       const isSweep = (r.fills || []).some(f => f.sweep);
-      row.append(mk('span', null, (r.window_end ? new Date(r.window_end).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : r.slug) + (isSweep ? ' [SWEEP]' : '')),
-                 mk('span', null, held || '—'), mk('span', null, money(r.paid)), mk('span', null, r.result || 'open'));
+      // Conf: how sure the model was that the side bought would win, when it bought it (cost-weighted over the window's buys)
+      const cf = mk('span', null, r.pair ? '—' : r.conf != null ? Math.round(r.conf * 100) + '%' : '…');
+      if (r.conf != null && !r.pair) cf.style.color = r.conf >= 0.9 ? '#00ff99' : r.conf >= 0.8 ? '#00e5ff' : 'var(--text-dim)';
+      row.append(mk('span', null, (r.window_end ? new Date(r.window_end).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : r.slug) + (isSweep ? ' ⚡' : '')),
+                 mk('span', null, held), cf, mk('span', null, money(r.paid)), mk('span', null, r.result || 'open'));
       const p = mk('span', null, r.pnl == null ? '…' : signed(r.pnl)); if (r.pnl != null) p.style.color = pnlColor(r.pnl); row.append(p);
       row.onclick = () => { DESK_OPEN[r.slug] = !DESK_OPEN[r.slug]; renderSide(); };
       tb.append(row);
       if (DESK_OPEN[r.slug]) {
         tb.append(mk('div', 'desk-fill', (r.window_end ? new Date(r.window_end).toLocaleString() + ' close · ' : '') + 'beat ' + (r.price_to_beat ? money(r.price_to_beat) : '?') + ' · close ' + (r.close_price ? money(r.close_price) : '?') + ' · ' + r.slug));
         (r.fills || []).forEach(f => tb.append(mk('div', 'desk-fill', new Date(f.ts).toLocaleTimeString() + ' · bought ' + (f.side === 'up' ? 'UP' : 'DOWN') + ' ' + Number(f.qty).toFixed(2)
-          + ' @ $' + (f.side === 'up' ? Number(f.price) : 1 - Number(f.price)).toFixed(2) + ' = ' + money(f.cost) + (f.sweep ? ' [SWEEP]' : '') + (f.fair != null ? ' · fair Up then ' + (f.fair * 100).toFixed(0) + '%' : ''))));
+          + ' @ $' + (f.side === 'up' ? Number(f.price) : 1 - Number(f.price)).toFixed(2) + ' = ' + money(f.cost) + (f.sweep ? ' [SWEEP]' : '') + (f.conf != null ? ' · model ' + Math.round(f.conf * 100) + '% sure' : '') + (f.fair != null ? ' · fair Up then ' + (f.fair * 100).toFixed(0) + '%' : ''))));
       }
     });
     s.append(tb);
