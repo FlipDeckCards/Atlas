@@ -83,6 +83,8 @@ class Config:
     hedge_max_loss: float = 0.05        # ... if the pair costs at most $1.05 a contract (0 = hedging off)
     trade_start: str = "06:30"          # v1.13: new pairs only in these hours (Los Angeles); open legs are still finished and settled
     trade_end: str = "20:30"            # (overnight books are empty, so one side fills and the other never does)
+    pairs_only: bool = True             # v1.16 back to basics: pairs only, both sides bought at once; no sweeps, no resting legs
+    pair_max_cost: float = 0.97         # v1.16: a pair opens only when both sides together cost at most this
     sweep_pct: float = 5.0              # v1.13 closing sweep: at most this % of the balance on the likely winner near the close (0 = off)
     sweep_secs_left: float = 60.0       # sweeps run from this many seconds before the close until stop_before_end_s (trading hours;
                                         # v1.14: 60 s, inside the closing average, where the result is mostly locked in)
@@ -171,6 +173,8 @@ def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Con
         hedge_max_loss=_f(e, "POLYBOT_HEDGE_MAX_LOSS", 0.05, 0.0, 0.5),
         trade_start=(per("POLYBOT_TRADE_START") or "06:30"),
         trade_end=(per("POLYBOT_TRADE_END") or "20:30"),
+        pairs_only=(e.get("POLYBOT_PAIRS_ONLY") or "true").strip().lower() in _TRUE,
+        pair_max_cost=_f(e, "POLYBOT_PAIR_MAX_COST", 0.97, 0.5, 1.0),
         sweep_pct=_f({"v": per("POLYBOT_SWEEP_PCT")}, "v", 5.0, 0.0, 50.0),
         sweep_secs_left=_f({"v": per("POLYBOT_SWEEP_SECONDS_DAY")}, "v", 60.0, 30.0, 600.0),
         sweep_secs_left_night=_f({"v": per("POLYBOT_SWEEP_SECONDS_NIGHT")}, "v", 90.0, 30.0, 600.0),

@@ -239,3 +239,25 @@ def quotes(fair: float, book: Book, inv: Inventory, limits: Limits, *, budget_le
             if q > 0:
                 out.append(Quote("down", p, q))
     return out
+
+
+def pair_takes(best_bid: Optional[float], best_ask: Optional[float], bid_size: float, ask_size: float, budget_usd: float,
+               window_cap_usd: float, min_qty: float, max_cost: float = 0.97) -> Tuple[List["Quote"], str]:
+    """v1.16 back to basics: open a pair ONLY by buying both sides at the same moment at the current asks, when the two together
+    cost at most max_cost and the book has size on both sides for the whole pair. Nothing rests, so no one-sided leg is opened on
+    a hope the other side will fill. Returns (quotes, why)."""
+    if best_bid is None or best_ask is None:
+        return [], "Waiting for both sides of the book."
+    up = round(best_ask, 6)
+    down = round(1.0 - best_bid, 6)
+    pair = up + down
+    if pair > max_cost + 1e-9:
+        return [], f"Both sides cost {pair * 100:.0f}c together (limit {max_cost * 100:.0f}c): no pair this window."
+    usd = min(budget_usd, window_cap_usd)
+    q = _qty(usd, pair, min_qty)
+    q = min(q, math.floor(ask_size / min_qty + 1e-9) * min_qty, math.floor(bid_size / min_qty + 1e-9) * min_qty)
+    q = round(q, 6)
+    if q < min_qty:
+        return [], "Not enough size on both sides at once for a pair."
+    return ([Quote("up", up, q, taker=True), Quote("down", round(best_bid, 6), q, taker=True)],
+            f"Opening a pair: buying both sides now for {pair * 100:.0f}c.")

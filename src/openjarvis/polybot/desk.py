@@ -560,9 +560,11 @@ class Desk:
             elif wobj.unpaired_since is None:
                 wobj.unpaired_since = now
             hedge = None
-            if lopsided and self.cfg.hedge_max_loss > 0 and (now - wobj.unpaired_since >= self.cfg.hedge_after_s
-                                                            or w.end - now <= self.cfg.hedge_before_end_s):
-                hedge = self.cfg.hedge_max_loss
+            # v1.16: a leftover leg may only be completed at $1.00 or less (never at a loss), and only if it is lopsided
+            hedge_cap = 0.0 if self.cfg.pairs_only else self.cfg.hedge_max_loss
+            if lopsided and (hedge_cap > 0 or self.cfg.pairs_only) and (now - wobj.unpaired_since >= self.cfg.hedge_after_s
+                                                                       or w.end - now <= self.cfg.hedge_before_end_s):
+                hedge = hedge_cap
                 can_up, can_down = inv.down_qty > inv.up_qty, inv.up_qty > inv.down_qty
                 why = "Finishing the pair (hedge)."
             extra = self.learner.extra_edge if self.cfg.learn else 0.0
@@ -580,7 +582,22 @@ class Desk:
             # likely winner (never the other side, which would undo it) at 75-97c when the model's odds beat the price
             sweep_s = (self.cfg.sweep_secs_left if risk.in_hours(now, self.cfg.trade_start, self.cfg.trade_end)
                        else self.cfg.sweep_secs_left_night)                     # v1.14: 60 s by day, 90 s overnight
-            if self.cfg.sweep_pct > 0 and w.end - now <= sweep_s and self.fair_model is not None:
+            if self.cfg.pairs_only:
+                # v1.16: the only way in is a pair bought on both sides at once; no sweeps, no resting quotes
+                want = []
+                if not lopsided:
+                    budget_usd = min(budget, sizing.window_cap(self.cfg.limits))
+                    want, why = strategy.pair_takes(b.best_bid, b.best_ask,
+                                                    b.offers[0][1] if b.offers else 0.0, b.bids[0][1] if b.bids else 0.0,
+                                                    budget_usd, sizing.window_cap(self.cfg.limits), w.min_qty, self.cfg.pair_max_cost) \
+                        if inv.spent <= 0 else ([], "Already in this window; holding to settlement.")
+                elif not want:
+                    why = why or "Finishing the pair (one leg was left open)."
+                if hedge is not None and lopsided:
+                    want = want or strategy.quotes(self.fair, strategy.Book(b.best_bid, b.best_ask, w.tick, w.min_qty), inv, lim,
+                                                   budget_left=budget, can_up=can_up, can_down=can_down, sizing=sizing,
+                                                   hedge_loss=hedge, min_cost=self.cfg.min_buy_price, max_cost=self.cfg.max_buy_price)
+            if self.cfg.sweep_pct > 0 and not self.cfg.pairs_only and w.end - now <= sweep_s and self.fair_model is not None:
                 cap = max(0.0, equity) * self.cfg.sweep_pct / 100.0
                 sw = strategy.sweep(self.fair_model, self.mid, strategy.Book(b.best_bid, b.best_ask, w.tick, w.min_qty), inv,
                                     cap_usd=cap, budget_left=budget, min_price=self.cfg.sweep_min_price,
@@ -690,7 +707,7 @@ class Desk:
         except Exception:
             logger.exception("pair history unreadable; learned sizing starts empty")
             return
-        floor = "1.14" if self.base.asset == "xrp" else "1.12"
+        floor = "1.16"
         by: Dict[str, List[Dict[str, Any]]] = {}
         ups: Dict[str, bool] = {}
         for r in rows:

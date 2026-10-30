@@ -384,7 +384,7 @@ def test_a_full_paper_window_fills_settles_and_records():
     async def sleep(_):
         ex.now += 1
 
-    cfg = from_env({"POLYBOT_FLUSH_SECONDS": "30", "POLYBOT_HEDGE_MAX_LOSS": "0"})     # this one checks fills and settlement only
+    cfg = from_env({"POLYBOT_FLUSH_SECONDS": "30", "POLYBOT_HEDGE_MAX_LOSS": "0", "POLYBOT_PAIRS_ONLY": "false"})     # this one checks fills and settlement only
     ex.now = t0 - 5
     desk = Desk(cfg, ex, store, notify=notify, clock=lambda: float(ex.now), sleep=sleep)
     run(desk.run(max_steps=330))
@@ -412,7 +412,7 @@ def test_pause_from_aibussol_stops_quoting():
         ex.now += 1
 
     ex.now = t0 - 5
-    desk = Desk(from_env({}), ex, store, clock=lambda: float(ex.now), sleep=sleep)
+    desk = Desk(from_env({"POLYBOT_PAIRS_ONLY": "false"}), ex, store, clock=lambda: float(ex.now), sleep=sleep)
     run(desk.run(max_steps=200))
     assert store.fills == [] and desk.reason.startswith("Paused")
 
@@ -610,7 +610,7 @@ def test_a_full_live_window_places_fills_settles_and_alerts():
     async def sleep(_):
         ex.now += 1
 
-    cfg = from_env({"POLYBOT_ALLOW_LIVE": "true", "POLYMARKET_KEY_ID": "k", "POLYMARKET_SECRET_KEY": "s"})
+    cfg = from_env({"POLYBOT_ALLOW_LIVE": "true", "POLYMARKET_KEY_ID": "k", "POLYMARKET_SECRET_KEY": "s", "POLYBOT_PAIRS_ONLY": "false"})
     ex.now = t0 - 5
     desk = Desk(cfg, ex, store, notify=notify, clock=lambda: float(ex.now), sleep=sleep)
     run(desk.run(max_steps=330))
@@ -722,7 +722,7 @@ def test_a_closed_market_is_not_an_api_error():
 
     store = MemStore()
     ex.now = t0 - 5
-    d = Desk(from_env({}), ex, store, clock=lambda: float(ex.now), sleep=sleep)
+    d = Desk(from_env({"POLYBOT_PAIRS_ONLY": "false"}), ex, store, clock=lambda: float(ex.now), sleep=sleep)
     run(d.run(max_steps=330))
     texts = " ".join(e["text"] for e in store.events)
     assert "API errors in a row" not in texts and "EXIT (settled)" in texts
@@ -981,3 +981,20 @@ def test_v115_book_view_and_calibration():
     assert t["model"][4] == {"bucket": "80-89", "trades": 2, "won": 1, "win_rate": 50.0}
     assert t["book"][2]["trades"] == 1 and t["book"][2]["won"] == 1      # 60% -> the 60-69 bucket, won
     s2 = shadow.Shadow(); s2.load(s.to_dict()); assert s2.calib_table() == t
+
+
+def test_v116_pairs_only_takes_both_sides_at_once():
+    from openjarvis.polybot import strategy
+    # asks 0.47 (up) and 0.50 (down, from a 0.50 bid): 97c together, enough size on both sides
+    q, why = strategy.pair_takes(0.50, 0.47, bid_size=100, ask_size=100, budget_usd=5.0, window_cap_usd=6.0, min_qty=0.01)
+    assert len(q) == 2 and all(x.taker for x in q)
+    assert {x.side for x in q} == {"up", "down"} and abs(sum(x.cost_per for x in q) - 0.97) < 1e-6
+    assert q[0].qty == q[1].qty and q[0].qty * 0.97 <= 5.0 + 1e-9
+    # both sides together cost more than 97c: no pair, nothing rests
+    assert strategy.pair_takes(0.50, 0.49, 100, 100, 5.0, 6.0, 0.01)[0] == []
+    # no size on one side: no pair
+    assert strategy.pair_takes(0.50, 0.47, bid_size=0.004, ask_size=100, budget_usd=5.0, window_cap_usd=6.0, min_qty=0.01)[0] == []
+    # one side of the book empty: nothing
+    assert strategy.pair_takes(None, 0.47, 100, 100, 5.0, 6.0, 0.01)[0] == []
+    from openjarvis.polybot.config import from_env
+    assert from_env({}).pairs_only is True and from_env({}).pair_max_cost == 0.97
