@@ -919,7 +919,7 @@ function factorySec(key) {
   const l = mk('div', 'lbl'); l.append(mk('span', null, 'Factory'), mk('span', 'tag', b.state)); s.append(l);
   const h = mk('div', 'h', b.label); h.style.color = b.color; s.append(h);
   const about = bizAbout(key); if (about) s.append(mk('div', 'dim', about));
-  if (DESK_ASSET[key]) s.append(deskSec(key));
+  if (key === 'polymarket') ['polymarket', 'polymarket-eth', 'polymarket-sol'].forEach(k => s.append(deskSec(k)));   // all three desks, one after another
   if (b.platform) {
     const c = S.connections && S.connections[key];
     const cr = mk('div', 'row'); cr.style.cursor = 'pointer'; cr.onclick = () => { selected = 'links'; renderSide(true); };
@@ -977,7 +977,7 @@ function loadDesk(force, asset) {
   if (DESK_LOADINGS[a] || (!force && Date.now() - (DESK_ATS[a] || 0) < 15000)) return;
   DESK_LOADINGS[a] = true;
   api('/api/crew/desk?limit=100&asset=' + a).then(r => { DESKS[a] = r.ok ? r.data : { error: (r.data && r.data.detail) || 'The desk could not be loaded.' }; DESK_ATS[a] = Date.now(); DESK_LOADINGS[a] = false;
-    if (selected === 'f:' + DESK_KEY[a]) renderSide(); }).catch(() => { DESK_LOADINGS[a] = false; });
+    if (selected === 'f:polymarket') renderSide(); }).catch(() => { DESK_LOADINGS[a] = false; });
 }
 function signed(v) { v = Number(v || 0); return (v < 0 ? '-' : '+') + money(Math.abs(v)); }
 function pnlColor(v) { return Number(v || 0) < 0 ? '#ff3344' : '#00ff99'; }
@@ -999,11 +999,8 @@ function deskSec(key) {
   loadDesk(false, A);
   const DESK = DESKS[A];
   const s = mk('div'); s.style.marginTop = '10px';
-  // the three desks (one Polymarket account): jump between them from any of them
-  const sw = mk('div', 'desk-tabs');
-  ['btc', 'eth', 'sol'].forEach(x => { const b = mk('button', 'b' + (x === A ? ' on' : ''), x.toUpperCase() + ' desk');
-    b.onclick = () => { selected = 'f:' + DESK_KEY[x]; renderSide(true); }; sw.append(b); });
-  s.append(sw);
+  s.style.borderTop = '1px solid rgba(0,229,255,0.25)'; s.style.paddingTop = '10px';
+  const hd = mk('div', 'h', NAME + ' desk'); hd.style.color = ({ btc: '#00e5ff', eth: '#8c8cff', sol: '#14f195' })[A]; s.append(hd);
   if (!DESK) { s.append(mk('div', 'dim', 'Loading the desk…')); return s; }
   if (DESK.error) { s.append(mk('div', 'dim', DESK.error)); return s; }
   const st = DESK.status || {};
@@ -1518,11 +1515,12 @@ function fillBay(b) {
   if (b.state === 'IDLE') b.powered = true;                                     // an idle factory stays lit and its tube keeps flowing
   // the product itself: LIVE or DOWN from the server's check of its site, shown whenever no crew is working there
   // the trading desk: its own state (from the desk's heartbeat), not the crew's
-  if (DESK_ASSET[b.key] && b.state === 'IDLE') {
-    loadDesk(false, DESK_ASSET[b.key]);
-    const D = DESKS[DESK_ASSET[b.key]], ds = D && !D.error ? D : null, st = ds ? (ds.status || {}) : {};
-    b.state = !ds ? 'IDLE' : !ds.running ? 'DOWN' : (st.paused || st.kill) ? 'PAUSED' : st.mode === 'live' ? 'LIVE TRADING' : 'PAPER TRADING';
-    b.powered = !!(ds && ds.running && !st.kill);
+  if (b.key === 'polymarket' && b.state === 'IDLE') {
+    ['btc', 'eth', 'sol'].forEach(a => loadDesk(false, a));
+    const ds = ['btc', 'eth', 'sol'].map(a => DESKS[a]).filter(d => d && !d.error), run = ds.filter(d => d.running), st = d => d.status || {};
+    b.state = !ds.length ? 'IDLE' : !run.length ? 'DOWN' : run.some(d => st(d).mode === 'live' && !st(d).paused && !st(d).kill) ? 'LIVE TRADING'
+      : run.every(d => st(d).paused || st(d).kill) ? 'PAUSED' : 'PAPER TRADING';
+    b.powered = run.some(d => !st(d).kill);
   }
   const site = S && S.products ? S.products[b.key] : null;
   if (site && b.state === 'IDLE') {

@@ -307,11 +307,7 @@ OWNER_BUSINESSES = (
     {"key": "deadzone", "name": "Deadzone", "url": "https://cybervoid-6tbo.onrender.com", "color": "#ff3344",
      "description": "Deadzone is a mobile game studio project, with its backend and iOS build kept here."},
     {"key": "polymarket", "name": "Polymarket Desk", "url": "https://polymarket.us", "color": "#00e5ff",
-     "description": "Polymarket Desk is a trading bot that makes markets in Polymarket US's 5-minute BTC Up/Down contracts."},
-    {"key": "polymarket-eth", "name": "Polymarket ETH Desk", "url": "https://polymarket.us", "color": "#8c8cff",
-     "description": "Polymarket ETH Desk is a trading bot that makes markets in Polymarket US's 5-minute ETH Up/Down contracts."},
-    {"key": "polymarket-sol", "name": "Polymarket SOL Desk", "url": "https://polymarket.us", "color": "#14f195",
-     "description": "Polymarket SOL Desk is a trading bot that makes markets in Polymarket US's 5-minute SOL Up/Down contracts."})
+     "description": "Polymarket Desk runs three trading bots (BTC, ETH and SOL) that make markets in Polymarket US's 5-minute Up/Down contracts."})
 OWNER_FIXED_KEYS = {b["key"] for b in OWNER_BUSINESSES}
 
 
@@ -442,14 +438,14 @@ async def crew_finance(request: Request):
     fin = getattr(request.app.state, "crew_finance", None)
     if fin is None:
         fin = request.app.state.crew_finance = Finance(engine.store, pool=pool)
-    keys = list(KNOWN) + ["polymarket", "polymarket-eth", "polymarket-sol"] + [factory_key(m["project"], m["title"], m["goal"], m["id"]) for m in missions]
+    keys = list(KNOWN) + ["polymarket"] + [factory_key(m["project"], m["title"], m["goal"], m["id"]) for m in missions]
     trading = None
     if pool is not None:
         try:
             from openjarvis.server.crew import desk
 
             per = await desk.live_pnl_all(pool)                                # live trading profit only; paper never counts as money
-            trading = {desk.KEYS[a]: v for a, v in per.items()}
+            trading = {"polymarket": {k: round(sum(v[k] for v in per.values()), 2) for k in ("today", "d30")}}    # one factory, all three desks
         except Exception:
             logger.exception("desk P&L unavailable")
     out = await fin.report(uid, missions, keys, trading=trading)
