@@ -55,7 +55,8 @@ class Config:
     allow_live: bool = False            # POLYBOT_ALLOW_LIVE: the worker-side half of the two-key switch
     key_id: str = ""
     secret_key: str = ""
-    horizon: str = "5m"                 # which Up/Down series: 5m, 15m or 1h
+    horizon: str = "5m"                 # which Up/Down series: 5m, 15m or 1h (in trading hours)
+    horizon_night: str = ""             # outside trading hours, if different (BTC: 15m by day, 5m at night for the sweeps)
     asset: str = "btc"
     limits: Limits = field(default_factory=Limits)
     quote_after_open_s: float = 20.0    # wait this long after a window opens (the price to beat is stamped a few seconds in)
@@ -142,6 +143,7 @@ def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Con
         key_id=(e.get("POLYMARKET_KEY_ID") or "").strip(),
         secret_key=(e.get("POLYMARKET_SECRET_KEY") or "").strip(),
         horizon=horizon if horizon in ("5m", "15m", "1h") else "5m",
+        horizon_night=(per("POLYBOT_HORIZON_NIGHT").lower() if per("POLYBOT_HORIZON_NIGHT").lower() in ("5m", "15m", "1h") else ""),
         asset=a,
         limits=lim,
         quote_after_open_s=_f(e, "POLYBOT_QUOTE_AFTER_OPEN_S", 20.0, 5.0, 600.0),

@@ -65,7 +65,7 @@ class Desk:
         self.ledger = Ledger(base.asset)
         self.name = base.asset.upper()
         from openjarvis.polybot.config import HORIZON_S
-        self.span = HORIZON_S.get(base.horizon, 300)          # seconds per window (5m 300, 15m 900)
+        self._prefixes: Dict[str, str] = {}                  # learned market address pattern per window length
         self.broker = PaperBroker()
         self.window: Optional[Window] = None
         self.open_windows: Dict[str, Window] = {}            # windows holding contracts, not settled yet
@@ -80,7 +80,6 @@ class Desk:
         self._lookup_fail = ""
         self._book404 = ""
         self._sweeps: set = set()                            # (window, side) a closing sweep is buying
-        self.slug_prefix = ""
         self.learner = brain.Learner()
         self.sigma: Optional[float] = None
         self.reason: str = "Starting."
@@ -176,7 +175,7 @@ class Desk:
         nxt = await self.window_by_slug(now)
         if nxt is None and self._due("markets_scan", 10.0, now):       # the slow full scan: at most every 10 s (three desks hammering it
             ms = await self.c.markets(categories=["crypto"], active=True, closed=False)          # every 2 s got rate-limited)
-            live = [x for x in (window_from_market(m) for m in ms if is_series(m, self.base.asset, self.base.horizon)) if x and x.start <= now < x.end]
+            live = [x for x in (window_from_market(m) for m in ms if is_series(m, self.base.asset, self.horizon)) if x and x.start <= now < x.end]
             nxt = min(live, key=lambda x: x.end) if live else None
         if nxt is not None:
             self.learn_prefix(nxt.slug)
@@ -192,7 +191,7 @@ class Desk:
     async def window_by_slug(self, now: float) -> Optional[Window]:
         """The current window looked up by its slug (cpc-btc-updown-5m-YYYY-MM-DD-HHMMz, the window's UTC start; 15m the same).
         Scanning the whole market list missed windows when the list was long, and the desk sat 'between windows' mid-window."""
-        if self.base.horizon not in ("5m", "15m"):
+        if self.horizon not in ("5m", "15m"):
             return None
         H = self.span
         start = int(now // H) * H
@@ -218,8 +217,29 @@ class Desk:
             self.log("warn", f"Market lookup for {slug} failed ({why}); trading it from its order book instead.")
         return Window(slug=slug, start=float(start), end=float(start + H), price_to_beat=None)
 
+    @property
+    def horizon(self) -> str:
+        """Window length now: the day setting in trading hours, the night one outside them (BTC: 15m by day, 5m at night)."""
+        night = self.base.horizon_night
+        if night and not risk.in_hours(self.clock(), self.base.trade_start, self.base.trade_end):
+            return night
+        return self.base.horizon
+
+    @property
+    def span(self) -> int:
+        from openjarvis.polybot.config import HORIZON_S
+        return HORIZON_S.get(self.horizon, 300)
+
+    @property
+    def slug_prefix(self) -> str:
+        return self._prefixes.get(self.horizon, "")
+
+    @slug_prefix.setter
+    def slug_prefix(self, v: str) -> None:
+        self._prefixes[self.horizon] = v
+
     def slug_for(self, start: int) -> str:
-        prefix = self.slug_prefix or f"cpc-{self.base.asset}-updown-{self.base.horizon}-"
+        prefix = self.slug_prefix or f"cpc-{self.base.asset}-updown-{self.horizon}-"
         return f"{prefix}{time.strftime('%Y-%m-%d-%H%M', time.gmtime(start))}z"
 
     def learn_prefix(self, slug: str) -> None:
@@ -227,8 +247,9 @@ class Desk:
         parts = slug.split("-")
         if len(parts) > 4 and parts[-1].endswith("z"):
             p = "-".join(parts[:-4]) + "-"
-            if p != self.slug_prefix:
-                self.slug_prefix = p
+            h = parts[-5] if len(parts) > 5 else self.horizon            # the window length is in the address (...-updown-5m-...)
+            if p != self._prefixes.get(h):
+                self._prefixes[h] = p
                 self.log("info", f"{self.name} market addresses look like {p}YYYY-MM-DD-HHMMz.")
 
     async def load_book(self, now: float) -> None:
@@ -287,7 +308,7 @@ class Desk:
             pay = f.price if f.side == "up" else 1 - f.price
             k = f"${w.price_to_beat:,.2f}" if w and w.price_to_beat else "pending"
             end = time.strftime("%H:%M:%S UTC", time.gmtime(w.end)) if w else "?"
-            text = (f"ENTRY {self.cfg.mode.upper()}{' [SWEEP]' if (f.slug, f.side) in self._sweeps else ''} · {self.name} {self.base.horizon} Up/Down · {side} · strike (price to beat) {k} · "
+            text = (f"ENTRY {self.cfg.mode.upper()}{' [SWEEP]' if (f.slug, f.side) in self._sweeps else ''} · {self.name} {self.horizon} Up/Down · {side} · strike (price to beat) {k} · "
                     f"expires {end} · {f.qty:g} contracts at ${pay:.2f} = ${f.cost:.2f} · stop: none, held to settlement (max loss ${f.cost:.2f}) · "
                     f"target: $1.00 per contract (${f.qty:.2f}) · fair value then {self.fair if self.fair is not None else 0:.2f}")
             self.log("trade", text)
@@ -439,7 +460,7 @@ class Desk:
                     self._missing = slug
                     self.log("warn", reason)
             else:
-                reason = f"Between windows: waiting for the next {self.base.horizon} market to open."
+                reason = f"Between windows: waiting for the next {self.horizon} market to open."
         else:
             reason = None
         reason = reason or risk.blocked(self.cfg, self.rs, now=now, data_age_s=data_age, book_age_s=(now - b.ts) if b else 999.0,
@@ -557,7 +578,7 @@ class Desk:
         last = self.tape.last()
         return {
             "version": VERSION, "heartbeat": now, "instance": self.instance, "stopped": self._stopping, "mode": self.cfg.mode, "allow_live": self.base.allow_live, "has_keys": bool(self.base.key_id and self.base.secret_key),
-            "series": f"{self.base.asset.upper()} {self.base.horizon} Up/Down", "reason": self.reason,
+            "series": f"{self.base.asset.upper()} {self.horizon} Up/Down", "reason": self.reason,
             "paused": self.rs.paused, "kill": self.rs.kill, "limits": self.cfg.limits.__dict__,
             "index": {"price": last[1] if last else None, "ts": last[0] if last else None},
             "window": ({"slug": w.slug, "start": w.start, "end": w.end, "price_to_beat": w.price_to_beat, "title": w.title} if w else None),
@@ -575,7 +596,7 @@ class Desk:
             "balance": self.balance, "day": self.rs.day, "day_pnl": round(self.rs.day_pnl, 2),
             "day_start": self.rs.day_start, "day_limit": risk.day_limit(self.cfg, self.rs), "at_risk": round(self.rs.at_risk, 2),
             "today": dict(self.stats),
-            "slug_prefix": self.slug_prefix,
+            "slug_prefix": self.slug_prefix, "slug_prefixes": dict(self._prefixes),
             "open_windows": [{"slug": x.slug, "start": x.start, "end": x.end, "price_to_beat": x.price_to_beat, "tick": x.tick,
                               "min_qty": x.min_qty, "title": x.title, "mode": x.mode, "fills": dict(x.fills),
                               "up_qty": x.inv.up_qty, "up_cost": x.inv.up_cost, "down_qty": x.inv.down_qty,
@@ -618,10 +639,13 @@ class Desk:
         if prev.get("strategy") == brain.STRATEGY_VERSION and prev.get("version_start") is not None:
             self.version_start = float(prev["version_start"])
         self.restore_windows(prev.get("open_windows"), now)
-        if isinstance(prev.get("slug_prefix"), str) and prev["slug_prefix"].endswith(f"-updown-{self.base.horizon}-"):
+        for p in (prev.get("slug_prefixes") or {}).values() if isinstance(prev.get("slug_prefixes"), dict) else []:
+            if isinstance(p, str) and "-updown-" in p:
+                self._prefixes[p.rsplit("-updown-", 1)[1].rstrip("-")] = p
+        if isinstance(prev.get("slug_prefix"), str) and prev["slug_prefix"].endswith(f"-updown-{self.horizon}-"):
             self.slug_prefix = prev["slug_prefix"]
         await self.load_index(now, backfill=True)
-        self.log("info", f"Desk started in {self.cfg.mode.upper()} mode on {self.base.asset.upper()} {self.base.horizon} Up/Down.")
+        self.log("info", f"Desk started in {self.cfg.mode.upper()} mode on {self.base.asset.upper()} {self.horizon} Up/Down.")
         steps = 0
         try:
             while not self._stopping and (max_steps is None or steps < max_steps):

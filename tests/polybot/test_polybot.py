@@ -874,3 +874,18 @@ def test_v113_closing_sweep():
     d = strategy.sweep(0.05, 0.15, Book(0.14, 0.16), inv, cap_usd=6.0, budget_left=50)  # Down at 86c
     assert d and d.side == "down" and abs(d.cost_per - 0.86) < 1e-9
     assert strategy.sweep(0.99, 0.6, Book(0.58, 0.60), inv, cap_usd=6.0, budget_left=50) is None   # 60c: below the 75c floor
+
+
+def test_btc_15m_by_day_5m_at_night():
+    import datetime as dt
+    from zoneinfo import ZoneInfo
+    from openjarvis.polybot.desk import Desk
+    LA = ZoneInfo("America/Los_Angeles")
+    cfg = from_env({"POLYBOT_HORIZON_BTC": "15m", "POLYBOT_HORIZON_NIGHT_BTC": "5m"}, asset="btc")
+    t = {"now": dt.datetime(2026, 10, 30, 12, 0, tzinfo=LA).timestamp()}
+    d = Desk(cfg, None, MemStore(), clock=lambda: t["now"])
+    assert d.horizon == "15m" and d.span == 900
+    t["now"] = dt.datetime(2026, 10, 30, 23, 0, tzinfo=LA).timestamp()
+    assert d.horizon == "5m" and d.span == 300 and d.slug_for(0).startswith("cpc-btc-updown-5m-")
+    d.learn_prefix("cpc-btc-updown-15m-2026-10-30-0530z")
+    assert d._prefixes["15m"] == "cpc-btc-updown-15m-" and d.slug_prefix == ""
