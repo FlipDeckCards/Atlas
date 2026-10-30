@@ -619,6 +619,14 @@ class Desk:
                                 self._dir_pending.add(w.slug)
                                 why = (f"Directional ({tier}): {side} at {cost * 100:.0f}c, edge {edge * 100:.1f}c after fees"
                                        f"{'' if tier == 'proven' else ' (learning: half size)'}.")
+                    if not want and inv.spent <= 0 and self.cfg.directional:
+                        z_now = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)
+                        in_win = self.cfg.directional_min_secs <= w.end - now <= self.cfg.directional_secs_left
+                        why_dir = directional.explain(self.fair_model, b.best_ask,
+                                                      None if b.best_bid is None else round(1.0 - b.best_bid, 6),
+                                                      self.shadow.bucket_stats(self.fair_model or 0.5),
+                                                      self.shadow.bucket_stats(1.0 - (self.fair_model or 0.5)), z_now, in_win)
+                        why = (why + " " if why else "") + why_dir
                 elif not want:
                     why = why or "Finishing the pair (one leg was left open)."
                 if hedge is not None and lopsided and w.slug not in self._dir_pending:
@@ -643,6 +651,8 @@ class Desk:
                     want = [q for q in want if (q.side == "up") == (self.fair_model >= 0.5)]    # never buy the likely loser now
             if want:
                 reason = "Quoting" + (f" (one side only: {why})" if why else ".")
+            elif self.cfg.pairs_only and why:
+                reason = why                                  # v1.18: say exactly why nothing is being bought
             elif why and not (can_up or can_down):
                 reason = why
             elif not (can_up or can_down):

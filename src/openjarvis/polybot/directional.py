@@ -53,3 +53,27 @@ def decide(prob_up: float, up_cost: Optional[float], down_cost: Optional[float],
         if edge >= need and (best is None or edge > best[3]):
             best = (side, cost, tier, round(edge, 4))
     return best
+
+
+def explain(prob_up: Optional[float], up_cost: Optional[float], down_cost: Optional[float], bucket_up: Tuple[int, int],
+            bucket_down: Tuple[int, int], z: Optional[float], in_window: bool) -> str:
+    """Plain words for why the directional rule did not trade this moment (shown on the desk status)."""
+    if not in_window:
+        return "Directional: outside its 30-240 second window."
+    if prob_up is None:
+        return "Directional: no model reading yet."
+    parts = []
+    for side, prob, cost, (n, wins) in (("Up", prob_up, up_cost, bucket_up), ("Down", 1.0 - prob_up, down_cost, bucket_down)):
+        if cost is None:
+            parts.append(f"{side}: no price")
+        elif not (0.05 <= cost <= 0.95):
+            parts.append(f"{side}: costs {cost * 100:.0f}c, outside 5-95c")
+        elif prob < MIN_CONF:
+            parts.append(f"{side}: model {prob * 100:.0f}% is under 75%")
+        elif z is not None and (z if side == "Up" else -z) < CUSHION_Z:
+            parts.append(f"{side}: index too close to the beat ({(z if side == 'Up' else -z):.2f} sd, needs 0.5)")
+        else:
+            conf, need = (setups.wilson_lb(wins, n), PROVEN_EDGE) if n >= PROVEN_N else (prob, EXPLORE_EDGE)
+            edge = conf - cost - taker_fee(cost)
+            parts.append(f"{side}: edge {edge * 100:.1f}c after fees, needs {need * 100:.0f}c" if edge < need else f"{side}: passes")
+    return "Directional: " + "; ".join(parts) + "."
