@@ -116,9 +116,32 @@ async def scoreboard(pool, mode: str, now: Optional[dt.datetime] = None, version
         curve.append([r["settled_at"].isoformat(), round(run, 2)])
     out["fills"] = int(fills or 0)
     out["sweeps"] = await sweep_stats(pool, mode, version, asset)
+    out["shadow"] = await shadow_stats(pool, mode, version, asset)
     out["curve"] = curve
     out["older"] = [{"version": r["v"], "trades": int(r["n"]), "wins": int(r["wins"]), "profit": round(float(r["pnl"]), 2)} for r in older]
     return out
+
+
+async def shadow_stats(pool, mode: str, version: str, asset: str) -> Dict[str, Any]:
+    """v1.14 learned pair sizing in shadow: the pairs' actual profit next to what they would have made at the size their setup
+    had earned (a window's pair P&L scales with its size: shadow = actual x shadow_pct / actual_pct)."""
+    async with pool.acquire() as c:
+        rows = await c.fetch(
+            "SELECT f.slug, f.side, f.qty, f.cost, f.features, w.up FROM polybot_fills f JOIN polybot_windows w ON w.slug = f.slug AND w.mode = f.mode "
+            "WHERE f.mode = $1 AND coalesce(f.version, '1.0') = $2 AND split_part(f.slug, '-', 2) = $3 AND w.up IS NOT NULL "
+            "AND coalesce(f.features->>'sweep', 'false') <> 'true' AND f.features ? 'shadow_pct' ORDER BY f.ts", mode, version, asset)
+    per: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        feat = _j(r["features"])
+        won = bool(r["up"]) if r["side"] == "up" else not bool(r["up"])
+        w = per.setdefault(r["slug"], {"pnl": 0.0, "shadow": feat.get("shadow_pct"), "actual": feat.get("actual_pct"), "tier": feat.get("shadow_tier")})
+        w["pnl"] += float(r["qty"]) * (1.0 if won else 0.0) - float(r["cost"])
+    actual = sum(w["pnl"] for w in per.values())
+    shadow = sum(w["pnl"] * (float(w["shadow"]) / float(w["actual"]) if w["shadow"] and w["actual"] else 1.0) for w in per.values())
+    tiers: Dict[str, int] = {}
+    for w in per.values():
+        tiers[w["tier"] or "unproven"] = tiers.get(w["tier"] or "unproven", 0) + 1
+    return {"windows": len(per), "actual": round(actual, 2), "shadow": round(shadow, 2), "tiers": tiers}
 
 
 async def sweep_stats(pool, mode: str, version: str, asset: str) -> Dict[str, Any]:

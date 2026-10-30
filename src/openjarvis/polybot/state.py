@@ -62,6 +62,10 @@ class ScopedStore:
     async def flush(self, ledger) -> None:
         await self.store.flush(ledger)
 
+    async def pair_history(self, days: int = 21) -> List[Dict[str, Any]]:
+        fn = getattr(self.store, "pair_history", None)
+        return await fn(self.asset, days) if fn else []
+
     async def close(self) -> None:
         await self.store.close()
 
@@ -151,6 +155,25 @@ class PgStore:
                 if events:
                     await c.executemany("INSERT INTO polybot_events (ts, level, text, asset) VALUES ($1,$2,$3,$4)",
                                         [(_t(e["ts"]), e["level"], e["text"], e.get("asset") or "btc") for e in events])
+
+    async def pair_history(self, asset: str, days: int = 21) -> List[Dict[str, Any]]:
+        """v1.14: settled LIVE fills of one desk over the last `days` days, with how their window settled (for learned pair sizing)."""
+        async with self.pool.acquire() as c:
+            rows = await c.fetch(
+                "SELECT f.slug, f.side, f.qty, f.cost, f.features, f.version, w.up FROM polybot_fills f JOIN polybot_windows w "
+                "ON w.slug = f.slug AND w.mode = f.mode WHERE f.mode = 'live' AND w.up IS NOT NULL AND split_part(f.slug, '-', 2) = $1 "
+                "AND f.ts >= now() - make_interval(days => $2) ORDER BY f.ts", asset, int(days))
+        out = []
+        for r in rows:
+            feat = r["features"]
+            if isinstance(feat, str):
+                try:
+                    feat = json.loads(feat)
+                except ValueError:
+                    feat = {}
+            out.append({"slug": r["slug"], "side": r["side"], "qty": r["qty"], "cost": r["cost"], "features": feat or {},
+                        "version": r["version"], "up": r["up"]})
+        return out
 
     async def close(self) -> None:
         await self.pool.close()

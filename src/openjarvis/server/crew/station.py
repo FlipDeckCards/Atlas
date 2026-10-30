@@ -1054,6 +1054,11 @@ function deskSec(key) {
   const swp = v.sweeps || {};
   box.append(mk('div', 'dim', 'Sweeps (closing, 75-97c): ' + (swp.trades ? swp.trades + ' trades, ' + swp.wins + ' won (' + swp.win_rate + '%), ' + signed(swp.profit) : 'none yet')
     + ' · included in the totals above'));
+  const sh = v.shadow || {};   // v1.14 learned pair sizing, shadow mode: what bigger bets on proven pair setups would have made
+  if (sh.windows) box.append(mk('div', 'dim', 'Learned pair sizing (shadow, not trading yet): ' + sh.windows + ' pair windows · actual ' + signed(sh.actual)
+    + ' · at learned sizes ' + signed(sh.shadow) + ' · ' + Object.entries(sh.tiers || {}).map(([t, n]) => n + ' ' + t).join(', ')));
+  const sets = (st.setups || []).filter(x => x.windows >= 3).slice(0, 5);
+  if (sets.length) box.append(mk('div', 'dim', 'Pair setups: ' + sets.map(x => x.label + ' — ' + x.wins + '/' + x.windows + ' won, floor ' + x.floor + '%, ' + signed(x.profit)).join(' | ')));
   (v.older || []).forEach(o => box.append(mk('div', 'dim', 'Earlier v' + o.version + ': ' + o.trades + ' trades, ' + o.wins + ' won, ' + signed(o.profit) + ' (not counted above)')));
   s.append(box);
   // switches (going live is an Approve card from Helix, never a button here)

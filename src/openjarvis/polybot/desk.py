@@ -12,7 +12,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from dataclasses import replace
 
-from openjarvis.polybot import brain, model, risk, strategy
+from openjarvis.polybot import brain, model, risk, setups, strategy
 from openjarvis.polybot.brokers import BookView, Fill, LiveBroker, PaperBroker, parse_ts
 from openjarvis.polybot.client import PMError, money
 from openjarvis.polybot.config import Config, apply_control
@@ -83,6 +83,8 @@ class Desk:
         self._ready = False
         self._sweeps: set = set()                            # (window, side) a closing sweep is buying
         self.learner = brain.Learner()
+        self.setups = setups.SetupBook()                     # v1.14 learned pair sizing (shadow): record per pair setup
+        self._pair_fills: Dict[str, List[Dict[str, Any]]] = {}   # non-sweep fills per open window, to file the pair under its setup
         self.sigma: Optional[float] = None
         self.reason: str = "Starting."
         self.balance: Optional[float] = None
@@ -295,7 +297,7 @@ class Desk:
         b = self.book
         cost_per = f.price if f.side == "up" else 1.0 - f.price
         fair_side = None if self.fair is None else (self.fair if f.side == "up" else 1.0 - self.fair)
-        self.ledger.fill(self.cfg.mode, f, self.fair, {
+        feats = {
             # what the desk saw at the moment of the fill, so results can be cut by condition later
             "model": None if self.fair_model is None else round(self.fair_model, 4),
             "mid": None if self.mid is None else round(self.mid, 4),
@@ -307,7 +309,17 @@ class Desk:
             "extra_edge": self.learner.extra_edge if self.cfg.learn else 0.0,
             "sigma": None if self.sigma is None else round(self.sigma, 3),
             "sweep": (f.slug, f.side) in self._sweeps,                                      # v1.13: bought by a closing sweep
-        })
+        }
+        if not feats["sweep"]:
+            # v1.14 shadow sizing: the window's pair is filed under the setup its FIRST leg opened in; record what size that setup
+            # has earned next to the size actually used (trading still uses the normal size)
+            pf = self._pair_fills.setdefault(w.slug, [])
+            first = pf[0] if pf else {"side": f.side, "features": feats}
+            key = setups.pair_setup(first["side"], first["features"])
+            shadow, tier = self.setups.size(key, self.cfg.window_pct)
+            feats.update({"setup": key, "shadow_pct": shadow, "shadow_tier": tier, "actual_pct": self.cfg.window_pct})
+            pf.append({"side": f.side, "qty": f.qty, "cost": f.cost, "features": feats})
+        self.ledger.fill(self.cfg.mode, f, self.fair, feats)
         self.stats["fills"] += 1
 
     async def on_fills(self, fills: List[Fill]) -> None:
@@ -351,6 +363,9 @@ class Desk:
             if res is None:
                 continue
             close, up = res
+            po = setups.pair_outcome(self._pair_fills.pop(slug, []), up)
+            if po is not None and w.mode == "live":
+                self.setups.add(*po)
             payout = w.inv.up_qty if up else w.inv.down_qty
             pnl = round(payout - w.inv.spent, 4)
             w.settled = True
@@ -617,7 +632,7 @@ class Desk:
             "book": ({"bid": b.best_bid, "ask": b.best_ask, "state": b.state} if b else None),
             "resting": [{"side": r.quote.side, "price": r.quote.price, "qty": r.left} for r in self.broker.resting.values()],
             "rejects": list(getattr(self.broker, "rejects", []))[-5:],
-            "equity": self.equity(), "window_pct": self.cfg.window_pct, "unpaired_pct": self.cfg.unpaired_pct, "version_start": self.version_start,
+            "equity": self.equity(), "window_pct": self.cfg.window_pct, "setups": self.setups.table()[:12], "unpaired_pct": self.cfg.unpaired_pct, "version_start": self.version_start,
             "account_value": round(self.account_value(), 2) if self.cfg.mode == "live" and self.balance is not None else None,
             "window_cap": strategy.Sizing(equity=self.equity(), window_pct=self.cfg.window_pct).window_cap(self.cfg.limits),
             "balance": self.balance, "day": self.rs.day, "day_pnl": round(self.rs.day_pnl, 2),
@@ -647,6 +662,31 @@ class Desk:
         self.hour_pnl = 0.0
 
     # ── run forever ───────────────────────────────────────────────────────────────────
+    async def load_setups(self) -> None:
+        """v1.14: rebuild the per-setup pair record from the last three weeks of settled live trades (v1.12+, when hedged pairs began;
+        XRP only from v1.14, as its earlier results were booked with the cent-rounding bug)."""
+        fn = getattr(self.store, "pair_history", None)
+        if fn is None:
+            return
+        try:
+            rows = await fn(21)
+        except Exception:
+            logger.exception("pair history unreadable; learned sizing starts empty")
+            return
+        floor = "1.14" if self.base.asset == "xrp" else "1.12"
+        by: Dict[str, List[Dict[str, Any]]] = {}
+        ups: Dict[str, bool] = {}
+        for r in rows:
+            if setups.version_at_least(r.get("version"), floor):
+                by.setdefault(r["slug"], []).append(r)
+                ups[r["slug"]] = bool(r["up"])
+        for slug, fs in by.items():
+            po = setups.pair_outcome(fs, ups[slug])
+            if po is not None:
+                self.setups.add(*po)
+        n = sum(r.n for r in self.setups.rec.values())
+        self.log("info", f"Learned pair sizing (shadow): {n} past pair windows filed under {len(self.setups.rec)} setups.")
+
     async def run(self, max_steps: Optional[int] = None) -> None:
         now = self.clock()
         self._t["hour"] = now
@@ -673,6 +713,7 @@ class Desk:
             self.slug_prefix = prev["slug_prefix"]
         self._day_reset_seen = prev.get("day_reset_seen")
         self._ready = True
+        await self.load_setups()
         await self.load_index(now, backfill=True)
         self.log("info", f"Desk started in {self.cfg.mode.upper()} mode on {self.base.asset.upper()} {self.horizon} Up/Down.")
         steps = 0

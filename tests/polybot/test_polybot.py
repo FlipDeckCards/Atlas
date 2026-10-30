@@ -927,3 +927,25 @@ def test_v114_sweep_seconds_day_and_night():
     assert c.sweep_secs_left == 60.0 and c.sweep_secs_left_night == 90.0
     c = from_env({"POLYBOT_SWEEP_SECONDS_DAY_SOL": "45"}, asset="sol")
     assert c.sweep_secs_left == 45.0
+
+
+def test_v114_learned_pair_sizing():
+    from openjarvis.polybot import setups
+    assert setups.wilson_lb(3, 3) < 0.6                     # three wins prove little
+    assert setups.wilson_lb(30, 30) > 0.90                  # thirty do
+    f = {"spread": 0.01, "momentum_z": 0.1, "secs_left": 240}
+    key = setups.pair_setup("up", f)
+    assert key == "tight/flat/early"
+    fills = [{"side": "up", "qty": 5, "cost": 2.40, "features": f}, {"side": "down", "qty": 5, "cost": 2.45, "features": f},
+             {"side": "up", "qty": 2, "cost": 1.80, "features": {"sweep": True}}]
+    k, pnl = setups.pair_outcome(fills, up=True)
+    assert k == key and abs(pnl - 0.15) < 1e-9             # the sweep is left out of the pair's result
+    book = setups.SetupBook()
+    assert book.size(key, 10.0) == (10.0, "unproven")
+    for _ in range(30):
+        book.add(key, 0.12)
+    assert book.size(key, 10.0) == (15.0, "proven")
+    for _ in range(12):
+        book.add("wide/against/late", -0.30)
+    assert book.size("wide/against/late", 10.0) == (5.0, "weak")
+    assert setups.version_at_least("1.13", "1.12") and not setups.version_at_least("1.9", "1.12")
