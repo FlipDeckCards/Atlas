@@ -826,3 +826,12 @@ def test_market_address_pattern_is_learned():
     d.learn_prefix("cpceth-eth-updown-5m-2026-10-30-0225z")
     assert d.slug_for(1761791100) == "cpceth-eth-updown-5m-" + __import__("time").strftime("%Y-%m-%d-%H%M", __import__("time").gmtime(1761791100)) + "z"
     assert d.status(0.0)["slug_prefix"] == "cpceth-eth-updown-5m-"
+
+
+def test_each_desk_can_have_its_own_window_and_size():
+    env = {"POLYBOT_WINDOW_PCT": "10", "POLYBOT_WINDOW_PCT_BTC": "7.5", "POLYBOT_WINDOW_PCT_ETH": "15", "POLYBOT_HORIZON_BTC": "15m"}
+    b, e, s = from_env(env, asset="btc"), from_env(env, asset="eth"), from_env(env, asset="sol")
+    assert (b.horizon, b.window_pct) == ("15m", 7.5) and (e.horizon, e.window_pct) == ("5m", 15.0) and s.window_pct == 10.0
+    from openjarvis.polybot.desk import Desk
+    d = Desk(b, None, MemStore())
+    assert d.span == 900 and d.slug_for(1761791400).startswith("cpc-btc-updown-15m-")

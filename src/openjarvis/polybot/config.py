@@ -100,6 +100,7 @@ class Config:
 
 
 ASSETS = ("btc", "eth", "sol")
+HORIZON_S = {"5m": 300, "15m": 900, "1h": 3600}
 
 
 def assets_from_env(env: Optional[Mapping[str, str]] = None) -> list:
@@ -118,14 +119,20 @@ def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Con
                  daily_loss_usd=_f(e, "POLYBOT_DAILY_LOSS_USD", 10.0, 0.0),
                  daily_loss_pct=_f(e, "POLYBOT_DAILY_LOSS_PCT", 15.0, 0.0, 100.0),
                  min_edge=_f(e, "POLYBOT_MIN_EDGE", 0.04, 0.01, 0.40)).clean()
-    horizon = (e.get("POLYBOT_HORIZON") or "5m").strip().lower()
+    a = (asset or "btc").lower()
+
+    def per(name: str) -> str:
+        """A per-desk setting (POLYBOT_WINDOW_PCT_ETH) wins over the shared one (POLYBOT_WINDOW_PCT)."""
+        return (e.get(f"{name}_{a.upper()}") or e.get(name) or "").strip()
+
+    horizon = (per("POLYBOT_HORIZON") or "5m").lower()
     return Config(
         mode="paper",
         allow_live=(e.get("POLYBOT_ALLOW_LIVE") or "").strip().lower() in _TRUE,
         key_id=(e.get("POLYMARKET_KEY_ID") or "").strip(),
         secret_key=(e.get("POLYMARKET_SECRET_KEY") or "").strip(),
         horizon=horizon if horizon in ("5m", "15m", "1h") else "5m",
-        asset=(asset or "btc").lower(),
+        asset=a,
         limits=lim,
         quote_after_open_s=_f(e, "POLYBOT_QUOTE_AFTER_OPEN_S", 20.0, 5.0, 600.0),
         stop_before_end_s=_f(e, "POLYBOT_STOP_BEFORE_END_S", 25.0, 5.0, 600.0),
@@ -140,7 +147,7 @@ def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Con
         max_fills_per_side=int(_f(e, "POLYBOT_MAX_FILLS_PER_SIDE", 8, 0, 100)),
         learn=(e.get("POLYBOT_LEARN") or "true").strip().lower() in _TRUE,
         kelly_fraction=_f(e, "POLYBOT_KELLY_FRACTION", 0.25, 0.0, 1.0),
-        window_pct=_f(e, "POLYBOT_WINDOW_PCT", 7.5, 0.1, 50.0),
+        window_pct=_f({"v": per("POLYBOT_WINDOW_PCT")}, "v", 7.5, 0.1, 50.0),
         min_order_usd=_f(e, "POLYBOT_MIN_ORDER_USD", 0.25, 0.01, 1000.0),
         unpaired_pct=_f(e, "POLYBOT_UNPAIRED_PCT", 10.0, 1.0, 100.0),
         open_cutoff_s=_f(e, "POLYBOT_OPEN_CUTOFF_SECONDS", 90.0, 0.0, 290.0),

@@ -63,6 +63,8 @@ class Desk:
         self.rs = risk.RiskState()
         self.ledger = Ledger(base.asset)
         self.name = base.asset.upper()
+        from openjarvis.polybot.config import HORIZON_S
+        self.span = HORIZON_S.get(base.horizon, 300)          # seconds per window (5m 300, 15m 900)
         self.broker = PaperBroker()
         self.window: Optional[Window] = None
         self.open_windows: Dict[str, Window] = {}            # windows holding contracts, not settled yet
@@ -185,11 +187,12 @@ class Desk:
                 self.recent.pop(old, None)
 
     async def window_by_slug(self, now: float) -> Optional[Window]:
-        """The current 5-minute window looked up by its slug (cpc-btc-updown-5m-YYYY-MM-DD-HHMMz, the window's UTC start).
+        """The current window looked up by its slug (cpc-btc-updown-5m-YYYY-MM-DD-HHMMz, the window's UTC start; 15m the same).
         Scanning the whole market list missed windows when the list was long, and the desk sat 'between windows' mid-window."""
-        if self.base.horizon != "5m":
+        if self.base.horizon not in ("5m", "15m"):
             return None
-        start = int(now // 300) * 300
+        H = self.span
+        start = int(now // H) * H
         slug = self.slug_for(start)
         if slug in self.recent and self.recent[slug].start <= now < self.recent[slug].end:
             return self.recent[slug]
@@ -210,10 +213,10 @@ class Desk:
         if self._lookup_fail != slug:
             self._lookup_fail = slug
             self.log("warn", f"Market lookup for {slug} failed ({why}); trading it from its order book instead.")
-        return Window(slug=slug, start=float(start), end=float(start + 300), price_to_beat=None)
+        return Window(slug=slug, start=float(start), end=float(start + H), price_to_beat=None)
 
     def slug_for(self, start: int) -> str:
-        prefix = self.slug_prefix or f"cpc-{self.base.asset}-updown-5m-"
+        prefix = self.slug_prefix or f"cpc-{self.base.asset}-updown-{self.base.horizon}-"
         return f"{prefix}{time.strftime('%Y-%m-%d-%H%M', time.gmtime(start))}z"
 
     def learn_prefix(self, slug: str) -> None:
@@ -421,14 +424,14 @@ class Desk:
         if self.guard and not (self.rs.kill or self.rs.paused):
             reason = self.guard
         elif w is None and not (self.rs.kill or self.rs.paused):
-            if now % 300 > 30:            # well into a window and still no market: say so (and log it once per window) instead of "between windows"
-                slug = self.slug_for(int(now // 300) * 300)
+            if now % self.span > 30:            # well into a window and still no market: say so (and log it once per window) instead of "between windows"
+                slug = self.slug_for(int(now // self.span) * self.span)
                 reason = f"Cannot find this window's {self.name} market ({slug}); retrying every 2 seconds."
                 if self._missing != slug:
                     self._missing = slug
                     self.log("warn", reason)
             else:
-                reason = "Between windows: waiting for the next 5-minute market to open."
+                reason = f"Between windows: waiting for the next {self.base.horizon} market to open."
         else:
             reason = None
         reason = reason or risk.blocked(self.cfg, self.rs, now=now, data_age_s=data_age, book_age_s=(now - b.ts) if b else 999.0,
@@ -573,7 +576,7 @@ class Desk:
         if prev.get("strategy") == brain.STRATEGY_VERSION and prev.get("version_start") is not None:
             self.version_start = float(prev["version_start"])
         self.restore_windows(prev.get("open_windows"), now)
-        if isinstance(prev.get("slug_prefix"), str) and prev["slug_prefix"].endswith("-updown-5m-"):
+        if isinstance(prev.get("slug_prefix"), str) and prev["slug_prefix"].endswith(f"-updown-{self.base.horizon}-"):
             self.slug_prefix = prev["slug_prefix"]
         await self.load_index(now, backfill=True)
         self.log("info", f"Desk started in {self.cfg.mode.upper()} mode on {self.base.asset.upper()} {self.base.horizon} Up/Down.")
