@@ -84,6 +84,9 @@ class Config:
     trade_start: str = "06:30"          # v1.13: new pairs only in these hours (Los Angeles); open legs are still finished and settled
     trade_end: str = "20:30"            # (overnight books are empty, so one side fills and the other never does)
     pairs_only: bool = True             # v1.16 back to basics: pairs only, both sides bought at once; no sweeps, no resting legs
+    directional: bool = True           # v1.18: confident directional trades, paper only (see directional.py)
+    directional_secs_left: float = 240.0   # ... considered from this many seconds before the close
+    directional_min_secs: float = 30.0     # ... and not in the final 30 seconds
     pair_margin: float = 0.02           # v1.17: a pair opens only when both sides plus both taker fees leave this much under $1.00
     sweep_pct: float = 5.0              # v1.13 closing sweep: at most this % of the balance on the likely winner near the close (0 = off)
     sweep_secs_left: float = 60.0       # sweeps run from this many seconds before the close until stop_before_end_s (trading hours;
@@ -174,6 +177,9 @@ def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Con
         trade_start=(per("POLYBOT_TRADE_START") or "06:30"),
         trade_end=(per("POLYBOT_TRADE_END") or "20:30"),
         pairs_only=(e.get("POLYBOT_PAIRS_ONLY") or "true").strip().lower() in _TRUE,
+        directional=(e.get("POLYBOT_DIRECTIONAL") or "true").strip().lower() in _TRUE,
+        directional_secs_left=_f(e, "POLYBOT_DIRECTIONAL_SECONDS", 240.0, 30.0, 290.0),
+        directional_min_secs=_f(e, "POLYBOT_DIRECTIONAL_MIN_SECONDS", 30.0, 5.0, 200.0),
         pair_margin=_f(e, "POLYBOT_PAIR_MARGIN", 0.02, 0.0, 0.5),
         sweep_pct=_f({"v": per("POLYBOT_SWEEP_PCT")}, "v", 5.0, 0.0, 50.0),
         sweep_secs_left=_f({"v": per("POLYBOT_SWEEP_SECONDS_DAY")}, "v", 60.0, 30.0, 600.0),

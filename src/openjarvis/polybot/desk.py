@@ -12,7 +12,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from dataclasses import replace
 
-from openjarvis.polybot import brain, model, risk, setups, shadow, strategy
+from openjarvis.polybot import brain, directional, model, risk, setups, shadow, strategy
 from openjarvis.polybot.brokers import BookView, Fill, LiveBroker, PaperBroker, parse_ts
 from openjarvis.polybot.client import PMError, money
 from openjarvis.polybot.config import Config, apply_control
@@ -83,6 +83,7 @@ class Desk:
         self._ready = False
         self._sweeps: set = set()                            # (window, side) a closing sweep is buying
         self.learner = brain.Learner()
+        self._dir_pending: set = set()                       # v1.18: windows where a directional trade was placed
         self._fill_conf: Dict[str, List[Tuple[str, Optional[float], Optional[float]]]] = {}   # per window: (side, model conf, book conf)
         self.shadow = shadow.Shadow()                        # v1.15: three hidden shadow strategies (recorded, never traded or shown)
         self.setups = setups.SetupBook()                     # v1.14 learned pair sizing (shadow): record per pair setup
@@ -371,6 +372,10 @@ class Desk:
                 continue
             close, up = res
             self.shadow.settle(slug, up)
+            if slug in self._dir_pending:
+                self._dir_pending.discard(slug)
+                if w.inv.spent > 0:
+                    self.shadow.add_result("directional", (w.inv.up_qty if up else w.inv.down_qty) - w.inv.spent, w.inv.spent)
             for side, mc, bc in self._fill_conf.pop(slug, []):
                 self.shadow.calib_add(mc, bc, (side == "up") == bool(up))
             try:
@@ -585,15 +590,34 @@ class Desk:
             if self.cfg.pairs_only:
                 # v1.16: the only way in is a pair bought on both sides at once; no sweeps, no resting quotes
                 want = []
-                if not lopsided:
+                if w.slug in self._dir_pending and inv.spent > 0:
+                    want, why = [], "Holding the directional trade to settlement."          # never hedge a directional bet away
+                elif not lopsided:
                     budget_usd = min(budget, sizing.window_cap(self.cfg.limits))
                     want, why = strategy.pair_takes(b.best_bid, b.best_ask,
                                                     b.offers[0][1] if b.offers else 0.0, b.bids[0][1] if b.bids else 0.0,
                                                     budget_usd, sizing.window_cap(self.cfg.limits), w.min_qty, self.cfg.pair_margin) \
                         if inv.spent <= 0 else ([], "Already in this window; holding to settlement.")
+                    if not want and inv.spent <= 0 and self.cfg.directional and self.cfg.mode == "paper" \
+                            and self.fair_model is not None and b.best_ask is not None and b.best_bid is not None \
+                            and self.cfg.directional_min_secs <= w.end - now <= self.cfg.directional_secs_left:
+                        pick = directional.decide(self.fair_model, b.best_ask, round(1.0 - b.best_bid, 6),
+                                                  self.shadow.bucket_stats(self.fair_model), self.shadow.bucket_stats(1.0 - self.fair_model))
+                        if pick is not None:
+                            side, cost, tier, edge = pick
+                            size_here = (b.offers[0][1] if b.offers else 0.0) if side == "up" else (b.bids[0][1] if b.bids else 0.0)
+                            usd = min(budget_usd, sizing.window_cap(self.cfg.limits)) * (1.0 if tier == "proven" else 0.5)
+                            q = strategy._qty(usd, cost, w.min_qty)
+                            q = min(q, round(size_here // w.min_qty * w.min_qty, 6))
+                            if q >= w.min_qty:
+                                price = b.best_ask if side == "up" else b.best_bid
+                                want = [strategy.Quote(side, price, q, taker=True)]
+                                self._dir_pending.add(w.slug)
+                                why = (f"Directional ({tier}): {side} at {cost * 100:.0f}c, edge {edge * 100:.1f}c after fees"
+                                       f"{'' if tier == 'proven' else ' (learning: half size)'}.")
                 elif not want:
                     why = why or "Finishing the pair (one leg was left open)."
-                if hedge is not None and lopsided:
+                if hedge is not None and lopsided and w.slug not in self._dir_pending:
                     want = want or strategy.quotes(self.fair, strategy.Book(b.best_bid, b.best_ask, w.tick, w.min_qty), inv, lim,
                                                    budget_left=budget, can_up=can_up, can_down=can_down, sizing=sizing,
                                                    hedge_loss=hedge, min_cost=self.cfg.min_buy_price, max_cost=self.cfg.max_buy_price)
@@ -707,7 +731,7 @@ class Desk:
         except Exception:
             logger.exception("pair history unreadable; learned sizing starts empty")
             return
-        floor = "1.17"
+        floor = "1.18"
         by: Dict[str, List[Dict[str, Any]]] = {}
         ups: Dict[str, bool] = {}
         for r in rows:

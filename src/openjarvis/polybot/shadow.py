@@ -96,6 +96,19 @@ class Shadow:
             cell["n"] += 1
             cell["wins"] += 1 if won else 0
 
+    def bucket_stats(self, prob: float) -> Tuple[int, int]:
+        """(trades, wins) of the calibration bucket that a model confidence falls in."""
+        lab = next(l for lo, hi, l in BUCKETS if lo <= prob < hi) if 0.0 <= prob < 1.01 else "90+"
+        c = self.calib["model"][lab]
+        return c["n"], c["wins"]
+
+    def add_result(self, name: str, profit: float, staked: float) -> None:
+        r = self.rec.setdefault(name, {"windows": 0, "wins": 0, "staked": 0.0, "profit": 0.0})
+        r["windows"] += 1
+        r["wins"] += 1 if profit > 0 else 0
+        r["staked"] = round(r["staked"] + staked, 4)
+        r["profit"] = round(r["profit"] + profit, 4)
+
     def calib_table(self) -> Dict[str, List[Dict[str, Any]]]:
         return {kind: [{"bucket": lab, "trades": c["n"], "won": c["wins"],
                         "win_rate": round(100.0 * c["wins"] / c["n"], 1) if c["n"] else None}

@@ -1000,3 +1000,20 @@ def test_v116_pairs_only_takes_both_sides_at_once():
     assert strategy.pair_takes(None, 0.47, 100, 100, 5.0, 6.0, 0.01)[0] == []
     from openjarvis.polybot.config import from_env
     assert from_env({}).pairs_only is True and from_env({}).pair_margin == 0.02
+
+
+def test_v118_directional_decision_and_calibration():
+    from openjarvis.polybot import directional, shadow
+    # exploring (under 50 trades in the bucket): raw 70% up, Up costs 60c, fee ~1.7c: edge ~8c >= 5c -> up
+    p = directional.decide(0.70, 0.60, 0.45, (3, 1), (0, 0))
+    assert p is not None and p[0] == "up" and p[2] == "exploring"
+    # too thin: 70% vs 68c -> ~0c edge: nothing
+    assert directional.decide(0.70, 0.68, 0.40, (3, 1), (0, 0)) is None
+    # proven bucket: 60 trades, 57 wins -> lower bound ~0.87; Up at 70c leaves ~15c: buy
+    p = directional.decide(0.85, 0.70, 0.25, (60, 57), (60, 2))
+    assert p is not None and p[0] == "up" and p[2] == "proven"
+    # proven but the lower bound is weak: 60 trades 45 wins -> ~0.63; Up at 70c: no
+    assert directional.decide(0.85, 0.70, 0.25, (60, 45), (60, 15)) is None
+    s = shadow.Shadow()
+    s.calib_add(0.85, None, True)
+    assert s.bucket_stats(0.85) == (1, 1) and s.bucket_stats(0.5) == (0, 0)
