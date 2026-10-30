@@ -215,7 +215,21 @@ async def live_pnl(pool) -> Dict[str, float]:
     async with pool.acquire() as c:
         today = await c.fetchval("SELECT coalesce(sum(pnl),0) FROM polybot_windows WHERE mode='live' AND settled_at >= $1", la_midnight(now))
         d30 = await c.fetchval("SELECT coalesce(sum(pnl),0) FROM polybot_windows WHERE mode='live' AND settled_at >= $1", now - dt.timedelta(days=30))
-    return {"today": round(float(today or 0), 2), "d30": round(float(d30 or 0), 2)}
+    out = {"today": round(float(today or 0), 2), "d30": round(float(d30 or 0), 2)}
+    # The real account beats the ledger: the ledger missed trades (restarts, unmatched fills) and the Station showed the wrong money.
+    st = await get_kv(pool, "status")
+    acct, start = st.get("account_value"), st.get("day_start")
+    if st.get("mode") == "live" and acct is not None:
+        if start is not None and st.get("day") == la_day_str(now):
+            out["today"] = round(float(acct) - float(start), 2)
+        if deposits():
+            out["d30"] = round(float(acct) - deposits(), 2)
+    return out
+
+
+def la_day_str(now: dt.datetime) -> str:
+    from openjarvis.polybot.risk import la_day
+    return la_day(now.timestamp())
 
 
 def status_text(s: Dict[str, Any]) -> str:
