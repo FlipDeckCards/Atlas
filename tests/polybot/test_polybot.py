@@ -1005,10 +1005,10 @@ def test_v116_pairs_only_takes_both_sides_at_once():
 def test_v118_directional_decision_and_calibration():
     from openjarvis.polybot import directional, shadow
     # exploring (under 50 trades in the bucket): raw 70% up, Up costs 60c, fee ~1.7c: edge ~8c >= 5c -> up
-    p = directional.decide(0.70, 0.60, 0.45, (3, 1), (0, 0))
+    p = directional.decide(0.80, 0.60, 0.45, (3, 1), (0, 0))
     assert p is not None and p[0] == "up" and p[2] == "exploring"
     # too thin: 70% vs 68c -> ~0c edge: nothing
-    assert directional.decide(0.70, 0.68, 0.40, (3, 1), (0, 0)) is None
+    assert directional.decide(0.80, 0.78, 0.40, (3, 1), (0, 0)) is None
     # proven bucket: 60 trades, 57 wins -> lower bound ~0.87; Up at 70c leaves ~15c: buy
     p = directional.decide(0.85, 0.70, 0.25, (60, 57), (60, 2))
     assert p is not None and p[0] == "up" and p[2] == "proven"
@@ -1024,9 +1024,9 @@ def test_v118_cushion_blocks_thin_leads():
     # index $0.10 above the beat with $1 of move still to come (z=0.1): a thin Up lead does not qualify
     z = directional.cushion_z(100.10, 100.0, 1.0, 1.0)
     assert abs(z - 0.1) < 1e-9
-    assert directional.decide(0.70, 0.60, 0.45, (3, 1), (0, 0), z=z) is None
+    assert directional.decide(0.80, 0.60, 0.45, (3, 1), (0, 0), z=z) is None
     # a clear cushion (z=1.0) passes
-    assert directional.decide(0.70, 0.60, 0.45, (3, 1), (0, 0), z=1.0)[0] == "up"
+    assert directional.decide(0.80, 0.60, 0.45, (3, 1), (0, 0), z=1.0)[0] == "up"
     assert directional.cushion_z(None, 100.0, 1.0, 100.0) is None
 
 
