@@ -74,6 +74,7 @@ class Desk:
         self.momentum: float = 0.0
         self.trend: float = 0.0
         self._missing = ""
+        self._lookup_fail = ""
         self.learner = brain.Learner()
         self.sigma: Optional[float] = None
         self.reason: str = "Starting."
@@ -189,12 +190,21 @@ class Desk:
         slug = f"cpc-{self.base.asset}-updown-5m-{time.strftime('%Y-%m-%d-%H%M', time.gmtime(start))}z"
         if slug in self.recent and self.recent[slug].start <= now < self.recent[slug].end:
             return self.recent[slug]
+        why = ""
         try:
             m = await self.c.market(slug)
-        except PMError:
-            return None
-        w = window_from_market(m) if m else None
-        return w if w and w.start <= now < w.end else None
+            w = window_from_market(m) if m else None
+            if w and w.start <= now < w.end:
+                return w
+            why = "no market data" if not m else f"market data without a usable window (keys: {', '.join(sorted(m)[:8])})"
+        except PMError as exc:
+            why = str(exc)[:160]
+        # the market lookup failed, but every 5-minute window has a known address and time: trade it from its order book; the
+        # price to beat comes from the market when it answers, or from the index itself 30 s in (the same 60-second average)
+        if self._lookup_fail != slug:
+            self._lookup_fail = slug
+            self.log("warn", f"Market lookup for {slug} failed ({why}); trading it from its order book instead.")
+        return Window(slug=slug, start=float(start), end=float(start + 300), price_to_beat=None)
 
     async def load_book(self, now: float) -> None:
         if not self.window:
