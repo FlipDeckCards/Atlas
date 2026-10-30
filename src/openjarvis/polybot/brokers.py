@@ -270,7 +270,9 @@ class LiveBroker:
                 fills.append(Fill(self.slug, side, px, round(cum - r.filled, 6), now, r.order_id))
                 r.filled = cum
             state = str(o.get("state") or "")
-            done = final or state in ("ORDER_STATE_FILLED", "ORDER_STATE_CANCELED", "ORDER_STATE_REJECTED", "ORDER_STATE_EXPIRED")
+            # gone from the open list is not the same as finished: a cancel can still be pending, and the order can still fill.
+            # Dropping it early let a replacement go up beside it, so both filled (one-sided windows over the cap, fills missed).
+            done = state in ("ORDER_STATE_FILLED", "ORDER_STATE_CANCELED", "ORDER_STATE_REJECTED", "ORDER_STATE_EXPIRED") or (final and not state)
             if done:
                 if closing:
                     self.closing.pop(r.order_id, None)

@@ -70,6 +70,7 @@ class Desk:
         self.fair_model: Optional[float] = None
         self.mid: Optional[float] = None
         self.momentum: float = 0.0
+        self.trend: float = 0.0
         self.learner = brain.Learner()
         self.sigma: Optional[float] = None
         self.reason: str = "Starting."
@@ -226,7 +227,7 @@ class Desk:
             # what the desk saw at the moment of the fill, so results can be cut by condition later
             "model": None if self.fair_model is None else round(self.fair_model, 4),
             "mid": None if self.mid is None else round(self.mid, 4),
-            "momentum_z": round(self.momentum, 2),
+            "momentum_z": round(self.momentum, 2), "trend_z": round(self.trend, 2),
             "secs_left": round(w.end - f.ts, 1),
             "edge": None if fair_side is None else round(fair_side - cost_per, 4),          # fair value of the side bought minus its cost
             "model_vs_market": None if self.fair_model is None or self.mid is None else round(self.fair_model - self.mid, 4),
@@ -406,6 +407,14 @@ class Desk:
                 can_down = can_down and inv.up_qty > inv.down_qty + 1e-9
                 if not (can_up or can_down):
                     why = why or "Last 90 seconds: only completing pairs, nothing new."
+            self.trend = brain.momentum_z(self.tape, int(now), int(self.cfg.trend_s), self.sigma)
+            if self.cfg.trend_z > 0:                                  # v1.10: every v1.8/v1.9 loss was Up bought into a falling BTC
+                if self.trend <= -self.cfg.trend_z and can_up and not inv.down_qty > inv.up_qty + 1e-9:
+                    can_up = False
+                    why = why or f"BTC trending down over 15 min ({self.trend:+.1f} sd): no new Up."
+                if self.trend >= self.cfg.trend_z and can_down and not inv.up_qty > inv.down_qty + 1e-9:
+                    can_down = False
+                    why = why or f"BTC trending up over 15 min ({self.trend:+.1f} sd): no new Down."
             extra = self.learner.extra_edge if self.cfg.learn else 0.0
             lim = replace(self.cfg.limits, min_edge=round(self.cfg.limits.min_edge + extra, 3))
             equity = self.equity()

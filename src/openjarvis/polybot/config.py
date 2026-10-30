@@ -67,6 +67,8 @@ class Config:
     model_weight: float = 0.4           # v1.1: fair value = this much model + the rest the market's own mid price
     drift_beta: float = 0.7             # v1.3: the last 30 s of BTC's move is expected to carry on this much (measured 0.6-1.3)
     momentum_s: float = 30.0            # v1.1 (30 s since v1.3, where the effect was measured): look back this far for a run ...
+    trend_s: float = 900.0              # v1.10: the trend is BTC's move over the last 15 minutes ...
+    trend_z: float = 1.0                # ... and no new pair starts on the side it runs against (0 = off); completing is fine
     momentum_z: float = 0.6             # ... and do not buy against a move bigger than this many standard deviations (0 = off)
     max_fills_per_side: int = 8         # fills per side per window (v1.8: pairs are built in steps; the unpaired cap bounds the risk)
     learn: bool = True                  # v1.1: demand extra edge while the last 20 windows are losing
@@ -120,6 +122,8 @@ def from_env(env: Optional[Mapping[str, str]] = None) -> Config:
         model_weight=_f(e, "POLYBOT_MODEL_WEIGHT", 0.4, 0.0, 1.0),
         momentum_s=_f(e, "POLYBOT_MOMENTUM_SECONDS", 30.0, 5.0, 600.0),
         drift_beta=_f(e, "POLYBOT_DRIFT_BETA", 0.7, 0.0, 3.0),
+        trend_s=_f(e, "POLYBOT_TREND_SECONDS", 900.0, 60.0, 3000.0),
+        trend_z=_f(e, "POLYBOT_TREND_Z", 1.0, 0.0, 10.0),
         momentum_z=_f(e, "POLYBOT_MOMENTUM_Z", 0.6, 0.0, 10.0),
         max_fills_per_side=int(_f(e, "POLYBOT_MAX_FILLS_PER_SIDE", 8, 0, 100)),
         learn=(e.get("POLYBOT_LEARN") or "true").strip().lower() in _TRUE,
