@@ -889,3 +889,16 @@ def test_btc_15m_by_day_5m_at_night():
     assert d.horizon == "5m" and d.span == 300 and d.slug_for(0).startswith("cpc-btc-updown-5m-")
     d.learn_prefix("cpc-btc-updown-15m-2026-10-30-0530z")
     assert d._prefixes["15m"] == "cpc-btc-updown-15m-" and d.slug_prefix == ""
+
+
+def test_owner_reset_clears_the_daily_stop():
+    from openjarvis.polybot.desk import Desk
+    st = MemStore()
+    d = Desk(replace(from_env({}), mode="live"), None, st)
+    d._ready, d.rs.day_start, d.rs.day_pnl, d.rs.real_pnl = True, 113.0, -5.0, -23.0
+    st.kv["control"] = {"mode": "paper", "day_reset_at": "2026-10-30T08:00:00Z"}
+    run(d.read_control(1.0))
+    assert d.rs.day_start is None and d.rs.real_pnl is None and d.rs.day_pnl == 0.0
+    d.rs.day_start = 90.27
+    run(d.read_control(2.0))                                                  # the same reset is not applied twice
+    assert d.rs.day_start == 90.27

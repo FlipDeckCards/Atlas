@@ -510,7 +510,7 @@ async def crew_desk_control(body: DeskControlIn, request: Request):
     asset = (body.asset or "btc").lower()
     if asset not in desk.KEYS:
         return JSONResponse({"detail": "Unknown desk."}, status_code=400)
-    if body.action not in ("pause", "resume", "flatten", "paper", "go_live"):
+    if body.action not in ("pause", "resume", "flatten", "paper", "go_live", "reset_day"):
         return JSONResponse({"detail": "Unknown action."}, status_code=400)
     out = await desk.control(g[2], body.action, asset=asset)
     if "needs_approval" in out:                       # going live is never done here: it becomes an Approve card in the Helix inbox

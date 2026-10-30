@@ -359,6 +359,13 @@ async def control(pool, action: str, limits: Optional[Dict[str, Any]] = None, as
         ctl["kill"] = True
         await put_control(pool, ctl, asset)
         return {"done": f"{name}: kill switch on: every resting order is cancelled within about 20 seconds. Contracts already bought settle on their own. Say resume to restart."}
+    if action == "reset_day":                     # the daily stop counts from the account value now (all desks share one account)
+        stamp = dt.datetime.now(dt.timezone.utc).isoformat()
+        for a in KEYS:
+            c = ctl if a == asset else await get_kv(pool, kv_key("control", a))
+            c["day_reset_at"] = stamp
+            await put_control(pool, c, a)
+        return {"done": "Daily stop reset on every desk: today's loss limit now counts from the current account value. Trading resumes within about 20 seconds."}
     if action == "paper":
         ctl["mode"] = "paper"
         await put_control(pool, ctl, asset)

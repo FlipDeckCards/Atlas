@@ -185,7 +185,7 @@ CREW_TOOLS: List[Dict[str, Any]] = [
                        "go_live and set_limits that loosen any limit put an Approve card on his inbox: they never happen until he taps Approve. "
                        "set_limits takes any of bankroll_usd, max_window_usd, max_order_usd, daily_loss_usd, min_edge.",
         "parameters": {"type": "object", "properties": {
-            "action": {"type": "string", "enum": ["pause", "resume", "flatten", "paper", "go_live", "set_limits"]},
+            "action": {"type": "string", "enum": ["pause", "resume", "flatten", "paper", "go_live", "set_limits", "reset_day"]},
             "asset": {"type": "string", "enum": ["btc", "eth", "sol", "xrp"], "description": "Which desk (default btc)."},
             "bankroll_usd": {"type": "number"}, "max_window_usd": {"type": "number"}, "max_order_usd": {"type": "number"},
             "daily_loss_usd": {"type": "number"}, "min_edge": {"type": "number"}}, "required": ["action"]}}},

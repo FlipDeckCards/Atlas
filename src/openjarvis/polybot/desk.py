@@ -79,6 +79,8 @@ class Desk:
         self._missing = ""
         self._lookup_fail = ""
         self._book404 = ""
+        self._day_reset_seen: Optional[str] = None          # the owner's last "reset daily stop" this desk has applied
+        self._ready = False
         self._sweeps: set = set()                            # (window, side) a closing sweep is buying
         self.learner = brain.Learner()
         self.sigma: Optional[float] = None
@@ -122,6 +124,11 @@ class Desk:
         new = apply_control(self.base, ctrl)
         was_paused = self.rs.paused
         self.rs.paused, self.rs.kill = bool(ctrl.get("paused")), bool(ctrl.get("kill"))
+        rt = ctrl.get("day_reset_at")
+        if self._ready and rt and rt != self._day_reset_seen:          # the owner reset the daily stop: today starts again from now
+            self._day_reset_seen = rt
+            self.rs.day_start, self.rs.day_pnl, self.rs.real_pnl = None, 0.0, None
+            self.log("info", "Daily stop reset by the owner: today's loss limit now counts from the current account value.")
         if self.guard and was_paused and not self.rs.paused:          # the owner looked, paused and resumed: trade again
             self.log("info", "Resumed by the owner after the position check; trading again.")
             self.guard = None
@@ -596,7 +603,7 @@ class Desk:
             "balance": self.balance, "day": self.rs.day, "day_pnl": round(self.rs.day_pnl, 2),
             "day_start": self.rs.day_start, "day_limit": risk.day_limit(self.cfg, self.rs), "at_risk": round(self.rs.at_risk, 2),
             "today": dict(self.stats),
-            "slug_prefix": self.slug_prefix, "slug_prefixes": dict(self._prefixes),
+            "slug_prefix": self.slug_prefix, "slug_prefixes": dict(self._prefixes), "day_reset_seen": self._day_reset_seen,
             "open_windows": [{"slug": x.slug, "start": x.start, "end": x.end, "price_to_beat": x.price_to_beat, "tick": x.tick,
                               "min_qty": x.min_qty, "title": x.title, "mode": x.mode, "fills": dict(x.fills),
                               "up_qty": x.inv.up_qty, "up_cost": x.inv.up_cost, "down_qty": x.inv.down_qty,
@@ -644,6 +651,8 @@ class Desk:
                 self._prefixes[p.rsplit("-updown-", 1)[1].rstrip("-")] = p
         if isinstance(prev.get("slug_prefix"), str) and prev["slug_prefix"].endswith(f"-updown-{self.horizon}-"):
             self.slug_prefix = prev["slug_prefix"]
+        self._day_reset_seen = prev.get("day_reset_seen")
+        self._ready = True
         await self.load_index(now, backfill=True)
         self.log("info", f"Desk started in {self.cfg.mode.upper()} mode on {self.base.asset.upper()} {self.horizon} Up/Down.")
         steps = 0

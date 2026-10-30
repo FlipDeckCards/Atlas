@@ -129,3 +129,10 @@ def test_each_desk_has_its_own_control_row():
     assert out["action"]["asset"] == "sol" and "SOL" in out["needs_approval"]
     run(desk.apply_approved(pool, {"mode": "live"}, "sol"))
     assert pool.kv["control:sol"]["mode"] == "live" and "control" not in pool.kv
+
+
+def test_reset_daily_stop_marks_every_desk():
+    pool = FakePool()
+    out = run(desk.control(pool, "reset_day", asset="btc"))
+    assert "reset" in out["done"]
+    assert all(pool.kv[k].get("day_reset_at") for k in ("control", "control:eth", "control:sol", "control:xrp"))

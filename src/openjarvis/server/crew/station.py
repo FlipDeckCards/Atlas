@@ -1060,6 +1060,7 @@ function deskSec(key) {
   if (st.paused || st.kill) act('Resume', 'resume'); else act('Pause', 'pause');
   act('Kill switch', 'flatten', 'no');
   if ((st.mode || 'paper') === 'live') act('Back to paper', 'paper'); else act('Go live', 'go_live');
+  if (/Daily loss limit/.test(st.reason || '')) act('Reset daily stop', 'reset_day');
   s.append(ctl);
   if ((st.mode || 'paper') !== 'live') s.append(mk('div', 'dim', 'Go live puts an Approve card in the Helix inbox; real money only after you tap Approve there.'));
   const lim = DESK.limits || {};
