@@ -8,7 +8,7 @@ import math
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from dataclasses import replace
 
@@ -83,6 +83,7 @@ class Desk:
         self._ready = False
         self._sweeps: set = set()                            # (window, side) a closing sweep is buying
         self.learner = brain.Learner()
+        self._fill_conf: Dict[str, List[Tuple[str, Optional[float], Optional[float]]]] = {}   # per window: (side, model conf, book conf)
         self.shadow = shadow.Shadow()                        # v1.15: three hidden shadow strategies (recorded, never traded or shown)
         self.setups = setups.SetupBook()                     # v1.14 learned pair sizing (shadow): record per pair setup
         self._pair_fills: Dict[str, List[Dict[str, Any]]] = {}   # non-sweep fills per open window, to file the pair under its setup
@@ -311,14 +312,19 @@ class Desk:
             "sigma": None if self.sigma is None else round(self.sigma, 3),
             "sweep": (f.slug, f.side) in self._sweeps,                                      # v1.13: bought by a closing sweep
         }
+        bu = shadow.book_up(getattr(self.book, "bids", None), getattr(self.book, "offers", None))
+        bconf = None if bu is None else (bu if f.side == "up" else round(1.0 - bu, 4))
+        mconf = None if self.fair_model is None else (self.fair_model if f.side == "up" else 1.0 - self.fair_model)
+        feats.update({"book_up": bu})                                        # v1.15: the order book's own view, recorded (not traded)
+        self._fill_conf.setdefault(w.slug, []).append((f.side, mconf, bconf))
         if not feats["sweep"]:
             # v1.14 shadow sizing: the window's pair is filed under the setup its FIRST leg opened in; record what size that setup
             # has earned next to the size actually used (trading still uses the normal size)
             pf = self._pair_fills.setdefault(w.slug, [])
             first = pf[0] if pf else {"side": f.side, "features": feats}
             key = setups.pair_setup(first["side"], first["features"])
-            shadow, tier = self.setups.size(key, self.cfg.window_pct)
-            feats.update({"setup": key, "shadow_pct": shadow, "shadow_tier": tier, "actual_pct": self.cfg.window_pct})
+            learned_pct, tier = self.setups.size(key, self.cfg.window_pct)
+            feats.update({"setup": key, "shadow_pct": learned_pct, "shadow_tier": tier, "actual_pct": self.cfg.window_pct})
             pf.append({"side": f.side, "qty": f.qty, "cost": f.cost, "features": feats})
         self.ledger.fill(self.cfg.mode, f, self.fair, feats)
         self.stats["fills"] += 1
@@ -365,6 +371,8 @@ class Desk:
                 continue
             close, up = res
             self.shadow.settle(slug, up)
+            for side, mc, bc in self._fill_conf.pop(slug, []):
+                self.shadow.calib_add(mc, bc, (side == "up") == bool(up))
             try:
                 await self.store.put("shadow", self.shadow.to_dict())
             except Exception:

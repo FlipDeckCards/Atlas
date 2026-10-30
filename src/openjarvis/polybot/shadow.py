@@ -45,8 +45,22 @@ def decide(name: str, secs_left: float, fair_up: Optional[float], ask_up: Option
     return []
 
 
+BUCKETS = ((0.0, 0.5, "under 50"), (0.5, 0.6, "50-59"), (0.6, 0.7, "60-69"), (0.7, 0.8, "70-79"), (0.8, 0.9, "80-89"), (0.9, 1.01, "90+"))
+
+
+def book_up(bids: Optional[List[tuple]], offers: Optional[List[tuple]], levels: int = 5) -> Optional[float]:
+    """The order book's own view that Up wins: the share of resting size on the bid side, over the top `levels` levels.
+    A heavy bid side (buyers of Up waiting) reads as more likely Up. None when the book is empty on either side."""
+    b = sum(float(q) for _, q in (bids or [])[:levels])
+    o = sum(float(q) for _, q in (offers or [])[:levels])
+    if b <= 0 or o <= 0:
+        return None
+    return round(min(0.999, max(0.001, b / (b + o))), 4)
+
+
 class Shadow:
     def __init__(self) -> None:
+        self.calib: Dict[str, Dict[str, Dict[str, int]]] = {m: {lab: {"n": 0, "wins": 0} for _, _, lab in BUCKETS} for m in ("model", "book")}
         self.rec: Dict[str, Dict[str, float]] = {n: {"windows": 0, "wins": 0, "staked": 0.0, "profit": 0.0} for n in NAMES}
         self.open: Dict[str, Dict[str, List[Tuple[str, float]]]] = {}   # slug -> strategy -> legs taken
         self.done: Dict[str, set] = {}                                  # slug -> strategies that already traded this window
@@ -72,10 +86,30 @@ class Shadow:
             r["profit"] = round(r["profit"] + profit, 4)
         self.done.pop(slug, None)
 
+    def calib_add(self, model_conf: Optional[float], book_conf: Optional[float], won: bool) -> None:
+        """One fill: the confidence the model gave the side it bought, and the book's, against whether that side won."""
+        for kind, c in (("model", model_conf), ("book", book_conf)):
+            if c is None:
+                continue
+            lab = next(l for lo, hi, l in BUCKETS if lo <= c < hi)
+            cell = self.calib[kind][lab]
+            cell["n"] += 1
+            cell["wins"] += 1 if won else 0
+
+    def calib_table(self) -> Dict[str, List[Dict[str, Any]]]:
+        return {kind: [{"bucket": lab, "trades": c["n"], "won": c["wins"],
+                        "win_rate": round(100.0 * c["wins"] / c["n"], 1) if c["n"] else None}
+                       for _, _, lab in BUCKETS for c in [self.calib[kind][lab]]] for kind in ("model", "book")}
+
     def to_dict(self) -> Dict[str, Any]:
-        return {"rec": self.rec}
+        return {"rec": self.rec, "calib": self.calib}
 
     def load(self, d: Optional[Dict[str, Any]]) -> None:
         for n, r in ((d or {}).get("rec") or {}).items():
             if n in self.rec and isinstance(r, dict):
                 self.rec[n] = {k: float(r.get(k, 0) or 0) for k in ("windows", "wins", "staked", "profit")}
+        for kind, rows in ((d or {}).get("calib") or {}).items():
+            if kind in self.calib and isinstance(rows, dict):
+                for lab, c in rows.items():
+                    if lab in self.calib[kind] and isinstance(c, dict):
+                        self.calib[kind][lab] = {"n": int(c.get("n", 0) or 0), "wins": int(c.get("wins", 0) or 0)}

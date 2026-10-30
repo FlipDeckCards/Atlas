@@ -967,3 +967,17 @@ def test_v115_shadow_strategies():
     assert s.rec["edge"]["windows"] == 1 and s.rec["edge"]["wins"] == 1 and s.rec["edge"]["profit"] > 0
     assert s.rec["late"]["wins"] == 1 and s.rec["pairs"]["windows"] == 1 and s.rec["pairs"]["wins"] == 1
     s2 = shadow.Shadow(); s2.load(s.to_dict()); assert s2.rec["edge"]["wins"] == 1
+
+
+def test_v115_book_view_and_calibration():
+    from openjarvis.polybot import shadow
+    assert shadow.book_up([(0.5, 30)], [(0.51, 10)]) == 0.75          # heavy bid side: Up looks likelier
+    assert shadow.book_up([], [(0.51, 10)]) is None                    # empty side: no reading
+    s = shadow.Shadow()
+    s.calib_add(0.85, 0.60, True)
+    s.calib_add(0.85, None, False)
+    s.calib_add(0.42, 0.42, False)
+    t = s.calib_table()
+    assert t["model"][4] == {"bucket": "80-89", "trades": 2, "won": 1, "win_rate": 50.0}
+    assert t["book"][2]["trades"] == 1 and t["book"][2]["won"] == 1      # 60% -> the 60-69 bucket, won
+    s2 = shadow.Shadow(); s2.load(s.to_dict()); assert s2.calib_table() == t
