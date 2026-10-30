@@ -602,7 +602,7 @@ class Desk:
                                                     budget_usd, sizing.window_cap(self.cfg.limits), w.min_qty, self.cfg.pair_margin) \
                         if inv.spent <= 0 else ([], "Already in this window; holding to settlement.")
                     can_up_m, can_down_m, mom_why = brain.side_filters(self.momentum, self.cfg.momentum_z, self.name)
-                    if not want and inv.spent <= 0 and self.cfg.directional and self.cfg.mode == "paper" \
+                    if not want and inv.spent <= 0 and self.cfg.directional \
                             and self.fair_model is not None and b.best_ask is not None and b.best_bid is not None \
                             and self.cfg.directional_min_secs <= w.end - now <= self.cfg.directional_secs_left:
                         z = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)
