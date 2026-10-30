@@ -19,7 +19,18 @@ from openjarvis.polybot.strategy import taker_fee
 PROVEN_N = 50
 PROVEN_EDGE = 0.03
 EXPLORE_EDGE = 0.05
-MIN_CONF = 0.75                 # a side must be at least 75% by the model's own number before the desk will buy it, in either tier
+MIN_CONF = 0.60                 # a side must be at least 60% by the model's own number before the desk will buy it
+
+
+def size_pct(prob: float) -> float:
+    """Lot size as a % of the balance, by the model's own confidence: 60-70% = 5, 71-90% = 10, 91%+ = 15 (0 below 60%)."""
+    if prob >= 0.91:
+        return 15.0
+    if prob > 0.70:
+        return 10.0
+    if prob >= MIN_CONF:
+        return 5.0
+    return 0.0
 
 
 CUSHION_Z = 0.5
@@ -36,8 +47,8 @@ def cushion_z(index: Optional[float], beat: Optional[float], sigma_per_s: Option
 
 def decide(prob_up: float, up_cost: Optional[float], down_cost: Optional[float],
            bucket_up: Tuple[int, int], bucket_down: Tuple[int, int],
-           z: Optional[float] = None) -> Optional[Tuple[str, float, str, float]]:
-    """(side, cost per contract, tier, edge after fees) for the better side, or None.
+           z: Optional[float] = None) -> Optional[Tuple[str, float, str, float, float]]:
+    """(side, cost per contract, tier, edge after fees, lot % of balance) for the better side, or None.
     bucket_up / bucket_down: (trades, wins) in the calibration bucket of that side's model confidence."""
     best = None
     for side, prob, cost, (n, wins) in (("up", prob_up, up_cost, bucket_up), ("down", 1.0 - prob_up, down_cost, bucket_down)):
@@ -50,8 +61,9 @@ def decide(prob_up: float, up_cost: Optional[float], down_cost: Optional[float],
         else:
             conf, need, tier = prob, EXPLORE_EDGE, "exploring"
         edge = conf - cost - taker_fee(cost)
-        if edge >= need and (best is None or edge > best[3]):
-            best = (side, cost, tier, round(edge, 4))
+        pct = size_pct(prob)
+        if edge >= need and pct > 0 and (best is None or edge > best[3]):
+            best = (side, cost, tier, round(edge, 4), pct)
     return best
 
 
@@ -69,7 +81,7 @@ def explain(prob_up: Optional[float], up_cost: Optional[float], down_cost: Optio
         elif not (0.05 <= cost <= 0.95):
             parts.append(f"{side}: costs {cost * 100:.0f}c, outside 5-95c")
         elif prob < MIN_CONF:
-            parts.append(f"{side}: model {prob * 100:.0f}% is under 75%")
+            parts.append(f"{side}: model {prob * 100:.0f}% is under {MIN_CONF * 100:.0f}%")
         elif z is not None and (z if side == "Up" else -z) < CUSHION_Z:
             parts.append(f"{side}: index too close to the beat ({(z if side == 'Up' else -z):.2f} sd, needs 0.5)")
         else:

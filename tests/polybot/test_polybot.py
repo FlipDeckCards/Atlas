@@ -1050,7 +1050,7 @@ def test_v118_shadow_scalp_target_and_stop():
     t = shadow.Shadow(); t.load(s.to_dict()); assert t.scalp_stats["target"] == 1
 
 
-def test_v118_never_buy_a_side_the_model_calls_unlikely():
+def test_v118_tiered_lot_sizes():
     from openjarvis.polybot import directional
     # the model says Up 43%: a 35c Up looks like an edge on paper, but the model itself says Up is the less likely outcome
     assert directional.decide(0.43, 0.35, 0.60, (0, 0), (0, 0)) is None or directional.decide(0.43, 0.35, 0.60, (0, 0), (0, 0))[0] != "up"
@@ -1059,5 +1059,6 @@ def test_v118_never_buy_a_side_the_model_calls_unlikely():
 
 def test_v118_directional_needs_75_percent():
     from openjarvis.polybot import directional
-    assert directional.decide(0.70, 0.40, 0.60, (0, 0), (0, 0)) is None           # 70% is not enough
+    assert directional.decide(0.55, 0.30, 0.60, (0, 0), (0, 0)) is None          # under 60%: never
     assert directional.decide(0.76, 0.60, 0.40, (0, 0), (0, 0))[0] == "up"        # 76% with an edge: yes
+    assert directional.size_pct(0.65) == 5.0 and directional.size_pct(0.80) == 10.0 and directional.size_pct(0.92) == 15.0

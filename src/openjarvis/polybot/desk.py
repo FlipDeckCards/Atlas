@@ -608,17 +608,16 @@ class Desk:
                         pick = directional.decide(self.fair_model, b.best_ask, round(1.0 - b.best_bid, 6),
                                                   self.shadow.bucket_stats(self.fair_model), self.shadow.bucket_stats(1.0 - self.fair_model), z=z)
                         if pick is not None:
-                            side, cost, tier, edge = pick
+                            side, cost, tier, edge, lot_pct = pick
                             size_here = (b.offers[0][1] if b.offers else 0.0) if side == "up" else (b.bids[0][1] if b.bids else 0.0)
-                            usd = min(budget_usd, sizing.window_cap(self.cfg.limits)) * (1.0 if tier == "proven" else 0.5)
+                            usd = min(budget_usd, equity * lot_pct / 100.0)          # lot size by confidence: 5 / 10 / 15% of the balance
                             q = strategy._qty(usd, cost, w.min_qty)
                             q = min(q, round(size_here // w.min_qty * w.min_qty, 6))
                             if q >= w.min_qty:
                                 price = b.best_ask if side == "up" else b.best_bid
                                 want = [strategy.Quote(side, price, q, taker=True)]
                                 self._dir_pending.add(w.slug)
-                                why = (f"Directional ({tier}): {side} at {cost * 100:.0f}c, edge {edge * 100:.1f}c after fees"
-                                       f"{'' if tier == 'proven' else ' (learning: half size)'}.")
+                                why = f"Directional ({tier}): {side} at {cost * 100:.0f}c, edge {edge * 100:.1f}c after fees, lot {lot_pct:.0f}%."
                     if not want and inv.spent <= 0 and self.cfg.directional:
                         z_now = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)
                         in_win = self.cfg.directional_min_secs <= w.end - now <= self.cfg.directional_secs_left
