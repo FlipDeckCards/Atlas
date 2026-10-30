@@ -1004,9 +1004,13 @@ function deskSec(key) {
   if (!DESK) { s.append(mk('div', 'dim', 'Loading the desk…')); return s; }
   if (DESK.error) { s.append(mk('div', 'dim', DESK.error)); return s; }
   const st = DESK.status || {};
-  // live state
-  const sr = mk('div', 'row'); const dot = mk('span', 'dot'); dot.style.background = DESK.running ? (st.paused || st.kill ? '#ffd23f' : '#00ff88') : '#ff3344';
-  sr.append(dot, mk('span', 'grow', DESK.running ? (st.reason || '') : (st.heartbeat ? 'The trading worker stopped reporting.' : 'The trading worker is not running yet.')),
+  // the switch follows what was ASKED (the control row, saved the moment you tap); the worker's own status catches up within ~20 s.
+  // Showing the worker's status made the button flip back for up to a minute after a tap, so it took several taps to stick.
+  const want = DESK.control || {}, wantStop = !!(want.paused || want.kill), isStop = !!(st.paused || st.kill);
+  const pending = DESK.running && wantStop !== isStop;
+  const sr = mk('div', 'row'); const dot = mk('span', 'dot'); dot.style.background = DESK.running ? (pending || wantStop ? '#ffd23f' : '#00ff88') : '#ff3344';
+  sr.append(dot, mk('span', 'grow', DESK.running ? (pending ? (wantStop ? 'Pausing… the desk picks it up within a few seconds.' : 'Resuming… the desk picks it up within a few seconds.') : (st.reason || ''))
+            : (st.heartbeat ? 'The trading worker stopped reporting.' : 'The trading worker is not running yet.')),
             mk('span', 'tag', (st.mode || 'paper').toUpperCase()));
   s.append(sr);
   if (st.window) s.append(mk('div', 'dim', 'Window ' + new Date(st.window.end * 1000).toLocaleTimeString() + ' close · beat ' + (st.window.price_to_beat ? money(st.window.price_to_beat) : '…')
@@ -1054,10 +1058,19 @@ function deskSec(key) {
   // switches (going live is an Approve card from Helix, never a button here)
   const ctl = mk('div', 'desk-tabs');
   const act = (label, action, cls) => { const b = mk('button', 'b' + (cls ? ' ' + cls : ''), label);
-    b.onclick = async () => { b.disabled = true; const r = await api('/api/crew/desk/control', 'POST', { action, asset: A }); b.disabled = false;
-      if (!r.ok) alert((r.data && r.data.detail) || 'Could not do that.'); else if (r.data && r.data.done && action === 'go_live') alert(r.data.done);
-      loadDesk(true, A); }; ctl.append(b); };
-  if (st.paused || st.kill) act('Resume', 'resume'); else act('Pause', 'pause');
+    b.onclick = async () => { if (b.disabled) return; b.disabled = true; const was = b.textContent; b.textContent = was + '…';
+      const r = await api('/api/crew/desk/control', 'POST', { action, asset: A });
+      if (!r.ok) { b.disabled = false; b.textContent = was; alert((r.data && r.data.detail) || 'Could not do that.'); return; }
+      if (r.data && r.data.done && action === 'go_live') alert(r.data.done);
+      if (DESKS[A]) {                                   // show the new state at once instead of waiting for the next reload
+        const c = DESKS[A].control = Object.assign({}, DESKS[A].control || {});
+        if (action === 'pause') c.paused = true;
+        if (action === 'resume') { c.paused = false; c.kill = false; }
+        if (action === 'flatten') c.kill = true;
+      }
+      DESK_LOADINGS[A] = false; renderSide(); loadDesk(true, A);
+      [8000, 25000].forEach(ms => setTimeout(() => { DESK_LOADINGS[A] = false; loadDesk(true, A); }, ms)); }; ctl.append(b); };
+  if (wantStop) act('Resume', 'resume'); else act('Pause', 'pause');
   act('Kill switch', 'flatten', 'no');
   if ((st.mode || 'paper') === 'live') act('Back to paper', 'paper'); else act('Go live', 'go_live');
   if (/Daily loss limit/.test(st.reason || '')) act('Reset daily stop', 'reset_day');

@@ -98,7 +98,7 @@ class Config:
     stale_s: float = 4.0                # data older than this pulls every quote
     tick_s: float = 1.0                 # how often the desk thinks
     flush_s: float = 60.0               # how often state is written to the database
-    control_s: float = 20.0             # how often the control row is read (pause, kill, mode, limits)
+    control_s: float = 5.0              # how often the control row is read (pause, kill, mode, limits); 5 s so a tap takes effect quickly
     database_url: str = ""
     data_dir: str = "polybot_data"      # used when there is no database (local paper runs)
     notify_url: str = ""                # ntfy topic (CREW_NOTIFY_URL): a push for every live entry and settlement
@@ -183,7 +183,7 @@ def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Con
         min_buy_price=_f(e, "POLYBOT_MIN_BUY_PRICE", 0.15, 0.01, 0.99),
         max_buy_price=_f(e, "POLYBOT_MAX_BUY_PRICE", 0.80, 0.01, 0.99),
         flush_s=_f(e, "POLYBOT_FLUSH_SECONDS", 60.0, 10.0, 3600.0),
-        control_s=_f(e, "POLYBOT_CONTROL_SECONDS", 20.0, 5.0, 600.0),
+        control_s=_f(e, "POLYBOT_CONTROL_SECONDS", 5.0, 2.0, 600.0),
         database_url=(e.get("DATABASE_URL") or "").strip(),
         data_dir=(e.get("POLYBOT_DATA_DIR") or "polybot_data").strip(),
         notify_url=(e.get("POLYBOT_NOTIFY_URL") or e.get("CREW_NOTIFY_URL") or "").strip(),

@@ -122,13 +122,16 @@ class Desk:
             logger.exception("control row unreadable; keeping the last settings")
             return
         new = apply_control(self.base, ctrl)
-        was_paused = self.rs.paused
+        was_paused, was_kill = self.rs.paused, self.rs.kill
         self.rs.paused, self.rs.kill = bool(ctrl.get("paused")), bool(ctrl.get("kill"))
         rt = ctrl.get("day_reset_at")
         if self._ready and rt and rt != self._day_reset_seen:          # the owner reset the daily stop: today starts again from now
             self._day_reset_seen = rt
             self.rs.day_start, self.rs.day_pnl, self.rs.real_pnl = None, 0.0, None
             self.log("info", "Daily stop reset by the owner: today's loss limit now counts from the current account value.")
+        if (was_paused, was_kill) != (self.rs.paused, self.rs.kill):   # a pause/resume tap: report it on the next tick, not a minute later
+            self._t["flush"] = 0.0
+            self.log("info", f"{self.name} {'paused' if self.rs.paused or self.rs.kill else 'resumed'} from Aibussol.")
         if self.guard and was_paused and not self.rs.paused:          # the owner looked, paused and resumed: trade again
             self.log("info", "Resumed by the owner after the position check; trading again.")
             self.guard = None

@@ -350,7 +350,7 @@ async def control(pool, action: str, limits: Optional[Dict[str, Any]] = None, as
     if action == "pause":
         ctl["paused"] = True
         await put_control(pool, ctl, asset)
-        return {"done": f"{name} paused: it pulls its quotes within about 20 seconds and holds what it already owns to settlement."}
+        return {"done": f"{name} paused: it pulls its quotes within a few seconds and holds what it already owns to settlement."}
     if action == "resume":
         ctl["paused"], ctl["kill"] = False, False
         await put_control(pool, ctl, asset)
@@ -358,7 +358,7 @@ async def control(pool, action: str, limits: Optional[Dict[str, Any]] = None, as
     if action in ("flatten", "kill", "stop"):
         ctl["kill"] = True
         await put_control(pool, ctl, asset)
-        return {"done": f"{name}: kill switch on: every resting order is cancelled within about 20 seconds. Contracts already bought settle on their own. Say resume to restart."}
+        return {"done": f"{name}: kill switch on: every resting order is cancelled within a few seconds. Contracts already bought settle on their own. Say resume to restart."}
     if action == "reset_day":                     # the daily stop counts from the account value now (all desks share one account)
         stamp = dt.datetime.now(dt.timezone.utc).isoformat()
         for a in KEYS:
