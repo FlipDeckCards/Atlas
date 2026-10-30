@@ -131,6 +131,31 @@ class Sizing:
         return round(min(max(usd, self.min_order_usd), limits.max_order_usd, self.window_cap(limits)), 2)
 
 
+def taker_fee(p: float) -> float:
+    """Polymarket US taker fee per contract at price p."""
+    return 0.0695 * p * (1.0 - p)
+
+
+def sweep(prob_up: float, mid: Optional[float], book: Book, inv: Inventory, *, cap_usd: float, budget_left: float,
+          min_price: float = 0.75, max_price: float = 0.97, min_edge: float = 0.03, mid_agree: float = 0.65) -> Optional[Quote]:
+    """v1.13 closing sweep: near the close, buy the side that is likely to win at its asking price, but only when the model's
+    probability beats the price by at least min_edge after the taker fee, the market leans the same way, and the price is in
+    [min_price, max_price]. Size: the exposure left on that side (beyond what pairs cover) at most cap_usd."""
+    for side, prob, ask in (("up", prob_up, book.best_ask), ("down", 1.0 - prob_up, None if book.best_bid is None else 1.0 - book.best_bid)):
+        if ask is None or not (min_price - 1e-9 <= ask <= max_price + 1e-9):
+            continue
+        if mid is None or (mid if side == "up" else 1.0 - mid) < mid_agree:
+            continue
+        if prob - ask - taker_fee(ask) < min_edge:
+            continue
+        held, other = (inv.up_qty, inv.down_qty) if side == "up" else (inv.down_qty, inv.up_qty)
+        room_usd = min(cap_usd - max(0.0, held - other) * ask, budget_left)
+        q = _qty(room_usd, ask, book.min_qty)
+        if q > 0:
+            return Quote(side, round(ask if side == "up" else 1.0 - ask, 6), q, taker=True)
+    return None
+
+
 def quotes(fair: float, book: Book, inv: Inventory, limits: Limits, *, budget_left: float, can_up: bool = True,
            can_down: bool = True, sizing: Optional[Sizing] = None, pair_margin: float = 0.03,
            min_cost: float = 0.0, max_cost: float = 1.0, unpaired_usd: Optional[float] = None,

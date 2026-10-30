@@ -22,7 +22,7 @@ from typing import Deque, Dict, List, Optional, Tuple
 
 from openjarvis.polybot.model import PriceTape
 
-STRATEGY_VERSION = "1.12"          # 1.13 (same scoreboard): new pairs only 06:30-20:30 Pacific. 1.12: unpaired legs are hedged (finished, crossing if needed) after 45 s or 75 s before the close. 1.11: fresh start for the three desks; jump filter per coin. 1.10: no new pair against the 15-minute trend. 1.9: new pairs only open on a side priced 30-70c. 1.8: pair-first: at most 10% of the window unpaired, no new legs in the last 90 s, pairs built in steps
+STRATEGY_VERSION = "1.13"          # 1.13: closing sweeps (likely winner at 75-97c near the close, model must beat the price); new pairs only new pairs only 06:30-20:30 Pacific. 1.12: unpaired legs are hedged (finished, crossing if needed) after 45 s or 75 s before the close. 1.11: fresh start for the three desks; jump filter per coin. 1.10: no new pair against the 15-minute trend. 1.9: new pairs only open on a side priced 30-70c. 1.8: pair-first: at most 10% of the window unpaired, no new legs in the last 90 s, pairs built in steps
 
 
 def market_mid(best_bid: Optional[float], best_ask: Optional[float]) -> Optional[float]:

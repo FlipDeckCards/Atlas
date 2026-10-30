@@ -861,3 +861,16 @@ def test_trading_hours_pacific():
     assert risk.in_hours(at(6, 30), "06:30", "20:30") and risk.in_hours(at(20, 29), "06:30", "20:30")
     assert not risk.in_hours(at(20, 30), "06:30", "20:30") and not risk.in_hours(at(2, 0), "06:30", "20:30")
     assert risk.in_hours(at(2, 0), "", "")
+
+
+def test_v113_closing_sweep():
+    lim = from_env({}).limits
+    inv = Inventory()
+    b = Book(0.84, 0.86)
+    q = strategy.sweep(0.95, 0.85, b, inv, cap_usd=6.0, budget_left=50)        # model 95%, ask 86c: edge 9c minus ~0.8c fee
+    assert q and q.side == "up" and q.taker and q.price == 0.86 and q.qty * 0.86 <= 6.0 + 1e-9
+    assert strategy.sweep(0.88, 0.85, b, inv, cap_usd=6.0, budget_left=50) is None     # 88% vs 86c: not enough edge
+    assert strategy.sweep(0.95, 0.40, b, inv, cap_usd=6.0, budget_left=50) is None     # the market does not agree
+    d = strategy.sweep(0.05, 0.15, Book(0.14, 0.16), inv, cap_usd=6.0, budget_left=50)  # Down at 86c
+    assert d and d.side == "down" and abs(d.cost_per - 0.86) < 1e-9
+    assert strategy.sweep(0.99, 0.6, Book(0.58, 0.60), inv, cap_usd=6.0, budget_left=50) is None   # 60c: below the 75c floor

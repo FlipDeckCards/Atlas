@@ -82,6 +82,11 @@ class Config:
     hedge_max_loss: float = 0.05        # ... if the pair costs at most $1.05 a contract (0 = hedging off)
     trade_start: str = "06:30"          # v1.13: new pairs only in these hours (Los Angeles); open legs are still finished and settled
     trade_end: str = "20:30"            # (overnight books are empty, so one side fills and the other never does)
+    sweep_pct: float = 5.0              # v1.13 closing sweep: at most this % of the balance on the likely winner near the close (0 = off)
+    sweep_secs_left: float = 90.0       # sweeps run from this many seconds before the close until stop_before_end_s
+    sweep_min_price: float = 0.75       # only buy the likely winner at 75c-97c ...
+    sweep_max_price: float = 0.97
+    sweep_min_edge: float = 0.03        # ... and only when the model's probability is at least 3c above the price after the fee
     open_min_price: float = 0.30        # v1.9: start a new pair only on a side priced 30-70c (the 15-20c long shots never got paired)
     open_max_price: float = 0.70
     min_buy_price: float = 0.15         # v1.5: never pay less than this for a side (long shots lost)
@@ -161,6 +166,11 @@ def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Con
         hedge_max_loss=_f(e, "POLYBOT_HEDGE_MAX_LOSS", 0.05, 0.0, 0.5),
         trade_start=(per("POLYBOT_TRADE_START") or "06:30"),
         trade_end=(per("POLYBOT_TRADE_END") or "20:30"),
+        sweep_pct=_f({"v": per("POLYBOT_SWEEP_PCT")}, "v", 5.0, 0.0, 50.0),
+        sweep_secs_left=_f(e, "POLYBOT_SWEEP_SECONDS", 90.0, 30.0, 600.0),
+        sweep_min_price=_f(e, "POLYBOT_SWEEP_MIN_PRICE", 0.75, 0.5, 0.99),
+        sweep_max_price=_f(e, "POLYBOT_SWEEP_MAX_PRICE", 0.97, 0.5, 0.99),
+        sweep_min_edge=_f(e, "POLYBOT_SWEEP_MIN_EDGE", 0.03, 0.0, 0.5),
         open_min_price=_f(e, "POLYBOT_OPEN_MIN_PRICE", 0.30, 0.01, 0.99),
         open_max_price=_f(e, "POLYBOT_OPEN_MAX_PRICE", 0.70, 0.01, 0.99),
         min_buy_price=_f(e, "POLYBOT_MIN_BUY_PRICE", 0.15, 0.01, 0.99),

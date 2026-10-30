@@ -498,6 +498,19 @@ class Desk:
                                    open_min=self.cfg.open_min_price, open_max=self.cfg.open_max_price, hedge_loss=hedge,
                                    unpaired_usd=max(0.25, sizing.window_cap(self.cfg.limits) * self.cfg.unpaired_pct / 100.0)
                                    ) if (can_up or can_down) else []
+            # v1.13 closing sweep (all hours): in the last sweep_secs_left seconds, when the model is confident, the desk only buys the
+            # likely winner (never the other side, which would undo it) at 75-97c when the model's odds beat the price
+            if self.cfg.sweep_pct > 0 and w.end - now <= self.cfg.sweep_secs_left and self.fair_model is not None:
+                cap = max(0.0, equity) * self.cfg.sweep_pct / 100.0
+                sw = strategy.sweep(self.fair_model, self.mid, strategy.Book(b.best_bid, b.best_ask, w.tick, w.min_qty), inv,
+                                    cap_usd=cap, budget_left=budget, min_price=self.cfg.sweep_min_price,
+                                    max_price=self.cfg.sweep_max_price, min_edge=self.cfg.sweep_min_edge)
+                decisive = max(self.fair_model, 1.0 - self.fair_model) >= self.cfg.sweep_min_price + self.cfg.sweep_min_edge
+                if sw is not None:
+                    want = [sw]
+                    why = f"Closing sweep: buying {sw.side.upper()} at {sw.cost_per:.2f} (model {max(self.fair_model, 1 - self.fair_model):.0%})."
+                elif decisive:
+                    want = [q for q in want if (q.side == "up") == (self.fair_model >= 0.5)]    # never buy the likely loser now
             if want:
                 reason = "Quoting" + (f" (one side only: {why})" if why else ".")
             elif why and not (can_up or can_down):
