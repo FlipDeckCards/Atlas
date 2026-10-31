@@ -23,12 +23,13 @@ EXPLORE_EDGE = 0.05
 # BTC: 80-84 = 5%, 85-89 = 7%, 90-94 = 8%, 95%+ = 10%; under 80 = no trade.
 # XRP: same as BTC but the floor is 90% (owner, 2026-10-31, after an 88% loss): 90-94 = 8%, 95%+ = 10%; under 90 = no trade.
 # The four methods (directional, edge, late, sweep) use the same floor and lot sizes for XRP as for BTC.
-# ETH and SOL: trade only at 95%+, at 1% of the balance for now (the owner is still collecting data).
+# ETH: trade only at 95%+, at 1% of the balance for now (the owner is still collecting data).
+# SOL: trade at 90%+ (owner, 2026-10-31; was 95%), still 1% of the balance.
 TIERS = {
     "btc": ((95, 10.0), (90, 8.0), (85, 7.0), (80, 5.0)),
     "xrp": ((95, 10.0), (90, 8.0)),
     "eth": ((95, 1.0),),
-    "sol": ((95, 1.0),),
+    "sol": ((90, 1.0),),
 }
 
 
@@ -60,7 +61,7 @@ CUSHION_Z = 0.5
 # entry rules; they keep the same confidence floor, lot tier, cushion and momentum filters as directional. Every method's bets in
 # a window together stay under WINDOW_TOTAL_PCT of the balance, and no method may bet against a side already bet in that window.
 WINDOW_TOTAL_PCT = 20.0
-EDGE_GAP = 0.06          # edge: the model's odds beat the ask by at least 6 cents
+EDGE_GAP = 0.04          # edge: the model's odds beat the ask by at least 4 cents (owner, 2026-10-31; was 6)
 LATE_PROB = 0.90         # late: the model is at least 90% sure
 LATE_MAX_COST = 0.95     # ... and the side costs 95 cents or less
 
