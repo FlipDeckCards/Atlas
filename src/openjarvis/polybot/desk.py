@@ -84,6 +84,7 @@ class Desk:
         self._sweeps: set = set()                            # (window, side) a closing sweep is buying
         self.learner = brain.Learner()
         self._dir_pending: set = set()                       # v1.18: windows where a directional trade was placed
+        self._bets: Dict[str, Dict[str, Tuple[str, float, float]]] = {}   # v1.22: window -> {method: (side, usd, qty)}, one bet per method
         self._fill_conf: Dict[str, List[Tuple[str, Optional[float], Optional[float]]]] = {}   # per window: (side, model conf, book conf)
         self.shadow = shadow.Shadow()                        # v1.15: three hidden shadow strategies (recorded, never traded or shown)
         self.setups = setups.SetupBook()                     # v1.14 learned pair sizing (shadow): record per pair setup
@@ -374,6 +375,9 @@ class Desk:
             close, up = res
             self.shadow.settle(slug, up)
             self.shadow.settle_scalp(slug, up)
+            for method, (side, usd, qty) in self._bets.pop(slug, {}).items():
+                if method != "directional":
+                    self.shadow.add_result(method, round((qty if (side == "up") == bool(up) else 0.0) - usd, 4), usd)
             if slug in self._dir_pending:
                 self._dir_pending.discard(slug)
                 if w.inv.spent > 0:
@@ -460,6 +464,15 @@ class Desk:
                 return
 
     # ── one second of work ────────────────────────────────────────────────────────────
+    def _taken(self, slug: str, method: str) -> bool:
+        return method in self._bets.get(slug, {})
+
+    def _place(self, slug: str, method: str, side: str, usd: float, qty: float) -> None:
+        """v1.22: record a bet the method just placed in this window (one per method), and count it against the windows' cap."""
+        self._bets.setdefault(slug, {})[method] = (side, round(usd, 4), qty)
+        self._dir_pending.add(slug)
+        exposure.reserve(self.name, usd)
+
     async def step(self) -> None:
         now = self.clock()
         self.rs.roll(now)
@@ -621,7 +634,7 @@ class Desk:
                                                     budget_usd, sizing.window_cap(self.cfg.limits), w.min_qty, self.cfg.pair_margin) \
                         if inv.spent <= 0 else ([], "Already in this window; holding to settlement.")
                     can_up_m, can_down_m, mom_why = brain.side_filters(self.momentum, self.cfg.momentum_z, self.name)
-                    if not want and inv.spent <= 0 and self.cfg.directional \
+                    if not want and not self._taken(w.slug, "directional") and self.cfg.directional \
                             and self.fair_model is not None and b.best_ask is not None and b.best_bid is not None \
                             and self.cfg.directional_min_secs <= w.end - now <= self.cfg.directional_secs_left:
                         z = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)
@@ -631,16 +644,42 @@ class Desk:
                         if pick is not None:
                             side, cost, tier, edge, lot_pct = pick
                             size_here = (b.offers[0][1] if b.offers else 0.0) if side == "up" else (b.bids[0][1] if b.bids else 0.0)
-                            usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity))   # lot by coin and confidence; capped across all desks
+                            bets = self._bets.get(w.slug, {})
+                            usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity), directional.window_room(bets, equity))   # lot by coin and confidence; capped across all desks and the window
+                            ok_win, _ = directional.may_take(bets, side, usd, equity)
+                            q = strategy._qty(usd, cost, w.min_qty)
+                            q = min(q, round(size_here // w.min_qty * w.min_qty, 6))
+                            if q >= w.min_qty and ok_win:
+                                price = b.best_ask if side == "up" else b.best_bid
+                                want = [strategy.Quote(side, price, q, taker=True)]
+                                self._place(w.slug, "directional", side, usd, q)
+                                why = f"Directional ({tier}): {side} at {cost * 100:.0f}c, edge {edge * 100:.1f}c after fees, lot {lot_pct:.0f}%."
+                    # v1.22: edge and late are extra single-bet methods: one bet each per window, never against a side already bet
+                    if self.cfg.directional and self.fair_model is not None and b.best_ask is not None and b.best_bid is not None:
+                        for method, lo, hi in (("edge", 60.0, self.cfg.directional_secs_left), ("late", self.cfg.directional_min_secs, 60.0)):
+                            if want or self._taken(w.slug, method) or not (lo <= w.end - now <= hi):
+                                continue
+                            z = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)
+                            pick = directional.method_pick(method, self.fair_model, b.best_ask, round(1.0 - b.best_bid, 6), z=z,
+                                                           up_ok=can_up_m, down_ok=can_down_m, asset=self.cfg.asset)
+                            if pick is None:
+                                continue
+                            side, cost, _, gap, lot_pct = pick
+                            bets = self._bets.get(w.slug, {})
+                            usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity), directional.window_room(bets, equity))
+                            ok_win, why_win = directional.may_take(bets, side, usd, equity)
+                            if not ok_win:
+                                why = f"{method.title()}: {why_win}."
+                                continue
+                            size_here = (b.offers[0][1] if b.offers else 0.0) if side == "up" else (b.bids[0][1] if b.bids else 0.0)
                             q = strategy._qty(usd, cost, w.min_qty)
                             q = min(q, round(size_here // w.min_qty * w.min_qty, 6))
                             if q >= w.min_qty:
                                 price = b.best_ask if side == "up" else b.best_bid
                                 want = [strategy.Quote(side, price, q, taker=True)]
-                                self._dir_pending.add(w.slug)
-                                exposure.reserve(self.name, usd)
-                                why = f"Directional ({tier}): {side} at {cost * 100:.0f}c, edge {edge * 100:.1f}c after fees, lot {lot_pct:.0f}%."
-                    if not want and inv.spent <= 0 and self.cfg.directional:
+                                self._place(w.slug, method, side, usd, q)
+                                why = f"{method.title()}: {side} at {cost * 100:.0f}c, model {gap * 100:.0f} points over the price, lot {lot_pct:.0f}%."
+                    if not want and not self._taken(w.slug, "directional") and self.cfg.directional:
                         z_now = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)
                         in_win = self.cfg.directional_min_secs <= w.end - now <= self.cfg.directional_secs_left
                         why_dir = directional.explain(self.fair_model, b.best_ask,
