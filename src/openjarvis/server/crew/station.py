@@ -1021,6 +1021,19 @@ function deskSec(key) {
   if (!DESK) { s.append(mk('div', 'dim', 'Loading the desk…')); return s; }
   if (DESK.error) { s.append(mk('div', 'dim', DESK.error)); return s; }
   const st = DESK.status || {};
+  // v1.22 window flag: is there a trade in the window the desk is in right now, and what is it
+  if (st.window) {
+    const cur = (st.open_windows || []).find(x => x.slug === st.window.slug);
+    const wEnd = st.window.end ? new Date(st.window.end * 1000).toLocaleTimeString() : '';
+    const flag = mk('div', 'row'); flag.style.marginTop = '6px'; flag.style.fontSize = '15px';
+    const tag = mk('span', null, cur && cur.paid > 0 ? 'IN A TRADE' : 'NO TRADE'); tag.style.fontWeight = '700';
+    tag.style.color = cur && cur.paid > 0 ? '#3d8bff' : '#ffb347';
+    const detail = cur && cur.paid > 0
+      ? ' · Up ' + Number(cur.up_qty || 0).toFixed(2) + ' @ ' + money(cur.up_cost) + ' · Down ' + Number(cur.down_qty || 0).toFixed(2) + ' @ ' + money(cur.down_cost) + ' · paid ' + money(cur.paid)
+      : ' · nothing bought in this window yet';
+    flag.append(mk('span', null, 'Current window (closes ' + wEnd + '): '), tag, mk('span', 'dim', detail));
+    s.append(flag);
+  }
   // the switch follows what was ASKED (the control row, saved the moment you tap); the worker's own status catches up within ~20 s.
   // Showing the worker's status made the button flip back for up to a minute after a tap, so it took several taps to stick.
   const want = DESK.control || {}, wantStop = !!(want.paused || want.kill), isStop = !!(st.paused || st.kill);
@@ -1043,19 +1056,6 @@ function deskSec(key) {
     b.onclick = () => { DESK_VIEW = m; renderSide(); }; tabs.append(b); });
   s.append(tabs);
   const v = sc[DESK_VIEW] || {}, a = v.all || {}, t = v.today || {}, d7 = v.d7 || {};
-  // v1.22 window flag: is there a trade in the window the desk is in right now, and what is it
-  if (st.window) {
-    const cur = (st.open_windows || []).find(x => x.slug === st.window.slug);
-    const wEnd = st.window.end ? new Date(st.window.end * 1000).toLocaleTimeString() : '';
-    const flag = mk('div', 'row'); flag.style.marginTop = '6px'; flag.style.fontSize = '15px';
-    const tag = mk('span', null, cur && cur.paid > 0 ? 'IN A TRADE' : 'NO TRADE'); tag.style.fontWeight = '700';
-    tag.style.color = cur && cur.paid > 0 ? '#3d8bff' : '#ffb347';
-    const detail = cur && cur.paid > 0
-      ? ' · Up ' + Number(cur.up_qty || 0).toFixed(2) + ' @ ' + money(cur.up_cost) + ' · Down ' + Number(cur.down_qty || 0).toFixed(2) + ' @ ' + money(cur.down_cost) + ' · paid ' + money(cur.paid)
-      : ' · nothing bought in this window yet';
-    flag.append(mk('span', null, 'Current window (closes ' + wEnd + '): '), tag, mk('span', 'dim', detail));
-    s.append(flag);
-  }
   if (DESK_VIEW === 'live' && st.account_value != null) {          // the real money, read from Polymarket: the line that cannot drift
     // v1.21: deposits made since this version started are not profit: net them out when the start deposit total is known
     const addedDep = (st.deposits_start != null && DESK.deposits != null) ? DESK.deposits - st.deposits_start : 0;
