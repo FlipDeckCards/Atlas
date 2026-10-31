@@ -136,7 +136,11 @@ async def shadow_detail(pool, asset: str) -> Optional[Dict[str, Any]]:
     out: Dict[str, Any] = {"calib": {}, "scalp": d.get("scalp") or {}}
     names = {"edge": "buys a side at least 6c under the model's fair price, 60-240 s before the close",
              "pairs": "buys both sides when the two asks total 97c or less, with 90 s or more left",
-             "late": "buys the likely winner (model 90%+ or 10%-) at 95c or less, in the last 60 s"}
+             "late": "buys the likely winner (model 90%+ or 10%-) at 95c or less, in the last 60 s",
+             "book": "buys a side when the model is 80%+ and the order book agrees (60%+), 60-240 s before the close, at 90c or less",
+             "imbalance": "buys the side the order book leans toward (75%+ bid share), 60-240 s before the close, at 85c or less",
+             "vol_narrow": "the model with volatility cut to 0.7x: buys a side it puts at 85%+ when the ask is 5c or more under that",
+             "vol_wide": "the model with volatility raised to 1.4x: buys a side it puts at 85%+ when the ask is 5c or more under that"}
     out["strategies"] = []
     for n, r in (d.get("rec") or {}).items():
         w, staked, profit = int(r.get("windows", 0)), float(r.get("staked", 0)), float(r.get("profit", 0))

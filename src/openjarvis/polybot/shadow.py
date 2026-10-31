@@ -17,12 +17,43 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from openjarvis.polybot.strategy import taker_fee
 
-NAMES = ("edge", "pairs", "late")
+NAMES = ("edge", "pairs", "late", "book", "imbalance", "vol_narrow", "vol_wide")   # v1.21: the four confidence pieces as shadows
 
 
 def decide(name: str, secs_left: float, fair_up: Optional[float], ask_up: Optional[float],
-           ask_down: Optional[float]) -> List[Tuple[str, float]]:
-    """The legs this strategy would buy at this moment, as (side, price per contract); [] when it would not trade."""
+           ask_down: Optional[float], extra: Optional[Dict[str, Optional[float]]] = None) -> List[Tuple[str, float]]:
+    """The legs this strategy would buy at this moment, as (side, price per contract); [] when it would not trade.
+    extra (v1.21): book_up (the book's own Up view), fair_lo / fair_hi (the model with a tighter / wider volatility)."""
+    ex = extra or {}
+    if name in ("book", "imbalance", "vol_narrow", "vol_wide"):
+        if not (60 <= secs_left <= 240):
+            return []
+        if name == "book":
+            bu = ex.get("book_up")
+            if fair_up is None or bu is None:
+                return []
+            if fair_up >= 0.80 and bu >= 0.60 and ask_up is not None and ask_up <= 0.90:
+                return [("up", ask_up)]
+            if fair_up <= 0.20 and bu <= 0.40 and ask_down is not None and ask_down <= 0.90:
+                return [("down", ask_down)]
+            return []
+        if name == "imbalance":
+            bu = ex.get("book_up")
+            if bu is None:
+                return []
+            if bu >= 0.75 and ask_up is not None and ask_up <= 0.85:
+                return [("up", ask_up)]
+            if bu <= 0.25 and ask_down is not None and ask_down <= 0.85:
+                return [("down", ask_down)]
+            return []
+        f = ex.get("fair_lo") if name == "vol_narrow" else ex.get("fair_hi")
+        if f is None:
+            return []
+        if f >= 0.85 and ask_up is not None and ask_up <= f - 0.05:
+            return [("up", ask_up)]
+        if (1.0 - f) >= 0.85 and ask_down is not None and ask_down <= (1.0 - f) - 0.05:
+            return [("down", ask_down)]
+        return []
     if name == "edge":
         if fair_up is None or not (60 <= secs_left <= 240):
             return []
@@ -74,11 +105,12 @@ class Shadow:
         self.open: Dict[str, Dict[str, List[Tuple[str, float]]]] = {}   # slug -> strategy -> legs taken
         self.done: Dict[str, set] = {}                                  # slug -> strategies that already traded this window
 
-    def tick(self, slug: str, secs_left: float, fair_up: Optional[float], ask_up: Optional[float], ask_down: Optional[float]) -> None:
+    def tick(self, slug: str, secs_left: float, fair_up: Optional[float], ask_up: Optional[float], ask_down: Optional[float],
+             extra: Optional[Dict[str, Optional[float]]] = None) -> None:
         for n in NAMES:
             if n in self.done.get(slug, set()):
                 continue
-            legs = decide(n, secs_left, fair_up, ask_up, ask_down)
+            legs = decide(n, secs_left, fair_up, ask_up, ask_down, extra)
             if legs:
                 self.open.setdefault(slug, {})[n] = legs
                 self.done.setdefault(slug, set()).add(n)
