@@ -210,6 +210,8 @@ class Desk:
         Scanning the whole market list missed windows when the list was long, and the desk sat 'between windows' mid-window."""
         if self.horizon not in ("5m", "15m"):
             return None
+        if not self.slug_prefix:
+            return None          # no market address learned from a real market yet: scan the live list instead of guessing one
         H = self.span
         start = int(now // H) * H
         slug = self.slug_for(start)
@@ -841,9 +843,10 @@ class Desk:
             self.deposits_start = float(prev["deposits_start"])
         self.restore_windows(prev.get("open_windows"), now)
         for p in (prev.get("slug_prefixes") or {}).values() if isinstance(prev.get("slug_prefixes"), dict) else []:
-            if isinstance(p, str) and "-updown-" in p:
+            if isinstance(p, str) and "-updown-" in p and not p.startswith(f"cpc-{self.base.asset}-updown-"):   # the guessed default is never restored
                 self._prefixes[p.rsplit("-updown-", 1)[1].rstrip("-")] = p
-        if isinstance(prev.get("slug_prefix"), str) and prev["slug_prefix"].endswith(f"-updown-{self.horizon}-"):
+        if isinstance(prev.get("slug_prefix"), str) and prev["slug_prefix"].endswith(f"-updown-{self.horizon}-") \
+                and not prev["slug_prefix"].startswith(f"cpc-{self.base.asset}-updown-"):
             self.slug_prefix = prev["slug_prefix"]
         self._day_reset_seen = prev.get("day_reset_seen")
         self._ready = True
