@@ -278,6 +278,8 @@ def deposits() -> Optional[float]:
 
 
 async def _ledger_pnl(pool, asset: str, now: dt.datetime) -> Dict[str, float]:
+    """Realised live P&L for one desk from its settled windows: today (since LA midnight), last 30 days, and all time.
+    Every figure is the same kind of number (settled windows only), so they can be compared and summed without a plug."""
     from openjarvis.server.crew.finance import la_midnight
 
     async with pool.acquire() as c:
@@ -285,25 +287,49 @@ async def _ledger_pnl(pool, asset: str, now: dt.datetime) -> Dict[str, float]:
                                  la_midnight(now), asset)
         d30 = await c.fetchval(f"SELECT coalesce(sum(pnl),0) FROM polybot_windows WHERE mode='live' AND settled_at >= $1 AND {ASSET_SQL} = $2",
                                now - dt.timedelta(days=30), asset)
-    return {"today": round(float(today or 0), 2), "d30": round(float(d30 or 0), 2)}
+        all_time = await c.fetchval(f"SELECT coalesce(sum(pnl),0) FROM polybot_windows WHERE mode='live' AND {ASSET_SQL} = $1", asset)
+    return {"today": round(float(today or 0), 2), "d30": round(float(d30 or 0), 2), "all": round(float(all_time or 0), 2)}
 
 
 async def live_pnl_all(pool) -> Dict[str, Dict[str, float]]:
-    """Live trading profit per desk for the Station's P&L (paper never counts as money). All desks share one Polymarket account,
-    so the real account is the truth for the total: ETH and SOL show their own ledger, and the BTC desk (the original one, whose
-    ledger missed trades earlier) gets the rest, so the three always add up to what Polymarket shows."""
+    """Live realised trading profit per desk (paper never counts as money), from each desk's own settled windows.
+    No desk absorbs the difference from the account balance: that gap is reported separately by reconciliation()."""
     now = dt.datetime.now(dt.timezone.utc)
     await _ensure(pool)
-    out = {a: await _ledger_pnl(pool, a, now) for a in KEYS}
+    return {a: await _ledger_pnl(pool, a, now) for a in KEYS}
+
+
+async def reconciliation(pool) -> Dict[str, Any]:
+    """Compare the ledger with the real Polymarket account. gap = what the account shows that the settled ledger does not explain:
+    trades placed by hand on Polymarket outside the desks, open positions marked at cost, fills the ledger missed, withdrawals.
+    It is shown as unreconciled, never spread across desks.
+    All figures come from one status snapshot (the BTC row), so the account and day-start values are from the same moment."""
+    now = dt.datetime.now(dt.timezone.utc)
+    await _ensure(pool)
+    per = {a: await _ledger_pnl(pool, a, now) for a in KEYS}
     st = await get_kv(pool, kv_key("status", "btc"))
     acct, start = st.get("account_value"), st.get("day_start")
+    ledger_all = round(sum(v["all"] for v in per.values()), 2)
+    ledger_today = round(sum(v["today"] for v in per.values()), 2)
+    dep = deposits()
+    out: Dict[str, Any] = {
+        "account_value": None if acct is None else round(float(acct), 2),
+        "as_of_day": st.get("day"),
+        "deposits": dep,
+        "ledger_all_time": ledger_all,
+        "ledger_today": ledger_today,
+        "account_change_today": None,
+        "unreconciled_today": None,
+        "account_change_all_time": None,
+        "unreconciled_all_time": None,
+    }
     if st.get("mode") == "live" and acct is not None:
-        others_today = sum(out[a]["today"] for a in KEYS if a != "btc")
-        others_d30 = sum(out[a]["d30"] for a in KEYS if a != "btc")
         if start is not None and st.get("day") == la_day_str(now):
-            out["btc"]["today"] = round(float(acct) - float(start) - others_today, 2)
-        if deposits():
-            out["btc"]["d30"] = round(float(acct) - deposits() - others_d30, 2)
+            out["account_change_today"] = round(float(acct) - float(start), 2)
+            out["unreconciled_today"] = round(out["account_change_today"] - ledger_today, 2)
+        if dep:
+            out["account_change_all_time"] = round(float(acct) - dep, 2)
+            out["unreconciled_all_time"] = round(out["account_change_all_time"] - ledger_all, 2)
     return out
 
 
