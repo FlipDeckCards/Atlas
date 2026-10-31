@@ -192,7 +192,7 @@ class Desk:
         nxt = await self.window_by_slug(now)
         if nxt is None and self._due("markets_scan", 10.0, now):       # the slow full scan: at most every 10 s (three desks hammering it
             ms = await self.c.markets(categories=["crypto"], active=True, closed=False)          # every 2 s got rate-limited)
-            live = [x for x in (window_from_market(m) for m in ms if is_series(m, self.base.asset, self.horizon)) if x and x.start <= now < x.end]
+            live = [x for x in (window_from_market(m) for m in ms if is_series(m, self.base.asset, self.horizon)) if x and x.start <= now < x.end and not x.slug.startswith("cpc")]
             nxt = min(live, key=lambda x: x.end) if live else None
         if nxt is not None:
             self.learn_prefix(nxt.slug)
@@ -210,8 +210,6 @@ class Desk:
         Scanning the whole market list missed windows when the list was long, and the desk sat 'between windows' mid-window."""
         if self.horizon not in ("5m", "15m"):
             return None
-        if not self.slug_prefix:
-            return None          # no market address learned from a real market yet: scan the live list instead of guessing one
         H = self.span
         start = int(now // H) * H
         slug = self.slug_for(start)
@@ -258,11 +256,13 @@ class Desk:
         self._prefixes[self.horizon] = v
 
     def slug_for(self, start: int) -> str:
-        prefix = self.slug_prefix or f"cpc-{self.base.asset}-updown-{self.horizon}-"
+        prefix = self.slug_prefix or f"{self.base.asset}-updown-{self.horizon}-"     # Polymarket's address: btc-updown-5m-YYYY-MM-DD-HHMMz
         return f"{prefix}{time.strftime('%Y-%m-%d-%H%M', time.gmtime(start))}z"
 
     def learn_prefix(self, slug: str) -> None:
         """cpceth-eth-updown-5m-2026-10-30-0225z -> cpceth-eth-updown-5m- (the part before the date)."""
+        if slug.startswith("cpc"):
+            return                                                    # the old guessed "cpc" names have no order book: never learn them
         parts = slug.split("-")
         if len(parts) > 4 and parts[-1].endswith("z"):
             p = "-".join(parts[:-4]) + "-"
@@ -843,10 +843,10 @@ class Desk:
             self.deposits_start = float(prev["deposits_start"])
         self.restore_windows(prev.get("open_windows"), now)
         for p in (prev.get("slug_prefixes") or {}).values() if isinstance(prev.get("slug_prefixes"), dict) else []:
-            if isinstance(p, str) and "-updown-" in p and not p.startswith(f"cpc-{self.base.asset}-updown-"):   # the guessed default is never restored
+            if isinstance(p, str) and "-updown-" in p and not p.startswith("cpc"):   # the old guessed "cpc" names are never restored
                 self._prefixes[p.rsplit("-updown-", 1)[1].rstrip("-")] = p
         if isinstance(prev.get("slug_prefix"), str) and prev["slug_prefix"].endswith(f"-updown-{self.horizon}-") \
-                and not prev["slug_prefix"].startswith(f"cpc-{self.base.asset}-updown-"):
+                and not prev["slug_prefix"].startswith("cpc"):
             self.slug_prefix = prev["slug_prefix"]
         self._day_reset_seen = prev.get("day_reset_seen")
         self._ready = True
