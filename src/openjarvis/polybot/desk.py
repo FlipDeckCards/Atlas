@@ -576,6 +576,11 @@ class Desk:
                 hedge = hedge_cap
                 can_up, can_down = inv.down_qty > inv.up_qty, inv.up_qty > inv.down_qty
                 why = "Finishing the pair (hedge)."
+            # v1.21: a fresh window opens its first leg only where the model's confidence clears this coin's tier floor
+            # (BTC/XRP 80%, ETH/SOL 95%); completing a leg already held is unchanged
+            if inv.up_qty <= 0 and inv.down_qty <= 0:
+                open_up, open_down = directional.open_sides(self.fair, self.cfg.asset)
+                can_up, can_down = can_up and open_up, can_down and open_down
             extra = self.learner.extra_edge if self.cfg.learn else 0.0
             lim = replace(self.cfg.limits, min_edge=round(self.cfg.limits.min_edge + extra, 3))
             equity = self.equity()

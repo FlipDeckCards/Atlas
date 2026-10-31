@@ -53,3 +53,13 @@ def test_publish_overwrites_and_reserve_adds():
     exposure.publish("BTC", 10.0)                  # the next tick reports the real figure
     assert exposure.total_open() == 10.0
     exposure.reset()
+
+
+def test_open_sides_follow_the_coin_floor():
+    # v1.21: a fresh window opens a leg only where the model clears the coin's floor
+    assert directional.open_sides(0.93, "eth") == (False, False)   # the 93% ETH case: no open
+    assert directional.open_sides(0.96, "eth") == (True, False)
+    assert directional.open_sides(0.04, "eth") == (False, True)
+    assert directional.open_sides(0.82, "btc") == (True, False)
+    assert directional.open_sides(0.78, "btc") == (False, False)
+    assert directional.open_sides(None, "btc") == (False, False)

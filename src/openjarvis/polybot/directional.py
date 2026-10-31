@@ -45,6 +45,14 @@ def size_pct(prob: float, asset: str = "btc") -> float:
     return 0.0
 
 
+def open_sides(fair_up: Optional[float], asset: str = "btc") -> Tuple[bool, bool]:
+    """v1.21: which sides a fresh window may open a single leg on. A side opens only when the model's confidence in it
+    meets this coin's tier floor (the same gate as a directional trade). Both False when the model is missing."""
+    if fair_up is None:
+        return False, False
+    return size_pct(fair_up, asset) > 0, size_pct(1.0 - fair_up, asset) > 0
+
+
 CUSHION_Z = 0.5
 
 

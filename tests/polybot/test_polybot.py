@@ -7,6 +7,7 @@ import base64
 import datetime as dt
 import json
 import math
+import unittest.mock
 import random
 
 import pytest
@@ -387,7 +388,9 @@ def test_a_full_paper_window_fills_settles_and_records():
     cfg = from_env({"POLYBOT_FLUSH_SECONDS": "30", "POLYBOT_HEDGE_MAX_LOSS": "0", "POLYBOT_PAIRS_ONLY": "false"})     # this one checks fills and settlement only
     ex.now = t0 - 5
     desk = Desk(cfg, ex, store, notify=notify, clock=lambda: float(ex.now), sleep=sleep)
-    run(desk.run(max_steps=330))
+    # v1.21 opens need the coin's confidence floor; these check fill mechanics, so allow opens here
+    with unittest.mock.patch("openjarvis.polybot.directional.open_sides", return_value=(True, True)):
+        run(desk.run(max_steps=330))
 
     assert store.fills, "the seller sweeping below fair should have filled the Up bid"
     assert all(f["side"] == "up" and f["price"] <= 0.5 for f in store.fills)
@@ -613,7 +616,9 @@ def test_a_full_live_window_places_fills_settles_and_alerts():
     cfg = from_env({"POLYBOT_ALLOW_LIVE": "true", "POLYMARKET_KEY_ID": "k", "POLYMARKET_SECRET_KEY": "s", "POLYBOT_PAIRS_ONLY": "false"})
     ex.now = t0 - 5
     desk = Desk(cfg, ex, store, notify=notify, clock=lambda: float(ex.now), sleep=sleep)
-    run(desk.run(max_steps=330))
+    # v1.21 opens need the coin's confidence floor; these check fill mechanics, so allow opens here
+    with unittest.mock.patch("openjarvis.polybot.directional.open_sides", return_value=(True, True)):
+        run(desk.run(max_steps=330))
 
     assert store.kv["status"]["mode"] == "live"
     assert ex.n >= 1 and store.fills and all(f["mode"] == "live" for f in store.fills)
@@ -723,7 +728,8 @@ def test_a_closed_market_is_not_an_api_error():
     store = MemStore()
     ex.now = t0 - 5
     d = Desk(from_env({"POLYBOT_PAIRS_ONLY": "false"}), ex, store, clock=lambda: float(ex.now), sleep=sleep)
-    run(d.run(max_steps=330))
+    with unittest.mock.patch("openjarvis.polybot.directional.open_sides", return_value=(True, True)):   # v1.21: mechanics test
+        run(d.run(max_steps=330))
     texts = " ".join(e["text"] for e in store.events)
     assert "API errors in a row" not in texts and "EXIT (settled)" in texts
 
