@@ -54,6 +54,53 @@ def open_sides(fair_up: Optional[float], asset: str = "btc") -> Tuple[bool, bool
 
 
 CUSHION_Z = 0.5
+# v1.22: each method (directional, edge, late) may place ONE bet per window. Edge and Late are extra triggers with their own
+# entry rules; they keep the same confidence floor, lot tier, cushion and momentum filters as directional. Every method's bets in
+# a window together stay under WINDOW_TOTAL_PCT of the balance, and no method may bet against a side already bet in that window.
+WINDOW_TOTAL_PCT = 20.0
+EDGE_GAP = 0.06          # edge: the model's odds beat the ask by at least 6 cents
+LATE_PROB = 0.90         # late: the model is at least 90% sure
+LATE_MAX_COST = 0.95     # ... and the side costs 95 cents or less
+
+
+def method_pick(method: str, prob_up: float, up_cost: Optional[float], down_cost: Optional[float], z: Optional[float] = None,
+                up_ok: bool = True, down_ok: bool = True, asset: str = "btc") -> Optional[Tuple[str, float, str, float, float]]:
+    """(side, cost, method, edge, lot % of balance) for an edge or late bet, or None. The caller checks the window timing."""
+    if method not in ("edge", "late"):
+        return None
+    best = None
+    for side, prob, cost, ok in (("up", prob_up, up_cost, up_ok), ("down", 1.0 - prob_up, down_cost, down_ok)):
+        if cost is None or not (0.05 <= cost <= 0.95) or prob < min_conf(asset) or not ok:
+            continue
+        if z is not None and (z if side == "up" else -z) < CUSHION_Z:
+            continue
+        pct = size_pct(prob, asset)
+        if pct <= 0:
+            continue
+        if method == "edge":
+            if prob - cost < EDGE_GAP:
+                continue
+        elif prob < LATE_PROB or cost > LATE_MAX_COST:
+            continue
+        gap = round(prob - cost, 4)
+        if best is None or gap > best[3]:
+            best = (side, cost, method, gap, pct)
+    return best
+
+
+def may_take(bets: dict, side: str, usd: float, equity: float) -> Tuple[bool, str]:
+    """Whether a new bet may go into this window: bets is {method: (side, usd, qty)} already placed in the window."""
+    if bets and side not in {s for s, _, _ in bets.values()}:
+        return False, "the other side is already bet in this window: not betting against it"
+    room = max(0.0, float(equity)) * WINDOW_TOTAL_PCT / 100.0 - sum(u for _, u, _ in bets.values())
+    if usd <= 0 or room <= 0 or usd > room + 1e-9:
+        return False, f"the window's {WINDOW_TOTAL_PCT:.0f}% total in bets has no room for this one"
+    return True, ""
+
+
+def window_room(bets: dict, equity: float) -> float:
+    """Dollars a new bet may still put into this window across every method (v1.22 per-window total)."""
+    return round(max(0.0, max(0.0, float(equity)) * WINDOW_TOTAL_PCT / 100.0 - sum(u for _, u, _ in bets.values())), 2)
 
 
 def cushion_z(index: Optional[float], beat: Optional[float], sigma_per_s: Optional[float], secs_left: float) -> Optional[float]:
