@@ -299,6 +299,7 @@ async def summary(pool, *, trade_limit: int = 50, asset: str = "btc") -> Dict[st
             "score": {"paper": await scoreboard(pool, "paper", asset=asset), "live": await scoreboard(pool, "live", asset=asset)},
             "trades": {"paper": await trades(pool, "paper", trade_limit, asset=asset), "live": await trades(pool, "live", trade_limit, asset=asset)},
             "events": await events(pool, 30, asset), "mode": mode, "strategy": STRATEGY_VERSION, "deposits": deposits(),
+            "shadow": await shadow_stats(pool, mode, STRATEGY_VERSION, asset), "shadow_detail": await shadow_detail(pool, asset),
             "asset": asset, "name": NAMES[asset],
             "analysis": await analysis(pool, "live" if mode == "live" else "paper", asset=asset)}
 
