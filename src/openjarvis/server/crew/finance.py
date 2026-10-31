@@ -200,16 +200,20 @@ class Finance:
         for app, n in stripe["subs"].items():
             row(app)["subscribers"] += n
         for k, v in (trading or {}).items():
-            row(k)["revenue_today"] += float(v.get("today") or 0)
-            row(k)["revenue_30d"] += float(v.get("d30") or 0)
+            t_today, t_30 = float(v.get("today") or 0), float(v.get("d30") or 0)
+            # a winning day is revenue; a losing day is money out (OUT), not negative revenue
+            row(k)["revenue_today"] += max(t_today, 0.0)
+            row(k)["revenue_30d"] += max(t_30, 0.0)
+            row(k)["trading_out_today"] = row(k).get("trading_out_today", 0.0) + max(-t_today, 0.0)
+            row(k)["trading_out_30d"] = row(k).get("trading_out_30d", 0.0) + max(-t_30, 0.0)
             row(k)["trading"] = True
         if owner:
             rows["aibussol"]["ai_cost_today"] = helix["today"]
             rows["aibussol"]["ai_cost_30d"] = helix["d30"]
         total = {"revenue_today": 0.0, "revenue_30d": 0.0, "cost_today": 0.0, "cost_30d": 0.0, "mrr": 0.0, "subscribers": 0}
         for r in rows.values():
-            r["cost_today"] = round(r["crew_cost_today"] + r["ai_cost_today"] + r["fixed_cost_today"], 2)
-            r["cost_30d"] = round(r["crew_cost_30d"] + r["ai_cost_30d"] + r["fixed_cost_30d"], 2)
+            r["cost_today"] = round(r["crew_cost_today"] + r["ai_cost_today"] + r["fixed_cost_today"] + r.get("trading_out_today", 0.0), 2)
+            r["cost_30d"] = round(r["crew_cost_30d"] + r["ai_cost_30d"] + r["fixed_cost_30d"] + r.get("trading_out_30d", 0.0), 2)
             r["net_today"] = round(r["revenue_today"] - r["cost_today"], 2)
             r["net_30d"] = round(r["revenue_30d"] - r["cost_30d"], 2)
             for k in list(r):
