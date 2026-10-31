@@ -1156,14 +1156,16 @@ function deskSec(key) {
   return s;
 }
 // shadow breakdown: every shadow strategy and calibration result, per desk, opened from a button under the desk log
+let SHADOW_OPEN = false;   // kept across re-renders: the desk panel rebuilds whenever a desk reloads
 function shadowBreakdownSec() {
   const wrap = mk('div'); wrap.style.marginTop = '10px';
-  const btn = mk('button', null, 'Shadow strategies ▸'); btn.style.cursor = 'pointer';
-  const panel = mk('div'); panel.style.display = 'none'; panel.style.marginTop = '8px';
+  const btn = mk('button', null, SHADOW_OPEN ? 'Shadow strategies ▾' : 'Shadow strategies ▸'); btn.style.cursor = 'pointer';
+  const panel = mk('div'); panel.style.display = SHADOW_OPEN ? 'block' : 'none'; panel.style.marginTop = '8px';
+  if (SHADOW_OPEN) renderShadow(panel);
   btn.onclick = () => {
-    const open = panel.style.display === 'none';
-    panel.style.display = open ? 'block' : 'none'; btn.textContent = open ? 'Shadow strategies ▾' : 'Shadow strategies ▸';
-    if (open) renderShadow(panel);
+    SHADOW_OPEN = !SHADOW_OPEN;
+    panel.style.display = SHADOW_OPEN ? 'block' : 'none'; btn.textContent = SHADOW_OPEN ? 'Shadow strategies ▾' : 'Shadow strategies ▸';
+    if (SHADOW_OPEN) renderShadow(panel);
   };
   wrap.append(btn, panel);
   return wrap;
@@ -1171,7 +1173,9 @@ function shadowBreakdownSec() {
 function renderShadow(panel) {
   panel.replaceChildren();
   ['btc', 'eth', 'sol', 'xrp'].forEach(a => {
-    const d = DESKS[a]; const sd = d && !d.error ? d.shadow_detail : null;
+    const d = DESKS[a];
+    if (!d) { panel.append(mk('div', 'dim', 'Loading ' + a.toUpperCase() + '…')); return; }
+    const sd = !d.error ? d.shadow_detail : null;
     const h = mk('div', 'lbl'); h.textContent = a.toUpperCase() + ' desk'; panel.append(h);
     if (!sd) { panel.append(mk('div', 'dim', 'No shadow results saved yet.')); return; }
     (sd.strategies || []).forEach(x => {
