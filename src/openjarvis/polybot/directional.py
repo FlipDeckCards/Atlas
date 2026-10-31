@@ -6,7 +6,7 @@ bucket its model confidence falls in:
     is bought only if that confidence beats its cost plus taker fee by at least PROVEN_EDGE.
   * exploring: fewer trades than that. Confidence = the raw model number, bought only with a bigger edge (EXPLORE_EDGE), and at
     half size, so the bucket gathers results without much at stake.
-Only one side is bought per window. Every directional trade needs the model at 75% or more on its side (MIN_CONF), live or paper.
+Only one side is bought per window. Each coin has its own confidence tiers and lot sizes (TIERS); below a coin's first tier there is no trade.
 """
 
 from __future__ import annotations
@@ -19,17 +19,29 @@ from openjarvis.polybot.strategy import taker_fee
 PROVEN_N = 50
 PROVEN_EDGE = 0.03
 EXPLORE_EDGE = 0.05
-MIN_CONF = 0.60                 # a side must be at least 60% by the model's own number before the desk will buy it
+# v1.20, the owner's direction plan: lot % of the balance by the model's confidence, per coin (floor of the percentage).
+# BTC and XRP: 80-84 = 5%, 85-89 = 7%, 90-94 = 8%, 95%+ = 10%; under 80 = no trade.
+# ETH and SOL: trade only at 95%+, at 1% of the balance for now (the owner is still collecting data).
+TIERS = {
+    "btc": ((95, 10.0), (90, 8.0), (85, 7.0), (80, 5.0)),
+    "xrp": ((95, 10.0), (90, 8.0), (85, 7.0), (80, 5.0)),
+    "eth": ((95, 1.0),),
+    "sol": ((95, 1.0),),
+}
 
 
-def size_pct(prob: float) -> float:
-    """Lot size as a % of the balance, by the model's own confidence: 60-70% = 5, 71-90% = 6, 91%+ = 7 (0 below 60%)."""
-    if prob >= 0.91:
-        return 7.0
-    if prob > 0.70:
-        return 6.0
-    if prob >= MIN_CONF:
-        return 5.0
+def min_conf(asset: str = "btc") -> float:
+    """The lowest model confidence this coin will trade at (no trade below it)."""
+    tiers = TIERS.get(asset)
+    return min(floor for floor, _ in tiers) / 100.0 if tiers else 1.0
+
+
+def size_pct(prob: float, asset: str = "btc") -> float:
+    """Lot size as a % of the balance for this coin and the model's confidence (0 = no trade). The percentage is floored: 84.6% counts as 84%."""
+    pct = int(prob * 100 + 1e-9)
+    for floor, lot in TIERS.get(asset, ()):
+        if pct >= floor:
+            return lot
     return 0.0
 
 
@@ -47,12 +59,13 @@ def cushion_z(index: Optional[float], beat: Optional[float], sigma_per_s: Option
 
 def decide(prob_up: float, up_cost: Optional[float], down_cost: Optional[float],
            bucket_up: Tuple[int, int], bucket_down: Tuple[int, int],
-           z: Optional[float] = None, up_ok: bool = True, down_ok: bool = True) -> Optional[Tuple[str, float, str, float, float]]:
+           z: Optional[float] = None, up_ok: bool = True, down_ok: bool = True,
+           asset: str = "btc") -> Optional[Tuple[str, float, str, float, float]]:
     """(side, cost per contract, tier, edge after fees, lot % of balance) for the better side, or None.
     bucket_up / bucket_down: (trades, wins) in the calibration bucket of that side's model confidence."""
     best = None
     for side, prob, cost, (n, wins) in (("up", prob_up, up_cost, bucket_up), ("down", 1.0 - prob_up, down_cost, bucket_down)):
-        if cost is None or not (0.05 <= cost <= 0.95) or prob < MIN_CONF:
+        if cost is None or not (0.05 <= cost <= 0.95) or prob < min_conf(asset):
             continue
         if z is not None and (z if side == "up" else -z) < CUSHION_Z:
             continue                                  # v1.18: the index is too close to the price to beat on this side
@@ -63,14 +76,14 @@ def decide(prob_up: float, up_cost: Optional[float], down_cost: Optional[float],
         else:
             conf, need, tier = prob, EXPLORE_EDGE, "exploring"
         edge = conf - cost - taker_fee(cost)
-        pct = size_pct(prob)
+        pct = size_pct(prob, asset)
         if edge >= need and pct > 0 and (best is None or edge > best[3]):
             best = (side, cost, tier, round(edge, 4), pct)
     return best
 
 
 def explain(prob_up: Optional[float], up_cost: Optional[float], down_cost: Optional[float], bucket_up: Tuple[int, int],
-            bucket_down: Tuple[int, int], z: Optional[float], in_window: bool) -> str:
+            bucket_down: Tuple[int, int], z: Optional[float], in_window: bool, asset: str = "btc") -> str:
     """Plain words for why the directional rule did not trade this moment (shown on the desk status)."""
     if not in_window:
         return "Directional: outside its 30-240 second window."
@@ -82,8 +95,8 @@ def explain(prob_up: Optional[float], up_cost: Optional[float], down_cost: Optio
             parts.append(f"{side}: no price")
         elif not (0.05 <= cost <= 0.95):
             parts.append(f"{side}: costs {cost * 100:.0f}c, outside 5-95c")
-        elif prob < MIN_CONF:
-            parts.append(f"{side}: model {prob * 100:.0f}% is under {MIN_CONF * 100:.0f}%")
+        elif prob < min_conf(asset):
+            parts.append(f"{side}: model {prob * 100:.0f}% is under {min_conf(asset) * 100:.0f}%")
         elif z is not None and (z if side == "Up" else -z) < CUSHION_Z:
             parts.append(f"{side}: index too close to the beat ({(z if side == 'Up' else -z):.2f} sd, needs 0.5)")
         else:

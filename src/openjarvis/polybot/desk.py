@@ -12,7 +12,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from dataclasses import replace
 
-from openjarvis.polybot import brain, directional, model, risk, setups, shadow, strategy
+from openjarvis.polybot import brain, directional, exposure, model, risk, setups, shadow, strategy
 from openjarvis.polybot.brokers import BookView, Fill, LiveBroker, PaperBroker, parse_ts
 from openjarvis.polybot.client import PMError, money
 from openjarvis.polybot.config import Config, apply_control
@@ -478,6 +478,7 @@ class Desk:
             self.balance = await self.broker.balance()
 
         self.rs.at_risk = round(sum(w.inv.spent for w in self.open_windows.values()) + self.external_at_risk, 4)
+        exposure.publish(self.name, sum(w.inv.spent for w in self.open_windows.values() if w.slug in self._dir_pending))   # v1.20 cross-desk cap
         if self.version_start is None and self.cfg.mode == "live" and self.balance is not None:
             self.version_start = round(self.account_value(), 2)
             self.log("info", f"Strategy v{brain.STRATEGY_VERSION} starts with a real account value of ${self.version_start:.2f}.")
@@ -608,17 +609,18 @@ class Desk:
                         z = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)
                         pick = directional.decide(self.fair_model, b.best_ask, round(1.0 - b.best_bid, 6),
                                                   self.shadow.bucket_stats(self.fair_model), self.shadow.bucket_stats(1.0 - self.fair_model), z=z,
-                                                  up_ok=can_up_m, down_ok=can_down_m)
+                                                  up_ok=can_up_m, down_ok=can_down_m, asset=self.cfg.asset)
                         if pick is not None:
                             side, cost, tier, edge, lot_pct = pick
                             size_here = (b.offers[0][1] if b.offers else 0.0) if side == "up" else (b.bids[0][1] if b.bids else 0.0)
-                            usd = min(budget_usd, equity * lot_pct / 100.0)          # lot size by confidence: 5 / 10 / 15% of the balance
+                            usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity))   # lot by coin and confidence; capped across all desks
                             q = strategy._qty(usd, cost, w.min_qty)
                             q = min(q, round(size_here // w.min_qty * w.min_qty, 6))
                             if q >= w.min_qty:
                                 price = b.best_ask if side == "up" else b.best_bid
                                 want = [strategy.Quote(side, price, q, taker=True)]
                                 self._dir_pending.add(w.slug)
+                                exposure.reserve(self.name, usd)
                                 why = f"Directional ({tier}): {side} at {cost * 100:.0f}c, edge {edge * 100:.1f}c after fees, lot {lot_pct:.0f}%."
                     if not want and inv.spent <= 0 and self.cfg.directional:
                         z_now = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)
@@ -626,7 +628,7 @@ class Desk:
                         why_dir = directional.explain(self.fair_model, b.best_ask,
                                                       None if b.best_bid is None else round(1.0 - b.best_bid, 6),
                                                       self.shadow.bucket_stats(self.fair_model or 0.5),
-                                                      self.shadow.bucket_stats(1.0 - (self.fair_model or 0.5)), z_now, in_win)
+                                                      self.shadow.bucket_stats(1.0 - (self.fair_model or 0.5)), z_now, in_win, asset=self.cfg.asset)
                         why = (why + " " if why else "") + why_dir + ("" if can_up_m and can_down_m else f" Momentum: {mom_why}")
                 elif not want:
                     why = why or "Finishing the pair (one leg was left open)."
