@@ -33,6 +33,8 @@ from urllib.parse import urlencode
 
 import httpx
 
+from openjarvis.server.crew import robinhood
+
 logger = logging.getLogger(__name__)
 
 STRIPE_API = "https://api.stripe.com/v1"
@@ -122,13 +124,14 @@ ACTIONS: Dict[str, Dict[str, Dict[str, Any]]] = {
                          "args": {"package": "app package name", "review_id": "the id shown by list_reviews", "reply_text": "the reply (max 350 characters)"}},
     },
     "app_store": {},
+    "robinhood": {},
 }
 
 RENDER_SETUP = ("Paste your Render API key in the Connections panel on the Station. Create it in Render: Account Settings, API Keys, Create API Key. "
                 "Aibussol only checks it can read your services; it never shows the key again.")
 RENDER_API = "https://api.render.com/v1"
 
-LABELS = {"stripe": "Stripe", "etsy": "Etsy", "marnyx": "Marnyx (your socials and email)", "google": "Google (Gmail, Drive and Calendar)", "google_play": "Google Play", "app_store": "App Store"}
+LABELS = {"stripe": "Stripe", "etsy": "Etsy", "marnyx": "Marnyx (your socials and email)", "google": "Google (Gmail, Drive and Calendar)", "google_play": "Google Play", "app_store": "App Store", "robinhood": "Robinhood (crypto)"}
 
 SETUP = {
     "stripe": "Set STRIPE_SECRET_KEY on Render (the Aibussol billing key works).",
@@ -139,6 +142,7 @@ SETUP = {
     "marnyx": "In Marnyx open Settings → Connected apps → Create key, then tap Connect here and paste it.",
     "google_play": "Tap Connect and paste a Google Cloud service account JSON key that Play Console has invited, plus your app package names.",
     "app_store": "Not built yet. Needs: an Apple Developer account and an App Store Connect API key (issuer id, key id, .p8 file).",
+    "robinhood": robinhood.SETUP,
 }
 
 
@@ -175,6 +179,7 @@ async def status(store, user_id: str, env=None) -> Dict[str, Dict[str, Any]]:
                    "note": (await store.get_secret(user_id, "google_email")) or ""},
         "google_play": {"connected": bool(play_key(env)), "built": True, "note": ", ".join(play_apps(env))},
         "app_store": {"connected": False, "built": False},
+        "robinhood": {"connected": robinhood.configured(env), "built": True},
     }
     for k, v in out.items():
         v.update(label=LABELS[k], setup="" if v["connected"] else SETUP[k],
@@ -201,6 +206,8 @@ def describe_for_agent(conn_status: Dict[str, Dict[str, Any]]) -> str:
         if not v["connected"]:
             lines.append(f"- {v['label']}: NOT connected ({'not built yet' if not v['built'] else 'owner must connect it'}). Do not plan on using it.")
             continue
+        if not ACTIONS[k]:
+            lines.append(f"- {v['label']}: connected (read-only check only; no trading actions are set up).")
         for n, a in ACTIONS[k].items():
             lines.append(f"- {k}.{n} [{a['risk']}]: {a['about']} args={json.dumps(a['args'])}")
     return "\n".join(lines)
