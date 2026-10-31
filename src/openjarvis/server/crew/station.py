@@ -20,15 +20,14 @@ STATION_PAGE = r"""<!DOCTYPE html>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <link rel="apple-touch-icon" href="/crew/icons/apple-touch-icon.png"/>
 <link rel="icon" type="image/png" href="/crew/icons/icon-192.png"/>
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&family=Fira+Code:wght@400;500;700&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Fira+Code:wght@400;500;700&display=swap" rel="stylesheet"/>
 <style>
   :root { --cyan:#00e5ff; --cyan-dim:#005f6b; --orange:#ff6d00; --green:#00ff88; --red:#ff3344; --violet:#b06cff;
           --bg:#050508; --panel:#08080f; --border:#0d2535; --text:#8ecfe0; --text-dim:#3d6a7a; }
   * { box-sizing:border-box; margin:0; padding:0; }
   html, body { height:100%; }
-  body { background:var(--bg); color:var(--text); font-family:'Share Tech Mono',monospace; display:grid; grid-template-rows:48px 1fr; overflow:hidden; }
+  body { background:var(--bg); color:var(--text); font-family:'Fira Code',monospace; display:grid; grid-template-rows:48px 1fr; overflow:hidden; }
   button { font-family:inherit; }
-  .num { font-family:'Fira Code',monospace; }   /* every number on the Station: Fira Code's zero is dotted, so 0 and 8 read apart */
   #top { display:flex; align-items:center; gap:14px; padding:0 16px; background:var(--panel); border-bottom:1px solid var(--border); min-width:0; }
   #brand { font-family:'Orbitron',monospace; font-weight:900; letter-spacing:4px; color:var(--cyan); text-shadow:0 0 18px var(--cyan); font-size:15px; white-space:nowrap; }
   #brand span { color:var(--orange); }
@@ -78,7 +77,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
   .lib-k { font-size:8px; letter-spacing:1px; color:var(--text-dim); text-transform:uppercase; }
   .viewer img, .viewer audio { width:100%; border-radius:2px; margin:8px 0; background:#050a12; }
   .lbl { font-family:'Orbitron',monospace; font-size:9px; letter-spacing:3px; color:var(--text-dim); text-transform:uppercase; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; gap:8px; }
-  .lbl .act { font-family:'Share Tech Mono',monospace; letter-spacing:1px; text-transform:none; }
+  .lbl .act { font-family:'Fira Code',monospace; letter-spacing:1px; text-transform:none; }
   .h { color:var(--cyan); font-size:13px; margin-bottom:4px; overflow-wrap:anywhere; }
   .dim { color:var(--text-dim); font-size:11px; line-height:1.6; overflow-wrap:anywhere; }
   .row { display:flex; gap:8px; align-items:center; padding:6px 0; border-bottom:1px solid rgba(0,229,255,0.05); font-size:11px; }
@@ -196,7 +195,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
   #img-bar img { width:34px; height:34px; object-fit:cover; border-radius:2px; }
   .cm img.th { max-width:140px; max-height:100px; display:block; margin-top:6px; border-radius:2px; }
   .cm .vn { font-size:10px; color:var(--orange); margin-top:4px; }
-  #wake { font-family:'Share Tech Mono',monospace; letter-spacing:1px; }
+  #wake { font-family:'Fira Code',monospace; letter-spacing:1px; }
   #wake.on { color:#00ff99; } #wake.rec { color:var(--red); } #wake.busy { color:var(--orange); }
   .v-row { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:8px; font-size:10px; color:var(--text-dim); }
   .v-row select, .v-row input { background:#050a12; border:1px solid var(--border); color:var(--text); padding:4px 6px; font:inherit; font-size:11px; max-width:110px; }
@@ -2149,7 +2148,7 @@ function drawWaiting(m, t) {
     drawBot(qx, qyb, ROLE_COLORS[tk.role] || m.color, 'waiting', t, i * 3.1, 'front', Math.max(0.8, SC), false);
     const qy = qyb - 26 * Math.max(0.8, SC);
     ctx.fillStyle = '#ff8a2a'; ctx.shadowColor = '#ff8a2a'; ctx.shadowBlur = 8; rr(qx - 6, qy, 12, 12, 3); ctx.fill(); ctx.shadowBlur = 0;
-    ctx.fillStyle = '#050508'; ctx.font = '700 10px Share Tech Mono, monospace'; ctx.textAlign = 'center'; ctx.fillText('?', qx, qy + 9);
+    ctx.fillStyle = '#050508'; ctx.font = '700 10px Fira Code, monospace'; ctx.textAlign = 'center'; ctx.fillText('?', qx, qy + 9);
   });
 }
 
@@ -2160,7 +2159,7 @@ function drawPlate(m, t) {
   ctx.font = '700 ' + fs + 'px Orbitron, monospace'; const fixedW = ctx.measureText('HELIX BUSINESS…').width + 18 * SC + 6, availW = fixedW - 18 * SC - 6;
   const full = (m.isNew ? '◆ ' : '') + m.label, k = Math.max(0.62, Math.min(1, availW / (ctx.measureText(full + '…').width || 1))), nfs = fs * k;
   ctx.font = '700 ' + nfs + 'px Orbitron, monospace'; const name = fitText(full, availW);
-  ctx.font = fs2 + 'px Share Tech Mono, monospace'; const st = m.state || '';
+  ctx.font = fs2 + 'px Fira Code, monospace'; const st = m.state || '';
   const pw = fixedW, ph = fs + fs2 + 12 * SC;
   // the plate lies flat against the factory's outer end, centred on it, turned with the factory so the name always faces Helix, whatever angle the ring has turned to
   ctx.save(); ctx.translate(m.cx, m.cy); ctx.rotate(m.rot); ctx.translate(0, -m.h / 2 - 5 * SC - ph / 2);
@@ -2170,7 +2169,7 @@ function drawPlate(m, t) {
   ctx.fillStyle = m.color; ctx.fillRect(x, y + 3, 2, ph - 6);
   ctx.textAlign = 'center';
   ctx.font = '700 ' + nfs + 'px Orbitron, monospace'; ctx.fillStyle = m.color; ctx.fillText(name, ox, y + 5 * SC + fs - (fs - nfs) * 0.4);
-  ctx.font = fs2 + 'px Share Tech Mono, monospace';
+  ctx.font = fs2 + 'px Fira Code, monospace';
   ctx.fillStyle = st === 'COMING SOON' ? '#ff2d95' : st === 'DOWN' ? '#ff3344' : st === 'NEEDS YOU' || st === 'OFFLINE' || st === 'IDLE' || st === 'PAUSED' ? '#ff8a2a' : st === 'WORKING' || st === 'ONLINE' || st === 'LIVE' || st === 'PAPER TRADING' || st === 'LIVE TRADING' ? '#00ff99' : 'rgba(142,207,224,0.65)';
   ctx.fillText(st, ox, y + 7 * SC + fs + fs2);
   ctx.restore();
@@ -2254,7 +2253,7 @@ function drawCore(t) {
   ctx.textAlign = 'center';
   if (open) {
     ctx.fillStyle = '#ff8a2a'; ctx.shadowColor = '#ff8a2a'; ctx.shadowBlur = 10; ctx.beginPath(); ctx.arc(x + r * 0.62, y - r * 0.62, 11, 0, 6.29); ctx.fill(); ctx.shadowBlur = 0;
-    ctx.fillStyle = '#050508'; ctx.font = '700 11px Share Tech Mono, monospace'; ctx.fillText(String(open), x + r * 0.62, y - r * 0.62 + 4);
+    ctx.fillStyle = '#050508'; ctx.font = '700 11px Fira Code, monospace'; ctx.fillText(String(open), x + r * 0.62, y - r * 0.62 + 4);
   }
 }
 
@@ -2708,7 +2707,7 @@ function trafficChart(k) {
     const padL = 28, padB = 18, padT = 6, w = W2 - padL - 4, h = H2 - padB - padT;
     const max = Math.max(4, ...pts.map(p2 => Math.max(p2.a, p2.b || 0)));
     const step = Math.pow(10, Math.floor(Math.log10(max))), top = Math.ceil(max / step) * step;
-    c.font = '9px Share Tech Mono, monospace'; c.fillStyle = 'rgba(142,207,224,0.55)'; c.strokeStyle = 'rgba(142,207,224,0.08)'; c.lineWidth = 1;
+    c.font = '9px Fira Code, monospace'; c.fillStyle = 'rgba(142,207,224,0.55)'; c.strokeStyle = 'rgba(142,207,224,0.08)'; c.lineWidth = 1;
     for (let g = 0; g <= 4; g++) { const y = padT + h - h * g / 4; c.beginPath(); c.moveTo(padL, y); c.lineTo(padL + w, y); c.stroke(); c.textAlign = 'right'; c.fillText(String(Math.round(top * g / 4)), padL - 4, y + 3); }
     const X = i => padL + (pts.length < 2 ? w / 2 : w * i / (pts.length - 1)), Y = v => padT + h - h * v / top;
     c.textAlign = 'center';
@@ -2808,28 +2807,6 @@ if (['etsy', 'google'].includes(new URLSearchParams(location.search).get('connec
 resize(); requestAnimationFrame(frame);
 if (token()) boot(); else showAuth();
 poll();
-// Fira Code for the numbers: wrap each run of digits in a .num span, and again after the page re-renders
-const NUM_RE = /[-+$]?\d[\d.,:%]*/g;
-function numify(root) {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode(n) {
-    const p = n.parentNode;
-    if (!p || !/\d/.test(n.nodeValue) || /^(SCRIPT|STYLE|TEXTAREA|INPUT|OPTION|SELECT)$/.test(p.nodeName)) return NodeFilter.FILTER_REJECT;
-    return p.classList && p.classList.contains('num') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT; } });
-  const todo = []; while (walker.nextNode()) todo.push(walker.currentNode);
-  todo.forEach(n => {
-    const text = n.nodeValue; const frag = document.createDocumentFragment(); let last = 0; NUM_RE.lastIndex = 0; let m;
-    while ((m = NUM_RE.exec(text))) {
-      if (m.index > last) frag.append(document.createTextNode(text.slice(last, m.index)));
-      const sp = document.createElement('span'); sp.className = 'num'; sp.textContent = m[0]; frag.append(sp); last = m.index + m[0].length;
-    }
-    if (last < text.length) frag.append(document.createTextNode(text.slice(last)));
-    n.parentNode.replaceChild(frag, n);
-  });
-}
-let numTimer = null;
-new MutationObserver(() => { clearTimeout(numTimer); numTimer = setTimeout(() => numify(document.body), 30); })
-  .observe(document.body, { childList: true, subtree: true, characterData: true });
-numify(document.body);
 </script>
 </body>
 </html>
