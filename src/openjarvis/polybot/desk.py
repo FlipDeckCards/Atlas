@@ -195,6 +195,13 @@ class Desk:
             if self._due("markets_names_log", 60.0, now):                                        # diagnostic: every up/down market name the list returns, once a minute
                 names = sorted(str(m.get("slug") or "?") for m in ms if is_series(m, self.base.asset, self.horizon))
                 self.log("info", f"{self.name} market list has {len(names)} {self.base.asset.upper()} {self.horizon} up/down markets: {', '.join(names[:12]) or 'none'}")
+            if self.base.asset == "btc" and self._due("markets_unfiltered_log", 60.0, now):      # diagnostic: the same list with no category filter, BTC desk only
+                try:
+                    allm = await self.c.markets(active=True, closed=False)
+                    ud = sorted(str(m.get("slug") or "?") for m in allm if "updown" in str(m.get("slug") or "") or "updown" in str(m.get("question") or "").lower())
+                    self.log("info", f"Unfiltered market list: {len(allm)} markets, {len(ud)} up/down: {', '.join(ud[:15]) or 'none'}")
+                except Exception as exc:
+                    self.log("warn", f"Unfiltered market list failed: {str(exc)[:160]}")
             live = [x for x in (window_from_market(m) for m in ms if is_series(m, self.base.asset, self.horizon)) if x and x.start <= now < x.end and not x.slug.startswith("cpc")]
             nxt = min(live, key=lambda x: x.end) if live else None
         if nxt is not None:
