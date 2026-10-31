@@ -21,11 +21,12 @@ PROVEN_EDGE = 0.03
 EXPLORE_EDGE = 0.05
 # v1.20, the owner's direction plan: lot % of the balance by the model's confidence, per coin (floor of the percentage).
 # BTC: 80-84 = 5%, 85-89 = 7%, 90-94 = 8%, 95%+ = 10%; under 80 = no trade.
-# XRP: same as BTC but the floor is 89% (owner, 2026-10-31, after an 88% loss): 89 = 7%, 90-94 = 8%, 95%+ = 10%; under 89 = no trade.
+# XRP: same as BTC but the floor is 90% (owner, 2026-10-31, after an 88% loss): 90-94 = 8%, 95%+ = 10%; under 90 = no trade.
+# The four methods (directional, edge, late, sweep) use the same floor and lot sizes for XRP as for BTC.
 # ETH and SOL: trade only at 95%+, at 1% of the balance for now (the owner is still collecting data).
 TIERS = {
     "btc": ((95, 10.0), (90, 8.0), (85, 7.0), (80, 5.0)),
-    "xrp": ((95, 10.0), (90, 8.0), (89, 7.0)),
+    "xrp": ((95, 10.0), (90, 8.0)),
     "eth": ((95, 1.0),),
     "sol": ((95, 1.0),),
 }
