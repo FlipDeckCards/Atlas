@@ -192,6 +192,9 @@ class Desk:
         nxt = await self.window_by_slug(now)
         if nxt is None and self._due("markets_scan", 10.0, now):       # the slow full scan: at most every 10 s (three desks hammering it
             ms = await self.c.markets(categories=["crypto"], active=True, closed=False)          # every 2 s got rate-limited)
+            if self._due("markets_names_log", 60.0, now):                                        # diagnostic: every up/down market name the list returns, once a minute
+                names = sorted(str(m.get("slug") or "?") for m in ms if is_series(m, self.base.asset, self.horizon))
+                self.log("info", f"{self.name} market list has {len(names)} {self.base.asset.upper()} {self.horizon} up/down markets: {', '.join(names[:12]) or 'none'}")
             live = [x for x in (window_from_market(m) for m in ms if is_series(m, self.base.asset, self.horizon)) if x and x.start <= now < x.end and not x.slug.startswith("cpc")]
             nxt = min(live, key=lambda x: x.end) if live else None
         if nxt is not None:
