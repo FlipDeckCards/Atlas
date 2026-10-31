@@ -192,17 +192,7 @@ class Desk:
         nxt = await self.window_by_slug(now)
         if nxt is None and self._due("markets_scan", 10.0, now):       # the slow full scan: at most every 10 s (three desks hammering it
             ms = await self.c.markets(categories=["crypto"], active=True, closed=False)          # every 2 s got rate-limited)
-            if self._due("markets_names_log", 60.0, now):                                        # diagnostic: every up/down market name the list returns, once a minute
-                names = sorted(str(m.get("slug") or "?") for m in ms if is_series(m, self.base.asset, self.horizon))
-                self.log("info", f"{self.name} market list has {len(names)} {self.base.asset.upper()} {self.horizon} up/down markets: {', '.join(names[:12]) or 'none'}")
-            if self.base.asset == "btc" and self._due("markets_unfiltered_log", 60.0, now):      # diagnostic: the same list with no category filter, BTC desk only
-                try:
-                    allm = await self.c.markets(active=True, closed=False)
-                    ud = sorted(str(m.get("slug") or "?") for m in allm if "updown" in str(m.get("slug") or "") or "updown" in str(m.get("question") or "").lower())
-                    self.log("info", f"Unfiltered market list: {len(allm)} markets, {len(ud)} up/down: {', '.join(ud[:15]) or 'none'}")
-                except Exception as exc:
-                    self.log("warn", f"Unfiltered market list failed: {str(exc)[:160]}")
-            live = [x for x in (window_from_market(m) for m in ms if is_series(m, self.base.asset, self.horizon)) if x and x.start <= now < x.end and not x.slug.startswith("cpc")]
+            live = [x for x in (window_from_market(m) for m in ms if is_series(m, self.base.asset, self.horizon)) if x and x.start <= now < x.end]
             nxt = min(live, key=lambda x: x.end) if live else None
         if nxt is not None:
             self.learn_prefix(nxt.slug)
@@ -266,13 +256,11 @@ class Desk:
         self._prefixes[self.horizon] = v
 
     def slug_for(self, start: int) -> str:
-        prefix = self.slug_prefix or f"{self.base.asset}-updown-{self.horizon}-"     # Polymarket's address: btc-updown-5m-YYYY-MM-DD-HHMMz
+        prefix = self.slug_prefix or f"cpc-{self.base.asset}-updown-{self.horizon}-"
         return f"{prefix}{time.strftime('%Y-%m-%d-%H%M', time.gmtime(start))}z"
 
     def learn_prefix(self, slug: str) -> None:
         """cpceth-eth-updown-5m-2026-10-30-0225z -> cpceth-eth-updown-5m- (the part before the date)."""
-        if slug.startswith("cpc"):
-            return                                                    # the old guessed "cpc" names have no order book: never learn them
         parts = slug.split("-")
         if len(parts) > 4 and parts[-1].endswith("z"):
             p = "-".join(parts[:-4]) + "-"
@@ -853,10 +841,9 @@ class Desk:
             self.deposits_start = float(prev["deposits_start"])
         self.restore_windows(prev.get("open_windows"), now)
         for p in (prev.get("slug_prefixes") or {}).values() if isinstance(prev.get("slug_prefixes"), dict) else []:
-            if isinstance(p, str) and "-updown-" in p and not p.startswith("cpc"):   # the old guessed "cpc" names are never restored
+            if isinstance(p, str) and "-updown-" in p:
                 self._prefixes[p.rsplit("-updown-", 1)[1].rstrip("-")] = p
-        if isinstance(prev.get("slug_prefix"), str) and prev["slug_prefix"].endswith(f"-updown-{self.horizon}-") \
-                and not prev["slug_prefix"].startswith("cpc"):
+        if isinstance(prev.get("slug_prefix"), str) and prev["slug_prefix"].endswith(f"-updown-{self.horizon}-"):
             self.slug_prefix = prev["slug_prefix"]
         self._day_reset_seen = prev.get("day_reset_seen")
         self._ready = True
