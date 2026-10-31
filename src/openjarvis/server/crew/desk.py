@@ -278,17 +278,26 @@ def deposits() -> Optional[float]:
 
 
 async def _ledger_pnl(pool, asset: str, now: dt.datetime) -> Dict[str, float]:
-    """Realised live P&L for one desk from its settled windows: today (since LA midnight), last 30 days, and all time.
-    Every figure is the same kind of number (settled windows only), so they can be compared and summed without a plug."""
+    """Realised live P&L for one desk from its settled windows of the current strategy version: today (since LA midnight),
+    last 30 days and all time. pre_today is what earlier strategy versions settled today; it is shown separately, not in the desk
+    figures, because the scoreboards only count the current version. Every figure is settled windows only (no plug)."""
     from openjarvis.server.crew.finance import la_midnight
 
+    cur = f"mode='live' AND {ASSET_SQL} = $2 AND {VER} = $3"
+    old = f"mode='live' AND {ASSET_SQL} = $2 AND {VER} <> $3"
     async with pool.acquire() as c:
-        today = await c.fetchval(f"SELECT coalesce(sum(pnl),0) FROM polybot_windows WHERE mode='live' AND settled_at >= $1 AND {ASSET_SQL} = $2",
-                                 la_midnight(now), asset)
-        d30 = await c.fetchval(f"SELECT coalesce(sum(pnl),0) FROM polybot_windows WHERE mode='live' AND settled_at >= $1 AND {ASSET_SQL} = $2",
-                               now - dt.timedelta(days=30), asset)
-        all_time = await c.fetchval(f"SELECT coalesce(sum(pnl),0) FROM polybot_windows WHERE mode='live' AND {ASSET_SQL} = $1", asset)
-    return {"today": round(float(today or 0), 2), "d30": round(float(d30 or 0), 2), "all": round(float(all_time or 0), 2)}
+        today = await c.fetchval(f"SELECT coalesce(sum(pnl),0) FROM polybot_windows WHERE {cur} AND settled_at >= $1",
+                                 la_midnight(now), asset, STRATEGY_VERSION)
+        d30 = await c.fetchval(f"SELECT coalesce(sum(pnl),0) FROM polybot_windows WHERE {cur} AND settled_at >= $1",
+                               now - dt.timedelta(days=30), asset, STRATEGY_VERSION)
+        all_time = await c.fetchval(f"SELECT coalesce(sum(pnl),0) FROM polybot_windows WHERE mode='live' AND {ASSET_SQL} = $1 AND {VER} = $2",
+                                    asset, STRATEGY_VERSION)
+        pre_today = await c.fetchval(f"SELECT coalesce(sum(pnl),0) FROM polybot_windows WHERE {old} AND settled_at >= $1",
+                                     la_midnight(now), asset, STRATEGY_VERSION)
+        pre_all = await c.fetchval(f"SELECT coalesce(sum(pnl),0) FROM polybot_windows WHERE mode='live' AND {ASSET_SQL} = $1 AND {VER} <> $2",
+                                   asset, STRATEGY_VERSION)
+    return {"today": round(float(today or 0), 2), "d30": round(float(d30 or 0), 2), "all": round(float(all_time or 0), 2),
+            "pre_today": round(float(pre_today or 0), 2), "pre_all": round(float(pre_all or 0), 2)}
 
 
 async def live_pnl_all(pool) -> Dict[str, Dict[str, float]]:
@@ -309,8 +318,8 @@ async def reconciliation(pool) -> Dict[str, Any]:
     per = {a: await _ledger_pnl(pool, a, now) for a in KEYS}
     st = await get_kv(pool, kv_key("status", "btc"))
     acct, start = st.get("account_value"), st.get("day_start")
-    ledger_all = round(sum(v["all"] for v in per.values()), 2)
-    ledger_today = round(sum(v["today"] for v in per.values()), 2)
+    ledger_all = round(sum(v["all"] + v["pre_all"] for v in per.values()), 2)
+    ledger_today = round(sum(v["today"] + v["pre_today"] for v in per.values()), 2)
     dep = deposits()
     out: Dict[str, Any] = {
         "account_value": None if acct is None else round(float(acct), 2),
