@@ -920,6 +920,9 @@ function factorySec(key) {
   const l = mk('div', 'lbl'); l.append(mk('span', null, 'Factory'), mk('span', 'tag', b.state)); s.append(l);
   const h = mk('div', 'h', b.label); h.style.color = b.color; s.append(h);
   const about = bizAbout(key); if (about) s.append(mk('div', 'dim', about));
+  if (key === 'polymarket') { ['btc', 'eth', 'sol', 'xrp'].forEach(a => {
+    const d = DESKS[a]; const wf = d && !d.error ? windowFlag(d.status || {}, a.toUpperCase() + ' Desk') : null; if (wf) s.append(wf);
+  }); }
   if (key === 'polymarket') { ['polymarket', 'polymarket-eth', 'polymarket-sol', 'polymarket-xrp'].forEach(k => s.append(deskSec(k))); s.append(deskLogSec()); }   // all four desks, then one log
   if (/stock market/i.test(b.label || '')) s.append(robinhoodSec());                    // all Robinhood crypto work lives in the Stock Market factory
   if (b.platform) {
@@ -1011,29 +1014,31 @@ function robinhoodSec() {
   return s;
 }
 
+// v1.22 window flag: is there a trade in the window the desk is in right now, and what is it (one line; label optional)
+function windowFlag(st, label) {
+  if (!st || !st.window) return null;
+  const cur = (st.open_windows || []).find(x => x.slug === st.window.slug);
+  const wEnd = st.window.end ? new Date(st.window.end * 1000).toLocaleTimeString() : '';
+  const flag = mk('div', 'row'); flag.style.marginTop = '6px'; flag.style.fontSize = '15px';
+  const tag = mk('span', null, cur && cur.paid > 0 ? 'IN A TRADE' : 'NO TRADE'); tag.style.fontWeight = '700';
+  tag.style.color = cur && cur.paid > 0 ? '#3d8bff' : '#ffb347';
+  const detail = cur && cur.paid > 0
+    ? ' · Up ' + Number(cur.up_qty || 0).toFixed(2) + ' @ ' + money(cur.up_cost) + ' · Down ' + Number(cur.down_qty || 0).toFixed(2) + ' @ ' + money(cur.down_cost) + ' · paid ' + money(cur.paid)
+    : ' · nothing bought in this window yet';
+  flag.append(mk('span', null, (label ? label + ' · ' : '') + 'Current window (closes ' + wEnd + '): '), tag, mk('span', 'dim', detail));
+  return flag;
+}
 function deskSec(key) {
   const A = DESK_ASSET[key] || 'btc', NAME = A.toUpperCase();
   loadDesk(false, A);
   const DESK = DESKS[A];
   const s = mk('div'); s.style.marginTop = '10px';
   s.style.borderTop = '1px solid rgba(0,229,255,0.25)'; s.style.paddingTop = '10px';
-  const hd = mk('div', 'h', NAME + ' desk'); hd.style.color = ({ btc: '#00e5ff', eth: '#8c8cff', sol: '#14f195', xrp: '#ffb347' })[A]; s.append(hd);
+  const hd = mk('div', 'h', NAME + ' Desk'); hd.style.color = ({ btc: '#00e5ff', eth: '#8c8cff', sol: '#14f195', xrp: '#ffb347' })[A]; s.append(hd);
   if (!DESK) { s.append(mk('div', 'dim', 'Loading the desk…')); return s; }
   if (DESK.error) { s.append(mk('div', 'dim', DESK.error)); return s; }
   const st = DESK.status || {};
-  // v1.22 window flag: is there a trade in the window the desk is in right now, and what is it
-  if (st.window) {
-    const cur = (st.open_windows || []).find(x => x.slug === st.window.slug);
-    const wEnd = st.window.end ? new Date(st.window.end * 1000).toLocaleTimeString() : '';
-    const flag = mk('div', 'row'); flag.style.marginTop = '6px'; flag.style.fontSize = '15px';
-    const tag = mk('span', null, cur && cur.paid > 0 ? 'IN A TRADE' : 'NO TRADE'); tag.style.fontWeight = '700';
-    tag.style.color = cur && cur.paid > 0 ? '#3d8bff' : '#ffb347';
-    const detail = cur && cur.paid > 0
-      ? ' · Up ' + Number(cur.up_qty || 0).toFixed(2) + ' @ ' + money(cur.up_cost) + ' · Down ' + Number(cur.down_qty || 0).toFixed(2) + ' @ ' + money(cur.down_cost) + ' · paid ' + money(cur.paid)
-      : ' · nothing bought in this window yet';
-    flag.append(mk('span', null, 'Current window (closes ' + wEnd + '): '), tag, mk('span', 'dim', detail));
-    s.append(flag);
-  }
+  const wf = windowFlag(st, ''); if (wf) s.append(wf);   // v1.22: is there a trade in this window
   // the switch follows what was ASKED (the control row, saved the moment you tap); the worker's own status catches up within ~20 s.
   // Showing the worker's status made the button flip back for up to a minute after a tap, so it took several taps to stick.
   const want = DESK.control || {}, wantStop = !!(want.paused || want.kill), isStop = !!(st.paused || st.kill);
@@ -1191,7 +1196,7 @@ function renderShadow(panel) {
     const d = DESKS[a];
     if (!d) { panel.append(mk('div', 'dim', 'Loading ' + a.toUpperCase() + '…')); return; }
     const sd = !d.error ? d.shadow_detail : null;
-    const h = mk('div', 'lbl'); h.textContent = a.toUpperCase() + ' desk'; panel.append(h);
+    const h = mk('div', 'lbl'); h.textContent = a.toUpperCase() + ' Desk'; panel.append(h);
     if (!sd) { panel.append(mk('div', 'dim', 'No shadow results saved yet.')); return; }
     (sd.strategies || []).forEach(x => {
       const row = mk('div', 'pnl-row');
