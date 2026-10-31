@@ -134,6 +134,16 @@ async def shadow_detail(pool, asset: str) -> Optional[Dict[str, Any]]:
     d = json.loads(raw) if isinstance(raw, str) else (raw or {})
     calib = d.get("calib") or {}
     out: Dict[str, Any] = {"calib": {}, "scalp": d.get("scalp") or {}}
+    names = {"edge": "buys a side at least 6c under the model's fair price, 60-240 s before the close",
+             "pairs": "buys both sides when the two asks total 97c or less, with 90 s or more left",
+             "late": "buys the likely winner (model 90%+ or 10%-) at 95c or less, in the last 60 s"}
+    out["strategies"] = []
+    for n, r in (d.get("rec") or {}).items():
+        w, staked, profit = int(r.get("windows", 0)), float(r.get("staked", 0)), float(r.get("profit", 0))
+        out["strategies"].append({"name": n, "rule": names.get(n, ""), "windows": w, "wins": int(r.get("wins", 0)),
+                                  "win_rate": round(100.0 * int(r.get("wins", 0)) / w, 1) if w else None,
+                                  "staked": round(staked, 2), "profit": round(profit, 2),
+                                  "return_pct": round(100.0 * profit / staked, 1) if staked else None})
     for kind in ("model", "book"):
         rows = []
         for lab, cell in (calib.get(kind) or {}).items():
