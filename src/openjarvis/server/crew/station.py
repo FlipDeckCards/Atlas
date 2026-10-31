@@ -1073,6 +1073,15 @@ function deskSec(key) {
   const sh = v.shadow || {};   // v1.14 learned pair sizing, shadow mode: what bigger bets on proven pair setups would have made
   if (sh.windows) box.append(mk('div', 'dim', 'Learned pair sizing (shadow, not trading yet): ' + sh.windows + ' pair windows · actual ' + signed(sh.actual)
     + ' · at learned sizes ' + signed(sh.shadow) + ' · ' + Object.entries(sh.tiers || {}).map(([t, n]) => n + ' ' + t).join(', ')));
+  const sd = v.shadow_detail;   // v1.21 shadow results: calibration by confidence bucket and the scalp shadow
+  if (sd) {
+    const cal = (sd.calib && sd.calib.model) || [];
+    const seen = cal.filter(r => r.trades > 0).map(r => r.bucket + ': ' + r.won + '/' + r.trades + ' won' + (r.win_rate == null ? '' : ' (' + r.win_rate + '%)'));
+    box.append(mk('div', 'dim', 'Shadow calibration (model confidence → result): ' + (seen.length ? seen.join(' · ') : 'no settled windows yet')));
+    const sc = sd.scalp || {};
+    if (sc.entries) box.append(mk('div', 'dim', 'Scalp shadow: ' + sc.entries + ' entries · ' + (sc.target || 0) + ' target · ' + (sc.stop || 0)
+      + ' stop · profit ' + signed(sc.profit || 0)));
+  }
   const sets = (st.setups || []).filter(x => x.windows >= 3).slice(0, 5);
   if (sets.length) box.append(mk('div', 'dim', 'Pair setups: ' + sets.map(x => x.label + ' — ' + x.wins + '/' + x.windows + ' won, floor ' + x.floor + '%, ' + signed(x.profit)).join(' | ')));
   (v.older || []).forEach(o => box.append(mk('div', 'dim', 'Earlier v' + o.version + ': ' + o.trades + ' trades, ' + o.wins + ' won, ' + signed(o.profit) + ' (not counted above)')));
@@ -1146,6 +1155,40 @@ function deskSec(key) {
   }
   return s;
 }
+// shadow breakdown: every shadow strategy and calibration result, per desk, opened from a button under the desk log
+function shadowBreakdownSec() {
+  const wrap = mk('div'); wrap.style.marginTop = '10px';
+  const btn = mk('button', null, 'Shadow strategies ▸'); btn.style.cursor = 'pointer';
+  const panel = mk('div'); panel.style.display = 'none'; panel.style.marginTop = '8px';
+  btn.onclick = () => {
+    const open = panel.style.display === 'none';
+    panel.style.display = open ? 'block' : 'none'; btn.textContent = open ? 'Shadow strategies ▾' : 'Shadow strategies ▸';
+    if (open) renderShadow(panel);
+  };
+  wrap.append(btn, panel);
+  return wrap;
+}
+function renderShadow(panel) {
+  panel.replaceChildren();
+  ['btc', 'eth', 'sol', 'xrp'].forEach(a => {
+    const d = DESKS[a]; const sd = d && !d.error ? d.shadow_detail : null;
+    const h = mk('div', 'lbl'); h.textContent = a.toUpperCase() + ' desk'; panel.append(h);
+    if (!sd) { panel.append(mk('div', 'dim', 'No shadow results saved yet.')); return; }
+    (sd.strategies || []).forEach(x => {
+      const row = mk('div', 'pnl-row');
+      row.append(mk('span', null, x.name), mk('span', null, x.windows + ' windows'),
+        mk('span', null, (x.win_rate == null ? '—' : x.win_rate + '% won')), mk('span', null, 'staked ' + money(x.staked)));
+      const p = mk('span', null, signed(x.profit)); p.style.color = pnlColor(x.profit); row.append(p); panel.append(row);
+      if (x.rule) panel.append(mk('div', 'dim', x.rule));
+    });
+    const cal = (sd.calib && sd.calib.model) || [];
+    const seen = cal.filter(r => r.trades > 0).map(r => r.bucket + ': ' + r.won + '/' + r.trades + ' won');
+    panel.append(mk('div', 'dim', 'Calibration (model): ' + (seen.length ? seen.join(' · ') : 'no settled windows yet')));
+    const sc = sd.scalp || {};
+    panel.append(mk('div', 'dim', 'Scalp shadow: ' + (sc.entries || 0) + ' entries · ' + (sc.target || 0) + ' target · ' + (sc.stop || 0)
+      + ' stop · profit ' + signed(sc.profit || 0)));
+  });
+}
 // one desk log for all three desks, newest first, each line marked with its desk
 function deskLogSec() {
   const s = mk('div'); s.style.borderTop = '1px solid rgba(0,229,255,0.25)'; s.style.marginTop = '10px';
@@ -1156,6 +1199,7 @@ function deskLogSec() {
   if (!ev.length) s.append(mk('div', 'dim', 'Nothing logged yet.'));
   ev.slice(0, 24).forEach(e => { const r = mk('div', 'desk-fill'); const t = mk('span', null, e.asset.toUpperCase() + ' ');
     t.style.color = ({ btc: '#00e5ff', eth: '#8c8cff', sol: '#14f195', xrp: '#ffb347' })[e.asset]; r.append(t, document.createTextNode(new Date(e.ts).toLocaleTimeString() + ' · ' + e.text)); s.append(r); });
+  s.append(shadowBreakdownSec());
   return s;
 }
 const CAT = {};

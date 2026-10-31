@@ -509,8 +509,15 @@ class Desk:
         self.fair = brain.blend(self.fair_model, self.mid, self.cfg.model_weight)
         self.momentum = brain.momentum_z(self.tape, int(now), int(self.cfg.momentum_s), self.sigma)
         if w is not None and w.price_to_beat and b is not None:
+            # v1.21 shadows: the book's own view, and the model with a tighter and a wider volatility
+            book_view = shadow.book_up(getattr(b, "bids", None), getattr(b, "offers", None))
+            fair_lo = model.fair_up(self.tape, int(now), int(w.end), w.price_to_beat, self.sigma or 0.0, self.cfg.vol_mult * 0.7,
+                                    drift_beta=self.cfg.drift_beta, drift_lookback_s=int(self.cfg.momentum_s)) if self.sigma else None
+            fair_hi = model.fair_up(self.tape, int(now), int(w.end), w.price_to_beat, self.sigma or 0.0, self.cfg.vol_mult * 1.4,
+                                    drift_beta=self.cfg.drift_beta, drift_lookback_s=int(self.cfg.momentum_s)) if self.sigma else None
             self.shadow.tick(w.slug, w.end - now, self.fair_model, b.best_ask,
-                             None if b.best_bid is None else round(1.0 - b.best_bid, 6))
+                             None if b.best_bid is None else round(1.0 - b.best_bid, 6),
+                             {"book_up": book_view, "fair_lo": fair_lo, "fair_hi": fair_hi})
         if w is not None and b is not None:                       # v1.18 shadow scalp: enter cheap trending sides, exit at target/stop
             self.shadow.scalp_tick(w.slug, w.end - now, b.best_bid, b.best_ask, self.momentum)
         if self.guard and not (self.rs.kill or self.rs.paused):

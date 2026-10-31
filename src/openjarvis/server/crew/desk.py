@@ -117,8 +117,44 @@ async def scoreboard(pool, mode: str, now: Optional[dt.datetime] = None, version
     out["fills"] = int(fills or 0)
     out["sweeps"] = await sweep_stats(pool, mode, version, asset)
     out["shadow"] = await shadow_stats(pool, mode, version, asset)
+    out["shadow_detail"] = await shadow_detail(pool, asset)
     out["curve"] = curve
     out["older"] = [{"version": r["v"], "trades": int(r["n"]), "wins": int(r["wins"]), "profit": round(float(r["pnl"]), 2)} for r in older]
+    return out
+
+
+async def shadow_detail(pool, asset: str) -> Optional[Dict[str, Any]]:
+    """v1.21 shadow results, readable from the Station and the API: the calibration of the model and the book by confidence
+    bucket (trades and wins per bucket) and the scalp shadow's entries, targets, stops and profit. Saved by the desk each window
+    under polybot_kv (key 'shadow' for BTC, 'shadow:<asset>' for the others)."""
+    async with pool.acquire() as c:
+        raw = await c.fetchval("SELECT value FROM polybot_kv WHERE key = $1", kv_key("shadow", asset))
+    if raw is None:
+        return None
+    d = json.loads(raw) if isinstance(raw, str) else (raw or {})
+    calib = d.get("calib") or {}
+    out: Dict[str, Any] = {"calib": {}, "scalp": d.get("scalp") or {}}
+    names = {"edge": "buys a side at least 6c under the model's fair price, 60-240 s before the close",
+             "pairs": "buys both sides when the two asks total 97c or less, with 90 s or more left",
+             "late": "buys the likely winner (model 90%+ or 10%-) at 95c or less, in the last 60 s",
+             "book": "buys a side when the model is 80%+ and the order book agrees (60%+), 60-240 s before the close, at 90c or less",
+             "imbalance": "buys the side the order book leans toward (75%+ bid share), 60-240 s before the close, at 85c or less",
+             "vol_narrow": "the model with volatility cut to 0.7x: buys a side it puts at 85%+ when the ask is 5c or more under that",
+             "vol_wide": "the model with volatility raised to 1.4x: buys a side it puts at 85%+ when the ask is 5c or more under that"}
+    out["strategies"] = []
+    for n, r in (d.get("rec") or {}).items():
+        w, staked, profit = int(r.get("windows", 0)), float(r.get("staked", 0)), float(r.get("profit", 0))
+        out["strategies"].append({"name": n, "rule": names.get(n, ""), "windows": w, "wins": int(r.get("wins", 0)),
+                                  "win_rate": round(100.0 * int(r.get("wins", 0)) / w, 1) if w else None,
+                                  "staked": round(staked, 2), "profit": round(profit, 2),
+                                  "return_pct": round(100.0 * profit / staked, 1) if staked else None})
+    for kind in ("model", "book"):
+        rows = []
+        for lab, cell in (calib.get(kind) or {}).items():
+            n, wins = int(cell.get("n", 0)), int(cell.get("wins", 0))
+            rows.append({"bucket": lab, "trades": n, "won": wins,
+                         "win_rate": round(100.0 * wins / n, 1) if n else None})
+        out["calib"][kind] = rows
     return out
 
 
