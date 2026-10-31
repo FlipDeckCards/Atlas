@@ -141,13 +141,15 @@ async def shadow_detail(pool, asset: str) -> Optional[Dict[str, Any]]:
              "imbalance": "buys the side the order book leans toward (75%+ bid share), 60-240 s before the close, at 85c or less",
              "vol_narrow": "the model with volatility cut to 0.7x: buys a side it puts at 85%+ when the ask is 5c or more under that",
              "vol_wide": "the model with volatility raised to 1.4x: buys a side it puts at 85%+ when the ask is 5c or more under that"}
+    diag = d.get("diag") or {}
     out["strategies"] = []
     for n, r in (d.get("rec") or {}).items():
         w, staked, profit = int(r.get("windows", 0)), float(r.get("staked", 0)), float(r.get("profit", 0))
         out["strategies"].append({"name": n, "rule": names.get(n, ""), "windows": w, "wins": int(r.get("wins", 0)),
                                   "win_rate": round(100.0 * int(r.get("wins", 0)) / w, 1) if w else None,
                                   "staked": round(staked, 2), "profit": round(profit, 2),
-                                  "return_pct": round(100.0 * profit / staked, 1) if staked else None})
+                                  "return_pct": round(100.0 * profit / staked, 1) if staked else None,
+                                  "passed_over": sorted(((k, v) for k, v in (diag.get(n) or {}).items() if k != "fired"), key=lambda kv: -kv[1])[:4]})
     for kind in ("model", "book"):
         rows = []
         for lab, cell in (calib.get(kind) or {}).items():

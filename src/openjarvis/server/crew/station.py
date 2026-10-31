@@ -1044,7 +1044,9 @@ function deskSec(key) {
   s.append(tabs);
   const v = sc[DESK_VIEW] || {}, a = v.all || {}, t = v.today || {}, d7 = v.d7 || {};
   if (DESK_VIEW === 'live' && st.account_value != null) {          // the real money, read from Polymarket: the line that cannot drift
-    const ch = st.version_start != null ? st.account_value - st.version_start : null;
+    // v1.21: deposits made since this version started are not profit: net them out when the start deposit total is known
+    const addedDep = (st.deposits_start != null && DESK.deposits != null) ? DESK.deposits - st.deposits_start : 0;
+    const ch = st.version_start != null ? (st.account_value - st.version_start) - addedDep : null;
     const acct = mk('div', 'row'); const at = mk('span', 'grow', 'Polymarket account: ' + money(st.account_value)
       + (ch != null ? ' (' + signed(ch) + ' since v' + (DESK.strategy || '') + ' started at ' + money(st.version_start) + ')' : ''));
     if (ch != null) at.style.color = pnlColor(ch);
@@ -1184,6 +1186,7 @@ function renderShadow(panel) {
         mk('span', null, (x.win_rate == null ? '—' : x.win_rate + '% won')), mk('span', null, 'staked ' + money(x.staked)));
       const p = mk('span', null, signed(x.profit)); p.style.color = pnlColor(x.profit); row.append(p); panel.append(row);
       if (x.rule) panel.append(mk('div', 'dim', x.rule));
+      if (x.windows === 0 && x.passed_over && x.passed_over.length) panel.append(mk('div', 'dim', 'Passed over: ' + x.passed_over.map(([r, n]) => r + ' ×' + n).join(' · ')));
     });
     const cal = (sd.calib && sd.calib.model) || [];
     const seen = cal.filter(r => r.trades > 0).map(r => r.bucket + ': ' + r.won + '/' + r.trades + ' won');

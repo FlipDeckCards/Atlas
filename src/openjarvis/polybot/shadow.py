@@ -20,40 +20,65 @@ from openjarvis.polybot.strategy import taker_fee
 NAMES = ("edge", "pairs", "late", "book", "imbalance", "vol_narrow", "vol_wide")   # v1.21: the four confidence pieces as shadows
 
 
+DIAG_NAMES = ("pairs", "book", "imbalance", "vol_narrow", "vol_wide")
+
+
+def decide_new(name: str, secs_left: float, fair_up: Optional[float], ask_up: Optional[float],
+               ask_down: Optional[float], extra: Optional[Dict[str, Optional[float]]] = None) -> Tuple[List[Tuple[str, float]], str]:
+    """Same rules as decide(), plus the reason a window was passed over (v1.21 diagnostics; "fired" when it traded)."""
+    ex = extra or {}
+    if name == "pairs":
+        if ask_up is None or ask_down is None:
+            return [], "no book on one side"
+        if secs_left < 90:
+            return [], "last 90 s"
+        if ask_up + ask_down > 0.97:
+            return [], "asks total over 97c"
+        return [("up", ask_up), ("down", ask_down)], "fired"
+    if not (60 <= secs_left <= 240):
+        return [], "outside 60-240 s"
+    if name == "book":
+        bu = ex.get("book_up")
+        if fair_up is None or bu is None:
+            return [], "no model or book view"
+        if fair_up >= 0.80 and bu >= 0.60:
+            if ask_up is not None and ask_up <= 0.90:
+                return [("up", ask_up)], "fired"
+            return [], "Up ask over 90c"
+        if fair_up <= 0.20 and bu <= 0.40:
+            if ask_down is not None and ask_down <= 0.90:
+                return [("down", ask_down)], "fired"
+            return [], "Down ask over 90c"
+        return [], "model or book not agreeing (need 80%+ and 60%+)"
+    if name == "imbalance":
+        bu = ex.get("book_up")
+        if bu is None:
+            return [], "no book view"
+        if bu >= 0.75:
+            if ask_up is not None and ask_up <= 0.85:
+                return [("up", ask_up)], "fired"
+            return [], "Up ask over 85c"
+        if bu <= 0.25:
+            if ask_down is not None and ask_down <= 0.85:
+                return [("down", ask_down)], "fired"
+            return [], "Down ask over 85c"
+        return [], "book lean under 75%"
+    f = ex.get("fair_lo") if name == "vol_narrow" else ex.get("fair_hi")
+    if f is None:
+        return [], "no model value"
+    if f >= 0.85 and ask_up is not None and ask_up <= f - 0.05:
+        return [("up", ask_up)], "fired"
+    if (1.0 - f) >= 0.85 and ask_down is not None and ask_down <= (1.0 - f) - 0.05:
+        return [("down", ask_down)], "fired"
+    return [], "model under 85% or ask not 5c under it"
+
+
 def decide(name: str, secs_left: float, fair_up: Optional[float], ask_up: Optional[float],
            ask_down: Optional[float], extra: Optional[Dict[str, Optional[float]]] = None) -> List[Tuple[str, float]]:
     """The legs this strategy would buy at this moment, as (side, price per contract); [] when it would not trade.
     extra (v1.21): book_up (the book's own Up view), fair_lo / fair_hi (the model with a tighter / wider volatility)."""
-    ex = extra or {}
-    if name in ("book", "imbalance", "vol_narrow", "vol_wide"):
-        if not (60 <= secs_left <= 240):
-            return []
-        if name == "book":
-            bu = ex.get("book_up")
-            if fair_up is None or bu is None:
-                return []
-            if fair_up >= 0.80 and bu >= 0.60 and ask_up is not None and ask_up <= 0.90:
-                return [("up", ask_up)]
-            if fair_up <= 0.20 and bu <= 0.40 and ask_down is not None and ask_down <= 0.90:
-                return [("down", ask_down)]
-            return []
-        if name == "imbalance":
-            bu = ex.get("book_up")
-            if bu is None:
-                return []
-            if bu >= 0.75 and ask_up is not None and ask_up <= 0.85:
-                return [("up", ask_up)]
-            if bu <= 0.25 and ask_down is not None and ask_down <= 0.85:
-                return [("down", ask_down)]
-            return []
-        f = ex.get("fair_lo") if name == "vol_narrow" else ex.get("fair_hi")
-        if f is None:
-            return []
-        if f >= 0.85 and ask_up is not None and ask_up <= f - 0.05:
-            return [("up", ask_up)]
-        if (1.0 - f) >= 0.85 and ask_down is not None and ask_down <= (1.0 - f) - 0.05:
-            return [("down", ask_down)]
-        return []
+    if name in DIAG_NAMES:
+        return decide_new(name, secs_left, fair_up, ask_up, ask_down, extra)[0]
     if name == "edge":
         if fair_up is None or not (60 <= secs_left <= 240):
             return []
@@ -104,18 +129,29 @@ class Shadow:
         self.rec: Dict[str, Dict[str, float]] = {n: {"windows": 0, "wins": 0, "staked": 0.0, "profit": 0.0} for n in NAMES}
         self.open: Dict[str, Dict[str, List[Tuple[str, float]]]] = {}   # slug -> strategy -> legs taken
         self.done: Dict[str, set] = {}                                  # slug -> strategies that already traded this window
+        self.why: Dict[str, Dict[str, str]] = {}                        # v1.21: slug -> strategy -> last reason it passed
+        self.diag: Dict[str, Dict[str, int]] = {n: {} for n in DIAG_NAMES}   # v1.21: strategy -> reason -> windows
 
     def tick(self, slug: str, secs_left: float, fair_up: Optional[float], ask_up: Optional[float], ask_down: Optional[float],
              extra: Optional[Dict[str, Optional[float]]] = None) -> None:
         for n in NAMES:
             if n in self.done.get(slug, set()):
                 continue
-            legs = decide(n, secs_left, fair_up, ask_up, ask_down, extra)
+            if n in DIAG_NAMES:
+                legs, reason = decide_new(n, secs_left, fair_up, ask_up, ask_down, extra)
+                self.why.setdefault(slug, {})[n] = reason
+            else:
+                legs = decide(n, secs_left, fair_up, ask_up, ask_down, extra)
             if legs:
                 self.open.setdefault(slug, {})[n] = legs
                 self.done.setdefault(slug, set()).add(n)
 
     def settle(self, slug: str, up: bool) -> None:
+        traded = set(self.open.get(slug, {}))
+        for n in DIAG_NAMES:
+            reason = "fired" if n in traded else self.why.get(slug, {}).get(n, "no tick in the window")
+            self.diag[n][reason] = self.diag[n].get(reason, 0) + 1
+        self.why.pop(slug, None)
         for n, legs in self.open.pop(slug, {}).items():
             staked = sum(p + taker_fee(p) for _, p in legs)
             payout = sum(1.0 for side, _ in legs if (side == "up") == bool(up))
@@ -194,12 +230,15 @@ class Shadow:
                        for _, _, lab in BUCKETS for c in [self.calib[kind][lab]]] for kind in ("model", "book")}
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"rec": self.rec, "calib": self.calib, "scalp": self.scalp_stats}
+        return {"rec": self.rec, "calib": self.calib, "scalp": self.scalp_stats, "diag": self.diag}
 
     def load(self, d: Optional[Dict[str, Any]]) -> None:
         for n, r in ((d or {}).get("rec") or {}).items():
             if n in self.rec and isinstance(r, dict):
                 self.rec[n] = {k: float(r.get(k, 0) or 0) for k in ("windows", "wins", "staked", "profit")}
+        for n, reasons in ((d or {}).get("diag") or {}).items():
+            if n in self.diag and isinstance(reasons, dict):
+                self.diag[n] = {str(k): int(v) for k, v in reasons.items()}
         for k, v in ((d or {}).get("scalp") or {}).items():
             if k in self.scalp_stats:
                 self.scalp_stats[k] = float(v or 0)

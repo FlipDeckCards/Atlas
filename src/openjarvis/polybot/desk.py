@@ -98,6 +98,7 @@ class Desk:
         self._stopping = False
         self.instance = ""                                   # set by the runner: which copy wrote the status
         self.version_start: Optional[float] = None           # real account value (live) when this strategy version started
+        self.deposits_start: Optional[float] = None         # v1.21: owner's total deposits when this version started (to net them out)
         self.guard: Optional[str] = None                     # v1.8: set when Polymarket holds more than the desk recorded; blocks trading
         self._mismatch: Dict[str, int] = {}                  # consecutive mismatched checks per window (a fill may be mid-sync once)
 
@@ -481,6 +482,11 @@ class Desk:
         exposure.publish(self.name, sum(w.inv.spent for w in self.open_windows.values() if w.slug in self._dir_pending))   # v1.20 cross-desk cap
         if self.version_start is None and self.cfg.mode == "live" and self.balance is not None:
             self.version_start = round(self.account_value(), 2)
+            try:
+                import os as _os
+                self.deposits_start = float((_os.environ.get("POLYBOT_DEPOSITS_USD") or "").strip() or 0) or None
+            except ValueError:
+                self.deposits_start = None
             self.log("info", f"Strategy v{brain.STRATEGY_VERSION} starts with a real account value of ${self.version_start:.2f}.")
         if self.rs.day_start is None:
             if self.cfg.mode == "live":
@@ -719,7 +725,7 @@ class Desk:
             "book": ({"bid": b.best_bid, "ask": b.best_ask, "state": b.state} if b else None),
             "resting": [{"side": r.quote.side, "price": r.quote.price, "qty": r.left} for r in self.broker.resting.values()],
             "rejects": list(getattr(self.broker, "rejects", []))[-5:],
-            "equity": self.equity(), "window_pct": self.cfg.window_pct, "setups": self.setups.table()[:12], "unpaired_pct": self.cfg.unpaired_pct, "version_start": self.version_start,
+            "equity": self.equity(), "window_pct": self.cfg.window_pct, "setups": self.setups.table()[:12], "unpaired_pct": self.cfg.unpaired_pct, "version_start": self.version_start, "deposits_start": self.deposits_start,
             "account_value": round(self.account_value(), 2) if self.cfg.mode == "live" and self.balance is not None else None,
             "window_cap": strategy.Sizing(equity=self.equity(), window_pct=self.cfg.window_pct).window_cap(self.cfg.limits),
             "balance": self.balance, "day": self.rs.day, "day_pnl": round(self.rs.day_pnl, 2),
@@ -792,6 +798,8 @@ class Desk:
             self.learner.load(prev.get("learner"))
         if prev.get("strategy") == brain.STRATEGY_VERSION and prev.get("version_start") is not None:
             self.version_start = float(prev["version_start"])
+        if prev.get("strategy") == brain.STRATEGY_VERSION and prev.get("deposits_start") is not None:
+            self.deposits_start = float(prev["deposits_start"])
         self.restore_windows(prev.get("open_windows"), now)
         for p in (prev.get("slug_prefixes") or {}).values() if isinstance(prev.get("slug_prefixes"), dict) else []:
             if isinstance(p, str) and "-updown-" in p:
