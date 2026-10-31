@@ -7,8 +7,13 @@ from openjarvis.polybot import directional, exposure
 
 @pytest.mark.parametrize("prob,expected", [(0.79, 0.0), (0.80, 5.0), (0.849, 5.0), (0.85, 7.0), (0.899, 7.0),
                                            (0.90, 8.0), (0.949, 8.0), (0.95, 10.0), (0.999, 10.0)])
-def test_btc_and_xrp_tiers(prob, expected):
+def test_btc_tiers(prob, expected):
     assert directional.size_pct(prob, "btc") == expected
+
+
+@pytest.mark.parametrize("prob,expected", [(0.80, 0.0), (0.85, 0.0), (0.88, 0.0), (0.889, 0.0), (0.89, 7.0), (0.899, 7.0),
+                                           (0.90, 8.0), (0.949, 8.0), (0.95, 10.0), (0.999, 10.0)])
+def test_xrp_tiers_floor_at_89(prob, expected):
     assert directional.size_pct(prob, "xrp") == expected
 
 
@@ -24,7 +29,7 @@ def test_unknown_coin_never_trades():
 
 def test_minimum_confidence_per_coin():
     assert directional.min_conf("btc") == 0.80
-    assert directional.min_conf("xrp") == 0.80
+    assert directional.min_conf("xrp") == 0.89
     assert directional.min_conf("eth") == 0.95
     assert directional.min_conf("sol") == 0.95
 
@@ -63,3 +68,5 @@ def test_open_sides_follow_the_coin_floor():
     assert directional.open_sides(0.82, "btc") == (True, False)
     assert directional.open_sides(0.78, "btc") == (False, False)
     assert directional.open_sides(None, "btc") == (False, False)
+    assert directional.open_sides(0.88, "xrp") == (False, False)   # the 88% XRP loss would not open now
+    assert directional.open_sides(0.89, "xrp") == (True, False)
