@@ -1047,9 +1047,9 @@ function deskSec(key) {
   if (st.window) {
     const cur = (st.open_windows || []).find(x => x.slug === st.window.slug);
     const wEnd = st.window.end ? new Date(st.window.end * 1000).toLocaleTimeString() : '';
-    const flag = mk('div', 'row'); flag.style.marginTop = '6px';
+    const flag = mk('div', 'row'); flag.style.marginTop = '6px'; flag.style.fontSize = '15px';
     const tag = mk('span', null, cur && cur.paid > 0 ? 'IN A TRADE' : 'NO TRADE'); tag.style.fontWeight = '700';
-    tag.style.color = cur && cur.paid > 0 ? '#ffb347' : '#7d8fa3';
+    tag.style.color = cur && cur.paid > 0 ? '#3d8bff' : '#ffb347';
     const detail = cur && cur.paid > 0
       ? ' · Up ' + Number(cur.up_qty || 0).toFixed(2) + ' @ ' + money(cur.up_cost) + ' · Down ' + Number(cur.down_qty || 0).toFixed(2) + ' @ ' + money(cur.down_cost) + ' · paid ' + money(cur.paid)
       : ' · nothing bought in this window yet';
