@@ -275,6 +275,11 @@ class Desk:
             return
         try:
             self.book = BookView.parse(await self.c.book(self.window.slug), now)
+            if self.book is not None and getattr(self, "_book_open_seen", None) != self.window.slug:
+                self._book_open_seen = self.window.slug          # diagnostic: say once per window when the order book opens, and its prices
+                bb, ba = self.book.best_bid, self.book.best_ask
+                self.log("info", f"Order book open for {self.window.slug} {now - self.window.start:.0f}s into the window: "
+                                 f"Up ask {ba if ba is not None else 'none'}, Down ask {round(1 - bb, 4) if bb is not None else 'none'}.")
         except PMError as exc:
             if exc.status == 404:                       # the market closed and is gone: not an error, move on to the next window
                 if self.window.start <= now < self.window.end - 5 and self._book404 != self.window.slug:
