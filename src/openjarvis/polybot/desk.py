@@ -282,6 +282,13 @@ class Desk:
                                  f"Up ask {ba if ba is not None else 'none'}, Down ask {round(1 - bb, 4) if bb is not None else 'none'}.")
         except PMError as exc:
             if exc.status == 404:                       # the market closed and is gone: not an error, move on to the next window
+                if now - self.window.start >= 60 and getattr(self, "_bbo_probe", None) != self.window.slug:
+                    self._bbo_probe = self.window.slug   # diagnostic: the book is still missing a minute in; ask the best-bid/offer endpoint once
+                    try:
+                        bbo = await self.c.bbo(self.window.slug)
+                        self.log("info", f"Book missing {now - self.window.start:.0f}s in; best bid/offer for {self.window.slug} says: {str(bbo)[:300]}")
+                    except PMError as exc2:
+                        self.log("info", f"Book missing {now - self.window.start:.0f}s in; best bid/offer for {self.window.slug} also failed: {str(exc2)[:200]}")
                 if self.window.start <= now < self.window.end - 5 and self._book404 != self.window.slug:
                     self._book404 = self.window.slug     # the market is listed but has no order book: say so once (that is the cause)
                     self.log("warn", f"{self.window.slug} is listed but Polymarket has no order book for it yet ({str(exc)[:120]}).")

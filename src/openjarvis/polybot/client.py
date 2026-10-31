@@ -117,6 +117,10 @@ class PolymarketUS:
     async def book(self, slug: str) -> Dict[str, Any]:
         return (await self._req("GET", f"/v1/markets/{slug}/book")).get("marketData") or {}
 
+    async def bbo(self, slug: str) -> Dict[str, Any]:
+        """Best bid/offer (the official SDK's markets.bbo): GET /v1/markets/{slug}/bbo on the public gateway."""
+        return await self._req("GET", f"/v1/markets/{slug}/bbo")
+
     async def index_prices(self, asset: str, start: int, end: int = 0, bucket: str = "ASSET_PRICE_BUCKET_1S") -> List[tuple]:
         """[(unix second, close)] for real prints only (gap-filled candles are dropped)."""
         d = await self._req("GET", "/v1/asset-prices/history", params={"assets": f"crypto:{asset}", "from": int(start), "to": int(end), "bucket": bucket})
