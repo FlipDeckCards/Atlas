@@ -2,11 +2,11 @@
 from openjarvis.polybot import directional
 
 
-def test_edge_needs_six_points_over_the_ask_and_the_80_floor_on_btc():
-    # the model says 85% Up, the Up ask is 78c: 7 points over the price, clears the floor
-    assert directional.method_pick("edge", 0.85, 0.78, 0.25, asset="btc")[0] == "up"
-    # only 5 points over: no edge bet
-    assert directional.method_pick("edge", 0.85, 0.80, 0.25, asset="btc") is None
+def test_edge_needs_four_points_over_the_ask_and_the_80_floor_on_btc():
+    # the model says 85% Up, the Up ask is 80c: 5 points over the price, clears the 4-point gap and the floor
+    assert directional.method_pick("edge", 0.85, 0.80, 0.25, asset="btc")[0] == "up"
+    # only 3 points over: no edge bet
+    assert directional.method_pick("edge", 0.85, 0.82, 0.25, asset="btc") is None
     # model under the 80% floor: nothing, however cheap
     assert directional.method_pick("edge", 0.70, 0.50, 0.55, asset="btc") is None
 

@@ -18,8 +18,12 @@ def test_xrp_tiers_floor_at_90(prob, expected):
 
 
 @pytest.mark.parametrize("prob,expected", [(0.94, 0.0), (0.95, 1.0), (0.99, 1.0), (0.80, 0.0)])
-def test_eth_and_sol_only_trade_at_95_and_size_flat(prob, expected):
+def test_eth_only_trades_at_95_and_size_flat(prob, expected):
     assert directional.size_pct(prob, "eth") == expected
+
+
+@pytest.mark.parametrize("prob,expected", [(0.89, 0.0), (0.899, 0.0), (0.90, 1.0), (0.93, 1.0), (0.99, 1.0), (0.80, 0.0)])
+def test_sol_trades_at_90_and_size_flat(prob, expected):
     assert directional.size_pct(prob, "sol") == expected
 
 
@@ -31,7 +35,7 @@ def test_minimum_confidence_per_coin():
     assert directional.min_conf("btc") == 0.80
     assert directional.min_conf("xrp") == 0.90
     assert directional.min_conf("eth") == 0.95
-    assert directional.min_conf("sol") == 0.95
+    assert directional.min_conf("sol") == 0.90
 
 
 def test_btc_trades_at_its_tier_and_eth_does_not_at_the_same_confidence():
