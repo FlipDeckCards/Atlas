@@ -918,7 +918,7 @@ function factorySec(key) {
   const s = mk('div', 'sec');
   if (!b) { s.append(mk('div', 'dim', 'That factory is gone.')); return s; }
   const l = mk('div', 'lbl'); l.append(mk('span', null, 'Factory'), mk('span', 'tag', b.state)); s.append(l);
-  const h = mk('div', 'h', b.label); h.style.color = b.color; s.append(h);
+  const h = mk('div', 'h', b.label); h.style.color = b.color; if (key === 'polymarket') h.style.fontSize = '17px'; s.append(h);
   const about = bizAbout(key); if (about) s.append(mk('div', 'dim', about));
   if (key === 'polymarket') { ['btc', 'eth', 'sol', 'xrp'].forEach(a => {
     const d = DESKS[a]; const wf = d && !d.error ? windowFlag(d.status || {}, a.toUpperCase() + ' Desk') : null; if (wf) s.append(wf);
