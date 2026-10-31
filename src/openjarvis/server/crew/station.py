@@ -1017,7 +1017,7 @@ function deskSec(key) {
   const DESK = DESKS[A];
   const s = mk('div'); s.style.marginTop = '10px';
   s.style.borderTop = '1px solid rgba(0,229,255,0.25)'; s.style.paddingTop = '10px';
-  const hd = mk('div', 'h', NAME + ' desk'); hd.style.color = ({ btc: '#00e5ff', eth: '#8c8cff', sol: '#14f195', xrp: '#ffb347' })[A]; s.append(hd);
+  const hd = mk('div', 'h', NAME + ' desk'); hd.style.color = ({ btc: '#00e5ff', eth: '#8c8cff', sol: '#14f195', xrp: '#ffb347' })[A]; hd.style.fontSize = '16px'; s.append(hd);
   if (!DESK) { s.append(mk('div', 'dim', 'Loading the desk…')); return s; }
   if (DESK.error) { s.append(mk('div', 'dim', DESK.error)); return s; }
   const st = DESK.status || {};
