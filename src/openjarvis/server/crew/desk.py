@@ -117,8 +117,30 @@ async def scoreboard(pool, mode: str, now: Optional[dt.datetime] = None, version
     out["fills"] = int(fills or 0)
     out["sweeps"] = await sweep_stats(pool, mode, version, asset)
     out["shadow"] = await shadow_stats(pool, mode, version, asset)
+    out["shadow_detail"] = await shadow_detail(pool, asset)
     out["curve"] = curve
     out["older"] = [{"version": r["v"], "trades": int(r["n"]), "wins": int(r["wins"]), "profit": round(float(r["pnl"]), 2)} for r in older]
+    return out
+
+
+async def shadow_detail(pool, asset: str) -> Optional[Dict[str, Any]]:
+    """v1.21 shadow results, readable from the Station and the API: the calibration of the model and the book by confidence
+    bucket (trades and wins per bucket) and the scalp shadow's entries, targets, stops and profit. Saved by the desk each window
+    under polybot_kv (key 'shadow' for BTC, 'shadow:<asset>' for the others)."""
+    async with pool.acquire() as c:
+        raw = await c.fetchval("SELECT value FROM polybot_kv WHERE key = $1", kv_key("shadow", asset))
+    if raw is None:
+        return None
+    d = json.loads(raw) if isinstance(raw, str) else (raw or {})
+    calib = d.get("calib") or {}
+    out: Dict[str, Any] = {"calib": {}, "scalp": d.get("scalp") or {}}
+    for kind in ("model", "book"):
+        rows = []
+        for lab, cell in (calib.get(kind) or {}).items():
+            n, wins = int(cell.get("n", 0)), int(cell.get("wins", 0))
+            rows.append({"bucket": lab, "trades": n, "won": wins,
+                         "win_rate": round(100.0 * wins / n, 1) if n else None})
+        out["calib"][kind] = rows
     return out
 
 

@@ -1073,6 +1073,15 @@ function deskSec(key) {
   const sh = v.shadow || {};   // v1.14 learned pair sizing, shadow mode: what bigger bets on proven pair setups would have made
   if (sh.windows) box.append(mk('div', 'dim', 'Learned pair sizing (shadow, not trading yet): ' + sh.windows + ' pair windows · actual ' + signed(sh.actual)
     + ' · at learned sizes ' + signed(sh.shadow) + ' · ' + Object.entries(sh.tiers || {}).map(([t, n]) => n + ' ' + t).join(', ')));
+  const sd = v.shadow_detail;   // v1.21 shadow results: calibration by confidence bucket and the scalp shadow
+  if (sd) {
+    const cal = (sd.calib && sd.calib.model) || [];
+    const seen = cal.filter(r => r.trades > 0).map(r => r.bucket + ': ' + r.won + '/' + r.trades + ' won' + (r.win_rate == null ? '' : ' (' + r.win_rate + '%)'));
+    box.append(mk('div', 'dim', 'Shadow calibration (model confidence → result): ' + (seen.length ? seen.join(' · ') : 'no settled windows yet')));
+    const sc = sd.scalp || {};
+    if (sc.entries) box.append(mk('div', 'dim', 'Scalp shadow: ' + sc.entries + ' entries · ' + (sc.target || 0) + ' target · ' + (sc.stop || 0)
+      + ' stop · profit ' + signed(sc.profit || 0)));
+  }
   const sets = (st.setups || []).filter(x => x.windows >= 3).slice(0, 5);
   if (sets.length) box.append(mk('div', 'dim', 'Pair setups: ' + sets.map(x => x.label + ' — ' + x.wins + '/' + x.windows + ' won, floor ' + x.floor + '%, ' + signed(x.profit)).join(' | ')));
   (v.older || []).forEach(o => box.append(mk('div', 'dim', 'Earlier v' + o.version + ': ' + o.trades + ' trades, ' + o.wins + ' won, ' + signed(o.profit) + ' (not counted above)')));
