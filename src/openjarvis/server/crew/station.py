@@ -20,7 +20,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <link rel="apple-touch-icon" href="/crew/icons/apple-touch-icon.png"/>
 <link rel="icon" type="image/png" href="/crew/icons/icon-192.png"/>
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&family=Fira+Code:wght@400;500;700&display=swap" rel="stylesheet"/>
 <style>
   :root { --cyan:#00e5ff; --cyan-dim:#005f6b; --orange:#ff6d00; --green:#00ff88; --red:#ff3344; --violet:#b06cff;
           --bg:#050508; --panel:#08080f; --border:#0d2535; --text:#8ecfe0; --text-dim:#3d6a7a; }
@@ -28,6 +28,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
   html, body { height:100%; }
   body { background:var(--bg); color:var(--text); font-family:'Share Tech Mono',monospace; display:grid; grid-template-rows:48px 1fr; overflow:hidden; }
   button { font-family:inherit; }
+  .num { font-family:'Fira Code',monospace; }   /* every number on the Station: Fira Code's zero is dotted, so 0 and 8 read apart */
   #top { display:flex; align-items:center; gap:14px; padding:0 16px; background:var(--panel); border-bottom:1px solid var(--border); min-width:0; }
   #brand { font-family:'Orbitron',monospace; font-weight:900; letter-spacing:4px; color:var(--cyan); text-shadow:0 0 18px var(--cyan); font-size:15px; white-space:nowrap; }
   #brand span { color:var(--orange); }
@@ -2807,6 +2808,28 @@ if (['etsy', 'google'].includes(new URLSearchParams(location.search).get('connec
 resize(); requestAnimationFrame(frame);
 if (token()) boot(); else showAuth();
 poll();
+// Fira Code for the numbers: wrap each run of digits in a .num span, and again after the page re-renders
+const NUM_RE = /[-+$]?\d[\d.,:%]*/g;
+function numify(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode(n) {
+    const p = n.parentNode;
+    if (!p || !/\d/.test(n.nodeValue) || /^(SCRIPT|STYLE|TEXTAREA|INPUT|OPTION|SELECT)$/.test(p.nodeName)) return NodeFilter.FILTER_REJECT;
+    return p.classList && p.classList.contains('num') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT; } });
+  const todo = []; while (walker.nextNode()) todo.push(walker.currentNode);
+  todo.forEach(n => {
+    const text = n.nodeValue; const frag = document.createDocumentFragment(); let last = 0; NUM_RE.lastIndex = 0; let m;
+    while ((m = NUM_RE.exec(text))) {
+      if (m.index > last) frag.append(document.createTextNode(text.slice(last, m.index)));
+      const sp = document.createElement('span'); sp.className = 'num'; sp.textContent = m[0]; frag.append(sp); last = m.index + m[0].length;
+    }
+    if (last < text.length) frag.append(document.createTextNode(text.slice(last)));
+    n.parentNode.replaceChild(frag, n);
+  });
+}
+let numTimer = null;
+new MutationObserver(() => { clearTimeout(numTimer); numTimer = setTimeout(() => numify(document.body), 30); })
+  .observe(document.body, { childList: true, subtree: true, characterData: true });
+numify(document.body);
 </script>
 </body>
 </html>
