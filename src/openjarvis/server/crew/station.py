@@ -921,6 +921,7 @@ function factorySec(key) {
   const h = mk('div', 'h', b.label); h.style.color = b.color; s.append(h);
   const about = bizAbout(key); if (about) s.append(mk('div', 'dim', about));
   if (key === 'polymarket') { ['polymarket', 'polymarket-eth', 'polymarket-sol', 'polymarket-xrp'].forEach(k => s.append(deskSec(k))); s.append(deskLogSec()); }   // all four desks, then one log
+  if (/stock market/i.test(b.label || '')) s.append(robinhoodSec());                    // all Robinhood crypto work lives in the Stock Market factory
   if (b.platform) {
     const c = S.connections && S.connections[key];
     const cr = mk('div', 'row'); cr.style.cursor = 'pointer'; cr.onclick = () => { selected = 'links'; renderSide(true); };
@@ -995,6 +996,21 @@ function deskCurve(points) {
   path.setAttribute('points', points.map((p, i) => X(i).toFixed(1) + ',' + Y(p[1]).toFixed(1)).join(' ')); svg.append(path);
   return svg;
 }
+function robinhoodSec() {
+  // Robinhood crypto: connection, the owner's risk limits, and paper mode. Live orders are not built yet, so Go live stays off.
+  const c = (S.connections && S.connections.robinhood) || {};
+  const s = mk('div', 'sec');
+  const h = mk('div', 'h', 'Robinhood (crypto)'); s.append(h);
+  s.append(mk('div', 'dim', c.connected ? 'Connected. The bot can read your crypto accounts; it cannot place orders yet.' : (c.setup || 'Not connected yet.')));
+  s.append(mk('div', 'dim', 'Limits: each order risks at most 3% of the account. BTC, ETH, SOL and XRP together never have more than 12% at risk.'));
+  const row = mk('div', 'row');
+  const paper = mk('button', 'b on', 'PAPER (simulated)'); paper.disabled = true;
+  const live = mk('button', 'b', 'GO LIVE'); live.disabled = true; live.title = 'Not built yet: Robinhood order placement is not wired up.';
+  row.append(paper, live); s.append(row);
+  s.append(mk('div', 'dim', 'Paper mode sends no orders. Going live will need your approval for each order.'));
+  return s;
+}
+
 function deskSec(key) {
   const A = DESK_ASSET[key] || 'btc', NAME = A.toUpperCase();
   loadDesk(false, A);
@@ -1342,7 +1358,7 @@ function linksSec() {
   s.append(Object.assign(mk('div', 'lbl'), { textContent: 'Connections' }));
   // connected first, then built but not connected, then not built yet (same order within each group)
   const rank = c => (c && c.connected ? 2 : c && c.built ? 1 : 0);
-  Object.entries(S.connections || {}).sort((a, b) => rank(b[1]) - rank(a[1])).forEach(([key, c]) => {
+  Object.entries(S.connections || {}).filter(([key]) => key !== 'robinhood').sort((a, b) => rank(b[1]) - rank(a[1])).forEach(([key, c]) => {
     const r = mk('div', 'row'); const d = mk('span', 'dot'); d.style.background = c.connected ? '#00ff88' : c.built ? '#ff6d00' : '#2a3a44';
     const g = mk('div', 'grow'); g.append(mk('div', null, c.label + (c.connected ? ' · connected' : c.built ? ' · not connected' : ' · not built yet')));
     if (!c.connected && c.setup) g.append(mk('div', 'dim', c.setup));
