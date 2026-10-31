@@ -497,6 +497,12 @@ class Desk:
             self.sigma = self.tape.sigma_per_s(int(now))
         await self.find_window(now)
         await self.load_book(now)
+        if self._due("diag_heartbeat", 30.0, now):                # diagnostic: what the desk sees, every 30 s
+            w, b = self.window, self.book
+            self.log("info", f"[diag] {self.name}: window={w.slug if w else None} "
+                             f"start={(now - w.start) if w else None:}s-in end_in={(w.end - now) if w else None} "
+                             f"book={'none' if b is None else f'bid {b.best_bid} ask {b.best_ask} state {b.state}'} "
+                             f"book404={self._book404} horizon={self.horizon} prefix={self.slug_prefix!r} reason={str(self.reason)[:120]!r}")
         await self.on_fills(await self.broker.sync(self.book, now))
         await self.settle_due(now)
         await self.refresh_positions(now)
