@@ -128,6 +128,7 @@ FIXED_HORIZON = {"btc15": "15m", "btclate": "5m"}        # desks pinned to one w
 COIN["btclate"] = "btc"                 # v1.23: a paper desk on BTC's 5-minute market that runs only the late method
 LEDGER = {"btclate": "paper-late"}
 LIVE_LEDGER = {"btclate": "live-late"}
+SHARED_MARKET = {"btc": ("btclate",), "btclate": ("btc",)}   # desks that trade the same Polymarket market (one shared position per window)
 LIVE_MODES = ("live", "live-late")       # every ledger label that is real money
 METHODS = {"btclate": ("late",)}
 PAPER_ONLY = ()                          # desks that can never trade real money (none now: btclate trades live, on its own ledger)

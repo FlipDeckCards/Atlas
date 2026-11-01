@@ -238,14 +238,10 @@ class LiveBroker:
             self.resting[side] = Resting(q, oid, now)
 
     async def cancel_all(self, now: float = 0.0) -> None:
-        try:
-            await self.c.cancel_all([self.slug] if self.slug else None)
-        except PMError as exc:
-            logger.warning("cancel_all: %s", exc)
-            for r in list(self.resting.values()):
-                await self._cancel(r)
-        for r in self.resting.values():
-            self.closing[r.order_id] = r
+        # only this desk's own orders: the market is shared with the other desks (BTC 5m and BTC Late), so a market-wide cancel would
+        # cancel their resting orders too
+        for r in list(self.resting.values()):
+            await self._cancel(r)
         self.resting = {}
 
     async def sync(self, book: Optional[BookView], now: float) -> List[Fill]:

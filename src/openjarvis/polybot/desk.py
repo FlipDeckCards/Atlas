@@ -13,7 +13,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 from dataclasses import replace
 
 from openjarvis.polybot import brain, directional, exposure, model, risk, setups, shadow, strategy
-from openjarvis.polybot.config import LIVE_MODES
+from openjarvis.polybot.config import LIVE_MODES, SHARED_MARKET
 from openjarvis.polybot.brokers import BookView, Fill, LiveBroker, PaperBroker, parse_ts
 from openjarvis.polybot.client import PMError, money
 from openjarvis.polybot.config import Config, apply_control
@@ -430,6 +430,7 @@ class Desk:
             pnl = round(payout - w.inv.spent, 4)
             w.settled = True
             del self.open_windows[slug]
+            await self._shared().put(f"openspend:{slug}:{self.cfg.asset}", 0.0)      # settled: nothing left booked here
             self._t.pop(f"settle:{slug}", None)
             self.rs.roll(now)
             self.rs.day_pnl += pnl
@@ -465,6 +466,7 @@ class Desk:
         except PMError as exc:
             self.log("warn", f"Positions unreadable: {exc}")
             return
+        await self.publish_open_spend()
         await self.check_positions(pos or {}, now)
         ext = 0.0
         for slug, p in (pos or {}).items():
@@ -473,6 +475,22 @@ class Desk:
             if "-updown-" in slug:                       # every desk's open contracts count: they all share one account
                 ext += abs(money(p.get("cost")) or 0.0)
         self.external_at_risk = round(ext, 2)
+
+    def _shared(self):
+        """The shared store under this desk's scope: the keys that every desk can read (open spend per market)."""
+        return getattr(self.store, "store", self.store)
+
+    async def publish_open_spend(self) -> None:
+        """Share this desk's booked spend per open window, so the other desks on the same market can account for it."""
+        for slug, w in self.open_windows.items():
+            await self._shared().put(f"openspend:{slug}:{self.cfg.asset}", round(w.inv.spent, 4))
+
+    async def others_spent(self, slug: str) -> float:
+        """What the other desks on this market have booked in this window (they share one Polymarket position)."""
+        total = 0.0
+        for other in SHARED_MARKET.get(self.cfg.asset, ()):
+            total += float(await self._shared().get(f"openspend:{slug}:{other}") or 0.0)
+        return total
 
     async def check_positions(self, pos: Dict[str, Any], now: float) -> None:
         """v1.8 safety check: what Polymarket says the desk paid in each open window must match what the desk recorded.
@@ -485,7 +503,7 @@ class Desk:
             if not p or p.get("expired"):
                 continue
             real = abs(money(p.get("cost")) or 0.0)
-            booked = w.inv.spent
+            booked = w.inv.spent + await self.others_spent(slug)
             if real <= booked + max(1.0, 0.25 * booked):
                 self._mismatch.pop(slug, None)
                 continue
