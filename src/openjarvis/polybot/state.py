@@ -42,9 +42,15 @@ def kv_key(key: str, asset: str = "btc") -> str:
 
 
 def asset_of(slug: str) -> str:
-    """cpc-eth-updown-5m-... -> eth"""
+    """The desk a market belongs to: cpc-eth-updown-5m-... -> eth; cpc-btc-updown-15m-... -> btc15 (BTC's 15-minute desk)."""
     parts = (slug or "").split("-")
-    return parts[1] if len(parts) > 1 else ""
+    a = parts[1] if len(parts) > 1 else ""
+    return "btc15" if a == "btc" and "-updown-15m-" in (slug or "") else a
+
+
+def desk_sql(col: str = "slug") -> str:
+    """SQL for asset_of(): which desk a row belongs to, from its market slug."""
+    return f"(CASE WHEN {col} LIKE '%-btc-updown-15m-%' THEN 'btc15' ELSE split_part({col}, '-', 2) END)"
 
 
 class ScopedStore:
@@ -161,7 +167,7 @@ class PgStore:
         async with self.pool.acquire() as c:
             rows = await c.fetch(
                 "SELECT f.slug, f.side, f.qty, f.cost, f.features, f.version, w.up FROM polybot_fills f JOIN polybot_windows w "
-                "ON w.slug = f.slug AND w.mode = f.mode WHERE f.mode = 'live' AND w.up IS NOT NULL AND split_part(f.slug, '-', 2) = $1 "
+                "ON w.slug = f.slug AND w.mode = f.mode WHERE f.mode = 'live' AND w.up IS NOT NULL AND " + desk_sql("f.slug") + " = $1 "
                 "AND f.ts >= now() - make_interval(days => $2) ORDER BY f.ts", asset, int(days))
         out = []
         for r in rows:

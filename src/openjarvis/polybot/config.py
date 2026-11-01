@@ -57,7 +57,8 @@ class Config:
     secret_key: str = ""
     horizon: str = "5m"                 # which Up/Down series: 5m, 15m or 1h (in trading hours)
     horizon_night: str = ""             # outside trading hours, if different (BTC: 15m by day, 5m at night for the sweeps)
-    asset: str = "btc"
+    asset: str = "btc"                  # the desk's id (btc, btc15, eth, sol, xrp): its own store, lock, controls and scoreboard
+    coin: str = "btc"                   # the coin it trades (btc15 trades BTC's 15-minute markets)
     limits: Limits = field(default_factory=Limits)
     quote_after_open_s: float = 20.0    # wait this long after a window opens (the price to beat is stamped a few seconds in)
     stop_before_end_s: float = 25.0     # pull every quote this long before the close (the last seconds are where fast bots pick you off)
@@ -118,12 +119,19 @@ class Config:
         return replace(self, limits=limits.clean())
 
 
-ASSETS = ("btc", "eth", "sol", "xrp")
+ASSETS = ("btc", "btc15", "eth", "sol", "xrp")
+COIN = {"btc15": "btc"}                 # desk id -> the coin it trades (default: the same name)
+FIXED_HORIZON = {"btc15": "15m"}        # desks pinned to one window length (a shared POLYBOT_HORIZON never changes them)
+
+
+def coin_of(asset: str) -> str:
+    a = (asset or "btc").lower()
+    return COIN.get(a, a)
 HORIZON_S = {"5m": 300, "15m": 900, "1h": 3600}
 
 
 def assets_from_env(env: Optional[Mapping[str, str]] = None) -> list:
-    """POLYBOT_ASSETS: which desks run (default btc,eth,sol,xrp). Each desk is its own market, scoreboard and controls."""
+    """POLYBOT_ASSETS: which desks run (default btc,btc15,eth,sol,xrp). Each desk is its own market, scoreboard and controls."""
     e = os.environ if env is None else env
     raw = (e.get("POLYBOT_ASSETS") or ",".join(ASSETS)).lower()
     out = [a.strip() for a in raw.split(",") if a.strip() in ASSETS]
@@ -145,14 +153,19 @@ def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Con
         return (e.get(f"{name}_{a.upper()}") or e.get(name) or "").strip()
 
     horizon = (per("POLYBOT_HORIZON") or "5m").lower()
+    night = per("POLYBOT_HORIZON_NIGHT").lower()
+    if a in FIXED_HORIZON:                  # only its own setting (POLYBOT_HORIZON_BTC15) may change a pinned desk
+        horizon = (e.get(f"POLYBOT_HORIZON_{a.upper()}") or FIXED_HORIZON[a]).strip().lower()
+        night = (e.get(f"POLYBOT_HORIZON_NIGHT_{a.upper()}") or "").strip().lower()
     return Config(
         mode="paper",
         allow_live=(e.get("POLYBOT_ALLOW_LIVE") or "").strip().lower() in _TRUE,
         key_id=(e.get("POLYMARKET_KEY_ID") or "").strip(),
         secret_key=(e.get("POLYMARKET_SECRET_KEY") or "").strip(),
         horizon=horizon if horizon in ("5m", "15m", "1h") else "5m",
-        horizon_night=(per("POLYBOT_HORIZON_NIGHT").lower() if per("POLYBOT_HORIZON_NIGHT").lower() in ("5m", "15m", "1h") else ""),
+        horizon_night=(night if night in ("5m", "15m", "1h") else ""),
         asset=a,
+        coin=coin_of(a),
         limits=lim,
         quote_after_open_s=_f(e, "POLYBOT_QUOTE_AFTER_OPEN_S", 20.0, 5.0, 600.0),
         stop_before_end_s=_f(e, "POLYBOT_STOP_BEFORE_END_S", 25.0, 5.0, 600.0),
