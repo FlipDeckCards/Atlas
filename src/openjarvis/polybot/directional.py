@@ -27,7 +27,8 @@ EXPLORE_EDGE = 0.05
 # SOL: trade at 90%+ (owner, 2026-10-31; was 95%), still 1% of the balance.
 TIERS = {
     "btc": ((95, 10.0), (90, 8.0), (85, 7.0), (80, 5.0)),
-    "btc15": ((95, 10.0), (90, 8.0), (85, 7.0), (80, 5.0)),      # BTC's 15-minute desk: the same tiers as BTC 5m
+    "btc15": ((95, 10.0), (90, 8.0), (85, 7.0), (80, 5.0)),
+    "btclate": ((95, 10.0), (90, 8.0), (85, 7.0), (80, 5.0)),      # v1.23: the late-only paper desk on BTC 5m: the same tiers      # BTC's 15-minute desk: the same tiers as BTC 5m
     "xrp": ((95, 10.0), (90, 8.0)),
     "eth": ((95, 1.0),),
     "sol": ((90, 1.0),),

@@ -21,18 +21,22 @@ from openjarvis.polybot.config import Limits, from_env
 from openjarvis.polybot.state import DDL, desk_sql, kv_key
 
 KEY = "polymarket"                                   # the BTC desk keeps the original factory key
-KEYS = {"btc": "polymarket", "btc15": "polymarket-btc15", "eth": "polymarket-eth", "sol": "polymarket-sol", "xrp": "polymarket-xrp"}
+KEYS = {"btc": "polymarket", "btc15": "polymarket-btc15", "eth": "polymarket-eth", "sol": "polymarket-sol", "xrp": "polymarket-xrp",
+        "btclate": "polymarket-btclate"}
+# v1.23: the late-only paper desk trades BTC 5m markets, so its rows are read as BTC with its own paper label
+LEDGER_OF = {"btclate": "paper-late"}
+ASSET_ROWS = {"btclate": "btc"}
 ASSET_OF = {v: k for k, v in KEYS.items()}
 NAMES = {"btc": "Polymarket Desk", "btc15": "Polymarket BTC 15m Desk", "eth": "Polymarket ETH Desk", "sol": "Polymarket SOL Desk",
-         "xrp": "Polymarket XRP Desk"}
-COLORS = {"btc": "#00e5ff", "btc15": "#4fc3f7", "eth": "#8c8cff", "sol": "#14f195", "xrp": "#ffb347"}
+         "xrp": "Polymarket XRP Desk", "btclate": "Polymarket BTC Late Desk (paper)"}
+COLORS = {"btc": "#00e5ff", "btc15": "#4fc3f7", "eth": "#8c8cff", "sol": "#14f195", "xrp": "#ffb347", "btclate": "#ff7ad9"}
 
 
 def business(asset: str = "btc") -> Dict[str, str]:
     a = asset.lower()
     return {"key": KEYS[a], "name": NAMES[a], "url": "https://polymarket.us", "color": COLORS[a],
             "description": f"{NAMES[a]} is a trading bot that makes markets in Polymarket US's "
-                           f"{'15-minute BTC' if a == 'btc15' else '5-minute ' + a.upper()} Up/Down contracts."}
+                           f"{'15-minute BTC' if a == 'btc15' else 'BTC 5-minute, late method only (paper)' if a == 'btclate' else '5-minute ' + a.upper()} Up/Down contracts."}
 
 
 BUSINESS = business("btc")
@@ -298,14 +302,16 @@ async def summary(pool, *, trade_limit: int = 50, asset: str = "btc") -> Dict[st
     status, control = await get_kv(pool, kv_key("status", asset)), await get_kv(pool, kv_key("control", asset))
     hb = float(status.get("heartbeat") or 0)
     mode = status.get("mode") or "paper"
+    rows = ASSET_ROWS.get(asset, asset)                  # v1.23: the late desk's rows are BTC rows under its own paper label
+    paper = LEDGER_OF.get(asset, "paper")
     return {"status": status, "control": control, "running": bool(hb) and time.time() - hb < 300, "heartbeat_age_s": round(time.time() - hb) if hb else None,
             "limits": current_limits(control).__dict__,
-            "score": {"paper": await scoreboard(pool, "paper", asset=asset), "live": await scoreboard(pool, "live", asset=asset)},
-            "trades": {"paper": await trades(pool, "paper", trade_limit, asset=asset), "live": await trades(pool, "live", trade_limit, asset=asset)},
+            "score": {"paper": await scoreboard(pool, paper, asset=rows), "live": await scoreboard(pool, "live", asset=rows)},
+            "trades": {"paper": await trades(pool, paper, trade_limit, asset=rows), "live": await trades(pool, "live", trade_limit, asset=rows)},
             "events": await events(pool, 30, asset), "mode": mode, "strategy": STRATEGY_VERSION, "deposits": deposits(),
-            "shadow": await shadow_stats(pool, mode, STRATEGY_VERSION, asset), "shadow_detail": await shadow_detail(pool, asset),
+            "shadow": await shadow_stats(pool, "live" if mode == "live" else paper, STRATEGY_VERSION, rows), "shadow_detail": await shadow_detail(pool, asset),
             "asset": asset, "name": NAMES[asset],
-            "analysis": await analysis(pool, "live" if mode == "live" else "paper", asset=asset)}
+            "analysis": await analysis(pool, "live" if mode == "live" else paper, asset=rows)}
 
 
 def deposits() -> Optional[float]:

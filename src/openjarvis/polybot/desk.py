@@ -63,7 +63,7 @@ class Desk:
         self.tape = model.PriceTape()
         self.rs = risk.RiskState()
         self.ledger = Ledger(base.asset)
-        self.name = "BTC 15m" if base.asset == "btc15" else base.asset.upper()
+        self.name = {"btc15": "BTC 15m", "btclate": "BTC Late"}.get(base.asset, base.asset.upper())
         from openjarvis.polybot.config import HORIZON_S
         self._prefixes: Dict[str, str] = {}                  # learned market address pattern per window length
         self.broker = PaperBroker()
@@ -200,7 +200,7 @@ class Desk:
             nxt = self.recent[nxt.slug]
         self.window = nxt
         if nxt:
-            nxt.mode = self.cfg.mode
+            nxt.mode = self.lmode()
             self.recent[nxt.slug] = nxt
             for old in sorted(self.recent, key=lambda k: self.recent[k].end)[:-6]:
                 self.recent.pop(old, None)
@@ -324,7 +324,7 @@ class Desk:
         if w is None:
             self.log("warn", f"A fill on {f.slug} could not be matched to a window; it is not counted.")
             return
-        w.mode = self.cfg.mode
+        w.mode = self.lmode()
         self.open_windows[w.slug] = w
         w.fills[f.side] = w.fills.get(f.side, 0) + 1
         if f.side == "up":
@@ -363,7 +363,7 @@ class Desk:
             learned_pct, tier = self.setups.size(key, self.cfg.window_pct)
             feats.update({"setup": key, "shadow_pct": learned_pct, "shadow_tier": tier, "actual_pct": self.cfg.window_pct})
             pf.append({"side": f.side, "qty": f.qty, "cost": f.cost, "features": feats})
-        self.ledger.fill(self.cfg.mode, f, self.fair, feats)
+        self.ledger.fill(self.lmode(), f, self.fair, feats)
         self.stats["fills"] += 1
 
     async def on_fills(self, fills: List[Fill]) -> None:
@@ -435,7 +435,7 @@ class Desk:
             self.hour_pnl += pnl
             self.stats["windows"] += 1
             self.stats["wins"] += 1 if pnl > 0 else 0
-            if w.mode == self.cfg.mode:
+            if w.mode == self.lmode():
                 self.learner.add(pnl, w.inv.spent)
             self.ledger.window({"slug": slug, "mode": w.mode, "window_start": w.start, "window_end": w.end, "price_to_beat": w.price_to_beat,
                                 "close_price": close, "up": up, "up_qty": w.inv.up_qty, "up_cost": round(w.inv.up_cost, 4),
@@ -498,6 +498,10 @@ class Desk:
                 return
 
     # ── one second of work ────────────────────────────────────────────────────────────
+    def lmode(self) -> str:
+        """v1.23: the ledger label for this desk's rows: live, or the desk's own paper label (btclate: paper-late)."""
+        return "live" if self.cfg.mode == "live" else self.cfg.ledger
+
     def _taken(self, slug: str, method: str) -> bool:
         return method in self._bets.get(slug, {})
 
@@ -666,9 +670,9 @@ class Desk:
                     want, why = strategy.pair_takes(b.best_bid, b.best_ask,
                                                     b.offers[0][1] if b.offers else 0.0, b.bids[0][1] if b.bids else 0.0,
                                                     budget_usd, sizing.window_cap(self.cfg.limits), w.min_qty, self.cfg.pair_margin) \
-                        if inv.spent <= 0 else ([], "Already in this window; holding to settlement.")
+                        if (inv.spent <= 0 and "pairs" in self.cfg.methods) else ([], "Pairs are off for this desk." if "pairs" not in self.cfg.methods else "Already in this window; holding to settlement.")
                     can_up_m, can_down_m, mom_why = brain.side_filters(self.momentum, self.cfg.momentum_z, self.name)
-                    if not want and not self._taken(w.slug, "directional") and self.cfg.directional \
+                    if not want and not self._taken(w.slug, "directional") and self.cfg.directional and "directional" in self.cfg.methods \
                             and self.fair_model is not None and b.best_ask is not None and b.best_bid is not None \
                             and self.cfg.directional_min_secs <= w.end - now <= self.cfg.directional_secs_left:
                         z = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)
@@ -691,7 +695,7 @@ class Desk:
                     # v1.22: edge and late are extra single-bet methods: one bet each per window, never against a side already bet
                     if self.cfg.directional and self.fair_model is not None and b.best_ask is not None and b.best_bid is not None:
                         for method, lo, hi in (("edge", 60.0, self.cfg.directional_secs_left), ("late", self.cfg.directional_min_secs, 60.0)):
-                            if want or self._taken(w.slug, method) or not (lo <= w.end - now <= hi):
+                            if want or method not in self.cfg.methods or self._taken(w.slug, method) or not (lo <= w.end - now <= hi):
                                 continue
                             z = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)
                             pick = directional.method_pick(method, self.fair_model, b.best_ask, round(1.0 - b.best_bid, 6), z=z,

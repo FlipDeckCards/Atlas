@@ -974,11 +974,11 @@ const CATALOG_KEYS = ['etsy', 'stripe', 'google_play', 'app_store', 'deadzone'];
 const CATALOG_TITLE = { etsy: 'Listings in the shop', stripe: 'Products on Stripe', google_play: 'Apps on Google Play', app_store: 'Apps on the App Store', deadzone: 'Games on the Deadzone site' };
 // ── the Polymarket Desk: scoreboard (win rate, total profit, trades), switches and the full trade log ──
 // three desks (BTC, ETH, SOL), one Polymarket account: each factory key maps to its asset
-const DESK_ASSET = { 'polymarket': 'btc', 'polymarket-btc15': 'btc15', 'polymarket-eth': 'eth', 'polymarket-sol': 'sol', 'polymarket-xrp': 'xrp' };
-const DESK_KEY = { btc: 'polymarket', btc15: 'polymarket-btc15', eth: 'polymarket-eth', sol: 'polymarket-sol', xrp: 'polymarket-xrp' };
-const DESK_ORDER = ['btc', 'btc15', 'eth', 'sol', 'xrp'];                       // BTC 15m sits right under BTC 5m
-const DESK_LABEL = a => a === 'btc15' ? 'BTC 15m' : a.toUpperCase();            // the desk's name
-const DESK_COIN = a => a === 'btc15' ? 'BTC' : a.toUpperCase();                 // the coin it trades
+const DESK_ASSET = { 'polymarket': 'btc', 'polymarket-btc15': 'btc15', 'polymarket-eth': 'eth', 'polymarket-sol': 'sol', 'polymarket-xrp': 'xrp', 'polymarket-btclate': 'btclate' };
+const DESK_KEY = { btc: 'polymarket', btc15: 'polymarket-btc15', eth: 'polymarket-eth', sol: 'polymarket-sol', xrp: 'polymarket-xrp', btclate: 'polymarket-btclate' };
+const DESK_ORDER = ['btc', 'btclate', 'btc15', 'eth', 'sol', 'xrp'];            // BTC 5m, then its late-only paper desk, then BTC 15m
+const DESK_LABEL = a => a === 'btc15' ? 'BTC 15m' : a === 'btclate' ? 'BTC 5m Late' : a.toUpperCase();   // the desk's name
+const DESK_COIN = a => (a === 'btc15' || a === 'btclate') ? 'BTC' : a.toUpperCase();                 // the coin it trades
 let DESKS = {}, DESK_ATS = {}, DESK_LOADINGS = {}, DESK_VIEW = '', DESK_OPEN = {};
 function loadDesk(force, asset) {
   const a = asset || 'btc';
@@ -1037,8 +1037,9 @@ function deskSec(key) {
   const DESK = DESKS[A];
   const s = mk('div'); s.style.marginTop = '10px';
   s.style.borderTop = '1px solid rgba(0,229,255,0.25)'; s.style.paddingTop = '10px';
-  const hd = mk('div', 'h', DESK_LABEL(A) + ' Desk'); hd.style.color = ({ btc: '#00e5ff', btc15: '#4fc3f7', eth: '#8c8cff', sol: '#14f195', xrp: '#ffb347' })[A]; hd.style.fontSize = '16px'; s.append(hd);
+  const hd = mk('div', 'h', DESK_LABEL(A) + ' Desk'); hd.style.color = ({ btc: '#00e5ff', btc15: '#4fc3f7', btclate: '#ff7ad9', eth: '#8c8cff', sol: '#14f195', xrp: '#ffb347' })[A]; hd.style.fontSize = '16px'; s.append(hd);
   if (A === 'btc') s.append(mk('div', 'dim', 'Strategy: pairs, directional, edge and late, one bet per method per window; 20% cap per window; never against a side already bet.'));
+  if (A === 'btclate') s.append(mk('div', 'dim', 'Strategy: late only, paper. One bet per window, 30-60 s before the close, when the model is 90%+ and the side costs 95c or less.'));
   if (!DESK) { s.append(mk('div', 'dim', 'Loading the desk…')); return s; }
   if (DESK.error) { s.append(mk('div', 'dim', DESK.error)); return s; }
   const st = DESK.status || {};
@@ -1227,7 +1228,7 @@ function deskLogSec() {
   const el = mk('div', 'lbl'); el.style.marginTop = '12px'; el.textContent = 'Desk log · all desks'; s.append(el);
   if (!ev.length) s.append(mk('div', 'dim', 'Nothing logged yet.'));
   ev.slice(0, 24).forEach(e => { const r = mk('div', 'desk-fill'); const t = mk('span', null, DESK_LABEL(e.asset) + ' ');
-    t.style.color = ({ btc: '#00e5ff', btc15: '#4fc3f7', eth: '#8c8cff', sol: '#14f195', xrp: '#ffb347' })[e.asset]; r.append(t, document.createTextNode(new Date(e.ts).toLocaleTimeString() + ' · ' + e.text)); s.append(r); });
+    t.style.color = ({ btc: '#00e5ff', btc15: '#4fc3f7', btclate: '#ff7ad9', eth: '#8c8cff', sol: '#14f195', xrp: '#ffb347' })[e.asset]; r.append(t, document.createTextNode(new Date(e.ts).toLocaleTimeString() + ' · ' + e.text)); s.append(r); });
   s.append(shadowBreakdownSec());
   return s;
 }
