@@ -166,7 +166,7 @@ SETUP_STEPS = [
 ]
 CHANGES_STATION = {"trading_desk_control", "add_business", "rename_business", "remove_business", "rename_mission", "add_task", "edit_task", "retry_task",
                    "attach_document", "attach_image", "build_book", "cancel_mission", "render_redeploy", "render_restart", "render_rollback", "pause_mission", "resume_mission", "answer_crew_question"}     # tools after which the Station must redraw
-OWNER_FIXED_KEYS_HELIX = {"flipdeck", "marnyx", "deadzone", "polymarket", "polymarket-btc15", "polymarket-eth", "polymarket-sol", "polymarket-xrp"}   # the owner's rows that are not stored (see routes.OWNER_BUSINESSES)
+OWNER_FIXED_KEYS_HELIX = {"flipdeck", "marnyx", "deadzone", "polymarket", "polymarket-btc15", "polymarket-btclate", "polymarket-eth", "polymarket-sol", "polymarket-xrp"}   # the owner's rows that are not stored (see routes.OWNER_BUSINESSES)
 
 CREW_TOOLS: List[Dict[str, Any]] = [
     {"type": "function", "function": {
@@ -178,7 +178,7 @@ CREW_TOOLS: List[Dict[str, Any]] = [
         "name": "trading_desk",
         "description": "A Polymarket Desk (5-minute Up/Down trading bots on the Station: btc, eth, sol, xrp): whether it is running, paper or live, what it is doing now, "
                        "its scoreboard (win rate, total profit, trades; paper and live kept apart), limits and latest log. Owner only.",
-        "parameters": {"type": "object", "properties": {"asset": {"type": "string", "enum": ["btc", "btc15", "eth", "sol", "xrp"], "description": "Which desk (default btc; btc15 = BTC 15-minute)."}}}}},
+        "parameters": {"type": "object", "properties": {"asset": {"type": "string", "enum": ["btc", "btc15", "btclate", "eth", "sol", "xrp"], "description": "Which desk (default btc; btc15 = BTC 15-minute)."}}}}},
     {"type": "function", "function": {
         "name": "trading_desk_control",
         "description": "Change the Polymarket Desk. pause / resume / flatten (kill switch: cancel every order) / paper happen at once. "
@@ -186,7 +186,7 @@ CREW_TOOLS: List[Dict[str, Any]] = [
                        "set_limits takes any of bankroll_usd, max_window_usd, max_order_usd, daily_loss_usd, min_edge.",
         "parameters": {"type": "object", "properties": {
             "action": {"type": "string", "enum": ["pause", "resume", "flatten", "paper", "go_live", "set_limits", "reset_day"]},
-            "asset": {"type": "string", "enum": ["btc", "btc15", "eth", "sol", "xrp"], "description": "Which desk (default btc; btc15 = BTC 15-minute)."},
+            "asset": {"type": "string", "enum": ["btc", "btc15", "btclate", "eth", "sol", "xrp"], "description": "Which desk (default btc; btc15 = BTC 15-minute)."},
             "bankroll_usd": {"type": "number"}, "max_window_usd": {"type": "number"}, "max_order_usd": {"type": "number"},
             "daily_loss_usd": {"type": "number"}, "min_edge": {"type": "number"}}, "required": ["action"]}}},
     {"type": "function", "function": {

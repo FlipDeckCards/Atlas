@@ -59,6 +59,8 @@ class Config:
     horizon_night: str = ""             # outside trading hours, if different (BTC: 15m by day, 5m at night for the sweeps)
     asset: str = "btc"                  # the desk's id (btc, btc15, eth, sol, xrp): its own store, lock, controls and scoreboard
     coin: str = "btc"                   # the coin it trades (btc15 trades BTC's 15-minute markets)
+    ledger: str = "paper"               # v1.23: the ledger label of its paper trades (btclate writes "paper-late", so it never mixes with BTC's paper rows)
+    methods: tuple = ("pairs", "directional", "edge", "late")   # v1.23: which entry methods this desk runs
     limits: Limits = field(default_factory=Limits)
     quote_after_open_s: float = 20.0    # wait this long after a window opens (the price to beat is stamped a few seconds in)
     stop_before_end_s: float = 25.0     # pull every quote this long before the close (the last seconds are where fast bots pick you off)
@@ -119,9 +121,13 @@ class Config:
         return replace(self, limits=limits.clean())
 
 
-ASSETS = ("btc", "btc15", "eth", "sol", "xrp")
+ASSETS = ("btc", "btc15", "eth", "sol", "xrp", "btclate")
 COIN = {"btc15": "btc"}                 # desk id -> the coin it trades (default: the same name)
-FIXED_HORIZON = {"btc15": "15m"}        # desks pinned to one window length (a shared POLYBOT_HORIZON never changes them)
+FIXED_HORIZON = {"btc15": "15m", "btclate": "5m"}        # desks pinned to one window length (a shared POLYBOT_HORIZON never changes them)
+COIN["btclate"] = "btc"                 # v1.23: a paper desk on BTC's 5-minute market that runs only the late method
+LEDGER = {"btclate": "paper-late"}
+METHODS = {"btclate": ("late",)}
+PAPER_ONLY = ("btclate",)               # always paper, whatever the control row says
 
 
 def coin_of(asset: str) -> str:
@@ -191,6 +197,8 @@ def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Con
         trade_end=(per("POLYBOT_TRADE_END") or "20:30"),
         pairs_only=(e.get("POLYBOT_PAIRS_ONLY") or "true").strip().lower() in _TRUE,
         directional=(e.get("POLYBOT_DIRECTIONAL") or "true").strip().lower() in _TRUE,
+        ledger=LEDGER.get(a, "paper"),
+        methods=METHODS.get(a, ("pairs", "directional", "edge", "late")),
         directional_secs_left=_f(e, "POLYBOT_DIRECTIONAL_SECONDS", 240.0, 30.0, 290.0),
         directional_min_secs=_f(e, "POLYBOT_DIRECTIONAL_MIN_SECONDS", 30.0, 5.0, 200.0),
         pair_margin=_f(e, "POLYBOT_PAIR_MARGIN", 0.02, 0.0, 0.5),
@@ -228,4 +236,6 @@ def apply_control(base: Config, control: Dict[str, Any]) -> Config:
                     pass
         cfg = cfg.with_limits(Limits(**cur))
     want = str((control or {}).get("mode") or "paper").lower()
+    if base.asset in PAPER_ONLY:
+        return replace(cfg, mode="paper")
     return replace(cfg, mode="live" if (want == "live" and base.allow_live and base.key_id and base.secret_key) else "paper")
