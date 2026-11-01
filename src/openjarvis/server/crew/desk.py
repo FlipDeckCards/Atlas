@@ -304,10 +304,11 @@ async def summary(pool, *, trade_limit: int = 50, asset: str = "btc") -> Dict[st
     mode = status.get("mode") or "paper"
     rows = ASSET_ROWS.get(asset, asset)                  # v1.23: the late desk's rows are BTC rows under its own paper label
     paper = LEDGER_OF.get(asset, "paper")
+    live_rows = "none" if asset in LEDGER_OF else rows   # a paper-only desk has no live trades: never show the BTC desk's live rows as its own
     return {"status": status, "control": control, "running": bool(hb) and time.time() - hb < 300, "heartbeat_age_s": round(time.time() - hb) if hb else None,
             "limits": current_limits(control).__dict__,
-            "score": {"paper": await scoreboard(pool, paper, asset=rows), "live": await scoreboard(pool, "live", asset=rows)},
-            "trades": {"paper": await trades(pool, paper, trade_limit, asset=rows), "live": await trades(pool, "live", trade_limit, asset=rows)},
+            "score": {"paper": await scoreboard(pool, paper, asset=rows), "live": await scoreboard(pool, "live", asset=live_rows)},
+            "trades": {"paper": await trades(pool, paper, trade_limit, asset=rows), "live": await trades(pool, "live", trade_limit, asset=live_rows)},
             "events": await events(pool, 30, asset), "mode": mode, "strategy": STRATEGY_VERSION, "deposits": deposits(),
             "shadow": await shadow_stats(pool, "live" if mode == "live" else paper, STRATEGY_VERSION, rows), "shadow_detail": await shadow_detail(pool, asset),
             "asset": asset, "name": NAMES[asset],
