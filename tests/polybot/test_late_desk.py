@@ -14,10 +14,12 @@ def test_late_desk_runs_only_late_on_btc_5m_and_writes_its_own_paper_label():
     assert c.mode == "paper"
 
 
-def test_late_desk_stays_paper_even_when_the_control_row_says_live():
+def test_late_desk_goes_live_on_its_own_ledger_when_approved():
     from dataclasses import replace
     late = replace(from_env({}, asset="btclate"), allow_live=True, key_id="k", secret_key="s")
-    assert apply_control(late, {"mode": "live"}).mode == "paper"
+    assert apply_control(late, {"mode": "live"}).mode == "live"
+    assert apply_control(late, {"mode": "paper"}).mode == "paper"
+    assert late.live_ledger == "live-late"
     btc = replace(from_env({}, asset="btc"), allow_live=True, key_id="k", secret_key="s")
     assert apply_control(btc, {"mode": "live"}).mode == "live"          # the live BTC desk is unchanged
 

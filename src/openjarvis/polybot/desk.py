@@ -13,6 +13,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 from dataclasses import replace
 
 from openjarvis.polybot import brain, directional, exposure, model, risk, setups, shadow, strategy
+from openjarvis.polybot.config import LIVE_MODES
 from openjarvis.polybot.brokers import BookView, Fill, LiveBroker, PaperBroker, parse_ts
 from openjarvis.polybot.client import PMError, money
 from openjarvis.polybot.config import Config, apply_control
@@ -390,7 +391,7 @@ class Desk:
             # v1.14: the exchange's own settlement is the truth for live money; the desk's index replay is only the fallback
             # (and the paper desk's referee). Ask every 10 s; use the index if the exchange has not answered 5 minutes after the close.
             res = None
-            if w.mode == "live" and now >= w.end + 20 and self._due(f"settle:{slug}", 10.0, now):
+            if w.mode in LIVE_MODES and now >= w.end + 20 and self._due(f"settle:{slug}", 10.0, now):
                 s = await self.c.settlement(slug)
                 if s is not None and (s >= 0.99 or s <= 0.01):                     # only a final $1 / $0 answer counts
                     mine = model.settle(self.tape, int(w.end), w.price_to_beat)
@@ -398,7 +399,7 @@ class Desk:
                     if mine and mine[1] != res[1]:
                         self.log("warn", f"{slug}: the index replay said {'UP' if mine[1] else 'DOWN'} but the exchange settled "
                                          f"{'UP' if res[1] else 'DOWN'}; booking the exchange's result.")
-            if res is None and (w.mode != "live" or now > w.end + 300):
+            if res is None and (w.mode not in LIVE_MODES or now > w.end + 300):
                 res = model.settle(self.tape, int(w.end), w.price_to_beat)
                 if res is None and now > w.end + 120:                            # index gap: ask the exchange
                     s = await self.c.settlement(slug)
@@ -423,7 +424,7 @@ class Desk:
             except Exception:
                 logger.warning("shadow record not saved")
             po = setups.pair_outcome(self._pair_fills.pop(slug, []), up)
-            if po is not None and w.mode == "live":
+            if po is not None and w.mode in LIVE_MODES:
                 self.setups.add(*po)
             payout = w.inv.up_qty if up else w.inv.down_qty
             pnl = round(payout - w.inv.spent, 4)
@@ -444,7 +445,7 @@ class Desk:
                     + (f", close ${close:,.2f}" if close else "") + f") · held Up {w.inv.up_qty:g} / Down {w.inv.down_qty:g}, paid ${w.inv.spent:.2f}, "
                     f"got ${payout:.2f} · P&L {'+' if pnl >= 0 else ''}{pnl:.2f} · today {'+' if self.rs.day_pnl >= 0 else ''}{self.rs.day_pnl:.2f}")
             self.log("trade", text)
-            if w.mode == "live":
+            if w.mode in LIVE_MODES:
                 await self.push("Desk settled", text)
             dl = risk.day_limit(self.cfg, self.rs)
             if dl > 0 and self.rs.day_pnl <= -dl and self.rs.day_pnl - pnl > -dl:          # only the moment it is crossed
@@ -500,7 +501,7 @@ class Desk:
     # ── one second of work ────────────────────────────────────────────────────────────
     def lmode(self) -> str:
         """v1.23: the ledger label for this desk's rows: live, or the desk's own paper label (btclate: paper-late)."""
-        return "live" if self.cfg.mode == "live" else self.cfg.ledger
+        return self.cfg.live_ledger if self.cfg.mode == "live" else self.cfg.ledger
 
     def _taken(self, slug: str, method: str) -> bool:
         return method in self._bets.get(slug, {})
