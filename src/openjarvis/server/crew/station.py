@@ -980,6 +980,7 @@ const DESK_ORDER = ['btc', 'btc15', 'eth', 'sol', 'xrp'];                       
 const DESK_LABEL = a => a === 'btc15' ? 'BTC 15m' : a.toUpperCase();            // the desk's name
 const DESK_COIN = a => a === 'btc15' ? 'BTC' : a.toUpperCase();                 // the coin it trades
 let DESKS = {}, DESK_ATS = {}, DESK_LOADINGS = {}, DESK_VIEW = '', DESK_OPEN = {};
+let PANEL_OPEN = {};   // per desk: 'detail' (version details), 'trades' (full trade log), 'wins' (what wins and loses); all start retracted
 function loadDesk(force, asset) {
   const a = asset || 'btc';
   if (DESK_LOADINGS[a] || (!force && Date.now() - (DESK_ATS[a] || 0) < 15000)) return;
@@ -1091,24 +1092,30 @@ function deskSec(key) {
   cell('Best window', signed(a.best), a.best ? '#00ff99' : null); cell('Worst window', signed(a.worst), a.worst < 0 ? '#ff3344' : null);
   box.append(grid);
   if (v.curve && v.curve.length > 1) { box.append(mk('div', 'pnl-l', 'Running profit')); box.append(deskCurve(v.curve)); }
-  const swp = v.sweeps || {};
-  box.append(mk('div', 'dim', 'Sweeps (closing, 75-97c): ' + (swp.trades ? swp.trades + ' trades, ' + swp.wins + ' won (' + swp.win_rate + '%), ' + signed(swp.profit) : 'none yet')
-    + ' · included in the totals above'));
-  const sh = v.shadow || {};   // v1.14 learned pair sizing, shadow mode: what bigger bets on proven pair setups would have made
-  if (sh.windows) box.append(mk('div', 'dim', 'Learned pair sizing (shadow, not trading yet): ' + sh.windows + ' pair windows · actual ' + signed(sh.actual)
-    + ' · at learned sizes ' + signed(sh.shadow) + ' · ' + Object.entries(sh.tiers || {}).map(([t, n]) => n + ' ' + t).join(', ')));
-  const sd = v.shadow_detail;   // v1.21 shadow results: calibration by confidence bucket and the scalp shadow
-  if (sd) {
-    const cal = (sd.calib && sd.calib.model) || [];
-    const seen = cal.filter(r => r.trades > 0).map(r => r.bucket + ': ' + r.won + '/' + r.trades + ' won' + (r.win_rate == null ? '' : ' (' + r.win_rate + '%)'));
-    box.append(mk('div', 'dim', 'Shadow calibration (model confidence → result): ' + (seen.length ? seen.join(' · ') : 'no settled windows yet')));
-    const sc = sd.scalp || {};
-    if (sc.entries) box.append(mk('div', 'dim', 'Scalp shadow: ' + sc.entries + ' entries · ' + (sc.target || 0) + ' target · ' + (sc.stop || 0)
-      + ' stop · profit ' + signed(sc.profit || 0)));
+  // version details: retracted by default, one tap to open
+  const detOpen = !!PANEL_OPEN[A + ':detail'];
+  const dtw = mk('div', 'desk-tabs'), dtb = mk('button', 'b', detOpen ? 'Version details ▾' : 'Version details ▸');
+  dtb.onclick = () => { PANEL_OPEN[A + ':detail'] = !detOpen; renderSide(); }; dtw.append(dtb); box.append(dtw);
+  if (detOpen) {
+    const swp = v.sweeps || {};
+    box.append(mk('div', 'dim', 'Sweeps (closing, 75-97c): ' + (swp.trades ? swp.trades + ' trades, ' + swp.wins + ' won (' + swp.win_rate + '%), ' + signed(swp.profit) : 'none yet')
+      + ' · included in the totals above'));
+    const sh = v.shadow || {};   // v1.14 learned pair sizing, shadow mode: what bigger bets on proven pair setups would have made
+    if (sh.windows) box.append(mk('div', 'dim', 'Learned pair sizing (shadow, not trading yet): ' + sh.windows + ' pair windows · actual ' + signed(sh.actual)
+      + ' · at learned sizes ' + signed(sh.shadow) + ' · ' + Object.entries(sh.tiers || {}).map(([t, n]) => n + ' ' + t).join(', ')));
+    const sd = v.shadow_detail;   // v1.21 shadow results: calibration by confidence bucket and the scalp shadow
+    if (sd) {
+      const cal = (sd.calib && sd.calib.model) || [];
+      const seen = cal.filter(r => r.trades > 0).map(r => r.bucket + ': ' + r.won + '/' + r.trades + ' won' + (r.win_rate == null ? '' : ' (' + r.win_rate + '%)'));
+      box.append(mk('div', 'dim', 'Shadow calibration (model confidence → result): ' + (seen.length ? seen.join(' · ') : 'no settled windows yet')));
+      const sc = sd.scalp || {};
+      if (sc.entries) box.append(mk('div', 'dim', 'Scalp shadow: ' + sc.entries + ' entries · ' + (sc.target || 0) + ' target · ' + (sc.stop || 0)
+        + ' stop · profit ' + signed(sc.profit || 0)));
+    }
+    const sets = (st.setups || []).filter(x => x.windows >= 3).slice(0, 5);
+    if (sets.length) box.append(mk('div', 'dim', 'Pair setups: ' + sets.map(x => x.label + ' — ' + x.wins + '/' + x.windows + ' won, floor ' + x.floor + '%, ' + signed(x.profit)).join(' | ')));
+    (v.older || []).forEach(o => box.append(mk('div', 'dim', 'Earlier v' + o.version + ': ' + o.trades + ' trades, ' + o.wins + ' won, ' + signed(o.profit) + ' (not counted above)')));
   }
-  const sets = (st.setups || []).filter(x => x.windows >= 3).slice(0, 5);
-  if (sets.length) box.append(mk('div', 'dim', 'Pair setups: ' + sets.map(x => x.label + ' — ' + x.wins + '/' + x.windows + ' won, floor ' + x.floor + '%, ' + signed(x.profit)).join(' | ')));
-  (v.older || []).forEach(o => box.append(mk('div', 'dim', 'Earlier v' + o.version + ': ' + o.trades + ' trades, ' + o.wins + ' won, ' + signed(o.profit) + ' (not counted above)')));
   s.append(box);
   // switches (going live is an Approve card from Helix, never a button here)
   const ctl = mk('div', 'desk-tabs');
@@ -1141,9 +1148,12 @@ function deskSec(key) {
   const rows = (DESK.trades || {})[DESK_VIEW] || [];
   if (!rows.length) s.append(mk('div', 'dim', 'No trades yet.'));
   else {
+    // the newest trade always shows; the rest of the log opens with the button below
+    const tlOpen = !!PANEL_OPEN[A + ':trades'];
+    const shown = tlOpen ? rows : rows.slice(0, 1);
     const tb = mk('div', 'pnl-table');
     const hd = mk('div', 'pnl-row conf hd'); ['Window', 'Held', 'Conf', 'Paid', 'Result', 'P&L'].forEach(x => hd.append(mk('span', null, x))); tb.append(hd);
-    rows.forEach(r => {
+    shown.forEach(r => {
       const row = mk('div', 'pnl-row conf'); row.style.cursor = 'pointer';
       // Held: the side the window rides on (Pair = matched Up + Down, wins either way); contract counts are in the tap-open detail
       const held = r.pair ? 'Pair' : (r.up_qty || r.down_qty) ? ((r.up_qty || 0) >= (r.down_qty || 0) ? 'Up' : 'Dn') : '—';
@@ -1163,13 +1173,20 @@ function deskSec(key) {
       }
     });
     s.append(tb);
+    if (rows.length > 1) {
+      const tw = mk('div', 'desk-tabs'), tbt = mk('button', 'b', tlOpen ? 'Show latest only ▾' : 'Show all ' + rows.length + ' trades ▸');
+      tbt.onclick = () => { PANEL_OPEN[A + ':trades'] = !tlOpen; renderSide(); }; tw.append(tbt); s.append(tw);
+    }
   }
   // what makes money and what loses it: every settled fill, cut by the conditions it happened in
   const an = DESK.analysis;
   if (an && DESK_VIEW === an.mode) {
+    const wOpen = !!PANEL_OPEN[A + ':wins'];
     const al = mk('div', 'lbl'); al.style.marginTop = '12px'; al.textContent = 'What wins and what loses · ' + an.fills + ' settled fills'; s.append(al);
-    if (an.fills < 30) s.append(mk('div', 'dim', 'Needs at least 30 settled fills before these cuts mean anything.'));
-    else Object.values(an.groups || {}).forEach(rows => {
+    const ww = mk('div', 'desk-tabs'), wb = mk('button', 'b', wOpen ? 'Hide breakdown ▾' : 'Show breakdown ▸');
+    wb.onclick = () => { PANEL_OPEN[A + ':wins'] = !wOpen; renderSide(); }; ww.append(wb); s.append(ww);
+    if (wOpen && an.fills < 30) s.append(mk('div', 'dim', 'Needs at least 30 settled fills before these cuts mean anything.'));
+    else if (wOpen) Object.values(an.groups || {}).forEach(rows => {
       const tb = mk('div', 'pnl-table');
       rows.forEach(r => { const row = mk('div', 'pnl-row'); row.append(mk('span', null, r.condition), mk('span', null, r.fills + ' fills'),
         mk('span', null, r.win_rate + '% won'), mk('span', null, (r.per_contract >= 0 ? '+' : '') + (r.per_contract * 100).toFixed(1) + 'c/ct'));
