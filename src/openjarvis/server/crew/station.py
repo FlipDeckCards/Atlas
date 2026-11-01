@@ -921,7 +921,7 @@ function factorySec(key) {
   const h = mk('div', 'h', b.label); h.style.color = b.color; if (key === 'polymarket') h.style.fontSize = '17px'; s.append(h);
   const about = bizAbout(key); if (about) s.append(mk('div', 'dim', about));
   if (key === 'polymarket') { DESK_ORDER.forEach(a => {
-    const d = DESKS[a]; const wf = d && !d.error ? windowFlag(d.status || {}, DESK_LABEL(a) + ' Desk') : null; if (wf) s.append(wf);
+    const d = DESKS[a]; const wf = d && !d.error && (d.status || {}).mode === 'live' ? windowFlag(d.status || {}, DESK_LABEL(a) + ' Desk') : null; if (wf) s.append(wf);   // real-money desks only
   }); }
   if (key === 'polymarket') { DESK_ORDER.map(a => DESK_KEY[a]).forEach(k => s.append(deskSec(k))); s.append(deskLogSec()); }   // every desk, then one log
   if (/stock market/i.test(b.label || '')) s.append(robinhoodSec());                    // all Robinhood crypto work lives in the Stock Market factory
@@ -1038,6 +1038,7 @@ function deskSec(key) {
   const s = mk('div'); s.style.marginTop = '10px';
   s.style.borderTop = '1px solid rgba(0,229,255,0.25)'; s.style.paddingTop = '10px';
   const hd = mk('div', 'h', DESK_LABEL(A) + ' Desk'); hd.style.color = ({ btc: '#00e5ff', btc15: '#4fc3f7', eth: '#8c8cff', sol: '#14f195', xrp: '#ffb347' })[A]; hd.style.fontSize = '16px'; s.append(hd);
+  if (A === 'btc') s.append(mk('div', 'dim', 'Strategy: pairs, directional, edge and late, one bet per method per window; 20% cap per window; never against a side already bet.'));
   if (!DESK) { s.append(mk('div', 'dim', 'Loading the desk…')); return s; }
   if (DESK.error) { s.append(mk('div', 'dim', DESK.error)); return s; }
   const st = DESK.status || {};
