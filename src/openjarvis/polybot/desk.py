@@ -63,7 +63,7 @@ class Desk:
         self.tape = model.PriceTape()
         self.rs = risk.RiskState()
         self.ledger = Ledger(base.asset)
-        self.name = base.asset.upper()
+        self.name = "BTC 15m" if base.asset == "btc15" else base.asset.upper()
         from openjarvis.polybot.config import HORIZON_S
         self._prefixes: Dict[str, str] = {}                  # learned market address pattern per window length
         self.broker = PaperBroker()
@@ -167,7 +167,7 @@ class Desk:
     # ── data ──────────────────────────────────────────────────────────────────────────
     async def load_index(self, now: float, backfill: bool = False) -> None:
         start = int(now) - (3599 if backfill else 20)
-        self.tape.extend(await self.c.index_prices(self.base.asset, start, 0))
+        self.tape.extend(await self.c.index_prices(self.base.coin, start, 0))
 
     async def find_window(self, now: float) -> None:
         w = self.window
@@ -192,7 +192,7 @@ class Desk:
         nxt = await self.window_by_slug(now)
         if nxt is None and self._due("markets_scan", 10.0, now):       # the slow full scan: at most every 10 s (three desks hammering it
             ms = await self.c.markets(categories=["crypto"], active=True, closed=False)          # every 2 s got rate-limited)
-            live = [x for x in (window_from_market(m) for m in ms if is_series(m, self.base.asset, self.horizon)) if x and x.start <= now < x.end]
+            live = [x for x in (window_from_market(m) for m in ms if is_series(m, self.base.coin, self.horizon)) if x and x.start <= now < x.end]
             nxt = min(live, key=lambda x: x.end) if live else None
         if nxt is not None:
             self.learn_prefix(nxt.slug)
@@ -256,7 +256,7 @@ class Desk:
         self._prefixes[self.horizon] = v
 
     def slug_for(self, start: int) -> str:
-        prefix = self.slug_prefix or f"cpc-{self.base.asset}-updown-{self.horizon}-"
+        prefix = self.slug_prefix or f"cpc-{self.base.coin}-updown-{self.horizon}-"
         return f"{prefix}{time.strftime('%Y-%m-%d-%H%M', time.gmtime(start))}z"
 
     def learn_prefix(self, slug: str) -> None:
@@ -275,6 +275,7 @@ class Desk:
             return
         try:
             self.book = BookView.parse(await self.c.book(self.window.slug), now)
+            self.book_from_bbo = False
             if self.book is not None and getattr(self, "_book_open_seen", None) != self.window.slug:
                 self._book_open_seen = self.window.slug          # diagnostic: say once per window when the order book opens, and its prices
                 bb, ba = self.book.best_bid, self.book.best_ask
@@ -282,19 +283,40 @@ class Desk:
                                  f"Up ask {ba if ba is not None else 'none'}, Down ask {round(1 - bb, 4) if bb is not None else 'none'}.")
         except PMError as exc:
             if exc.status == 404:                       # the market closed and is gone: not an error, move on to the next window
-                if now - self.window.start >= 60 and getattr(self, "_bbo_probe", None) != self.window.slug:
-                    self._bbo_probe = self.window.slug   # diagnostic: the book is still missing a minute in; ask the best-bid/offer endpoint once
-                    try:
-                        bbo = await self.c.bbo(self.window.slug)
-                        self.log("info", f"Book missing {now - self.window.start:.0f}s in; best bid/offer for {self.window.slug} says: {str(bbo)[:300]}")
-                    except PMError as exc2:
-                        self.log("info", f"Book missing {now - self.window.start:.0f}s in; best bid/offer for {self.window.slug} also failed: {str(exc2)[:200]}")
+                if self.window.start <= now < self.window.end - 5:
+                    bbo = await self.bbo_book(now)       # the full book opens 1-2 min in; best bid/offer often has prices sooner
+                    if bbo is not None:
+                        self.book, self.book_from_bbo = bbo, True
+                        return
                 if self.window.start <= now < self.window.end - 5 and self._book404 != self.window.slug:
                     self._book404 = self.window.slug     # the market is listed but has no order book: say so once (that is the cause)
                     self.log("warn", f"{self.window.slug} is listed but Polymarket has no order book for it yet ({str(exc)[:120]}).")
                 self.window, self.book = None, None
                 return
             raise
+
+    async def bbo_book(self, now: float) -> Optional[BookView]:
+        """Prices from the best bid/offer endpoint while the full book is missing. It has no sizes (qty 0), so the desk sees the
+        market and explains its decision but places no order until the full book shows how many contracts are there."""
+        slug = self.window.slug
+        prev = getattr(self, "_bbo_last", None)
+        if not self._due("bbo", 4.0, now):                         # at most every 4 s per desk; reuse a fresh answer in between
+            return prev if prev is not None and getattr(self, "_bbo_slug", "") == slug and now - prev.ts < 8 else None
+        try:
+            md = (await self.c.bbo(slug)).get("marketData") or {}
+        except PMError:
+            return None
+        bid, ask = money(md.get("bestBid")), money(md.get("bestAsk"))
+        if bid is None and ask is None:
+            return None
+        bv = BookView(bids=[(round(bid, 4), 0.0)] if bid is not None else [], offers=[(round(ask, 4), 0.0)] if ask is not None else [],
+                      last_trade_px=money(md.get("lastTradePx")), state="MARKET_STATE_OPEN", ts=now)
+        self._bbo_last, self._bbo_slug = bv, slug
+        if getattr(self, "_bbo_seen", None) != slug:
+            self._bbo_seen = slug
+            self.log("info", f"Prices for {slug} from best bid/offer {now - self.window.start:.0f}s in (Up ask {ask}, Down ask "
+                             f"{round(1 - bid, 4) if bid is not None else 'none'}); no order until the full book shows the size.")
+        return bv
 
     # ── fills and settlement ──────────────────────────────────────────────────────────
     def _book_fill(self, f: Fill) -> None:
@@ -348,11 +370,11 @@ class Desk:
         for f in fills:
             self._book_fill(f)
             w = self.open_windows.get(f.slug)
-            side = f"UP (call-like: pays if {self.name} closes at/above)" if f.side == "up" else f"DOWN (put-like: pays if {self.name} closes below)"
+            side = f"UP (call-like: pays if {self.base.coin.upper()} closes at/above)" if f.side == "up" else f"DOWN (put-like: pays if {self.base.coin.upper()} closes below)"
             pay = f.price if f.side == "up" else 1 - f.price
             k = f"${w.price_to_beat:,.2f}" if w and w.price_to_beat else "pending"
             end = time.strftime("%H:%M:%S UTC", time.gmtime(w.end)) if w else "?"
-            text = (f"ENTRY {self.cfg.mode.upper()}{' [SWEEP]' if (f.slug, f.side) in self._sweeps else ''} · {self.name} {self.horizon} Up/Down · {side} · strike (price to beat) {k} · "
+            text = (f"ENTRY {self.cfg.mode.upper()}{' [SWEEP]' if (f.slug, f.side) in self._sweeps else ''} · {self.base.coin.upper()} {self.horizon} Up/Down · {side} · strike (price to beat) {k} · "
                     f"expires {end} · {f.qty:g} contracts at ${pay:.2f} = ${f.cost:.2f} · stop: none, held to settlement (max loss ${f.cost:.2f}) · "
                     f"target: $1.00 per contract (${f.qty:.2f}) · fair value then {self.fair if self.fair is not None else 0:.2f}"
                     + ("" if self.fair_model is None else
@@ -497,12 +519,6 @@ class Desk:
             self.sigma = self.tape.sigma_per_s(int(now))
         await self.find_window(now)
         await self.load_book(now)
-        if self._due("diag_heartbeat", 30.0, now):                # diagnostic: what the desk sees, every 30 s
-            w, b = self.window, self.book
-            self.log("info", f"[diag] {self.name}: window={w.slug if w else None} "
-                             f"start={(now - w.start) if w else None:}s-in end_in={(w.end - now) if w else None} "
-                             f"book={'none' if b is None else f'bid {b.best_bid} ask {b.best_ask} state {b.state}'} "
-                             f"book404={self._book404} horizon={self.horizon} prefix={self.slug_prefix!r} reason={str(self.reason)[:120]!r}")
         await self.on_fills(await self.broker.sync(self.book, now))
         await self.settle_due(now)
         await self.refresh_positions(now)
@@ -727,6 +743,9 @@ class Desk:
                     why = f"Closing sweep: buying {sw.side.upper()} at {sw.cost_per:.2f} (model {max(self.fair_model, 1 - self.fair_model):.0%})."
                 elif decisive:
                     want = [q for q in want if (q.side == "up") == (self.fair_model >= 0.5)]    # never buy the likely loser now
+            if want and getattr(self, "book_from_bbo", False):
+                want = []                                             # best bid/offer has no sizes: wait for the full book to place anything
+                why = (why + " " if why else "") + "(Prices from best bid/offer; waiting for the full book to size an order.)"
             if want:
                 reason = "Quoting" + (f" (one side only: {why})" if why else ".")
             elif self.cfg.pairs_only and why:
@@ -770,7 +789,7 @@ class Desk:
         last = self.tape.last()
         return {
             "version": VERSION, "heartbeat": now, "instance": self.instance, "stopped": self._stopping, "mode": self.cfg.mode, "allow_live": self.base.allow_live, "has_keys": bool(self.base.key_id and self.base.secret_key),
-            "series": f"{self.base.asset.upper()} {self.horizon} Up/Down", "reason": self.reason,
+            "series": f"{self.base.coin.upper()} {self.horizon} Up/Down", "reason": self.reason,
             "paused": self.rs.paused, "kill": self.rs.kill, "limits": self.cfg.limits.__dict__,
             "index": {"price": last[1] if last else None, "ts": last[0] if last else None},
             "window": ({"slug": w.slug, "start": w.start, "end": w.end, "price_to_beat": w.price_to_beat, "title": w.title} if w else None),
@@ -871,7 +890,7 @@ class Desk:
         except Exception:
             logger.warning("shadow record unreadable; starting empty")
         await self.load_index(now, backfill=True)
-        self.log("info", f"Desk started in {self.cfg.mode.upper()} mode on {self.base.asset.upper()} {self.horizon} Up/Down.")
+        self.log("info", f"Desk started in {self.cfg.mode.upper()} mode on {self.base.coin.upper()} {self.horizon} Up/Down.")
         steps = 0
         try:
             while not self._stopping and (max_steps is None or steps < max_steps):
@@ -911,7 +930,7 @@ class Desk:
         try:
             for o in await self.c.open_orders():
                 slug = str(o.get("marketSlug") or o.get("slug") or "")
-                if f"-{self.base.asset}-updown-" in slug and o.get("id"):
+                if f"-{self.base.coin}-updown-{self.horizon}-" in slug and o.get("id"):     # BTC 5m and BTC 15m never touch each other's orders
                     await self.c.cancel(str(o["id"]), slug)
         except PMError as exc:
             self.log("warn", f"Could not clear old orders: {exc}")

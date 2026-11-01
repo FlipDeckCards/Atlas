@@ -100,11 +100,11 @@ async def _check() -> int:
     ok = True
     try:
         now = int(time.time())
-        px = await c.index_prices(cfg.asset, now - 30, 0)
+        px = await c.index_prices(cfg.coin, now - 30, 0)
         print(f"Index feed: {len(px)} prints in the last 30s, latest {px[-1] if px else None}")
         ms = await c.markets(categories=["crypto"], active=True, closed=False)
-        ws = [w for w in (window_from_market(m) for m in ms if is_series(m, cfg.asset, cfg.horizon)) if w]
-        print(f"{cfg.asset.upper()} {cfg.horizon} Up/Down windows listed: {len(ws)}" + (f", e.g. {ws[0].slug}" if ws else ""))
+        ws = [w for w in (window_from_market(m) for m in ms if is_series(m, cfg.coin, cfg.horizon)) if w]
+        print(f"{cfg.coin.upper()} {cfg.horizon} Up/Down windows listed: {len(ws)}" + (f", e.g. {ws[0].slug}" if ws else ""))
         if cfg.key_id and cfg.secret_key:
             try:
                 raw = await c._req("GET", "/v1/account/balances", auth=True)

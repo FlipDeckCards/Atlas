@@ -18,23 +18,25 @@ from typing import Any, Dict, List, Optional
 
 from openjarvis.polybot.brain import STRATEGY_VERSION
 from openjarvis.polybot.config import Limits, from_env
-from openjarvis.polybot.state import DDL, kv_key
+from openjarvis.polybot.state import DDL, desk_sql, kv_key
 
 KEY = "polymarket"                                   # the BTC desk keeps the original factory key
-KEYS = {"btc": "polymarket", "eth": "polymarket-eth", "sol": "polymarket-sol", "xrp": "polymarket-xrp"}
+KEYS = {"btc": "polymarket", "btc15": "polymarket-btc15", "eth": "polymarket-eth", "sol": "polymarket-sol", "xrp": "polymarket-xrp"}
 ASSET_OF = {v: k for k, v in KEYS.items()}
-NAMES = {"btc": "Polymarket Desk", "eth": "Polymarket ETH Desk", "sol": "Polymarket SOL Desk", "xrp": "Polymarket XRP Desk"}
-COLORS = {"btc": "#00e5ff", "eth": "#8c8cff", "sol": "#14f195", "xrp": "#ffb347"}
+NAMES = {"btc": "Polymarket Desk", "btc15": "Polymarket BTC 15m Desk", "eth": "Polymarket ETH Desk", "sol": "Polymarket SOL Desk",
+         "xrp": "Polymarket XRP Desk"}
+COLORS = {"btc": "#00e5ff", "btc15": "#4fc3f7", "eth": "#8c8cff", "sol": "#14f195", "xrp": "#ffb347"}
 
 
 def business(asset: str = "btc") -> Dict[str, str]:
     a = asset.lower()
     return {"key": KEYS[a], "name": NAMES[a], "url": "https://polymarket.us", "color": COLORS[a],
-            "description": f"{NAMES[a]} is a trading bot that makes markets in Polymarket US's 5-minute {a.upper()} Up/Down contracts."}
+            "description": f"{NAMES[a]} is a trading bot that makes markets in Polymarket US's "
+                           f"{'15-minute BTC' if a == 'btc15' else '5-minute ' + a.upper()} Up/Down contracts."}
 
 
 BUSINESS = business("btc")
-ASSET_SQL = "split_part(slug, '-', 2)"          # cpc-eth-updown-5m-... -> eth
+ASSET_SQL = desk_sql("slug")                     # cpc-eth-updown-5m-... -> eth; cpc-btc-updown-15m-... -> btc15
 LIMIT_FIELDS = ("bankroll_usd", "max_window_usd", "max_order_usd", "daily_loss_usd", "daily_loss_pct", "min_edge")
 _READY: Dict[int, bool] = {}
 
@@ -166,7 +168,7 @@ async def shadow_stats(pool, mode: str, version: str, asset: str) -> Dict[str, A
     async with pool.acquire() as c:
         rows = await c.fetch(
             "SELECT f.slug, f.side, f.qty, f.cost, f.features, w.up FROM polybot_fills f JOIN polybot_windows w ON w.slug = f.slug AND w.mode = f.mode "
-            "WHERE f.mode = $1 AND coalesce(f.version, '1.0') = $2 AND split_part(f.slug, '-', 2) = $3 AND w.up IS NOT NULL "
+            "WHERE f.mode = $1 AND coalesce(f.version, '1.0') = $2 AND " + desk_sql("f.slug") + " = $3 AND w.up IS NOT NULL "
             "AND coalesce(f.features->>'sweep', 'false') <> 'true' AND f.features ? 'shadow_pct' ORDER BY f.ts", mode, version, asset)
     per: Dict[str, Dict[str, Any]] = {}
     for r in rows:
@@ -187,7 +189,7 @@ async def sweep_stats(pool, mode: str, version: str, asset: str) -> Dict[str, An
     async with pool.acquire() as c:
         rows = await c.fetch(
             "SELECT f.slug, f.side, f.qty, f.cost, w.up FROM polybot_fills f JOIN polybot_windows w ON w.slug = f.slug AND w.mode = f.mode "
-            "WHERE f.mode = $1 AND coalesce(f.version, '1.0') = $2 AND split_part(f.slug, '-', 2) = $3 AND w.up IS NOT NULL "
+            "WHERE f.mode = $1 AND coalesce(f.version, '1.0') = $2 AND " + desk_sql("f.slug") + " = $3 AND w.up IS NOT NULL "
             "AND (f.features->>'sweep') = 'true'", mode, version, asset)
     per: Dict[str, float] = {}
     for r in rows:
@@ -250,7 +252,7 @@ async def analysis(pool, mode: str = "paper", version: str = STRATEGY_VERSION, a
     async with pool.acquire() as c:
         rows = await c.fetch(
             f"SELECT f.side, f.price, f.qty, f.cost, f.features, w.up FROM polybot_fills f JOIN polybot_windows w ON w.slug = f.slug AND w.mode = f.mode "
-            f"WHERE f.mode = $1 AND coalesce(f.version, '1.0') = $2 AND w.up IS NOT NULL AND split_part(f.slug, '-', 2) = $3", mode, version, asset)
+            f"WHERE f.mode = $1 AND coalesce(f.version, '1.0') = $2 AND w.up IS NOT NULL AND " + desk_sql("f.slug") + " = $3", mode, version, asset)
     trades = []
     for r in rows:
         feat = _j(r["features"])
