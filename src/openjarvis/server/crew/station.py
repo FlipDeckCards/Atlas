@@ -139,7 +139,7 @@ STATION_PAGE = r"""<!DOCTYPE html>
   .desk-tabs button { flex:1; }
   .desk-tabs button.on { border-color:var(--cyan, #00e5ff); color:var(--cyan, #00e5ff); }
   .desk-fill { font-size:10px; color:var(--text-dim); padding:2px 0 2px 14px; }
-  .pnl-row.conf { grid-template-columns:1.3fr 0.7fr 0.7fr 1fr 1fr 1fr; }
+  .pnl-row.conf { grid-template-columns:1.2fr 0.6fr 0.6fr 0.7fr 0.9fr 0.9fr 0.9fr; }
   .pnl-row.hd { font-size:9px; letter-spacing:1px; color:var(--text-dim); text-transform:uppercase; }
   .pnl-note { font-size:10px; color:var(--text-dim); margin-top:5px; line-height:1.5; opacity:0.8; }
   .msg { font-size:11px; min-height:14px; margin-top:6px; color:var(--green); overflow-wrap:anywhere; }
@@ -1153,7 +1153,7 @@ function deskSec(key) {
     const tlOpen = !!PANEL_OPEN[A + ':trades'];
     const shown = tlOpen ? rows : rows.slice(0, 1);
     const tb = mk('div', 'pnl-table');
-    const hd = mk('div', 'pnl-row conf hd'); ['Window', 'Held', 'Conf', 'Paid', 'Result', 'P&L'].forEach(x => hd.append(mk('span', null, x))); tb.append(hd);
+    const hd = mk('div', 'pnl-row conf hd'); ['Window', 'Held', 'Conf', '% acct', 'Paid', 'Result', 'P&L'].forEach(x => hd.append(mk('span', null, x))); tb.append(hd);
     shown.forEach(r => {
       const row = mk('div', 'pnl-row conf'); row.style.cursor = 'pointer';
       // Held: the side the window rides on (Pair = matched Up + Down, wins either way); contract counts are in the tap-open detail
@@ -1163,7 +1163,7 @@ function deskSec(key) {
       const cf = mk('span', null, r.conf != null ? Math.round(r.conf * 100) + '%' : (r.result ? 'none' : '…'));
       if (r.conf != null) cf.style.color = r.conf >= 0.9 ? '#00ff99' : r.conf >= 0.8 ? '#00e5ff' : 'var(--text-dim)';
       row.append(mk('span', null, (r.window_end ? new Date(r.window_end).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : r.slug) + (isSweep ? ' ⚡' : '')),
-                 mk('span', null, held), cf, mk('span', null, money(r.paid)), mk('span', null, r.result || 'open'));
+                 mk('span', null, held), cf, mk('span', null, r.acct_pct == null ? '—' : r.acct_pct + '%'), mk('span', null, money(r.paid)), mk('span', null, r.result || 'open'));
       const p = mk('span', null, r.pnl == null ? '…' : signed(r.pnl)); if (r.pnl != null) p.style.color = pnlColor(r.pnl); row.append(p);
       row.onclick = () => { DESK_OPEN[r.slug] = !DESK_OPEN[r.slug]; renderSide(); };
       tb.append(row);

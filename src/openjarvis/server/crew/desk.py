@@ -218,7 +218,7 @@ async def trades(pool, mode: str, limit: int = 50, version: str = STRATEGY_VERSI
         # confidence: the model's probability that the side bought wins, at the moment it was bought
         conf = None if not isinstance(m, (int, float)) else round(m if f["side"] == "up" else 1.0 - m, 3)
         by.setdefault(f["slug"], []).append({"ts": f["ts"].isoformat(), "side": f["side"], "price": f["price"], "qty": f["qty"],
-                                             "sweep": feat.get("sweep") is True, "conf": conf,
+                                             "sweep": feat.get("sweep") is True, "conf": conf, "acct": feat.get("account_usd"),
                                              "cost": round(f["cost"], 2), "fair": round(f["fair"], 3) if f["fair"] is not None else None})
     out = []
     for w in ws:
@@ -231,7 +231,9 @@ async def trades(pool, mode: str, limit: int = 50, version: str = STRATEGY_VERSI
         else:
             mf = [f for f in wf if f["side"] == main] or [f for f in by.get(w["slug"], []) if f["side"] == main and f["conf"] is not None]
             wconf = None if not mf else round(sum(f["conf"] * f["cost"] for f in mf) / (sum(f["cost"] for f in mf) or 1), 3)
-        out.append({"slug": w["slug"], "window_start": w["window_start"].isoformat() if w["window_start"] else None,
+        acct = next((f["acct"] for f in by.get(w["slug"], []) if isinstance(f.get("acct"), (int, float)) and f["acct"] > 0), None)
+        paid = round((w["up_cost"] or 0) + (w["down_cost"] or 0), 2)
+        out.append({"acct_pct": round(100.0 * paid / acct, 1) if acct else None, "slug": w["slug"], "window_start": w["window_start"].isoformat() if w["window_start"] else None,
                     "window_end": w["window_end"].isoformat() if w["window_end"] else None, "price_to_beat": w["price_to_beat"],
                     "close_price": w["close_price"], "result": None if w["up"] is None else ("UP" if w["up"] else "DOWN"),
                     "up_qty": w["up_qty"], "up_cost": w["up_cost"], "down_qty": w["down_qty"], "down_cost": w["down_cost"],

@@ -347,6 +347,7 @@ class Desk:
             "spread": None if not b or b.best_bid is None or b.best_ask is None else round(b.best_ask - b.best_bid, 4),
             "extra_edge": self.learner.extra_edge if self.cfg.learn else 0.0,
             "sigma": None if self.sigma is None else round(self.sigma, 3),
+            "account_usd": round(self.equity(), 2),                                          # the account when bought: the trade log shows the bet as a % of it
             "sweep": (f.slug, f.side) in self._sweeps,                                      # v1.13: bought by a closing sweep
         }
         bu = shadow.book_up(getattr(self.book, "bids", None), getattr(self.book, "offers", None))
