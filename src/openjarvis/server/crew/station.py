@@ -976,7 +976,7 @@ const CATALOG_TITLE = { etsy: 'Listings in the shop', stripe: 'Products on Strip
 // three desks (BTC, ETH, SOL), one Polymarket account: each factory key maps to its asset
 const DESK_ASSET = { 'polymarket': 'btc', 'polymarket-btc15': 'btc15', 'polymarket-eth': 'eth', 'polymarket-sol': 'sol', 'polymarket-xrp': 'xrp', 'polymarket-btclate': 'btclate' };
 const DESK_KEY = { btc: 'polymarket', btc15: 'polymarket-btc15', eth: 'polymarket-eth', sol: 'polymarket-sol', xrp: 'polymarket-xrp', btclate: 'polymarket-btclate' };
-const DESK_ORDER = ['btc', 'btclate', 'btc15', 'eth', 'sol', 'xrp'];            // BTC 5m, then its late-only paper desk, then BTC 15m
+const DESK_ORDER = ['btc', 'btclate', 'btc15'];            // BTC 5m, then its late-only desk, then BTC 15m (ETH, SOL and XRP desks retired)
 const DESK_LABEL = a => a === 'btc15' ? 'BTC 15m' : a === 'btclate' ? 'BTC 5m Late' : a.toUpperCase();   // the desk's name
 const DESK_COIN = a => (a === 'btc15' || a === 'btclate') ? 'BTC' : a.toUpperCase();                 // the coin it trades
 let DESKS = {}, DESK_ATS = {}, DESK_LOADINGS = {}, DESK_VIEW = '', DESK_OPEN = {};
