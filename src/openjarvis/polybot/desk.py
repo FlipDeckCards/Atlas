@@ -399,7 +399,7 @@ class Desk:
                     if mine and mine[1] != res[1]:
                         self.log("warn", f"{slug}: the index replay said {'UP' if mine[1] else 'DOWN'} but the exchange settled "
                                          f"{'UP' if res[1] else 'DOWN'}; booking the exchange's result.")
-            if res is None and (w.mode not in LIVE_MODES or now > w.end + 300):
+            if res is None and (w.mode not in LIVE_MODES or now > w.end + 60):      # live: the exchange gets 60 s to finalize, then the index answers so the scoreboard keeps up
                 res = model.settle(self.tape, int(w.end), w.price_to_beat)
                 if res is None and now > w.end + 120:                            # index gap: ask the exchange
                     s = await self.c.settlement(slug)
