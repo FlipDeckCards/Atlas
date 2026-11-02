@@ -25,6 +25,7 @@ KEYS = {"btc": "polymarket", "btc15": "polymarket-btc15", "eth": "polymarket-eth
         "btclate": "polymarket-btclate"}
 # v1.23: the late-only paper desk trades BTC 5m markets, so its rows are read as BTC with its own paper label
 LEDGER_OF = {"btclate": "paper-late"}
+LIVE_OF = {"btclate": "live-late"}                  # the late desk's real-money rows: its own live scoreboard
 ASSET_ROWS = {"btclate": "btc"}
 ASSET_OF = {v: k for k, v in KEYS.items()}
 NAMES = {"btc": "Polymarket Desk", "btc15": "Polymarket BTC 15m Desk", "eth": "Polymarket ETH Desk", "sol": "Polymarket SOL Desk",
@@ -304,15 +305,16 @@ async def summary(pool, *, trade_limit: int = 50, asset: str = "btc") -> Dict[st
     mode = status.get("mode") or "paper"
     rows = ASSET_ROWS.get(asset, asset)                  # v1.23: the late desk's rows are BTC rows under its own paper label
     paper = LEDGER_OF.get(asset, "paper")
-    live_rows = "none" if asset in LEDGER_OF else rows   # a paper-only desk has no live trades: never show the BTC desk's live rows as its own
+    live = LIVE_OF.get(asset, "live")
+    live_rows = rows
     return {"status": status, "control": control, "running": bool(hb) and time.time() - hb < 300, "heartbeat_age_s": round(time.time() - hb) if hb else None,
             "limits": current_limits(control).__dict__,
-            "score": {"paper": await scoreboard(pool, paper, asset=rows), "live": await scoreboard(pool, "live", asset=live_rows)},
-            "trades": {"paper": await trades(pool, paper, trade_limit, asset=rows), "live": await trades(pool, "live", trade_limit, asset=live_rows)},
+            "score": {"paper": await scoreboard(pool, paper, asset=rows), "live": await scoreboard(pool, live, asset=live_rows)},
+            "trades": {"paper": await trades(pool, paper, trade_limit, asset=rows), "live": await trades(pool, live, trade_limit, asset=live_rows)},
             "events": await events(pool, 30, asset), "mode": mode, "strategy": STRATEGY_VERSION, "deposits": deposits(),
-            "shadow": await shadow_stats(pool, "live" if mode == "live" else paper, STRATEGY_VERSION, rows), "shadow_detail": await shadow_detail(pool, asset),
+            "shadow": await shadow_stats(pool, live if mode == "live" else paper, STRATEGY_VERSION, rows), "shadow_detail": await shadow_detail(pool, asset),
             "asset": asset, "name": NAMES[asset],
-            "analysis": await analysis(pool, "live" if mode == "live" else paper, asset=rows)}
+            "analysis": await analysis(pool, live if mode == "live" else paper, asset=rows)}
 
 
 def deposits() -> Optional[float]:
@@ -331,19 +333,21 @@ async def _ledger_pnl(pool, asset: str, now: dt.datetime) -> Dict[str, float]:
     figures, because the scoreboards only count the current version. Every figure is settled windows only (no plug)."""
     from openjarvis.server.crew.finance import la_midnight
 
-    cur = f"mode='live' AND {ASSET_SQL} = $2 AND {VER} = $3"
-    old = f"mode='live' AND {ASSET_SQL} = $2 AND {VER} <> $3"
+    # the desk's own live label (btclate: live-late) and its market rows (btclate: BTC's 5-minute markets)
+    lm, ar = LIVE_OF.get(asset, "live"), ASSET_ROWS.get(asset, asset)
+    cur = f"mode='{lm}' AND {ASSET_SQL} = $2 AND {VER} = $3"
+    old = f"mode='{lm}' AND {ASSET_SQL} = $2 AND {VER} <> $3"
     async with pool.acquire() as c:
         today = await c.fetchval(f"SELECT coalesce(sum(pnl),0) FROM polybot_windows WHERE {cur} AND settled_at >= $1",
-                                 la_midnight(now), asset, STRATEGY_VERSION)
+                                 la_midnight(now), ar, STRATEGY_VERSION)
         d30 = await c.fetchval(f"SELECT coalesce(sum(pnl),0) FROM polybot_windows WHERE {cur} AND settled_at >= $1",
-                               now - dt.timedelta(days=30), asset, STRATEGY_VERSION)
-        all_time = await c.fetchval(f"SELECT coalesce(sum(pnl),0) FROM polybot_windows WHERE mode='live' AND {ASSET_SQL} = $1 AND {VER} = $2",
-                                    asset, STRATEGY_VERSION)
+                               now - dt.timedelta(days=30), ar, STRATEGY_VERSION)
+        all_time = await c.fetchval(f"SELECT coalesce(sum(pnl),0) FROM polybot_windows WHERE mode='{lm}' AND {ASSET_SQL} = $1 AND {VER} = $2",
+                                    ar, STRATEGY_VERSION)
         pre_today = await c.fetchval(f"SELECT coalesce(sum(pnl),0) FROM polybot_windows WHERE {old} AND settled_at >= $1",
-                                     la_midnight(now), asset, STRATEGY_VERSION)
-        pre_all = await c.fetchval(f"SELECT coalesce(sum(pnl),0) FROM polybot_windows WHERE mode='live' AND {ASSET_SQL} = $1 AND {VER} <> $2",
-                                   asset, STRATEGY_VERSION)
+                                     la_midnight(now), ar, STRATEGY_VERSION)
+        pre_all = await c.fetchval(f"SELECT coalesce(sum(pnl),0) FROM polybot_windows WHERE mode='{lm}' AND {ASSET_SQL} = $1 AND {VER} <> $2",
+                                   ar, STRATEGY_VERSION)
     return {"today": round(float(today or 0), 2), "d30": round(float(d30 or 0), 2), "all": round(float(all_time or 0), 2),
             "pre_today": round(float(pre_today or 0), 2), "pre_all": round(float(pre_all or 0), 2)}
 
