@@ -122,7 +122,7 @@ class Config:
         return replace(self, limits=limits.clean())
 
 
-ASSETS = ("btc", "btc15", "eth", "sol", "xrp", "btclate")
+ASSETS = ("btc", "btc15", "btclate")                 # ETH, SOL and XRP desks retired (they still exist in the code, just not run)
 COIN = {"btc15": "btc"}                 # desk id -> the coin it trades (default: the same name)
 FIXED_HORIZON = {"btc15": "15m", "btclate": "5m"}        # desks pinned to one window length (a shared POLYBOT_HORIZON never changes them)
 COIN["btclate"] = "btc"                 # v1.23: a paper desk on BTC's 5-minute market that runs only the late method
