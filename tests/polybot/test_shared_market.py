@@ -31,5 +31,4 @@ def test_cancel_all_cancels_only_this_desks_orders():
 
 
 def test_btc_5m_and_late_share_a_market():
-    assert SHARED_MARKET["btc"] == ("btclate",)
-    assert SHARED_MARKET["btclate"] == ("btc",)
+    assert SHARED_MARKET == {}

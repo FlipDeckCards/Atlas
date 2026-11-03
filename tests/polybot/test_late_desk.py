@@ -24,10 +24,10 @@ def test_late_desk_goes_live_on_its_own_ledger_when_approved():
     assert apply_control(btc, {"mode": "live"}).mode == "live"          # the live BTC desk is unchanged
 
 
-def test_the_other_desks_run_pairs_directional_and_edge_without_late():
+def test_the_desks_run_all_four_methods_and_the_paper_label():
     for a in ("btc", "btc15", "eth", "sol", "xrp"):
         c = from_env({}, asset=a)
-        assert c.methods == ("pairs", "directional", "edge") and c.ledger == "paper"
+        assert c.methods == ("pairs", "directional", "edge", "late") and c.ledger == "paper"
 
 
 def test_late_desk_has_its_own_store_and_lock():
