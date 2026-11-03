@@ -61,7 +61,7 @@ class Config:
     coin: str = "btc"                   # the coin it trades (btc15 trades BTC's 15-minute markets)
     ledger: str = "paper"               # v1.23: the ledger label of its paper trades (btclate writes "paper-late", so it never mixes with BTC's paper rows)
     live_ledger: str = "live"           # the ledger label of its real-money trades (btclate writes "live-late": its own live scoreboard, never mixed with BTC's)
-    methods: tuple = ("pairs", "directional", "edge")   # v1.24: late removed from the main BTC desk (it doubled the shared position with btclate and froze the desks)
+    methods: tuple = ("pairs", "directional", "edge", "late")   # v1.23: which entry methods this desk runs
     limits: Limits = field(default_factory=Limits)
     quote_after_open_s: float = 20.0    # wait this long after a window opens (the price to beat is stamped a few seconds in)
     stop_before_end_s: float = 25.0     # pull every quote this long before the close (the last seconds are where fast bots pick you off)
@@ -122,13 +122,13 @@ class Config:
         return replace(self, limits=limits.clean())
 
 
-ASSETS = ("btc", "btc15", "btclate")                 # ETH, SOL and XRP desks retired (they still exist in the code, just not run)
+ASSETS = ("btc", "btc15")                 # ETH, SOL and XRP desks retired (they still exist in the code, just not run)
 COIN = {"btc15": "btc"}                 # desk id -> the coin it trades (default: the same name)
 FIXED_HORIZON = {"btc15": "15m", "btclate": "5m"}        # desks pinned to one window length (a shared POLYBOT_HORIZON never changes them)
 COIN["btclate"] = "btc"                 # v1.23: a paper desk on BTC's 5-minute market that runs only the late method
 LEDGER = {"btclate": "paper-late"}
 LIVE_LEDGER = {"btclate": "live-late"}
-SHARED_MARKET = {"btc": ("btclate",), "btclate": ("btc",)}   # desks that trade the same Polymarket market (one shared position per window)
+SHARED_MARKET = {}   # v1.24: one BTC 5m desk, so nothing shares a market
 LIVE_MODES = ("live", "live-late")       # every ledger label that is real money
 METHODS = {"btclate": ("late",)}
 PAPER_ONLY = ()                          # desks that can never trade real money (none now: btclate trades live, on its own ledger)
@@ -203,7 +203,7 @@ def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Con
         directional=(e.get("POLYBOT_DIRECTIONAL") or "true").strip().lower() in _TRUE,
         ledger=LEDGER.get(a, "paper"),
         live_ledger=LIVE_LEDGER.get(a, "live"),
-        methods=METHODS.get(a, ("pairs", "directional", "edge")),
+        methods=METHODS.get(a, ("pairs", "directional", "edge", "late")),
         directional_secs_left=_f(e, "POLYBOT_DIRECTIONAL_SECONDS", 240.0, 30.0, 290.0),
         directional_min_secs=_f(e, "POLYBOT_DIRECTIONAL_MIN_SECONDS", 30.0, 5.0, 200.0),
         pair_margin=_f(e, "POLYBOT_PAIR_MARGIN", 0.02, 0.0, 0.5),
