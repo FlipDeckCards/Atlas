@@ -920,7 +920,7 @@ function factorySec(key) {
   const l = mk('div', 'lbl'); l.append(mk('span', null, 'Factory'), mk('span', 'tag', b.state)); s.append(l);
   const h = mk('div', 'h', b.label); h.style.color = b.color; if (key === 'polymarket') h.style.fontSize = '17px'; s.append(h);
   const about = bizAbout(key); if (about) s.append(mk('div', 'dim', about));
-  if (key === 'polymarket') { DESK_ORDER.forEach(a => {
+  if (key === 'polymarket') { accountLines(DESKS.btc).forEach(el => s.append(el)); DESK_ORDER.forEach(a => {
     const d = DESKS[a]; const wf = d && !d.error && (d.status || {}).mode === 'live' ? windowFlag(d.status || {}, DESK_LABEL(a) + ' Desk') : null; if (wf) s.append(wf);   // real-money desks only
   }); }
   if (key === 'polymarket') { DESK_ORDER.map(a => DESK_KEY[a]).forEach(k => s.append(deskSec(k))); s.append(deskLogSec()); }   // every desk, then one log
@@ -1032,6 +1032,26 @@ function windowFlag(st, label) {
   flag.append(mk('span', null, (label ? label + ' · ' : '') + 'Current window (closes ' + wEnd + '): '), tag, mk('span', 'dim', detail));
   return flag;
 }
+// v1.24: the Polymarket account lines (account value, change since the version started, all-time) live once, at the top of the Polymarket Desk
+function accountLines(DESK) {
+  const out = [];
+  if (!DESK || DESK.error) return out;
+  const st = DESK.status || {};
+  if (DESK_VIEW === 'live' && st.account_value != null) {          // the real money, read from Polymarket: the line that cannot drift
+    // v1.21: deposits made since this version started are not profit: net them out when the start deposit total is known
+    const addedDep = (st.deposits_start != null && DESK.deposits != null) ? DESK.deposits - st.deposits_start : 0;
+    const ch = st.version_start != null ? (st.account_value - st.version_start) - addedDep : null;
+    const acct = mk('div', 'row'); const at = mk('span', 'grow', 'Polymarket account: ' + money(st.account_value)
+      + (ch != null ? ' (' + signed(ch) + ' since v' + (DESK.strategy || '') + ' started at ' + money(st.version_start) + ')' : ''));
+    if (ch != null) at.style.color = pnlColor(ch);
+    acct.append(at); out.push(acct);
+    if (DESK.deposits) {                                            // all-time: what the account is worth minus what went in
+      const all = st.account_value - DESK.deposits, r = mk('div', 'row'), x = mk('span', 'grow', 'All-time: ' + signed(all) + ' on ' + money(DESK.deposits) + ' deposited');
+      x.style.color = pnlColor(all); r.append(x); out.push(r);
+    }
+  }
+  return out;
+}
 function deskSec(key) {
   const A = DESK_ASSET[key] || 'btc', NAME = DESK_COIN(A);
   loadDesk(false, A);
@@ -1067,19 +1087,6 @@ function deskSec(key) {
     b.onclick = () => { DESK_VIEW = m; renderSide(); }; tabs.append(b); });
   s.append(tabs);
   const v = sc[DESK_VIEW] || {}, a = v.all || {}, t = v.today || {}, d7 = v.d7 || {};
-  if (DESK_VIEW === 'live' && st.account_value != null) {          // the real money, read from Polymarket: the line that cannot drift
-    // v1.21: deposits made since this version started are not profit: net them out when the start deposit total is known
-    const addedDep = (st.deposits_start != null && DESK.deposits != null) ? DESK.deposits - st.deposits_start : 0;
-    const ch = st.version_start != null ? (st.account_value - st.version_start) - addedDep : null;
-    const acct = mk('div', 'row'); const at = mk('span', 'grow', 'Polymarket account: ' + money(st.account_value)
-      + (ch != null ? ' (' + signed(ch) + ' since v' + (DESK.strategy || '') + ' started at ' + money(st.version_start) + ')' : ''));
-    if (ch != null) at.style.color = pnlColor(ch);
-    acct.append(at); s.append(acct);
-    if (DESK.deposits) {                                            // all-time: what the account is worth minus what went in
-      const all = st.account_value - DESK.deposits, r = mk('div', 'row'), x = mk('span', 'grow', 'All-time: ' + signed(all) + ' on ' + money(DESK.deposits) + ' deposited');
-      x.style.color = pnlColor(all); r.append(x); s.append(r);
-    }
-  }
   const box = mk('div', 'pnl'); box.append(mk('div', 'pnl-t', 'Strategy v' + (v.version || DESK.strategy || '') + ' scoreboard · ' + DESK_VIEW + (DESK_VIEW === 'paper' ? ' (not real money)' : '')));
   const grid = mk('div', 'pnl-g');
   const cell = (label, val, color, big) => { const c = mk('div', 'pnl-c'); c.append(mk('div', 'pnl-l', label)); const x = mk('div', 'pnl-v' + (big ? ' desk-big' : ''), val); if (color) x.style.color = color; c.append(x); grid.append(c); };
