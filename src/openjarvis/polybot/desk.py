@@ -391,17 +391,25 @@ class Desk:
             # v1.14: the exchange's own settlement is the truth for live money; the desk's index replay is only the fallback
             # (and the paper desk's referee). Ask every 10 s; use the index if the exchange has not answered 5 minutes after the close.
             res = None
-            if w.mode in LIVE_MODES and now >= w.end + 20 and self._due(f"settle:{slug}", 10.0, now):
-                s = await self.c.settlement(slug)
-                if s is not None and (s >= 0.99 or s <= 0.01):                     # only a final $1 / $0 answer counts
-                    mine = model.settle(self.tape, int(w.end), w.price_to_beat)
-                    res = (mine[0] if mine else None), s >= 0.5
-                    if mine and mine[1] != res[1]:
-                        self.log("warn", f"{slug}: the index replay said {'UP' if mine[1] else 'DOWN'} but the exchange settled "
-                                         f"{'UP' if res[1] else 'DOWN'}; booking the exchange's result.")
-            if res is None and (w.mode not in LIVE_MODES or now > w.end + 60):      # live: the exchange gets 60 s to finalize, then the index answers so the scoreboard keeps up
+            if w.mode in LIVE_MODES:
+                # v1.22: live money is booked only from the venue's own final answer. The index's 60-second average can land on
+                # the other side of the strike from the venue's close (9:15 PM Nov 2: average above the target, venue settled Down),
+                # so a live window with no final answer stays open instead of being booked from the index.
+                if now >= w.end + 20 and self._due(f"settle:{slug}", 10.0, now):
+                    s = await self.c.settlement(slug)
+                    if s is not None and (s >= 0.99 or s <= 0.01):                 # only a final $1 / $0 answer counts
+                        mine = model.settle(self.tape, int(w.end), w.price_to_beat)
+                        res = (mine[0] if mine else None), s >= 0.5
+                        if mine and mine[1] != res[1]:
+                            self.log("warn", f"{slug}: the index average said {'UP' if mine[1] else 'DOWN'} but the venue settled "
+                                             f"{'UP' if res[1] else 'DOWN'}; booking the venue's result.")
+                if res is None:
+                    if now > w.end + 600 and self._due(f"unsettled:{slug}", 300.0, now):
+                        self.log("warn", f"{slug}: no final result from Polymarket 10 minutes after close; holding the window open.")
+                    continue
+            else:
                 res = model.settle(self.tape, int(w.end), w.price_to_beat)
-                if res is None and now > w.end + 120:                            # index gap: ask the exchange
+                if res is None and now > w.end + 120:                            # paper: index gap, ask the exchange
                     s = await self.c.settlement(slug)
                     if s is not None:
                         res = (None, s >= 0.5)
