@@ -9,7 +9,8 @@ A new copy starts in PAPER with the owner's current limits; the account holder t
 
 Seeding (one-time, from Render): POLYBOT_SEED_ACCOUNTS is a JSON list of {"email", "key_id", "secret_key"}. On startup each
 entry's keys are sealed into that account's secrets, the Polymarket Desk becomes its only business, and its desks start. Once the
-logs say "seeded", clear the variable: the keys live encrypted in the database from then on.
+desk shows on their Station, clear the variable: the keys live encrypted in the database from then on (seeding an account that
+already has keys does nothing, so a restart never resets it).
 """
 
 from __future__ import annotations
@@ -149,6 +150,8 @@ async def seed_from_env(store, pool, env=None) -> List[str]:
             logger.warning("POLYBOT_SEED_ACCOUNTS: no Aibussol account for %s yet", email)
             continue
         uid = str(uid)
+        if await has_desk(store, uid):                    # already seeded: never reset their Station or keys on a later restart
+            continue
         try:
             await connect(store, uid, it.get("key_id"), it.get("secret_key"), env)
         except ValueError as exc:
