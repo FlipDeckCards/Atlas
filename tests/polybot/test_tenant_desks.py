@@ -70,3 +70,19 @@ def test_controls_are_per_account_and_a_copy_starts_in_paper_with_the_owners_lim
 def test_account_tag_is_short_and_safe():
     assert tenant_desks.account_tag("3F2a-91c0-77d1-aa00-ffff") == "u3f2a91c077d1"
     assert tenant_desks.account_tag("x';drop") == "uxdrop"
+
+
+def test_profit_by_hour_groups_by_los_angeles_hour():
+    import datetime as dt
+
+    utc = dt.timezone.utc
+    rows = [  # 09:05 UTC = 1 AM PST; 03:50 UTC = 7 PM PST (Nov 3)
+        {"window_start": dt.datetime(2026, 11, 4, 9, 5, tzinfo=utc), "window_end": None, "up_cost": 2.0, "down_cost": 0.0, "pnl": 0.5},
+        {"window_start": dt.datetime(2026, 11, 4, 9, 40, tzinfo=utc), "window_end": None, "up_cost": 0.0, "down_cost": 2.0, "pnl": -2.0},
+        {"window_start": dt.datetime(2026, 11, 4, 3, 50, tzinfo=utc), "window_end": None, "up_cost": 4.0, "down_cost": 0.0, "pnl": 1.0},
+    ]
+    out = desk.hour_rows(rows)
+    assert [r["label"] for r in out] == ["1 AM", "7 PM"]
+    am = out[0]
+    assert (am["trades"], am["wins"], am["win_rate"], am["profit"], am["return_pct"]) == (2, 1, 50.0, -1.5, -37.5)
+    assert out[1]["return_pct"] == 25.0

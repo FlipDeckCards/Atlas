@@ -1264,6 +1264,24 @@ function deskSec(key) {
       tbt.onclick = () => { PANEL_OPEN[A + ':trades'] = !tlOpen; renderSide(); }; tw.append(tbt); s.append(tw);
     }
   }
+  // profit by hour of day (Los Angeles), every strategy version: which hours make money and which lose it
+  const hr = (DESK.hours || {})[DESK_VIEW];
+  if (hr && hr.windows) {
+    const hOpen = !!PANEL_OPEN[A + ':hours'];
+    const hl = mk('div', 'lbl'); hl.style.marginTop = '12px'; hl.textContent = 'Profit by hour · ' + hr.windows + ' settled trades, all versions'; s.append(hl);
+    const hw = mk('div', 'desk-tabs'), hb = mk('button', 'b', hOpen ? 'Hide hours ▾' : 'Show hours ▸');
+    hb.onclick = () => { PANEL_OPEN[A + ':hours'] = !hOpen; renderSide(); }; hw.append(hb); s.append(hw);
+    if (hOpen) {
+      const tb = mk('div', 'pnl-table'), hd = mk('div', 'pnl-row hd');
+      ['Hour (PT)', 'Trades', 'Won', 'Return', 'Profit'].forEach(h => hd.append(mk('span', null, h))); tb.append(hd);
+      hr.hours.forEach(r => { const row = mk('div', 'pnl-row');
+        row.append(mk('span', null, r.label), mk('span', null, String(r.trades)), mk('span', null, r.win_rate + '%'),
+          mk('span', null, r.return_pct == null ? '—' : (r.return_pct >= 0 ? '+' : '') + r.return_pct + '%'));
+        const p = mk('span', null, signed(r.profit)); p.style.color = pnlColor(r.profit); row.append(p); tb.append(row); });
+      s.append(tb);
+      s.append(mk('div', 'dim', 'Hours with only a few trades can swing on one result; look for hours that stay red as trades pile up.'));
+    }
+  }
   // what makes money and what loses it: every settled fill, cut by the conditions it happened in
   const an = DESK.analysis;
   if (an && DESK_VIEW === an.mode) {

@@ -286,6 +286,43 @@ async def analysis(pool, mode: str = "paper", version: str = STRATEGY_VERSION, a
     return out
 
 
+def hour_rows(rows) -> List[Dict[str, Any]]:
+    """Settled windows grouped by the Los Angeles hour they opened in: trades, wins, staked, profit and return on staked."""
+    from openjarvis.server.crew.finance import LA
+
+    per: Dict[int, Dict[str, float]] = {}
+    for r in rows:
+        t = r["window_start"] or r["window_end"]
+        if t is None:
+            continue
+        h = t.astimezone(LA).hour
+        g = per.setdefault(h, {"trades": 0, "wins": 0, "staked": 0.0, "profit": 0.0})
+        pnl = float(r["pnl"] or 0)
+        g["trades"] += 1
+        g["wins"] += 1 if pnl > 0 else 0
+        g["staked"] += float(r["up_cost"] or 0) + float(r["down_cost"] or 0)
+        g["profit"] += pnl
+    out = []
+    for h in sorted(per):
+        g = per[h]
+        label = f"{(h % 12) or 12} {'AM' if h < 12 else 'PM'}"
+        out.append({"hour": h, "label": label, "trades": int(g["trades"]), "wins": int(g["wins"]),
+                    "win_rate": round(100.0 * g["wins"] / g["trades"], 1), "staked": round(g["staked"], 2), "profit": round(g["profit"], 2),
+                    "return_pct": round(100.0 * g["profit"] / g["staked"], 1) if g["staked"] else None})
+    return out
+
+
+async def by_hour(pool, mode: str, asset: str = "btc") -> Dict[str, Any]:
+    """Profit by hour of day (Los Angeles) for one desk and ledger, over EVERY strategy version (more data than the scoreboard,
+    which counts only the current version)."""
+    await _ensure(pool)
+    async with pool.acquire() as c:
+        rows = await c.fetch(f"SELECT window_start, window_end, up_cost, down_cost, pnl FROM polybot_windows WHERE mode = $1 "
+                             f"AND settled_at IS NOT NULL AND {ASSET_SQL} = $2", mode, asset)
+    hours = hour_rows(rows)
+    return {"mode": mode, "windows": sum(h["trades"] for h in hours), "hours": hours}
+
+
 def analysis_text(a: Dict[str, Any]) -> str:
     if a["fills"] < 30:
         return f"Trade analysis ({a['mode']}, v{a['version']}): only {a['fills']} settled fills so far; at least 30 are needed before the cuts mean anything."
@@ -319,6 +356,7 @@ async def summary(pool, *, trade_limit: int = 50, asset: str = "btc", account: s
             "events": await events(pool, 30, asset, account), "mode": mode, "strategy": STRATEGY_VERSION, "deposits": None if account else deposits(),
             "shadow": await shadow_stats(pool, live if mode == "live" else paper, STRATEGY_VERSION, rows), "shadow_detail": await shadow_detail(pool, asset, account),
             "asset": asset, "name": NAMES[asset], "account": account,
+            "hours": {"paper": await by_hour(pool, paper, rows), "live": await by_hour(pool, live, live_rows)},
             "analysis": await analysis(pool, live if mode == "live" else paper, asset=rows)}
 
 
