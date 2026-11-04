@@ -391,9 +391,29 @@ def create_app(
             logger.info("Polymarket Desks started inside Aibussol: %s", ", ".join(a.upper() for a in assets))
         except Exception:
             logger.exception("Polymarket Desk did not start; the rest of Aibussol runs normally")
+        try:
+            # subscribers' own desks (copies of the owner's two bots on THEIR keys, crew/tenant_desks.py): their own small pool
+            import asyncpg
+
+            from openjarvis.server.crew.store import CrewStore
+            from openjarvis.server.crew.tenant_desks import TenantDesks, seed_from_env
+
+            tpool = await asyncpg.create_pool(dsn, min_size=1, max_size=int(os.environ.get("POLYBOT_TENANT_POOL") or 12))
+            tstore = CrewStore(tpool)
+            await tstore.ensure_tables()
+            await seed_from_env(tstore, tpool)
+            app.state.tenant_desks = TenantDesks(tstore, tpool)
+            app.state.tenant_desk_pool = tpool
+            await app.state.tenant_desks.start_all()
+        except Exception:
+            logger.exception("subscribers' Polymarket Desks did not start; the rest of Aibussol runs normally")
 
     @app.on_event("shutdown")
     async def _shutdown_desk() -> None:
+        td = getattr(app.state, "tenant_desks", None)
+        if td is not None:
+            await td.stop_all()
+            await app.state.tenant_desk_pool.close()
         runners = getattr(app.state, "desk_runners", None) or []
         if runners:
             import asyncio

@@ -404,6 +404,41 @@ async def crew_state(request: Request):
     return st
 
 
+async def subscriber_finance(request: Request, engine, uid: str, pool, missions=None):
+    """A subscriber's P&L: their own Stripe (if connected), their own Polymarket Desk's live trading and their crew's spend,
+    nothing of the owner's. Also what the owner sees when he switches to that account."""
+    from openjarvis.server.crew import tenant, tenant_desks
+    from openjarvis.server.crew.finance import Finance, factory_key
+
+    if missions is None:
+        missions = await engine.store.list_missions(uid, 200)
+    biz = await tenant.businesses(engine.store, uid)
+    known = tuple(b["key"] for b in biz)
+    envx = await engine.env_for(uid)
+    cache = getattr(request.app.state, "crew_finance_users", None)
+    if cache is None:
+        cache = request.app.state.crew_finance_users = {}
+    fin_u = cache.get(uid)
+    untagged = next((k for k in known if k != "polymarket"), "business")
+    sub_env = {"STRIPE_SECRET_KEY": envx.get("STRIPE_SECRET_KEY", ""), "CREW_STRIPE_UNTAGGED": untagged}
+    if fin_u is None or fin_u.env != sub_env:
+        fin_u = cache[uid] = Finance(engine.store, pool=None, env=sub_env)
+    keys = list(known) + [factory_key(m["project"], m["title"], m["goal"], m["id"], known) for m in missions]
+    trading = None
+    if pool is not None and "polymarket" in known and await tenant_desks.has_desk(engine.store, uid):
+        try:
+            from openjarvis.server.crew import desk
+
+            per = await desk.live_pnl_all(pool, tenant_desks.account_tag(uid))
+            trading = {"polymarket": {k: round(sum(v[k] for v in per.values()), 2) for k in ("today", "d30")}}
+        except Exception:
+            logger.exception("a subscriber's desk P&L is unavailable")
+    out = await fin_u.report(uid, missions, keys, owner=False, trading=trading)
+    out["products"] = await engine.products_for(uid, biz)
+    out["product_stats"], out["aibussol_stats"] = {}, None
+    return out
+
+
 @router.get("/api/crew/finance")
 async def crew_finance(request: Request):
     """P&L per factory and in total (crew/finance.py), the products' live status and Aibussol's own counts."""
@@ -417,24 +452,7 @@ async def crew_finance(request: Request):
     pool = getattr(getattr(request.app.state, "session_store", None), "_pool", None)
     missions = await engine.store.list_missions(uid, 200)
     if not await engine.is_owner(uid):
-        # a subscriber: their own Stripe (if connected) and their crew's spend, nothing of the owner's
-        from openjarvis.server.crew import tenant
-
-        biz = await tenant.businesses(engine.store, uid)
-        known = tuple(b["key"] for b in biz)
-        envx = await engine.env_for(uid)
-        cache = getattr(request.app.state, "crew_finance_users", None)
-        if cache is None:
-            cache = request.app.state.crew_finance_users = {}
-        fin_u = cache.get(uid)
-        sub_env = {"STRIPE_SECRET_KEY": envx.get("STRIPE_SECRET_KEY", ""), "CREW_STRIPE_UNTAGGED": known[0] if known else "business"}
-        if fin_u is None or fin_u.env != sub_env:
-            fin_u = cache[uid] = Finance(engine.store, pool=None, env=sub_env)
-        keys = list(known) + [factory_key(m["project"], m["title"], m["goal"], m["id"], known) for m in missions]
-        out = await fin_u.report(uid, missions, keys, owner=False)
-        out["products"] = await engine.products_for(uid, biz)
-        out["product_stats"], out["aibussol_stats"] = {}, None
-        return out
+        return await subscriber_finance(request, engine, uid, pool, missions)
     fin = getattr(request.app.state, "crew_finance", None)
     if fin is None:
         fin = request.app.state.crew_finance = Finance(engine.store, pool=pool)
@@ -475,7 +493,127 @@ class DeskControlIn(BaseModel):
     asset: str = Field("btc", max_length=8)
 
 
-async def _desk_gate(request: Request):
+async def _desk_gate(request: Request, view: str = ""):
+    """(uid, engine, pool, account, read_only) for the desk routes.
+    The owner: his own desks (account ""), or with ?view=<user id> a subscriber's desks, read only.
+    A subscriber: only their own desks (their account tag), and only once they connected their Polymarket keys."""
+    from openjarvis.server.crew import tenant_desks
+
+    g = await _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    pool = getattr(getattr(request.app.state, "session_store", None), "_pool", None) or getattr(engine, "pool", None)
+    if pool is None:
+        return JSONResponse({"detail": "No database."}, status_code=503)
+    if await engine.is_owner(uid):
+        if view and view != uid:
+            if not await tenant_desks.has_desk(engine.store, view):
+                return JSONResponse({"detail": "That account has no Polymarket Desk."}, status_code=404)
+            return uid, engine, pool, tenant_desks.account_tag(view), True
+        return uid, engine, pool, "", False
+    if not await tenant_desks.has_desk(engine.store, uid):
+        return JSONResponse({"detail": "Connect your Polymarket US keys first."}, status_code=403)
+    return uid, engine, pool, tenant_desks.account_tag(uid), False
+
+
+@router.get("/api/crew/desk")
+async def crew_desk(request: Request, limit: int = 50, asset: str = "btc", view: str = ""):
+    """The desk's scoreboard (win rate, total profit, trades; paper and live kept apart), its trade log and its latest status."""
+    g = await _desk_gate(request, view)
+    if isinstance(g, JSONResponse):
+        return g
+    from openjarvis.server.crew import desk
+
+    asset = (asset or "btc").lower()
+    if g[3] and asset not in desk.TENANT_ASSETS:
+        return JSONResponse({"detail": "Unknown desk."}, status_code=404)
+    out = await desk.summary(g[2], trade_limit=max(1, min(limit, 500)), asset=asset, account=g[3])
+    out["read_only"] = g[4]
+    return out
+
+
+@router.post("/api/crew/desk/control")
+async def crew_desk_control(body: DeskControlIn, request: Request):
+    """Pause, resume, kill or back to paper from the Station. The owner's go-live is an Approve card from Helix; a subscriber's
+    own desk is their own money, so their LIVE tap applies at once. Nobody controls another account's desk."""
+    g = await _desk_gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    from openjarvis.server.crew import desk
+
+    asset = (body.asset or "btc").lower()
+    if asset not in (desk.TENANT_ASSETS if g[3] else desk.KEYS):
+        return JSONResponse({"detail": "Unknown desk."}, status_code=400)
+    if body.action not in ("pause", "resume", "flatten", "paper", "go_live", "reset_day"):
+        return JSONResponse({"detail": "Unknown action."}, status_code=400)
+    out = await desk.control(g[2], body.action, asset=asset, account=g[3])
+    if "needs_approval" in out and g[3]:              # a subscriber's own desk: their tap is the approval
+        done = await desk.apply_approved(g[2], out["action"]["set"], asset=asset, account=g[3])
+        await g[1].store.add_event(g[0], "ops", f"{desk.NAMES[asset]}: {done}")
+        return {"done": done}
+    if "needs_approval" in out:                       # going live is never done here: it becomes an Approve card in the Helix inbox
+        await g[1].store.add_question("", "", g[0], "ops", out["needs_approval"], ["Approve", "Decline"], out["action"])
+        return {"done": "An Approve card is waiting in the Helix inbox. Tap Approve there to go live."}
+    await g[1].store.add_event(g[0], "ops", f"{desk.NAMES[asset]}: {out['done']}")
+    return out
+
+
+class PolymarketKeysIn(BaseModel):
+    key_id: str = Field(..., max_length=80)
+    secret_key: str = Field(..., max_length=200)
+
+
+@router.post("/api/crew/polymarket/connect")
+async def crew_polymarket_connect(body: PolymarketKeysIn, request: Request):
+    """A subscriber connects their own Polymarket US keys: the Polymarket Desk joins their Station and its two bots start (paper)."""
+    g = await _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    if await engine.is_owner(uid):
+        return JSONResponse({"detail": "The owner's desks use the keys on Render."}, status_code=400)
+    from openjarvis.server.crew import tenant_desks
+
+    try:
+        await tenant_desks.connect(engine.store, uid, body.key_id, body.secret_key)
+    except ValueError as exc:
+        return _err(exc)
+    td = getattr(request.app.state, "tenant_desks", None)
+    started = bool(td) and await td.restart(uid)
+    return {"done": "Polymarket connected. Your two bots start in PAPER; tap LIVE on each when you are ready." if started
+            else "Polymarket keys saved. The desks start on the next restart."}
+
+
+# ── the owner's account switcher: subscribers' accounts, read only ───────────────────────────────
+
+@router.get("/api/crew/accounts")
+async def crew_accounts(request: Request):
+    """The owner's list of other accounts he can look at (those with a Polymarket Desk, plus free-access accounts)."""
+    g = await _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    if not await engine.is_owner(uid):
+        return JSONResponse({"detail": "Owner only."}, status_code=403)
+    pool = getattr(getattr(request.app.state, "session_store", None), "_pool", None) or getattr(engine, "pool", None)
+    if pool is None:
+        return {"accounts": []}
+    from openjarvis.server.crew import comp_emails, tenant_desks
+
+    ids = set(await tenant_desks.uids_with_desks(pool))
+    comps = sorted(comp_emails())
+    async with pool.acquire() as c:
+        rows = await c.fetch("SELECT id, email, display_name FROM users WHERE id::text = ANY($1::text[]) OR lower(email) = ANY($2::text[])",
+                             list(ids), comps)
+    out = [{"id": str(r["id"]), "email": r["email"], "name": r["display_name"] or r["email"].split("@")[0],
+            "desk": str(r["id"]) in ids} for r in rows if str(r["id"]) != uid]
+    return {"accounts": sorted(out, key=lambda a: a["email"])}
+
+
+@router.get("/api/crew/accounts/{other}/overview")
+async def crew_account_overview(other: str, request: Request):
+    """One subscriber's trading bots and income, for the owner to look at. Read only."""
     g = await _gate(request)
     if isinstance(g, JSONResponse):
         return g
@@ -485,38 +623,20 @@ async def _desk_gate(request: Request):
     pool = getattr(getattr(request.app.state, "session_store", None), "_pool", None) or getattr(engine, "pool", None)
     if pool is None:
         return JSONResponse({"detail": "No database."}, status_code=503)
-    return uid, engine, pool
+    from openjarvis.server.crew import tenant_desks
 
-
-@router.get("/api/crew/desk")
-async def crew_desk(request: Request, limit: int = 50, asset: str = "btc"):
-    """The desk's scoreboard (win rate, total profit, trades; paper and live kept apart), its trade log and its latest status."""
-    g = await _desk_gate(request)
-    if isinstance(g, JSONResponse):
-        return g
-    from openjarvis.server.crew import desk
-
-    return await desk.summary(g[2], trade_limit=max(1, min(limit, 500)), asset=(asset or "btc").lower())
-
-
-@router.post("/api/crew/desk/control")
-async def crew_desk_control(body: DeskControlIn, request: Request):
-    """Pause, resume, kill or back to paper from the Station. Going live is never done here: it is an Approve card from Helix."""
-    g = await _desk_gate(request)
-    if isinstance(g, JSONResponse):
-        return g
-    from openjarvis.server.crew import desk
-
-    asset = (body.asset or "btc").lower()
-    if asset not in desk.KEYS:
-        return JSONResponse({"detail": "Unknown desk."}, status_code=400)
-    if body.action not in ("pause", "resume", "flatten", "paper", "go_live", "reset_day"):
-        return JSONResponse({"detail": "Unknown action."}, status_code=400)
-    out = await desk.control(g[2], body.action, asset=asset)
-    if "needs_approval" in out:                       # going live is never done here: it becomes an Approve card in the Helix inbox
-        await g[1].store.add_question("", "", g[0], "ops", out["needs_approval"], ["Approve", "Decline"], out["action"])
-        return {"done": "An Approve card is waiting in the Helix inbox. Tap Approve there to go live."}
-    await g[1].store.add_event(g[0], "ops", f"{desk.NAMES[asset]}: {out['done']}")
+    async with pool.acquire() as c:
+        row = await c.fetchrow("SELECT id, email, display_name FROM users WHERE id::text = $1", other)
+    if not row:
+        return JSONResponse({"detail": "No such account."}, status_code=404)
+    out: dict = {"id": other, "email": row["email"], "name": row["display_name"] or row["email"].split("@")[0], "desk": None}
+    if await tenant_desks.has_desk(engine.store, other):
+        out["desk"] = await tenant_desks.overview(pool, engine.store, other)
+    try:
+        out["finance"] = await subscriber_finance(request, engine, other, pool)
+    except Exception:
+        logger.exception("a subscriber's finance is unavailable")
+        out["finance"] = None
     return out
 
 

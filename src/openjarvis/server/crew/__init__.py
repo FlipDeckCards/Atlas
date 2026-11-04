@@ -112,6 +112,15 @@ def notify_url(env=None) -> str:
 _SUB_CACHE: dict = {}
 
 
+def comp_emails(env: Optional[Mapping[str, str]] = None) -> set:
+    """CREW_COMP_EMAILS: accounts the owner gives free access to (a full subscriber's Station, no Stripe subscription)."""
+    return {x.strip().lower() for x in (_env(env).get("CREW_COMP_EMAILS") or "").split(",") if x.strip()}
+
+
+def is_comp(email: str, env: Optional[Mapping[str, str]] = None) -> bool:
+    return bool(email) and email.strip().lower() in comp_emails(env)
+
+
 async def crew_access(request) -> bool:
     """The crew is for owner/admin accounts and for accounts with an active Aibussol subscription (checked at most once a minute)."""
     import time
@@ -120,7 +129,7 @@ async def crew_access(request) -> bool:
     uid = getattr(request.state, "user_id", "") or ""
     if not uid:
         return False
-    if crew_allowed(email):
+    if crew_allowed(email) or is_comp(email):
         return True
     hit = _SUB_CACHE.get(uid)
     if hit and time.monotonic() - hit[0] < 60:

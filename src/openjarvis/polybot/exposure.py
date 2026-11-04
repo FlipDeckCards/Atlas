@@ -14,24 +14,34 @@ CROSS_DESK_PCT = 25.0          # % of the account value, across every desk's dir
 _open: Dict[str, float] = {}   # desk name -> dollars at risk in its directional windows
 
 
-def publish(desk_name: str, usd: float) -> None:
+def _k(desk_name: str, account: str = "") -> str:
+    """Each account's desks share one tally (one Polymarket account); a subscriber's never count against the owner's."""
+    return f"{account}|{desk_name}" if account else desk_name
+
+
+def _acct(key: str) -> str:
+    return key.split("|", 1)[0] if "|" in key else ""
+
+
+def publish(desk_name: str, usd: float, account: str = "") -> None:
     """A desk reports what it has at risk in directional windows right now (overwrites the last report)."""
-    _open[desk_name] = max(0.0, float(usd))
+    _open[_k(desk_name, account)] = max(0.0, float(usd))
 
 
-def reserve(desk_name: str, usd: float) -> None:
+def reserve(desk_name: str, usd: float, account: str = "") -> None:
     """Count an order just placed, before the next tick reports the real figure."""
-    _open[desk_name] = _open.get(desk_name, 0.0) + max(0.0, float(usd))
+    k = _k(desk_name, account)
+    _open[k] = _open.get(k, 0.0) + max(0.0, float(usd))
 
 
-def total_open() -> float:
-    return round(sum(_open.values()), 2)
+def total_open(account: str = "") -> float:
+    return round(sum(v for k, v in _open.items() if _acct(k) == (account or "")), 2)
 
 
-def headroom(equity: float) -> float:
-    """Dollars left under the cross-desk cap for a new directional order, from every desk together."""
+def headroom(equity: float, account: str = "") -> float:
+    """Dollars left under the cross-desk cap for a new directional order, from every desk of this account together."""
     cap = max(0.0, float(equity)) * CROSS_DESK_PCT / 100.0
-    return round(max(0.0, cap - total_open()), 2)
+    return round(max(0.0, cap - total_open(account)), 2)
 
 
 def reset() -> None:

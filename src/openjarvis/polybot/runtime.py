@@ -19,9 +19,13 @@ logger = logging.getLogger("polybot.runtime")
 LOCK_ID = 7_310_442_118          # an arbitrary constant: "the Polymarket Desk" (BTC); other assets get their own lock
 
 
-def lock_id(asset: str) -> int:
+def lock_id(asset: str, account: str = "") -> int:
     a = (asset or "btc").lower()
-    return LOCK_ID if a == "btc" else LOCK_ID + 1 + (int.from_bytes(a.encode()[:6].ljust(6, b"\0"), "big") % 1_000_000)
+    base = LOCK_ID if a == "btc" else LOCK_ID + 1 + (int.from_bytes(a.encode()[:6].ljust(6, b"\0"), "big") % 1_000_000)
+    if not account:
+        return base
+    import hashlib                                   # a subscriber's desk: its own lock, far from the owner's range
+    return 8_000_000_000 + int.from_bytes(hashlib.sha256(f"{account}|{a}".encode()).digest()[:4], "big")
 LOCK_RETRY_S = 15.0
 
 
@@ -50,7 +54,7 @@ class Runner:
         self.instance = uuid.uuid4().hex[:12]
 
     def start(self) -> asyncio.Task:
-        self._task = asyncio.create_task(self._main(), name=f"polymarket-desk-{self.cfg.asset}")
+        self._task = asyncio.create_task(self._main(), name=f"polymarket-desk-{self.cfg.asset}{self.cfg.account and '@' + self.cfg.account}")
         return self._task
 
     async def stop(self, timeout: float = 20.0) -> None:
@@ -69,7 +73,7 @@ class Runner:
         """Wait while another desk's heartbeat (written every flush, about once a minute) is fresh."""
         from openjarvis.polybot.state import PgStore, ScopedStore
 
-        store = ScopedStore(PgStore(self.pool), self.cfg.asset)
+        store = ScopedStore(PgStore(self.pool), self.cfg.asset, self.cfg.account, self.cfg.live_ledger)
         while not self._stop.is_set():
             st = await store.get("status")
             hb, other = float(st.get("heartbeat") or 0), st.get("instance")
@@ -91,7 +95,7 @@ class Runner:
         lock_conn = await self.pool.acquire()                 # held for the desk's whole life: the lock belongs to this connection
         try:
             while not self._stop.is_set():
-                if await lock_conn.fetchval("SELECT pg_try_advisory_lock($1)", lock_id(self.cfg.asset)):
+                if await lock_conn.fetchval("SELECT pg_try_advisory_lock($1)", lock_id(self.cfg.asset, self.cfg.account)):
                     break
                 if self.state != "waiting":
                     logger.info("another copy of the desk is running; waiting for it to stop")
@@ -108,7 +112,7 @@ class Runner:
             delay = 5.0
             while not self._stop.is_set():
                 client = PolymarketUS(self.cfg.key_id, self.cfg.secret_key)
-                self.desk = Desk(self.cfg, client, ScopedStore(PgStore(self.pool), self.cfg.asset), notify=ntfy_pusher(self.cfg.notify_url))
+                self.desk = Desk(self.cfg, client, ScopedStore(PgStore(self.pool), self.cfg.asset, self.cfg.account, self.cfg.live_ledger), notify=ntfy_pusher(self.cfg.notify_url))
                 self.desk.instance = self.instance
                 self.state = "running"
                 try:
@@ -130,7 +134,7 @@ class Runner:
         finally:
             self.state = "stopped"
             try:
-                await lock_conn.execute("SELECT pg_advisory_unlock($1)", lock_id(self.cfg.asset))
+                await lock_conn.execute("SELECT pg_advisory_unlock($1)", lock_id(self.cfg.asset, self.cfg.account))
             except Exception:
                 pass
             await self.pool.release(lock_conn)

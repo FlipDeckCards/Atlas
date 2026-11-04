@@ -18,7 +18,8 @@ from typing import Any, Dict, List, Optional
 
 from openjarvis.polybot.brain import STRATEGY_VERSION
 from openjarvis.polybot.config import Limits, from_env
-from openjarvis.polybot.state import DDL, desk_sql, kv_key
+from openjarvis.polybot.config import label_for
+from openjarvis.polybot.state import DDL, desk_sql, event_asset, kv_key
 
 KEY = "polymarket"                                   # the BTC desk keeps the original factory key
 KEYS = {"btc": "polymarket", "btc15": "polymarket-btc15", "eth": "polymarket-eth", "sol": "polymarket-sol", "xrp": "polymarket-xrp",
@@ -41,6 +42,9 @@ def business(asset: str = "btc") -> Dict[str, str]:
 
 
 BUSINESS = business("btc")
+TENANT_ASSETS = ("btc", "btc15")                 # the two bots a subscriber's own Polymarket Desk runs (copies of the owner's)
+TENANT_BUSINESS = {"key": "polymarket", "name": "Polymarket Desk", "url": "https://polymarket.us", "color": "#00e5ff",
+                   "description": "Polymarket Desk runs two trading bots on your own Polymarket US account: BTC on 5-minute and on 15-minute Up/Down windows."}
 ASSET_SQL = desk_sql("slug")                     # cpc-eth-updown-5m-... -> eth; cpc-btc-updown-15m-... -> btc15
 LIMIT_FIELDS = ("bankroll_usd", "max_window_usd", "max_order_usd", "daily_loss_usd", "daily_loss_pct", "min_edge")
 _READY: Dict[int, bool] = {}
@@ -68,11 +72,11 @@ async def get_kv(pool, key: str) -> Dict[str, Any]:
         return _j(await c.fetchval("SELECT value FROM polybot_kv WHERE key = $1", key))
 
 
-async def put_control(pool, control: Dict[str, Any], asset: str = "btc") -> None:
+async def put_control(pool, control: Dict[str, Any], asset: str = "btc", account: str = "") -> None:
     await _ensure(pool)
     async with pool.acquire() as c:
         await c.execute("INSERT INTO polybot_kv (key, value, updated_at) VALUES ($2, $1::jsonb, now()) "
-                        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()", json.dumps(control), kv_key("control", asset))
+                        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()", json.dumps(control), kv_key("control", asset, account))
 
 
 def current_limits(control: Dict[str, Any]) -> Limits:
@@ -89,7 +93,8 @@ def current_limits(control: Dict[str, Any]) -> Limits:
 VER = "coalesce(version, '1.0')"
 
 
-async def scoreboard(pool, mode: str, now: Optional[dt.datetime] = None, version: str = STRATEGY_VERSION, asset: str = "btc") -> Dict[str, Any]:
+async def scoreboard(pool, mode: str, now: Optional[dt.datetime] = None, version: str = STRATEGY_VERSION, asset: str = "btc",
+                     account: str = "") -> Dict[str, Any]:
     """Win rate and profit for one mode (paper or live), over all time, the last 7 days and today (Los Angeles)."""
     await _ensure(pool)
     from openjarvis.server.crew.finance import la_midnight
@@ -124,18 +129,18 @@ async def scoreboard(pool, mode: str, now: Optional[dt.datetime] = None, version
     out["fills"] = int(fills or 0)
     out["sweeps"] = await sweep_stats(pool, mode, version, asset)
     out["shadow"] = await shadow_stats(pool, mode, version, asset)
-    out["shadow_detail"] = await shadow_detail(pool, asset)
+    out["shadow_detail"] = await shadow_detail(pool, asset, account)
     out["curve"] = curve
     out["older"] = [{"version": r["v"], "trades": int(r["n"]), "wins": int(r["wins"]), "profit": round(float(r["pnl"]), 2)} for r in older]
     return out
 
 
-async def shadow_detail(pool, asset: str) -> Optional[Dict[str, Any]]:
+async def shadow_detail(pool, asset: str, account: str = "") -> Optional[Dict[str, Any]]:
     """v1.21 shadow results, readable from the Station and the API: the calibration of the model and the book by confidence
     bucket (trades and wins per bucket) and the scalp shadow's entries, targets, stops and profit. Saved by the desk each window
     under polybot_kv (key 'shadow' for BTC, 'shadow:<asset>' for the others)."""
     async with pool.acquire() as c:
-        raw = await c.fetchval("SELECT value FROM polybot_kv WHERE key = $1", kv_key("shadow", asset))
+        raw = await c.fetchval("SELECT value FROM polybot_kv WHERE key = $1", kv_key("shadow", asset, account))
     if raw is None:
         return None
     d = json.loads(raw) if isinstance(raw, str) else (raw or {})
@@ -290,30 +295,30 @@ def analysis_text(a: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-async def events(pool, limit: int = 30, asset: str = "btc") -> List[Dict[str, Any]]:
+async def events(pool, limit: int = 30, asset: str = "btc", account: str = "") -> List[Dict[str, Any]]:
     await _ensure(pool)
     async with pool.acquire() as c:
         rows = await c.fetch("SELECT ts, level, text FROM polybot_events WHERE coalesce(asset, 'btc') = $2 ORDER BY id DESC LIMIT $1",
-                             max(1, min(limit, 200)), asset)
+                             max(1, min(limit, 200)), event_asset(asset, account))
     return [{"ts": r["ts"].isoformat(), "level": r["level"], "text": r["text"]} for r in rows]
 
 
-async def summary(pool, *, trade_limit: int = 50, asset: str = "btc") -> Dict[str, Any]:
+async def summary(pool, *, trade_limit: int = 50, asset: str = "btc", account: str = "") -> Dict[str, Any]:
     asset = asset if asset in KEYS else "btc"
-    status, control = await get_kv(pool, kv_key("status", asset)), await get_kv(pool, kv_key("control", asset))
+    status, control = await get_kv(pool, kv_key("status", asset, account)), await get_kv(pool, kv_key("control", asset, account))
     hb = float(status.get("heartbeat") or 0)
     mode = status.get("mode") or "paper"
     rows = ASSET_ROWS.get(asset, asset)                  # v1.23: the late desk's rows are BTC rows under its own paper label
-    paper = LEDGER_OF.get(asset, "paper")
-    live = LIVE_OF.get(asset, "live")
+    paper = label_for(LEDGER_OF.get(asset, "paper"), account)       # a subscriber's rows carry their account ("live@<tag>")
+    live = label_for(LIVE_OF.get(asset, "live"), account)
     live_rows = rows
     return {"status": status, "control": control, "running": bool(hb) and time.time() - hb < 300, "heartbeat_age_s": round(time.time() - hb) if hb else None,
             "limits": current_limits(control).__dict__,
-            "score": {"paper": await scoreboard(pool, paper, asset=rows), "live": await scoreboard(pool, live, asset=live_rows)},
+            "score": {"paper": await scoreboard(pool, paper, asset=rows, account=account), "live": await scoreboard(pool, live, asset=live_rows, account=account)},
             "trades": {"paper": await trades(pool, paper, trade_limit, asset=rows), "live": await trades(pool, live, trade_limit, asset=live_rows)},
-            "events": await events(pool, 30, asset), "mode": mode, "strategy": STRATEGY_VERSION, "deposits": deposits(),
-            "shadow": await shadow_stats(pool, live if mode == "live" else paper, STRATEGY_VERSION, rows), "shadow_detail": await shadow_detail(pool, asset),
-            "asset": asset, "name": NAMES[asset],
+            "events": await events(pool, 30, asset, account), "mode": mode, "strategy": STRATEGY_VERSION, "deposits": None if account else deposits(),
+            "shadow": await shadow_stats(pool, live if mode == "live" else paper, STRATEGY_VERSION, rows), "shadow_detail": await shadow_detail(pool, asset, account),
+            "asset": asset, "name": NAMES[asset], "account": account,
             "analysis": await analysis(pool, live if mode == "live" else paper, asset=rows)}
 
 
@@ -327,14 +332,16 @@ def deposits() -> Optional[float]:
     return v if v > 0 else None
 
 
-async def _ledger_pnl(pool, asset: str, now: dt.datetime) -> Dict[str, float]:
+async def _ledger_pnl(pool, asset: str, now: dt.datetime, account: str = "") -> Dict[str, float]:
     """Realised live P&L for one desk from its settled windows of the current strategy version: today (since LA midnight),
     last 30 days and all time. pre_today is what earlier strategy versions settled today; it is shown separately, not in the desk
     figures, because the scoreboards only count the current version. Every figure is settled windows only (no plug)."""
     from openjarvis.server.crew.finance import la_midnight
 
     # the desk's own live label (btclate: live-late) and its market rows (btclate: BTC's 5-minute markets)
-    lm, ar = LIVE_OF.get(asset, "live"), ASSET_ROWS.get(asset, asset)
+    lm, ar = label_for(LIVE_OF.get(asset, "live"), account), ASSET_ROWS.get(asset, asset)
+    if not all(ch.isalnum() or ch in "-@_" for ch in lm):
+        raise ValueError("bad ledger label")
     cur = f"mode='{lm}' AND {ASSET_SQL} = $2 AND {VER} = $3"
     old = f"mode='{lm}' AND {ASSET_SQL} = $2 AND {VER} <> $3"
     async with pool.acquire() as c:
@@ -352,12 +359,13 @@ async def _ledger_pnl(pool, asset: str, now: dt.datetime) -> Dict[str, float]:
             "pre_today": round(float(pre_today or 0), 2), "pre_all": round(float(pre_all or 0), 2)}
 
 
-async def live_pnl_all(pool) -> Dict[str, Dict[str, float]]:
+async def live_pnl_all(pool, account: str = "") -> Dict[str, Dict[str, float]]:
     """Live realised trading profit per desk (paper never counts as money), from each desk's own settled windows.
     No desk absorbs the difference from the account balance: that gap is reported separately by reconciliation()."""
     now = dt.datetime.now(dt.timezone.utc)
     await _ensure(pool)
-    return {a: await _ledger_pnl(pool, a, now) for a in KEYS}
+    keys = KEYS if not account else TENANT_ASSETS
+    return {a: await _ledger_pnl(pool, a, now, account) for a in keys}
 
 
 async def reconciliation(pool) -> Dict[str, Any]:
@@ -426,7 +434,7 @@ def status_text(s: Dict[str, Any]) -> str:
         if st.get("account_value") is not None:
             vs = st.get("version_start")
             lines.append(f"Real Polymarket account value ${st['account_value']:.2f}" + (f" ({st['account_value'] - vs:+.2f} since strategy v{st.get('strategy')} started at ${vs:.2f})" if vs is not None else "")
-                         + (f"; all-time {st['account_value'] - deposits():+.2f} on ${deposits():.2f} deposited" if deposits() else "")
+                         + (f"; all-time {st['account_value'] - s['deposits']:+.2f} on ${s['deposits']:.2f} deposited" if s.get("deposits") else "")
                          + ". Trust this over the scoreboard if they differ.")
         lines.append(f"At risk now ${st.get('at_risk', 0):.2f}; today's P&L {st.get('day_pnl', 0):+.2f}"
                      + (f"; buying power ${st['balance']:.2f}" if st.get("balance") is not None else "") + ".")
@@ -464,35 +472,35 @@ def requested_limits(control: Dict[str, Any], changes: Dict[str, Any]) -> Limits
     return Limits(**cur).clean()
 
 
-async def control(pool, action: str, limits: Optional[Dict[str, Any]] = None, asset: str = "btc") -> Dict[str, Any]:
+async def control(pool, action: str, limits: Optional[Dict[str, Any]] = None, asset: str = "btc", account: str = "") -> Dict[str, Any]:
     """Changes that need no Approve. Returns {"done": text} or {"needs_approval": text, "action": {...}} for the caller to turn
     into an Approve card. Never sets live on its own."""
     asset = asset if asset in KEYS else "btc"
     name = NAMES[asset]
-    ctl = await get_kv(pool, kv_key("control", asset))
+    ctl = await get_kv(pool, kv_key("control", asset, account))
     action = str(action or "").strip().lower()
     if action == "pause":
         ctl["paused"] = True
-        await put_control(pool, ctl, asset)
+        await put_control(pool, ctl, asset, account)
         return {"done": f"{name} paused: it pulls its quotes within a few seconds and holds what it already owns to settlement."}
     if action == "resume":
         ctl["paused"], ctl["kill"] = False, False
-        await put_control(pool, ctl, asset)
+        await put_control(pool, ctl, asset, account)
         return {"done": f"{name} resumed."}
     if action in ("flatten", "kill", "stop"):
         ctl["kill"] = True
-        await put_control(pool, ctl, asset)
+        await put_control(pool, ctl, asset, account)
         return {"done": f"{name}: kill switch on: every resting order is cancelled within a few seconds. Contracts already bought settle on their own. Say resume to restart."}
     if action == "reset_day":                     # the daily stop counts from the account value now (all desks share one account)
         stamp = dt.datetime.now(dt.timezone.utc).isoformat()
-        for a in KEYS:
-            c = ctl if a == asset else await get_kv(pool, kv_key("control", a))
+        for a in (KEYS if not account else TENANT_ASSETS):
+            c = ctl if a == asset else await get_kv(pool, kv_key("control", a, account))
             c["day_reset_at"] = stamp
-            await put_control(pool, c, a)
+            await put_control(pool, c, a, account)
         return {"done": "Daily stop reset on every desk: today's loss limit now counts from the current account value. Trading resumes within about 20 seconds."}
     if action == "paper":
         ctl["mode"] = "paper"
-        await put_control(pool, ctl, asset)
+        await put_control(pool, ctl, asset, account)
         return {"done": f"{name} switched to PAPER: no more real orders (resting live orders are cancelled)."}
     if action == "go_live":
         lim = current_limits(ctl)
@@ -503,7 +511,7 @@ async def control(pool, action: str, limits: Optional[Dict[str, Any]] = None, as
         new = requested_limits(ctl, limits or {})
         if new.tighter_than(current_limits(ctl)):
             ctl["limits"] = new.__dict__
-            await put_control(pool, ctl, asset)
+            await put_control(pool, ctl, asset, account)
             return {"done": "Limits tightened: " + _lim_text(new)}
         return {"needs_approval": f"Loosen the {name}'s limits to: " + _lim_text(new) + ".",
                 "action": {"type": "desk_control", "asset": asset, "set": {"limits": new.__dict__}}}
@@ -520,19 +528,19 @@ def _stop_text(lim: Dict[str, Any]) -> str:
     return f"{pct:g}% of the day's starting balance" if pct > 0 else f"${float(lim.get('daily_loss_usd') or 0):.2f}"
 
 
-async def apply_approved(pool, setting: Dict[str, Any], asset: str = "btc") -> str:
-    """Runs only from the owner's Approve tap (engine._answer_ops)."""
+async def apply_approved(pool, setting: Dict[str, Any], asset: str = "btc", account: str = "") -> str:
+    """Runs only from an Approve tap (engine._answer_ops): the owner's for his desks, the account holder's for their own."""
     asset = asset if asset in KEYS else "btc"
-    ctl = await get_kv(pool, kv_key("control", asset))
+    ctl = await get_kv(pool, kv_key("control", asset, account))
     if setting.get("mode") == "live":
         ctl["mode"], ctl["kill"], ctl["paused"] = "live", False, False
         ctl["live_approved_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
-        await put_control(pool, ctl, asset)
+        await put_control(pool, ctl, asset, account)
         return (f"Approved: the {NAMES[asset]} goes LIVE within about 20 seconds, if the worker has POLYBOT_ALLOW_LIVE=true and its API keys. "
                 "Every entry and settlement is pushed to your phone.")
     if isinstance(setting.get("limits"), dict):
         new = Limits(**{k: float(setting["limits"][k]) for k in LIMIT_FIELDS if k in setting["limits"]}).clean()
         ctl["limits"] = new.__dict__
-        await put_control(pool, ctl, asset)
+        await put_control(pool, ctl, asset, account)
         return "Approved: limits are now " + _lim_text(new) + "."
     raise ValueError("Nothing to apply.")

@@ -57,6 +57,7 @@ class Config:
     secret_key: str = ""
     horizon: str = "5m"                 # which Up/Down series: 5m, 15m or 1h (in trading hours)
     horizon_night: str = ""             # outside trading hours, if different (BTC: 15m by day, 5m at night for the sweeps)
+    account: str = ""                   # whose desk: "" is the owner's (env keys); a subscriber's tag keeps its own store, lock, ledger and controls
     asset: str = "btc"                  # the desk's id (btc, btc15, eth, sol, xrp): its own store, lock, controls and scoreboard
     coin: str = "btc"                   # the coin it trades (btc15 trades BTC's 15-minute markets)
     ledger: str = "paper"               # v1.23: the ledger label of its paper trades (btclate writes "paper-late", so it never mixes with BTC's paper rows)
@@ -130,6 +131,23 @@ LEDGER = {"btclate": "paper-late"}
 LIVE_LEDGER = {"btclate": "live-late"}
 SHARED_MARKET = {}   # v1.24: one BTC 5m desk, so nothing shares a market
 LIVE_MODES = ("live", "live-late")       # every ledger label that is real money
+ACCOUNT_SEP = "@"                        # a subscriber's ledger labels carry their account: "live@<tag>", "paper@<tag>"
+
+
+def is_live_label(label: str) -> bool:
+    """A ledger label that is real money, for the owner's desks ('live') and a subscriber's ('live@<tag>')."""
+    return str(label or "").split(ACCOUNT_SEP, 1)[0] in LIVE_MODES
+
+
+def label_for(label: str, account: str = "") -> str:
+    return f"{label}{ACCOUNT_SEP}{account}" if account else label
+
+
+def for_account(cfg: "Config", account: str, key_id: str, secret_key: str, notify_url: str = "") -> "Config":
+    """The same desk, run for a subscriber on their own Polymarket keys: its own ledger labels, controls, lock and phone topic.
+    Nothing of the owner's (keys, notify topic, ledger rows) is shared."""
+    return replace(cfg, account=account, key_id=key_id, secret_key=secret_key, notify_url=notify_url,
+                   ledger=label_for(cfg.ledger, account), live_ledger=label_for(cfg.live_ledger, account))
 METHODS = {"btclate": ("late",)}
 PAPER_ONLY = ()                          # desks that can never trade real money (none now: btclate trades live, on its own ledger)
 

@@ -665,7 +665,21 @@ class CrewEngine:
     async def _month_room(self, user_id: str) -> float:
         from openjarvis.server.crew import usage as us
 
-        return us.room_usd(await self.store.month_spend(user_id, us.month_start(self.now())), self.env)
+        spent = await self.store.month_spend(user_id, us.month_start(self.now()))
+        if not await self._has_paid_plan(user_id):           # free access (CREW_COMP_EMAILS): the included work only, never unbilled extras
+            return us.plan(self.env)["included_usd"] - spent
+        return us.room_usd(spent, self.env)
+
+    async def _has_paid_plan(self, user_id: str) -> bool:
+        pool = getattr(self, "pool", None)
+        if pool is None:
+            return True
+        try:
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow("SELECT status FROM subscriptions WHERE user_id = $1", user_id)
+            return bool(row) and row["status"] in ("active", "trialing")
+        except Exception:
+            return True
 
     async def usage(self, user_id: str) -> Optional[Dict[str, Any]]:
         """A subscriber's month: included work used and extra usage billed. None for the owner (never metered)."""
@@ -2388,7 +2402,14 @@ class CrewEngine:
 
                 if getattr(self, "pool", None) is None:
                     raise ValueError("the desk's database is not reachable")
-                result = await desk.apply_approved(self.pool, act.get("set") or {}, str(act.get("asset") or "btc"))
+                from openjarvis.server.crew import tenant_desks
+
+                acct = ""                                              # whose desk: the card's own account, never one named in the card
+                if not await self.is_owner(user_id):
+                    if not await tenant_desks.has_desk(self.store, user_id):
+                        raise ValueError("this account has no Polymarket Desk")
+                    acct = tenant_desks.account_tag(user_id)
+                result = await desk.apply_approved(self.pool, act.get("set") or {}, str(act.get("asset") or "btc"), acct)
             elif kind == "marnyx_approve":
                 outs = []
                 for name in act.get("businesses") or []:                 # goes back into Marnyx and approves every held draft of each brand

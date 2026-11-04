@@ -237,9 +237,11 @@ STATION_PAGE = r"""<!DOCTYPE html>
   <button class="tbtn" id="t-night" title="Let the crew keep working through quiet hours">NIGHT SHIFT</button>
   <button class="tbtn" id="t-view" title="Switch between the flat map and the 3D station">VIEW: 2D</button>
   <button class="tbtn warn" id="t-pause" title="Stop the crew from starting any new work">PAUSE ALL</button>
+  <button class="tbtn" id="t-acct" onclick="accountMenu()" title="Look at another account's trading bots and income (read only)" hidden>ACCOUNTS ▾</button>
   <button class="tbtn" id="t-sub" onclick="subscribe()" hidden>SUBSCRIBE</button>
   <button class="tbtn" onclick="logout()">LOGOUT</button>
 </div>
+<div id="acct-menu" hidden style="position:fixed;top:44px;right:120px;z-index:60;background:#060b12;border:1px solid var(--cyan);border-radius:3px;padding:6px;min-width:230px;max-width:92vw"></div>
 <div id="main">
   <div id="left" class="col"><div id="vitals-box"></div><div id="roster-box"></div><div id="library-box"></div><div class="col-grip" id="left-grip" title="Drag to resize"></div></div>
   <div id="center">
@@ -476,6 +478,7 @@ async function refresh() {
   if (!r.data.enabled) { crewOff(r.data.detail || 'The crew is not switched on.'); return; }
   gate(null);
   S = r.data;
+  document.getElementById('t-acct').hidden = !S.owner;
   spinOnMissionChange(S.missions || []);                  // a mission started or finished: spin the ring
   document.getElementById('c-run').textContent = S.running;
   document.getElementById('c-spend').textContent = money(S.spend.today_usd) + (S.spend.daily_cap_usd == null ? ' · no cap' : ' of ' + money(S.spend.daily_cap_usd) + ' cap');
@@ -534,7 +537,8 @@ function renderSide(force) {
   document.getElementById('links-box').replaceChildren(linksSec());
   document.getElementById('vitals-box').replaceChildren(vitalsSec());
   document.getElementById('library-box').replaceChildren(librarySec());
-  if (selected === 'setup') side.append(backSec(), setupSec());
+  if (selected === 'acct' && VIEW_AS) side.append(accountSec());
+  else if (selected === 'setup') side.append(backSec(), setupSec());
   else if (selected === 'hub' || selected === 'links' || String(selected).startsWith('m:')) {
     if (!isOwner() && (!S.businesses.length || !S.connections.stripe.connected)) side.append(setupSec());
     side.append(overviewSec(), inboxSec(), missionsSec(), ledgerSec(S.events, 'Station Ledger'));
@@ -795,7 +799,7 @@ async function refreshSubscription() {
   const btn = document.getElementById('t-sub');
   const r = await api('/api/billing/status').catch(() => null);
   if (!r || !r.ok) return;
-  btn.hidden = !r.data.enabled; btn.disabled = !!r.data.active; btn.textContent = r.data.active ? 'SUBSCRIBED' : 'SUBSCRIBE';
+  btn.hidden = !r.data.enabled || !!r.data.comp; btn.disabled = !!r.data.active; btn.textContent = r.data.active ? 'SUBSCRIBED' : 'SUBSCRIBE';
 }
 async function subscribe() {
   const btn = document.getElementById('t-sub');
@@ -923,7 +927,8 @@ function factorySec(key) {
   if (key === 'polymarket') { accountLines(DESKS.btc).forEach(el => s.append(el)); DESK_ORDER.forEach(a => {
     const d = DESKS[a]; const wf = d && !d.error && (d.status || {}).mode === 'live' ? windowFlag(d.status || {}, DESK_LABEL(a) + ' Desk') : null; if (wf) s.append(wf);   // real-money desks only
   }); }
-  if (key === 'polymarket') { DESK_ORDER.map(a => DESK_KEY[a]).forEach(k => s.append(deskSec(k))); s.append(deskLogSec()); }   // every desk, then one log
+  if (key === 'polymarket' && !isOwner() && DESKS.btc && DESKS.btc.error && /Connect/.test(DESKS.btc.error)) s.append(polymarketConnectSec());
+  else if (key === 'polymarket') { DESK_ORDER.map(a => DESK_KEY[a]).forEach(k => s.append(deskSec(k))); s.append(deskLogSec()); }   // every desk, then one log
   if (/stock market/i.test(b.label || '')) s.append(robinhoodSec());                    // all Robinhood crypto work lives in the Stock Market factory
   if (b.platform) {
     const c = S.connections && S.connections[key];
@@ -985,8 +990,74 @@ function loadDesk(force, asset) {
   const a = asset || 'btc';
   if (DESK_LOADINGS[a] || (!force && Date.now() - (DESK_ATS[a] || 0) < 15000)) return;
   DESK_LOADINGS[a] = true;
-  api('/api/crew/desk?limit=100&asset=' + a).then(r => { DESKS[a] = r.ok ? r.data : { error: (r.data && r.data.detail) || 'The desk could not be loaded.' }; DESK_ATS[a] = Date.now(); DESK_LOADINGS[a] = false;
-    if (selected === 'f:polymarket') renderSide(); }).catch(() => { DESK_LOADINGS[a] = false; });
+  const view = VIEW_AS, into = DESKS;
+  api('/api/crew/desk?limit=100&asset=' + a + (view ? '&view=' + encodeURIComponent(view) : '')).then(r => { if (view !== VIEW_AS || into !== DESKS) { DESK_LOADINGS[a] = false; return; }
+    DESKS[a] = r.ok ? r.data : { error: (r.data && r.data.detail) || 'The desk could not be loaded.' }; DESK_ATS[a] = Date.now(); DESK_LOADINGS[a] = false;
+    if (selected === 'f:polymarket' || selected === 'acct') renderSide(); }).catch(() => { DESK_LOADINGS[a] = false; });
+}
+// ── the owner's account switcher: another account's trading bots and income, read only ──
+let VIEW_AS = '', VIEW_INFO = null, OWN_DESKS = null;
+async function accountMenu() {
+  const menu = document.getElementById('acct-menu');
+  if (!menu.hidden) { menu.hidden = true; return; }
+  menu.replaceChildren(mk('div', 'dim', 'Loading accounts…')); menu.hidden = false;
+  const r = await api('/api/crew/accounts').catch(() => null);
+  menu.replaceChildren();
+  const pick = (label, fn, on) => { const b = mk('button', 'b' + (on ? ' on' : ''), label); b.style.display = 'block'; b.style.width = '100%'; b.style.margin = '3px 0'; b.style.textAlign = 'left';
+    b.onclick = () => { menu.hidden = true; fn(); }; menu.append(b); };
+  pick('My Station', exitAccount, !VIEW_AS);
+  const list = r && r.ok ? r.data.accounts || [] : [];
+  if (!list.length) menu.append(mk('div', 'dim', r && r.ok ? 'No other accounts yet.' : 'Could not load the accounts.'));
+  list.forEach(a => pick(a.name + ' · ' + a.email + (a.desk ? '' : ' (no desk yet)'), () => enterAccount(a), VIEW_AS === a.id));
+}
+function enterAccount(a) {
+  if (!VIEW_AS) OWN_DESKS = { d: DESKS, at: DESK_ATS, ld: DESK_LOADINGS, v: DESK_VIEW };
+  VIEW_AS = a.id; VIEW_INFO = { name: a.name, email: a.email, loading: true };
+  DESKS = {}; DESK_ATS = {}; DESK_LOADINGS = {}; DESK_VIEW = '';
+  document.getElementById('t-acct').textContent = String(a.name).toUpperCase().slice(0, 14) + ' ▾'; document.getElementById('t-acct').classList.add('on');
+  selected = 'acct'; renderSide(true);
+  api('/api/crew/accounts/' + encodeURIComponent(a.id) + '/overview').then(r => { if (VIEW_AS !== a.id) return;
+    VIEW_INFO = r.ok ? Object.assign({ name: a.name, email: a.email }, r.data) : { name: a.name, email: a.email, error: (r.data && r.data.detail) || 'Could not load that account.' };
+    if (selected === 'acct') renderSide(); }).catch(() => {});
+}
+function exitAccount() {
+  if (VIEW_AS && OWN_DESKS) { DESKS = OWN_DESKS.d; DESK_ATS = OWN_DESKS.at; DESK_LOADINGS = OWN_DESKS.ld; DESK_VIEW = OWN_DESKS.v; }
+  VIEW_AS = ''; VIEW_INFO = null; OWN_DESKS = null;
+  const b = document.getElementById('t-acct'); b.textContent = 'ACCOUNTS ▾'; b.classList.remove('on');
+  if (selected === 'acct') selected = 'hub';
+  renderSide(true);
+}
+function accountSec() {
+  const s = mk('div', 'sec'), i = VIEW_INFO || {};
+  const top = mk('div', 'row'); const ex = mk('button', 'b', '← My Station'); ex.onclick = exitAccount; top.append(ex); s.append(top);
+  const l = mk('div', 'lbl'); l.append(mk('span', null, 'Viewing account'), mk('span', 'tag', 'READ ONLY')); s.append(l);
+  const h = mk('div', 'h', i.name || ''); h.style.color = '#00e5ff'; s.append(h, mk('div', 'dim', i.email || ''));
+  if (i.error) { s.append(mk('div', 'dim', i.error)); return s; }
+  if (i.loading) { s.append(mk('div', 'dim', 'Loading…')); return s; }
+  const inc = i.desk && i.desk.income ? i.desk.income : null, t = inc ? inc.trading || {} : {};
+  const il = mk('div', 'lbl'); il.style.marginTop = '10px'; il.textContent = 'Overall income'; s.append(il);
+  const fin = i.finance && i.finance.total ? i.finance.total : null;
+  if (fin) s.append(pnlBlock(fin, 'All of this account (Stripe + live trading − crew costs)'));
+  if (inc) {
+    const row = (label, v) => { const r = mk('div', 'row'), x = mk('span', 'grow', label + ': ' + signed(v)); x.style.color = pnlColor(v); r.append(x); s.append(r); };
+    row('Live trading today', t.today); row('Live trading, last 30 days', t.d30); row('Live trading, all time', t.all);
+    if (inc.account_value != null) s.append(mk('div', 'dim', 'Polymarket account value ' + money(inc.account_value) + (inc.buying_power != null ? ' · buying power ' + money(inc.buying_power) : '')));
+    else s.append(mk('div', 'dim', 'The account value shows once a bot trades live.'));
+  } else s.append(mk('div', 'dim', 'No Polymarket Desk on this account yet.'));
+  if (i.desk) { DESK_ORDER.map(a => DESK_KEY[a]).forEach(k => s.append(deskSec(k))); s.append(deskLogSec()); }
+  return s;
+}
+function polymarketConnectSec() {
+  const s = mk('div', 'sec');
+  s.append(mk('div', 'lbl', 'Connect Polymarket US'), mk('div', 'dim', 'Paste the API key ID and secret key from Polymarket US (Account → API keys). They are stored encrypted and used only by your own two bots, which start in paper.'));
+  const kid = document.createElement('input'); kid.placeholder = 'Key ID'; kid.id = 'pm-kid';
+  const sec = document.createElement('input'); sec.placeholder = 'Secret key'; sec.type = 'password'; sec.id = 'pm-sec';
+  [kid, sec].forEach(x => { x.style.width = '100%'; x.style.margin = '4px 0'; s.append(x); });
+  const b = mk('button', 'b', 'CONNECT'); const msg = mk('div', 'dim', '');
+  b.onclick = async () => { b.disabled = true; const r = await api('/api/crew/polymarket/connect', 'POST', { key_id: kid.value.trim(), secret_key: sec.value.trim() });
+    b.disabled = false; msg.textContent = (r.data && (r.data.done || r.data.detail)) || (r.ok ? 'Connected.' : 'That did not work.');
+    if (r.ok) { DESKS = {}; DESK_ATS = {}; sec.value = ''; refresh(); setTimeout(() => renderSide(true), 4000); } };
+  s.append(b, msg); return s;
 }
 function signed(v) { v = Number(v || 0); return (v < 0 ? '-' : '+') + money(Math.abs(v)); }
 function pnlColor(v) { return Number(v || 0) < 0 ? '#ff3344' : '#00ff99'; }
@@ -1128,7 +1199,9 @@ function deskSec(key) {
   // switches (going live is an Approve card from Helix, never a button here)
   const ctl = mk('div', 'desk-tabs');
   const act = (label, action, cls) => { const b = mk('button', 'b' + (cls ? ' ' + cls : ''), label);
-    b.onclick = async () => { if (b.disabled) return; b.disabled = true; const was = b.textContent; b.textContent = was + '…';
+    b.onclick = async () => { if (b.disabled) return;
+      if (action === 'go_live' && !isOwner() && !confirm('Trade REAL money with the ' + DESK_LABEL(A) + ' bot on your Polymarket account?')) return;
+      b.disabled = true; const was = b.textContent; b.textContent = was + '…';
       const r = await api('/api/crew/desk/control', 'POST', { action, asset: A });
       if (!r.ok) { b.disabled = false; b.textContent = was; alert((r.data && r.data.detail) || 'Could not do that.'); return; }
       if (r.data && r.data.done && action === 'go_live') alert(r.data.done);
@@ -1140,12 +1213,17 @@ function deskSec(key) {
       }
       DESK_LOADINGS[A] = false; renderSide(); loadDesk(true, A);
       [8000, 25000].forEach(ms => setTimeout(() => { DESK_LOADINGS[A] = false; loadDesk(true, A); }, ms)); }; ctl.append(b); };
-  if (wantStop) act('Resume', 'resume'); else act('Pause', 'pause');
-  act('Kill switch', 'flatten', 'no');
-  if ((st.mode || 'paper') === 'live') act('Back to paper', 'paper'); else act('Go live', 'go_live');
-  if (/Daily loss limit/.test(st.reason || '')) act('Reset daily stop', 'reset_day');
-  s.append(ctl);
-  if ((st.mode || 'paper') !== 'live') s.append(mk('div', 'dim', 'Go live puts an Approve card in the Helix inbox; real money only after you tap Approve there.'));
+  if (DESK.read_only) {
+    s.append(mk('div', 'dim', 'Read only: you are looking at another account\'s desk. Only its owner can pause it or go live.'));
+  } else {
+    if (wantStop) act('Resume', 'resume'); else act('Pause', 'pause');
+    act('Kill switch', 'flatten', 'no');
+    if ((st.mode || 'paper') === 'live') act('Back to paper', 'paper'); else act('Go live', 'go_live');
+    if (/Daily loss limit/.test(st.reason || '')) act('Reset daily stop', 'reset_day');
+    s.append(ctl);
+    if ((st.mode || 'paper') !== 'live') s.append(mk('div', 'dim', isOwner() ? 'Go live puts an Approve card in the Helix inbox; real money only after you tap Approve there.'
+      : 'Go live trades real money on your own Polymarket account, sized by the limits below.'));
+  }
   const lim = DESK.limits || {};
   s.append(mk('div', 'dim', 'Limits: bankroll ' + ((st.mode === 'live' && st.account_value != null) ? money(st.account_value) + ' (the whole account)' : money(lim.bankroll_usd)) + ' · bets sized by confidence, up to ' + (st.window_pct || 7.5) + '% of the current balance per window' + (st.window_cap != null ? ' (' + money(st.window_cap) + ' now)' : '')
     + ' · daily stop ' + (lim.daily_loss_pct > 0 ? lim.daily_loss_pct + '% of the day\'s start' + (st.day_limit != null ? ' (' + money(st.day_limit) + ' today)' : '') : money(lim.daily_loss_usd))
@@ -1664,7 +1742,7 @@ function fillBay(b) {
   if (b.state === 'IDLE') b.powered = true;                                     // an idle factory stays lit and its tube keeps flowing
   // the product itself: LIVE or DOWN from the server's check of its site, shown whenever no crew is working there
   // the trading desk: its own state (from the desk's heartbeat), not the crew's
-  if (b.key === 'polymarket' && b.state === 'IDLE') {
+  if (b.key === 'polymarket' && b.state === 'IDLE' && !VIEW_AS) {
     DESK_ORDER.forEach(a => loadDesk(false, a));
     const ds = DESK_ORDER.map(a => DESKS[a]).filter(d => d && !d.error), run = ds.filter(d => d.running), st = d => d.status || {};
     b.state = !ds.length ? 'IDLE' : !run.length ? 'DOWN' : run.some(d => st(d).mode === 'live' && !st(d).paused && !st(d).kill) ? 'LIVE TRADING'
@@ -2026,6 +2104,7 @@ function layout() {
   const plat = {}; PLATFORMS.forEach(p => { plat[p.key] = platformModule(p); });
   const fresh = pl[3] ? fillBay(Object.assign({}, pl[3])) : nk.length ? newBay(nk[0]) : open(3);
   const outerOpen = (j) => Object.assign(open(10 + j), { label: 'EXPANSION BAY ' + (j + 1) });                // expansion bay numbers run 1 to 16 around the outer ring
+  if (!isOwner()) ['etsy', 'google_play', 'app_store'].forEach((k, i) => { plat[k] = open(20 + i); });   // a subscriber's Station starts blank: Stripe, then open bays
   const inner = RING.map(k => k === 'new' ? fresh : (prod[k] || plat[k]));
   mods = inner.map((m, i) => {
     const a = -Math.PI / 2 + i * 2 * Math.PI / N;
@@ -2789,7 +2868,7 @@ function overviewSec() {
   const l = mk('div', 'lbl'); l.append(mk('span', null, 'All businesses'), mk('span', 'act', FIN ? 'as of ' + new Date(FIN.as_of).toLocaleTimeString() : 'loading…')); s.append(l);
   if (!FIN) { s.append(mk('div', 'dim', 'Loading the numbers…')); return s; }
   // the main factories always show (zeros until they have activity); missions (new: rows) and the crew total stay out
-  const MAIN = ['flipdeck', 'marnyx', 'deadzone', 'aibussol', 'etsy', 'google_play', 'app_store'];
+  const MAIN = isOwner() ? ['flipdeck', 'marnyx', 'deadzone', 'aibussol', 'etsy', 'google_play', 'app_store'] : [];   // a subscriber's box lists only their own businesses
   const LABEL = { flipdeck: 'FlipDeck', marnyx: 'Marnyx', deadzone: 'Deadzone', aibussol: 'Aibussol', etsy: 'Etsy', google_play: 'Google Play', app_store: 'App Store' };
   // one row per main factory and per business that has a factory (a business you add gets its row here); mission factories stay out
   const keys = [...new Set([...MAIN, ...(S && S.businesses ? S.businesses.map(b => b.key).filter(Boolean) : [])])];

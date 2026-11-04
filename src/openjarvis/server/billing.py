@@ -153,6 +153,10 @@ async def status(request: Request):
     user_id = getattr(request.state, "user_id", "") or ""
     if not user_id:
         return JSONResponse({"detail": "Sign in first."}, status_code=401)
+    from openjarvis.server.crew import is_comp
+
+    if is_comp(getattr(request.state, "user_email", "") or ""):          # free access from the owner: no Subscribe button
+        return {"enabled": enabled(), "active": True, "status": "comp", "comp": True}
     async with request.app.state.session_store._pool.acquire() as conn:
         row = await conn.fetchrow("SELECT status FROM subscriptions WHERE user_id = $1", user_id)
     return {"enabled": enabled(), "active": bool(row and row["status"] in ACTIVE), "status": row["status"] if row else None}
@@ -170,6 +174,10 @@ async def checkout(request: Request):
         row = await conn.fetchrow("SELECT status FROM subscriptions WHERE user_id = $1", user_id)
     if row and row["status"] in ACTIVE:
         return JSONResponse({"detail": "You already have an active subscription."}, status_code=409)
+    from openjarvis.server.crew import is_comp
+
+    if is_comp(email):
+        return JSONResponse({"detail": "Your account already has free access."}, status_code=409)
     base = str(request.base_url).rstrip("/")
     try:
         url = await create_checkout(config(), user_id, email, f"{base}/?subscribed=1", f"{base}/?subscribed=0")

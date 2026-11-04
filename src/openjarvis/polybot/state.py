@@ -35,10 +35,18 @@ ALTER TABLE polybot_events ADD COLUMN IF NOT EXISTS asset TEXT;
 """
 
 
-def kv_key(key: str, asset: str = "btc") -> str:
-    """BTC keeps the original keys ('status', 'control'); other desks get their own ('status:eth')."""
+def kv_key(key: str, asset: str = "btc", account: str = "") -> str:
+    """BTC keeps the original keys ('status', 'control'); other desks get their own ('status:eth'); a subscriber's desks carry
+    their account ('status@<tag>', 'status:btc15@<tag>')."""
     a = (asset or "btc").lower()
-    return key if a == "btc" else f"{key}:{a}"
+    base = key if a == "btc" else f"{key}:{a}"
+    return f"{base}@{account}" if account else base
+
+
+def event_asset(asset: str, account: str = "") -> str:
+    """The asset column of a desk's log lines (a subscriber's carry their account)."""
+    a = (asset or "btc").lower()
+    return f"{a}@{account}" if account else a
 
 
 def asset_of(slug: str) -> str:
@@ -56,21 +64,23 @@ def desk_sql(col: str = "slug") -> str:
 class ScopedStore:
     """One desk's view of the shared store: its own status and control keys; the ledger tables are shared (rows carry the slug)."""
 
-    def __init__(self, store, asset: str) -> None:
-        self.store, self.asset = store, (asset or "btc").lower()
+    def __init__(self, store, asset: str, account: str = "", live_label: str = "live") -> None:
+        self.store, self.asset, self.account, self.live_label = store, (asset or "btc").lower(), account or "", live_label
 
     async def get(self, key: str):
-        return await self.store.get(kv_key(key, self.asset))
+        return await self.store.get(kv_key(key, self.asset, self.account))
 
     async def put(self, key: str, value) -> None:
-        await self.store.put(kv_key(key, self.asset), value)
+        await self.store.put(kv_key(key, self.asset, self.account), value)
 
     async def flush(self, ledger) -> None:
         await self.store.flush(ledger)
 
     async def pair_history(self, days: int = 21) -> List[Dict[str, Any]]:
         fn = getattr(self.store, "pair_history", None)
-        return await fn(self.asset, days) if fn else []
+        if not fn:
+            return []
+        return await fn(self.asset, days) if self.live_label == "live" else await fn(self.asset, days, self.live_label)
 
     async def close(self) -> None:
         await self.store.close()
@@ -84,7 +94,7 @@ class Ledger:
     """Buffers fills, windows and events, and flushes them in one go."""
 
     def __init__(self, asset: str = "btc") -> None:
-        self.asset = asset
+        self.asset = asset                                   # the events' asset column (event_asset: a subscriber's carries the account)
         self.fills: List[Dict[str, Any]] = []
         self.windows: Dict[str, Dict[str, Any]] = {}
         self.events: List[Dict[str, Any]] = []
@@ -162,13 +172,13 @@ class PgStore:
                     await c.executemany("INSERT INTO polybot_events (ts, level, text, asset) VALUES ($1,$2,$3,$4)",
                                         [(_t(e["ts"]), e["level"], e["text"], e.get("asset") or "btc") for e in events])
 
-    async def pair_history(self, asset: str, days: int = 21) -> List[Dict[str, Any]]:
+    async def pair_history(self, asset: str, days: int = 21, live_label: str = "live") -> List[Dict[str, Any]]:
         """v1.14: settled LIVE fills of one desk over the last `days` days, with how their window settled (for learned pair sizing)."""
         async with self.pool.acquire() as c:
             rows = await c.fetch(
                 "SELECT f.slug, f.side, f.qty, f.cost, f.features, f.version, w.up FROM polybot_fills f JOIN polybot_windows w "
-                "ON w.slug = f.slug AND w.mode = f.mode WHERE f.mode = 'live' AND w.up IS NOT NULL AND " + desk_sql("f.slug") + " = $1 "
-                "AND f.ts >= now() - make_interval(days => $2) ORDER BY f.ts", asset, int(days))
+                "ON w.slug = f.slug AND w.mode = f.mode WHERE f.mode = $3 AND w.up IS NOT NULL AND " + desk_sql("f.slug") + " = $1 "
+                "AND f.ts >= now() - make_interval(days => $2) ORDER BY f.ts", asset, int(days), live_label)
         out = []
         for r in rows:
             feat = r["features"]

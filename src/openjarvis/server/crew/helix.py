@@ -511,19 +511,24 @@ async def _desk(ctx: CrewCtx, name: str, args: Dict[str, Any]) -> str:
     """The Polymarket Desk: read its scoreboard, or flip its switches. Live and looser limits only ever become Approve cards."""
     from openjarvis.server.crew import desk
 
+    from openjarvis.server.crew import tenant_desks
+
     eng = ctx.engine
+    acct = ""                                           # the owner's desks; a subscriber's Helix sees only their own copy
     if not await eng.is_owner(ctx.user_id):
-        return "The trading desk is the owner's only."
+        if not await tenant_desks.has_desk(eng.store, ctx.user_id):
+            return "This account has no Polymarket Desk yet: connect Polymarket US keys on the Station first."
+        acct = tenant_desks.account_tag(ctx.user_id)
     pool = getattr(eng, "pool", None)
     if pool is None:
         return "The desk's database is not reachable right now."
     asset = str(args.get("asset") or "btc").lower()
-    if asset not in desk.KEYS:
+    if asset not in (desk.TENANT_ASSETS if acct else desk.KEYS):
         asset = "btc"
     if name == "trading_desk":
-        return desk.status_text(await desk.summary(pool, trade_limit=10, asset=asset))
+        return desk.status_text(await desk.summary(pool, trade_limit=10, asset=asset, account=acct))
     lim = {k: args.get(k) for k in desk.LIMIT_FIELDS if args.get(k) is not None}
-    out = await desk.control(pool, str(args.get("action") or ""), lim, asset=asset)
+    out = await desk.control(pool, str(args.get("action") or ""), lim, asset=asset, account=acct)
     if "done" in out:
         await eng.store.add_event(ctx.user_id, "ops", f"{desk.NAMES[asset]}: {out['done']}")
         return out["done"]

@@ -13,7 +13,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 from dataclasses import replace
 
 from openjarvis.polybot import brain, directional, exposure, model, risk, setups, shadow, strategy
-from openjarvis.polybot.config import LIVE_MODES, SHARED_MARKET
+from openjarvis.polybot.config import SHARED_MARKET, is_live_label
 from openjarvis.polybot.brokers import BookView, Fill, LiveBroker, PaperBroker, parse_ts
 from openjarvis.polybot.client import PMError, money
 from openjarvis.polybot.config import Config, apply_control
@@ -63,7 +63,8 @@ class Desk:
         self.clock, self.sleep = clock, sleep
         self.tape = model.PriceTape()
         self.rs = risk.RiskState()
-        self.ledger = Ledger(base.asset)
+        from openjarvis.polybot.state import event_asset
+        self.ledger = Ledger(event_asset(base.asset, base.account))
         self.name = {"btc15": "BTC 15m", "btclate": "BTC Late"}.get(base.asset, base.asset.upper())
         from openjarvis.polybot.config import HORIZON_S
         self._prefixes: Dict[str, str] = {}                  # learned market address pattern per window length
@@ -391,7 +392,7 @@ class Desk:
             # v1.14: the exchange's own settlement is the truth for live money; the desk's index replay is only the fallback
             # (and the paper desk's referee). Ask every 10 s; use the index if the exchange has not answered 5 minutes after the close.
             res = None
-            if w.mode in LIVE_MODES:
+            if is_live_label(w.mode):
                 # v1.22: live money is booked only from the venue's own final answer. The index's 60-second average can land on
                 # the other side of the strike from the venue's close (9:15 PM Nov 2: average above the target, venue settled Down),
                 # so a live window with no final answer stays open instead of being booked from the index.
@@ -432,13 +433,13 @@ class Desk:
             except Exception:
                 logger.warning("shadow record not saved")
             po = setups.pair_outcome(self._pair_fills.pop(slug, []), up)
-            if po is not None and w.mode in LIVE_MODES:
+            if po is not None and is_live_label(w.mode):
                 self.setups.add(*po)
             payout = w.inv.up_qty if up else w.inv.down_qty
             pnl = round(payout - w.inv.spent, 4)
             w.settled = True
             del self.open_windows[slug]
-            await self._shared().put(f"openspend:{slug}:{self.cfg.asset}", 0.0)      # settled: nothing left booked here
+            await self._shared().put(f"openspend:{slug}:{self.cfg.asset}{self._acct_sfx()}", 0.0)      # settled: nothing left booked here
             self._t.pop(f"settle:{slug}", None)
             self.rs.roll(now)
             self.rs.day_pnl += pnl
@@ -454,7 +455,7 @@ class Desk:
                     + (f", close ${close:,.2f}" if close else "") + f") · held Up {w.inv.up_qty:g} / Down {w.inv.down_qty:g}, paid ${w.inv.spent:.2f}, "
                     f"got ${payout:.2f} · P&L {'+' if pnl >= 0 else ''}{pnl:.2f} · today {'+' if self.rs.day_pnl >= 0 else ''}{self.rs.day_pnl:.2f}")
             self.log("trade", text)
-            if w.mode in LIVE_MODES:
+            if is_live_label(w.mode):
                 await self.push("Desk settled", text)
             dl = risk.day_limit(self.cfg, self.rs)
             if dl > 0 and self.rs.day_pnl <= -dl and self.rs.day_pnl - pnl > -dl:          # only the moment it is crossed
@@ -484,6 +485,9 @@ class Desk:
                 ext += abs(money(p.get("cost")) or 0.0)
         self.external_at_risk = round(ext, 2)
 
+    def _acct_sfx(self) -> str:
+        return f"@{self.base.account}" if self.base.account else ""
+
     def _shared(self):
         """The shared store under this desk's scope: the keys that every desk can read (open spend per market)."""
         return getattr(self.store, "store", self.store)
@@ -491,13 +495,13 @@ class Desk:
     async def publish_open_spend(self) -> None:
         """Share this desk's booked spend per open window, so the other desks on the same market can account for it."""
         for slug, w in self.open_windows.items():
-            await self._shared().put(f"openspend:{slug}:{self.cfg.asset}", round(w.inv.spent, 4))
+            await self._shared().put(f"openspend:{slug}:{self.cfg.asset}{self._acct_sfx()}", round(w.inv.spent, 4))
 
     async def others_spent(self, slug: str) -> float:
         """What the other desks on this market have booked in this window (they share one Polymarket position)."""
         total = 0.0
         for other in SHARED_MARKET.get(self.cfg.asset, ()):
-            total += float(await self._shared().get(f"openspend:{slug}:{other}") or 0.0)
+            total += float(await self._shared().get(f"openspend:{slug}:{other}{self._acct_sfx()}") or 0.0)
         return total
 
     async def check_positions(self, pos: Dict[str, Any], now: float) -> None:
@@ -536,7 +540,7 @@ class Desk:
         """v1.22: record a bet the method just placed in this window (one per method), and count it against the windows' cap."""
         self._bets.setdefault(slug, {})[method] = (side, round(usd, 4), qty)
         self._dir_pending.add(slug)
-        exposure.reserve(self.name, usd)
+        exposure.reserve(self.name, usd, self.base.account)
 
     async def step(self) -> None:
         now = self.clock()
@@ -557,12 +561,13 @@ class Desk:
             self.balance = await self.broker.balance()
 
         self.rs.at_risk = round(sum(w.inv.spent for w in self.open_windows.values()) + self.external_at_risk, 4)
-        exposure.publish(self.name, sum(w.inv.spent for w in self.open_windows.values() if w.slug in self._dir_pending))   # v1.20 cross-desk cap
+        exposure.publish(self.name, account=self.base.account, usd=sum(w.inv.spent for w in self.open_windows.values() if w.slug in self._dir_pending))   # v1.20 cross-desk cap
         if self.version_start is None and self.cfg.mode == "live" and self.balance is not None:
             self.version_start = round(self.account_value(), 2)
             try:
                 import os as _os
-                self.deposits_start = float((_os.environ.get("POLYBOT_DEPOSITS_USD") or "").strip() or 0) or None
+                self.deposits_start = (None if self.base.account else        # the owner's deposits figure is his account's, never a subscriber's
+                                       float((_os.environ.get("POLYBOT_DEPOSITS_USD") or "").strip() or 0) or None)
             except ValueError:
                 self.deposits_start = None
             self.log("info", f"Strategy v{brain.STRATEGY_VERSION} starts with a real account value of ${self.version_start:.2f}.")
@@ -710,7 +715,7 @@ class Desk:
                             side, cost, tier, edge, lot_pct = pick
                             size_here = (b.offers[0][1] if b.offers else 0.0) if side == "up" else (b.bids[0][1] if b.bids else 0.0)
                             bets = self._bets.get(w.slug, {})
-                            usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity), directional.window_room(bets, equity))   # lot by coin and confidence; capped across all desks and the window
+                            usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self.base.account), directional.window_room(bets, equity))   # lot by coin and confidence; capped across all desks and the window
                             ok_win, _ = directional.may_take(bets, side, usd, equity)
                             q = strategy._qty(usd, cost, w.min_qty)
                             q = min(q, round(size_here // w.min_qty * w.min_qty, 6))
@@ -731,7 +736,7 @@ class Desk:
                                 continue
                             side, cost, _, gap, lot_pct = pick
                             bets = self._bets.get(w.slug, {})
-                            usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity), directional.window_room(bets, equity))
+                            usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self.base.account), directional.window_room(bets, equity))
                             ok_win, why_win = directional.may_take(bets, side, usd, equity)
                             if not ok_win:
                                 why = f"{method.title()}: {why_win}."
@@ -971,7 +976,7 @@ class Desk:
         their result lands on the scoreboard instead of vanishing (the 4:20 PM window on Oct 29 was lost that way)."""
         for r in rows or []:
             try:
-                if r.get("mode") != self.cfg.mode or r["slug"] in self.open_windows or now > float(r["end"]) + 3600:
+                if r.get("mode") not in (self.cfg.mode, self.lmode()) or r["slug"] in self.open_windows or now > float(r["end"]) + 3600:
                     continue
                 w = Window(slug=r["slug"], start=float(r["start"]), end=float(r["end"]), price_to_beat=r.get("price_to_beat"),
                            tick=float(r.get("tick") or 0.01), min_qty=float(r.get("min_qty") or 0.01), title=r.get("title") or "",
