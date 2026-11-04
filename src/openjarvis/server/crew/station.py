@@ -1266,8 +1266,11 @@ function deskSec(key) {
     }
   }
   // profit by hour of day (Los Angeles), every strategy version: which hours make money and which lose it
-  const hr = (DESK.hours || {})[DESK_VIEW];
-  if (hr && hr.windows) {
+  const hr = (DESK.hours || {})[DESK_VIEW] || { windows: 0, hours: [] };
+  if (!hr.windows) {                                   // a new desk (or a quiet view): the table is there and fills in as trades settle
+    const hl = mk('div', 'lbl'); hl.style.marginTop = '12px'; hl.textContent = 'Profit by hour · 0 settled trades'; s.append(hl);
+    s.append(mk('div', 'dim', 'No settled ' + DESK_VIEW + ' trades yet. Each hour fills in here as this desk\'s trades settle.'));
+  } else {
     const hOpen = !!PANEL_OPEN[A + ':hours'];
     const hl = mk('div', 'lbl'); hl.style.marginTop = '12px'; hl.textContent = 'Profit by hour · ' + hr.windows + ' settled trades, all versions'; s.append(hl);
     const hw = mk('div', 'desk-tabs'), hb = mk('button', 'b', hOpen ? 'Hide hours ▾' : 'Show hours ▸');
