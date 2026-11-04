@@ -556,6 +556,14 @@ async def control(pool, action: str, limits: Optional[Dict[str, Any]] = None, as
     raise ValueError("Unknown desk action. Use pause, resume, flatten, paper, go_live or set_limits.")
 
 
+def hour_size_text(hs: Dict[str, Any]) -> str:
+    parts = []
+    for h, f in sorted(((int(k), float(v)) for k, v in (hs or {}).items()), key=lambda x: x[0]):
+        when = f"{(h % 12) or 12} {'AM' if h < 12 else 'PM'}"
+        parts.append(f"{when} windows " + ("skipped" if f <= 0 else "at full size" if f >= 1 else f"at {f:.0%} size"))
+    return ", ".join(parts) or "every hour at full size"
+
+
 def _lim_text(l: Limits) -> str:
     return (f"bankroll ${l.bankroll_usd:.2f}, per window ${l.max_window_usd:.2f}, per order ${l.max_order_usd:.2f}, "
             f"daily stop {_stop_text(l.__dict__)}, min edge {l.min_edge:.2f}")
@@ -576,6 +584,22 @@ async def apply_approved(pool, setting: Dict[str, Any], asset: str = "btc", acco
         await put_control(pool, ctl, asset, account)
         return (f"Approved: the {NAMES[asset]} goes LIVE within about 20 seconds, if the worker has POLYBOT_ALLOW_LIVE=true and its API keys. "
                 "Every entry and settlement is pushed to your phone.")
+    if isinstance(setting.get("hour_size"), dict):          # from the daily 7 AM review: full size, half size or skip the hour
+        from openjarvis.polybot.config import parse_hour_size
+
+        hs = parse_hour_size(setting["hour_size"])
+        ctl["hour_size"] = {str(h): f for h, f in hs}
+        for h in setting["hour_size"]:                       # an hour set back to 1 (full size) stays in the row as 1.0
+            if str(h) not in ctl["hour_size"]:
+                ctl["hour_size"][str(h)] = 1.0
+        await put_control(pool, ctl, asset, account)
+        rev = await get_kv(pool, kv_key("hour_review", asset, account))         # the daily review measures the new setting from now
+        rev["since"] = dt.datetime.now(dt.timezone.utc).isoformat()
+        async with pool.acquire() as c:
+            await c.execute("INSERT INTO polybot_kv (key, value, updated_at) VALUES ($2, $1::jsonb, now()) "
+                            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()", json.dumps(rev, default=str),
+                            kv_key("hour_review", asset, account))
+        return "Approved: " + hour_size_text(ctl["hour_size"]) + f" on the {NAMES[asset]}."
     if isinstance(setting.get("limits"), dict):
         new = Limits(**{k: float(setting["limits"][k]) for k in LIMIT_FIELDS if k in setting["limits"]}).clean()
         ctl["limits"] = new.__dict__

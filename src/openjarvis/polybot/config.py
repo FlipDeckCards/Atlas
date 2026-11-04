@@ -111,6 +111,8 @@ class Config:
     control_s: float = 5.0              # how often the control row is read (pause, kill, mode, limits); 5 s so a tap takes effect quickly
     database_url: str = ""
     data_dir: str = "polybot_data"      # used when there is no database (local paper runs)
+    hour_size: tuple = ((7, 0.5),)      # v1.25: size by Los Angeles hour the window opens in: (hour, factor); 0.5 = half size, 0 = skip
+                                        # (7 AM, right after the US stock open, was the worst hour on both BTC desks)
     notify_url: str = ""                # ntfy topic (CREW_NOTIFY_URL): a push for every live entry and settlement
 
     def as_dict(self) -> Dict[str, Any]:
@@ -164,6 +166,20 @@ def assets_from_env(env: Optional[Mapping[str, str]] = None) -> list:
     raw = (e.get("POLYBOT_ASSETS") or ",".join(ASSETS)).lower()
     out = [a.strip() for a in raw.split(",") if a.strip() in ASSETS]
     return list(dict.fromkeys(out)) or ["btc"]
+
+
+def parse_hour_size(raw: Any) -> tuple:
+    """'7:0.5,16:0' or {"7": 0.5} -> ((7, 0.5), (16, 0.0)); bad entries are dropped; factors are clamped to 0..1."""
+    items = raw.items() if isinstance(raw, dict) else (p.split(":", 1) for p in str(raw or "").split(",") if ":" in p)
+    out = {}
+    for h, f in items:
+        try:
+            h, f = int(str(h).strip()), float(str(f).strip())
+        except ValueError:
+            continue
+        if 0 <= h <= 23:
+            out[h] = min(1.0, max(0.0, f))
+    return tuple(sorted((h, f) for h, f in out.items() if f != 1.0))
 
 
 def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Config:
@@ -240,6 +256,7 @@ def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Con
         control_s=_f(e, "POLYBOT_CONTROL_SECONDS", 5.0, 2.0, 600.0),
         database_url=(e.get("DATABASE_URL") or "").strip(),
         data_dir=(e.get("POLYBOT_DATA_DIR") or "polybot_data").strip(),
+        hour_size=parse_hour_size(e.get("POLYBOT_HOUR_SIZE")) if e.get("POLYBOT_HOUR_SIZE") is not None else ((7, 0.5),),
         notify_url=(e.get("POLYBOT_NOTIFY_URL") or e.get("CREW_NOTIFY_URL") or "").strip(),
     )
 
@@ -258,6 +275,8 @@ def apply_control(base: Config, control: Dict[str, Any]) -> Config:
                 except (TypeError, ValueError):
                     pass
         cfg = cfg.with_limits(Limits(**cur))
+    if isinstance(control, dict) and isinstance(control.get("hour_size"), dict):     # an approved change from the daily hour review
+        cfg = replace(cfg, hour_size=parse_hour_size(control["hour_size"]))
     want = str((control or {}).get("mode") or "paper").lower()
     if base.asset in PAPER_ONLY:
         return replace(cfg, mode="paper")

@@ -86,3 +86,45 @@ def test_profit_by_hour_groups_by_los_angeles_hour():
     am = out[0]
     assert (am["trades"], am["wins"], am["win_rate"], am["profit"], am["return_pct"]) == (2, 1, 50.0, -1.5, -37.5)
     assert out[1]["return_pct"] == 25.0
+
+
+def test_seven_am_windows_are_half_size_by_default_and_the_control_row_can_change_it():
+    import datetime as dt
+    from openjarvis.polybot.config import apply_control, parse_hour_size
+    from openjarvis.polybot.desk import Desk
+    from openjarvis.polybot.risk import LA
+
+    assert from_env({}).hour_size == ((7, 0.5),)
+    assert from_env({"POLYBOT_HOUR_SIZE": ""}).hour_size == ()                 # an empty setting turns it off
+    assert parse_hour_size("7:0.5,16:0,25:1,x:y,9:1") == ((7, 0.5), (16, 0.0))
+    d = Desk(from_env({}), None, None)
+    seven = dt.datetime(2026, 11, 4, 7, 5, tzinfo=LA).timestamp()
+    eight = dt.datetime(2026, 11, 4, 8, 5, tzinfo=LA).timestamp()
+    assert d.hour_factor(seven) == 0.5 and d.hour_factor(eight) == 1.0
+    d.cfg = apply_control(d.base, {"hour_size": {"7": 0}})
+    assert d.hour_factor(seven) == 0.0
+    d.cfg = apply_control(d.base, {"hour_size": {"7": 1.0}})
+    assert d.hour_factor(seven) == 1.0
+    tenant = for_account(from_env({}), "uabc", "k", "s")
+    assert tenant.hour_size == ((7, 0.5),)                                     # the brother's copies get it too
+
+
+def test_the_daily_review_decides_from_the_seven_am_numbers():
+    from openjarvis.server.crew.hour_review import decide
+
+    assert decide(5, -40.0, 0.5)["change"] is False                            # too few trades: keep half size
+    up = decide(25, 8.0, 0.5)
+    assert up["change"] and up["factor"] == 1.0
+    down = decide(25, -9.0, 0.5)
+    assert down["change"] and down["factor"] == 0.0
+    flat = decide(25, 1.0, 0.5)
+    assert not flat["change"] and flat["factor"] == 0.5
+    assert decide(25, 8.0, 1.0)["change"] is False                              # already full size: nothing to approve
+
+
+def test_an_approved_hour_change_lands_in_that_accounts_control_row_only():
+    p = FakePool()
+    out = run(desk.apply_approved(p, {"hour_size": {"7": 0}}, asset="btc15", account="uabc"))
+    assert "7 AM windows skipped" in out and p.kv["control:btc15@uabc"]["hour_size"] == {"7": 0.0}
+    run(desk.apply_approved(p, {"hour_size": {"7": 1}}, asset="btc"))
+    assert p.kv["control"]["hour_size"] == {"7": 1.0} and "control:btc15" not in p.kv

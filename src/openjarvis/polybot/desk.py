@@ -4,6 +4,7 @@ and sets its resting quotes. Everything here is plain code; nothing is decided b
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import math
 import logging
 import time
@@ -485,6 +486,11 @@ class Desk:
                 ext += abs(money(p.get("cost")) or 0.0)
         self.external_at_risk = round(ext, 2)
 
+    def hour_factor(self, ts: float) -> float:
+        """v1.25: the size factor for a window opening at ts (Los Angeles hour): 1 normally, 0.5 at 7 AM, 0 to skip the hour."""
+        h = dt.datetime.fromtimestamp(ts, risk.LA).hour
+        return dict(self.cfg.hour_size).get(h, 1.0)
+
     def _acct_sfx(self) -> str:
         return f"@{self.base.account}" if self.base.account else ""
 
@@ -698,11 +704,12 @@ class Desk:
                 if w.slug in self._dir_pending and inv.spent > 0:
                     want, why = [], "Holding the directional trade to settlement."          # never hedge a directional bet away
                 elif not lopsided:
-                    budget_usd = min(budget, sizing.window_cap(self.cfg.limits))
+                    hf = self.hour_factor(w.start)                     # v1.25: 7 AM windows at half size (the daily review may change it)
+                    budget_usd = min(budget, sizing.window_cap(self.cfg.limits)) * hf
                     want, why = strategy.pair_takes(b.best_bid, b.best_ask,
                                                     b.offers[0][1] if b.offers else 0.0, b.bids[0][1] if b.bids else 0.0,
-                                                    budget_usd, sizing.window_cap(self.cfg.limits), w.min_qty, self.cfg.pair_margin) \
-                        if (inv.spent <= 0 and "pairs" in self.cfg.methods) else ([], "Pairs are off for this desk." if "pairs" not in self.cfg.methods else "Already in this window; holding to settlement.")
+                                                    budget_usd, sizing.window_cap(self.cfg.limits) * hf, w.min_qty, self.cfg.pair_margin) \
+                        if (inv.spent <= 0 and "pairs" in self.cfg.methods and hf > 0) else ([], "Not trading this hour (hour size 0).") if hf <= 0 else ([], "Pairs are off for this desk." if "pairs" not in self.cfg.methods else "Already in this window; holding to settlement.")
                     can_up_m, can_down_m, mom_why = brain.side_filters(self.momentum, self.cfg.momentum_z, self.name)
                     if not want and not self._taken(w.slug, "directional") and self.cfg.directional and "directional" in self.cfg.methods \
                             and self.fair_model is not None and b.best_ask is not None and b.best_bid is not None \
@@ -840,6 +847,7 @@ class Desk:
             "equity": self.equity(), "window_pct": self.cfg.window_pct, "setups": self.setups.table()[:12], "unpaired_pct": self.cfg.unpaired_pct, "version_start": self.version_start, "deposits_start": self.deposits_start,
             "account_value": round(self.account_value(), 2) if self.cfg.mode == "live" and self.balance is not None else None,
             "window_cap": strategy.Sizing(equity=self.equity(), window_pct=self.cfg.window_pct).window_cap(self.cfg.limits),
+            "hour_size": [[h, f] for h, f in self.cfg.hour_size],
             "balance": self.balance, "day": self.rs.day, "day_pnl": round(self.rs.day_pnl, 2),
             "day_start": self.rs.day_start, "day_limit": risk.day_limit(self.cfg, self.rs), "at_risk": round(self.rs.at_risk, 2),
             "today": dict(self.stats),

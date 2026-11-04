@@ -407,6 +407,14 @@ def create_app(
             await app.state.tenant_desks.start_all()
         except Exception:
             logger.exception("subscribers' Polymarket Desks did not start; the rest of Aibussol runs normally")
+        try:
+            import asyncio
+
+            from openjarvis.server.crew import hour_review
+
+            app.state.hour_review_task = asyncio.create_task(hour_review.loop(app), name="desk-hour-review")   # the daily 7 AM review
+        except Exception:
+            logger.exception("the daily 7 AM review did not start")
 
     @app.on_event("shutdown")
     async def _shutdown_desk() -> None:

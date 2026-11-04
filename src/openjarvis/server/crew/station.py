@@ -1227,7 +1227,8 @@ function deskSec(key) {
   const lim = DESK.limits || {};
   s.append(mk('div', 'dim', 'Limits: bankroll ' + ((st.mode === 'live' && st.account_value != null) ? money(st.account_value) + ' (the whole account)' : money(lim.bankroll_usd)) + ' · bets sized by confidence, up to ' + (st.window_pct || 7.5) + '% of the current balance per window' + (st.window_cap != null ? ' (' + money(st.window_cap) + ' now)' : '')
     + ' · daily stop ' + (lim.daily_loss_pct > 0 ? lim.daily_loss_pct + '% of the day\'s start' + (st.day_limit != null ? ' (' + money(st.day_limit) + ' today)' : '') : money(lim.daily_loss_usd))
-    + ' · min edge ' + Number(lim.min_edge || 0).toFixed(2)));
+    + ' · min edge ' + Number(lim.min_edge || 0).toFixed(2)
+    + (st.hour_size && st.hour_size.length ? ' · ' + st.hour_size.map(([h, f]) => ((h % 12) || 12) + (h < 12 ? ' AM' : ' PM') + ' windows ' + (f <= 0 ? 'skipped' : Math.round(f * 100) + '% size')).join(', ') + ' (reviewed daily)' : '')));
   // trade log: every window traded, tap for each fill
   const tl = mk('div', 'lbl'); tl.style.marginTop = '12px'; tl.append(mk('span', null, 'Trade log · ' + DESK_VIEW));
   const rf = mk('span', 'tag', '↻'); rf.style.cursor = 'pointer'; rf.onclick = () => loadDesk(true, A); tl.append(rf); s.append(tl);
