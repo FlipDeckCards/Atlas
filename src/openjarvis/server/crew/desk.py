@@ -162,15 +162,17 @@ async def export_shadow(pool, asset: str = "btc", account: str = "") -> str:
     buf = io.StringIO()
     wr = csv.writer(buf)
     wr.writerow(["slug", "result", "up_won", "secs_left_at_last_tick", "p_up_model_1.0x", "p_up_tight_0.7x", "p_up_wide_1.4x", "p_up_book",
-                 "entry_sigma", "entry_conf", "window_return", "sigma_lot_pct", "conf_lot_pct"])
+                 "entry_sigma", "entry_conf", "entry_cal_conf", "window_return", "sigma_lot_pct", "conf_lot_pct", "cal_lot_pct"])
     for r in (d or {}).get("log") or []:
         wr.writerow([r.get("slug"), "UP" if r.get("up") else "DOWN", 1 if r.get("up") else 0, r.get("secs_left"),
                      r.get("fair"), r.get("lo"), r.get("hi"), r.get("book"),
-                     r.get("entry_sigma"), r.get("entry_conf"), r.get("window_return"), r.get("sigma_lot_pct"), r.get("conf_lot_pct")])
+                     r.get("entry_sigma"), r.get("entry_conf"), r.get("entry_cal_conf"), r.get("window_return"), r.get("sigma_lot_pct"),
+                     r.get("conf_lot_pct"), r.get("cal_lot_pct")])
     sz = (d or {}).get("sizing") or {}
     wr.writerow([])
     wr.writerow(["SIZING TOTALS (same trades, % of balance x return, not compounded)", "windows", sz.get("windows", 0),
-                 "sigma tiers", round(sz.get("sigma_pts", 0.0), 2), "confidence tiers", round(sz.get("conf_pts", 0.0), 2)])
+                 "sigma tiers", round(sz.get("sigma_pts", 0.0), 2), "confidence tiers", round(sz.get("conf_pts", 0.0), 2),
+                 "calibrated-confidence tiers", round(sz.get("cal_pts", 0.0), 2)])
     return buf.getvalue()
 
 
@@ -320,7 +322,8 @@ async def export_fills(pool, asset: str = "btc") -> str:
     buf = io.StringIO()
     wr = csv.writer(buf)
     wr.writerow(["time_utc", "mode", "version", "window_end_utc", "slug", "side", "price", "qty", "cost", "fair",
-                 "model_prob_side", "edge", "sd_from_strike", "sigma", "secs_left", "move_left_usd", "sweep", "window_result", "window_pnl"])
+                 "model_prob_side", "edge", "sd_from_strike", "sigma", "secs_left", "move_left_usd", "momentum_z", "trend_z", "mid", "spread",
+                 "book_up", "model_vs_market", "sweep", "window_result", "window_pnl"])
     for r in rows:
         feat = _j(r["features"])
         m = feat.get("model")
@@ -332,7 +335,9 @@ async def export_fills(pool, asset: str = "btc") -> str:
         mv = round(sg * math.sqrt(max(1.0, sl)), 2) if isinstance(sg, (int, float)) and isinstance(sl, (int, float)) else None
         wr.writerow([r["ts"].isoformat(), r["mode"], r["version"],
                      r["window_end"].isoformat() if r["window_end"] else "", r["slug"], r["side"], r["price"], r["qty"],
-                     round(r["cost"], 2), r["fair"], conf, edge, sd_from_strike(conf), sg, sl, mv, feat.get("sweep") is True, res, r["pnl"]])
+                     round(r["cost"], 2), r["fair"], conf, edge, sd_from_strike(conf), sg, sl, mv,
+                     feat.get("momentum_z"), feat.get("trend_z"), feat.get("mid"), feat.get("spread"), feat.get("book_up"),
+                     feat.get("model_vs_market"), feat.get("sweep") is True, res, r["pnl"]])
     return buf.getvalue()
 
 
