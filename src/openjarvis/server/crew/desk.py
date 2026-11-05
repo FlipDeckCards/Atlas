@@ -142,6 +142,8 @@ SHADOW_RULES = {
     "s15_trend": "15-minute: buys the side recent spot movement favours, when its ask is 5c under fair and at most 80c, 180-600 s before the close",
     "s15_distance": "15-minute: the model is 80%+ sure and the side is at least 7c under fair, 120-300 s before the close",
     "s15_vol": "15-minute: the model is 70%+ sure under both the tighter and wider volatility, and the ask is 5c under both, 120-600 s before the close",
+    "m5_pair": "5-minute maker: rests a bid on both sides at fair value minus 3c, 150-240 s before the close; fills when the market sells down to it, pulled in the last minute",
+    "m15_maker": "15-minute maker: rests a bid on the side the model favours (60%+) at fair value minus 6c, 300-600 s before the close; pulled in the last minute",
 }
 
 

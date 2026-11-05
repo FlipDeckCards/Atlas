@@ -22,9 +22,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from openjarvis.polybot.strategy import taker_fee
 
-NAMES_5M = ("s5_late", "s5_cheap", "s5_book")
-NAMES_15M = ("s15_trend", "s15_distance", "s15_vol")
-NAMES = NAMES_5M + NAMES_15M
+MAKER_5M = "m5_pair"        # maker shadow, 5-minute: rest a bid on both sides under fair value and earn the spread
+MAKER_15M = "m15_maker"     # maker shadow, 15-minute: rest a bid on the side the model favours, under fair value
+MAKER_MIN_SECS = 60         # resting quotes are pulled in the last minute
+NAMES_5M = ("s5_late", "s5_cheap", "s5_book", MAKER_5M)
+NAMES_15M = ("s15_trend", "s15_distance", "s15_vol", MAKER_15M)
+NAMES = tuple(dict.fromkeys(NAMES_5M + NAMES_15M))
 
 
 def names_for(window_secs: int) -> Tuple[str, ...]:
@@ -114,6 +117,9 @@ class Shadow:
         self.rec: Dict[str, Dict[str, float]] = {n: {"windows": 0, "wins": 0, "staked": 0.0, "profit": 0.0} for n in NAMES}
         self.open: Dict[str, Dict[str, List[Tuple[str, float]]]] = {}   # slug -> strategy -> legs taken
         self.done: Dict[str, set] = {}                                  # slug -> strategies that already traded this window
+        self.maker_name = MAKER_15M if window_secs >= 900 else MAKER_5M
+        self.maker_quotes: Dict[str, Dict[str, float]] = {}   # slug -> side -> resting bid price
+        self.maker_fills: Dict[str, Dict[str, float]] = {}    # slug -> side -> price a resting bid was filled at
 
     def tick(self, slug: str, secs_left: float, fair_up: Optional[float], ask_up: Optional[float], ask_down: Optional[float],
              extra: Optional[Dict[str, Optional[float]]] = None) -> None:
@@ -125,7 +131,42 @@ class Shadow:
                 self.open.setdefault(slug, {})[n] = legs
                 self.done.setdefault(slug, set()).add(n)
 
+    def maker_tick(self, slug: str, secs_left: float, fair_up: Optional[float], ask_up: Optional[float],
+                   ask_down: Optional[float]) -> None:
+        """Maker shadow: post resting bids once per window, then count a bid as filled when the market sells down to it.
+        Nothing is paid as a fee (a resting bid is a maker), and the rebate is not counted, so the result is conservative."""
+        if fair_up is None:
+            return
+        if slug not in self.maker_quotes:
+            q: Dict[str, float] = {}
+            if self.maker_name == MAKER_5M and 150 <= secs_left <= 240:
+                q = {"up": fair_up - 0.03, "down": (1.0 - fair_up) - 0.03}
+            elif self.maker_name == MAKER_15M and 300 <= secs_left <= 600:
+                side, p = ("up", fair_up) if fair_up >= 0.5 else ("down", 1.0 - fair_up)
+                if p >= 0.60:
+                    q = {side: p - 0.06}
+            self.maker_quotes[slug] = {k: round(v, 2) for k, v in q.items() if v > 0.01}
+            return
+        if secs_left < MAKER_MIN_SECS:
+            return
+        fills = self.maker_fills.setdefault(slug, {})
+        for side, price in self.maker_quotes[slug].items():
+            ask = ask_up if side == "up" else ask_down
+            if side not in fills and ask is not None and ask <= price:
+                fills[side] = price
+
     def settle(self, slug: str, up: bool) -> None:
+        filled = self.maker_fills.pop(slug, {})
+        self.maker_quotes.pop(slug, None)
+        if filled:
+            staked = sum(filled.values())
+            payout = sum(1.0 for side in filled if (side == "up") == bool(up))
+            profit = payout - staked
+            r = self.rec[self.maker_name]
+            r["windows"] += 1
+            r["wins"] += 1 if profit > 0 else 0
+            r["staked"] = round(r["staked"] + staked, 4)
+            r["profit"] = round(r["profit"] + profit, 4)
         for n, legs in self.open.pop(slug, {}).items():
             staked = sum(p + taker_fee(p) for _, p in legs)
             payout = sum(1.0 for side, _ in legs if (side == "up") == bool(up))

@@ -4,8 +4,8 @@ from openjarvis.polybot import shadow
 
 
 def test_six_shadows_split_by_timeframe():
-    assert shadow.NAMES_5M == ("s5_late", "s5_cheap", "s5_book")
-    assert shadow.NAMES_15M == ("s15_trend", "s15_distance", "s15_vol")
+    assert shadow.NAMES_5M == ("s5_late", "s5_cheap", "s5_book", "m5_pair")
+    assert shadow.NAMES_15M == ("s15_trend", "s15_distance", "s15_vol", "m15_maker")
     assert set(shadow.Shadow(window_secs=300).rec) == set(shadow.NAMES)
     assert shadow.Shadow(window_secs=300).names == shadow.NAMES_5M
     assert shadow.Shadow(window_secs=900).names == shadow.NAMES_15M
@@ -73,3 +73,24 @@ def test_load_clears_the_old_shadows_and_keeps_calibration():
     t.load(old)
     assert "edge" not in t.rec and t.rec["s5_late"]["windows"] == 0
     assert t.bucket_stats(0.85) == (1, 1)
+
+
+def test_5m_maker_fills_when_the_market_sells_down_to_its_bid():
+    s = shadow.Shadow(window_secs=300)
+    s.maker_tick("m1", 200, 0.60, 0.62, 0.40)                       # posts bids: up 0.57, down 0.37
+    assert s.maker_quotes["m1"] == {"up": 0.57, "down": 0.37}
+    s.maker_tick("m1", 150, 0.60, 0.56, 0.40)                       # up ask 56c <= 57c: fills up; down ask 40c > 37c
+    assert s.maker_fills["m1"] == {"up": 0.57}
+    s.maker_tick("m1", 40, 0.60, 0.30, 0.30)                        # last minute: no new fills
+    assert "down" not in s.maker_fills["m1"]
+    s.settle("m1", up=True)
+    assert s.rec["m5_pair"]["windows"] == 1 and s.rec["m5_pair"]["wins"] == 1 and round(s.rec["m5_pair"]["profit"], 2) == 0.43
+
+
+def test_15m_maker_posts_one_bid_on_the_favoured_side():
+    s = shadow.Shadow(window_secs=900)
+    s.maker_tick("m2", 500, 0.70, 0.72, 0.30)                       # up favoured at 70c: bid 64c
+    assert s.maker_quotes["m2"] == {"up": 0.64}
+    s.maker_tick("m2", 400, 0.70, 0.60, 0.40)                       # ask 60c <= 64c: fills
+    s.settle("m2", up=False)                                        # the up side loses
+    assert s.rec["m15_maker"]["windows"] == 1 and s.rec["m15_maker"]["wins"] == 0 and round(s.rec["m15_maker"]["profit"], 2) == -0.64
