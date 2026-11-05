@@ -125,6 +125,8 @@ class Shadow:
         self.window_secs = window_secs
         self.maker_quotes: Dict[str, Dict[str, float]] = {}   # slug -> side -> resting bid price
         self.maker_fills: Dict[str, Dict[str, float]] = {}    # slug -> side -> price a resting bid was filled at
+        self.last_fair: Dict[str, Dict[str, Any]] = {}        # slug -> the latest fair values seen in the window (kept until settlement)
+        self.log: List[Dict[str, Any]] = []                   # one row per settled window: the model, the tighter and wider volatility, the book, and the result
 
     def tick(self, slug: str, secs_left: float, fair_up: Optional[float], ask_up: Optional[float], ask_down: Optional[float],
              extra: Optional[Dict[str, Optional[float]]] = None) -> None:
@@ -176,7 +178,16 @@ class Shadow:
                 self.done.setdefault(slug, set()).add(name)
                 return
 
+    def record_fair(self, slug: str, secs_left: float, fair_up: Optional[float], fair_lo: Optional[float],
+                    fair_hi: Optional[float], book_up: Optional[float]) -> None:
+        """The fair values at the latest tick of the window, so settlement can log what each view said last."""
+        self.last_fair[slug] = {"secs_left": round(float(secs_left), 1), "fair": fair_up, "lo": fair_lo, "hi": fair_hi, "book": book_up}
+
     def settle(self, slug: str, up: bool) -> None:
+        last = self.last_fair.pop(slug, None)
+        if last is not None:
+            self.log.append({"slug": slug, "up": bool(up), **last})
+            del self.log[:-600]                                # keep the most recent 600 windows
         filled = self.maker_fills.pop(slug, {})
         self.maker_quotes.pop(slug, None)
         if filled:
@@ -228,13 +239,15 @@ class Shadow:
                        for _, _, lab in BUCKETS for c in [self.calib[kind][lab]]] for kind in ("model", "book")}
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"rec": self.rec, "calib": self.calib}
+        return {"rec": self.rec, "calib": self.calib, "log": self.log}
 
     def load(self, d: Optional[Dict[str, Any]]) -> None:
         """Older saved results (the v1.15-v1.21 shadows) are dropped here: only the six current strategies are kept."""
         for n, r in ((d or {}).get("rec") or {}).items():
             if n in self.rec and isinstance(r, dict):
                 self.rec[n] = {k: float(r.get(k, 0) or 0) for k in ("windows", "wins", "staked", "profit")}
+        if isinstance((d or {}).get("log"), list):
+            self.log = [x for x in d["log"] if isinstance(x, dict)][-600:]
         for kind, rows in ((d or {}).get("calib") or {}).items():
             if kind in self.calib and isinstance(rows, dict):
                 for lab, c in rows.items():
