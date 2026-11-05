@@ -1228,7 +1228,21 @@ function deskSec(key) {
     + (st.hour_size && st.hour_size.length ? ' · ' + st.hour_size.map(([h, f]) => ((h % 12) || 12) + (h < 12 ? ' AM' : ' PM') + ' windows ' + (f <= 0 ? 'skipped' : Math.round(f * 100) + '% size')).join(', ') + ' (reviewed daily)' : '')));
   // trade log: every window traded, tap for each fill
   const tl = mk('div', 'lbl'); tl.style.marginTop = '12px'; tl.append(mk('span', null, 'Trade log · ' + DESK_VIEW));
-  const rf = mk('span', 'tag', '↻'); rf.style.cursor = 'pointer'; rf.onclick = () => loadDesk(true, A); tl.append(rf); s.append(tl);
+  const rf = mk('span', 'tag', '↻'); rf.style.cursor = 'pointer'; rf.onclick = () => loadDesk(true, A); tl.append(rf);
+  // full trade history for this bot as a CSV file (every fill, all versions), saved to the phone or computer
+  const dl = mk('span', 'tag', '⬇ CSV'); dl.style.cursor = 'pointer'; dl.style.marginLeft = '6px';
+  dl.onclick = async () => {
+    dl.textContent = '…';
+    try {
+      const res = await fetch('/api/crew/desk/export.csv?asset=' + encodeURIComponent(A), { headers: { 'Authorization': 'Bearer ' + token() } });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a'); a.href = url; a.download = 'desk-' + A + '-fills.csv';
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      dl.textContent = '⬇ CSV';
+    } catch (e) { dl.textContent = 'CSV failed'; }
+  };
+  tl.append(dl); s.append(tl);
   const rows = (DESK.trades || {})[DESK_VIEW] || [];
   if (!rows.length) s.append(mk('div', 'dim', 'No trades yet.'));
   else {
