@@ -219,6 +219,11 @@ async def sweep_stats(pool, mode: str, version: str, asset: str) -> Dict[str, An
     return {"trades": n, "wins": wins, "win_rate": round(100.0 * wins / n, 1) if n else None, "profit": round(sum(per.values()), 2)}
 
 
+def buy_price(f: Dict[str, Any]) -> float:
+    """What a fill actually paid per contract: the Up price for an Up buy, 1 minus it for a Down buy."""
+    return float(f["price"]) if f["side"] == "up" else 1.0 - float(f["price"])
+
+
 async def trades(pool, mode: str, limit: int = 50, version: str = STRATEGY_VERSION, asset: str = "btc") -> List[Dict[str, Any]]:
     """The trade log: one row per window traded, with every fill in it (time, side, price, size, cost, fair value at the time)."""
     await _ensure(pool)
@@ -242,17 +247,20 @@ async def trades(pool, mode: str, limit: int = 50, version: str = STRATEGY_VERSI
         pair = uq > 0 and dq > 0 and min(uq, dq) / max(uq, dq) >= 0.9          # a matched pair: it wins either way, but still shows the model's view
         main = "up" if uq >= dq else "down"
         wf = [f for f in by.get(w["slug"], []) if f["conf"] is not None and not f["sweep"]]
+        wedge = None
         if pair:
             wconf = wf[0]["conf"] if wf else None                                 # the model's odds on the side the pair opened with
         else:
             mf = [f for f in wf if f["side"] == main] or [f for f in by.get(w["slug"], []) if f["side"] == main and f["conf"] is not None]
             wconf = None if not mf else round(sum(f["conf"] * f["cost"] for f in mf) / (sum(f["cost"] for f in mf) or 1), 3)
+            qty = sum(f["qty"] for f in mf)
+            wedge = None if not mf or not qty else round(wconf - sum(buy_price(f) * f["qty"] for f in mf) / qty, 3)
         out.append({"slug": w["slug"], "window_start": w["window_start"].isoformat() if w["window_start"] else None,
                     "window_end": w["window_end"].isoformat() if w["window_end"] else None, "price_to_beat": w["price_to_beat"],
                     "close_price": w["close_price"], "result": None if w["up"] is None else ("UP" if w["up"] else "DOWN"),
                     "up_qty": w["up_qty"], "up_cost": w["up_cost"], "down_qty": w["down_qty"], "down_cost": w["down_cost"],
                     "paid": round((w["up_cost"] or 0) + (w["down_cost"] or 0), 2), "pnl": w["pnl"], "fills": by.get(w["slug"], []),
-                    "pair": pair, "conf": wconf})
+                    "pair": pair, "conf": wconf, "edge": wedge})
     return out
 
 
@@ -271,15 +279,17 @@ async def export_fills(pool, asset: str = "btc") -> str:
     buf = io.StringIO()
     wr = csv.writer(buf)
     wr.writerow(["time_utc", "mode", "version", "window_end_utc", "slug", "side", "price", "qty", "cost", "fair",
-                 "model_prob_side", "sweep", "window_result", "window_pnl"])
+                 "model_prob_side", "edge", "sweep", "window_result", "window_pnl"])
     for r in rows:
         feat = _j(r["features"])
         m = feat.get("model")
         conf = None if not isinstance(m, (int, float)) else round(m if r["side"] == "up" else 1.0 - m, 3)
         res = None if r["up"] is None else ("UP" if r["up"] else "DOWN")
+        bp = r["price"] if r["side"] == "up" else 1.0 - r["price"]
+        edge = None if conf is None else round(conf - bp, 3)
         wr.writerow([r["ts"].isoformat(), r["mode"], r["version"],
                      r["window_end"].isoformat() if r["window_end"] else "", r["slug"], r["side"], r["price"], r["qty"],
-                     round(r["cost"], 2), r["fair"], conf, feat.get("sweep") is True, res, r["pnl"]])
+                     round(r["cost"], 2), r["fair"], conf, edge, feat.get("sweep") is True, res, r["pnl"]])
     return buf.getvalue()
 
 
