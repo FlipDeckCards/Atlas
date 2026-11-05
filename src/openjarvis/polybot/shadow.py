@@ -114,6 +114,21 @@ def book_up(bids: Optional[List[tuple]], offers: Optional[List[tuple]], levels: 
     return round(min(0.999, max(0.001, b / (b + o))), 4)
 
 
+# Sigma-tier sizing (shadow only, never traded): the lot as a % of the balance by the sigma at the window's first entry.
+# Thresholds are the owner's plan from the 5m and 15m data; they stay fixed while the shadow runs.
+SIGMA_TIERS = ((3.10, 10.0), (3.20, 8.0), (3.30, 7.0), (3.40, 5.0))
+
+
+def sigma_pct(sigma: Optional[float]) -> float:
+    """Lot % of the balance for a sigma (0 = no trade). Below 3.10 = 10%; 3.10-3.20 = 8%; 3.20-3.30 = 7%; 3.30-3.40 = 5%; 3.40 and up = no trade."""
+    if sigma is None:
+        return 0.0
+    for limit, lot in SIGMA_TIERS:
+        if sigma < limit:
+            return lot
+    return 0.0
+
+
 class Shadow:
     def __init__(self, window_secs: int = 300) -> None:
         self.names = names_for(window_secs)
@@ -127,6 +142,7 @@ class Shadow:
         self.maker_fills: Dict[str, Dict[str, float]] = {}    # slug -> side -> price a resting bid was filled at
         self.last_fair: Dict[str, Dict[str, Any]] = {}        # slug -> the latest fair values seen in the window (kept until settlement)
         self.log: List[Dict[str, Any]] = []                   # one row per settled window: the model, the tighter and wider volatility, the book, and the result
+        self.sizing: Dict[str, float] = {"windows": 0, "sigma_pct": 0.0, "conf_pct": 0.0, "sigma_pts": 0.0, "conf_pts": 0.0}   # sigma-tier vs confidence-tier sizing on the same trades; pts = % of balance x return
 
     def tick(self, slug: str, secs_left: float, fair_up: Optional[float], ask_up: Optional[float], ask_down: Optional[float],
              extra: Optional[Dict[str, Optional[float]]] = None) -> None:
@@ -238,14 +254,31 @@ class Shadow:
                         "win_rate": round(100.0 * c["wins"] / c["n"], 1) if c["n"] else None}
                        for _, _, lab in BUCKETS for c in [self.calib[kind][lab]]] for kind in ("model", "book")}
 
+    def add_sizing(self, slug: str, sigma: Optional[float], conf: Optional[float], conf_lot: float, ret: float) -> None:
+        """A traded window's return, sized two ways: by the sigma tier at entry, and by the confidence tier the bot actually used."""
+        s_pct = sigma_pct(sigma)
+        r = self.sizing
+        r["windows"] += 1
+        r["sigma_pct"] += s_pct
+        r["conf_pct"] += conf_lot
+        r["sigma_pts"] = round(r["sigma_pts"] + s_pct * ret, 4)
+        r["conf_pts"] = round(r["conf_pts"] + conf_lot * ret, 4)
+        for row in reversed(self.log):
+            if row.get("slug") == slug:
+                row.update({"entry_sigma": sigma, "entry_conf": conf, "window_return": round(ret, 4),
+                            "sigma_lot_pct": s_pct, "conf_lot_pct": conf_lot})
+                break
+
     def to_dict(self) -> Dict[str, Any]:
-        return {"rec": self.rec, "calib": self.calib, "log": self.log}
+        return {"rec": self.rec, "calib": self.calib, "log": self.log, "sizing": self.sizing}
 
     def load(self, d: Optional[Dict[str, Any]]) -> None:
         """Older saved results (the v1.15-v1.21 shadows) are dropped here: only the six current strategies are kept."""
         for n, r in ((d or {}).get("rec") or {}).items():
             if n in self.rec and isinstance(r, dict):
                 self.rec[n] = {k: float(r.get(k, 0) or 0) for k in ("windows", "wins", "staked", "profit")}
+        if isinstance((d or {}).get("sizing"), dict):
+            self.sizing.update({k: float((d or {})["sizing"].get(k, 0) or 0) for k in self.sizing})
         if isinstance((d or {}).get("log"), list):
             self.log = [x for x in d["log"] if isinstance(x, dict)][-600:]
         for kind, rows in ((d or {}).get("calib") or {}).items():

@@ -89,6 +89,7 @@ class Desk:
         self._dir_pending: set = set()                       # v1.18: windows where a directional trade was placed
         self._bets: Dict[str, Dict[str, Tuple[str, float, float]]] = {}   # v1.22: window -> {method: (side, usd, qty)}, one bet per method
         self._fill_conf: Dict[str, List[Tuple[str, Optional[float], Optional[float]]]] = {}   # per window: (side, model conf, book conf)
+        self._entry_sig: Dict[str, Tuple[Optional[float], Optional[float]]] = {}              # per window: (sigma, model conf) at the first entry
         self.shadow = shadow.Shadow(window_secs=900 if str(self.cfg.asset).endswith("15") else 300)   # six hidden shadow strategies, three per timeframe (recorded, never traded or shown)
         self.setups = setups.SetupBook()                     # v1.14 learned pair sizing (shadow): record per pair setup
         self._pair_fills: Dict[str, List[Dict[str, Any]]] = {}   # non-sweep fills per open window, to file the pair under its setup
@@ -358,6 +359,8 @@ class Desk:
         feats.update({"book_up": bu})                                        # v1.15: the order book's own view, recorded (not traded)
         self._fill_conf.setdefault(w.slug, []).append((f.side, mconf, bconf))
         if not feats["sweep"]:
+            self._entry_sig.setdefault(w.slug, (feats["sigma"], mconf))           # the window's first entry: its sigma and confidence
+        if not feats["sweep"]:
             # v1.14 shadow sizing: the window's pair is filed under the setup its FIRST leg opened in; record what size that setup
             # has earned next to the size actually used (trading still uses the normal size)
             pf = self._pair_fills.setdefault(w.slug, [])
@@ -437,6 +440,13 @@ class Desk:
                 self.setups.add(*po)
             payout = w.inv.up_qty if up else w.inv.down_qty
             pnl = round(payout - w.inv.spent, 4)
+            ent = self._entry_sig.pop(slug, None)
+            if ent is not None and w.inv.spent > 0:
+                self.shadow.add_sizing(slug, ent[0], ent[1], directional.size_pct(ent[1] or 0.0, self.cfg.asset), pnl / w.inv.spent)
+                try:
+                    await self.store.put("shadow", self.shadow.to_dict())
+                except Exception:
+                    logger.warning("shadow sizing not saved")
             w.settled = True
             del self.open_windows[slug]
             await self._shared().put(f"openspend:{slug}:{self.cfg.asset}{self._acct_sfx()}", 0.0)      # settled: nothing left booked here

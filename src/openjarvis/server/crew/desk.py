@@ -161,10 +161,16 @@ async def export_shadow(pool, asset: str = "btc", account: str = "") -> str:
     d = {} if raw is None else (json.loads(raw) if isinstance(raw, str) else raw)
     buf = io.StringIO()
     wr = csv.writer(buf)
-    wr.writerow(["slug", "result", "up_won", "secs_left_at_last_tick", "p_up_model_1.0x", "p_up_tight_0.7x", "p_up_wide_1.4x", "p_up_book"])
+    wr.writerow(["slug", "result", "up_won", "secs_left_at_last_tick", "p_up_model_1.0x", "p_up_tight_0.7x", "p_up_wide_1.4x", "p_up_book",
+                 "entry_sigma", "entry_conf", "window_return", "sigma_lot_pct", "conf_lot_pct"])
     for r in (d or {}).get("log") or []:
         wr.writerow([r.get("slug"), "UP" if r.get("up") else "DOWN", 1 if r.get("up") else 0, r.get("secs_left"),
-                     r.get("fair"), r.get("lo"), r.get("hi"), r.get("book")])
+                     r.get("fair"), r.get("lo"), r.get("hi"), r.get("book"),
+                     r.get("entry_sigma"), r.get("entry_conf"), r.get("window_return"), r.get("sigma_lot_pct"), r.get("conf_lot_pct")])
+    sz = (d or {}).get("sizing") or {}
+    wr.writerow([])
+    wr.writerow(["SIZING TOTALS (same trades, % of balance x return, not compounded)", "windows", sz.get("windows", 0),
+                 "sigma tiers", round(sz.get("sigma_pts", 0.0), 2), "confidence tiers", round(sz.get("conf_pts", 0.0), 2)])
     return buf.getvalue()
 
 
