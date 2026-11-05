@@ -241,6 +241,33 @@ async def trades(pool, mode: str, limit: int = 50, version: str = STRATEGY_VERSI
     return out
 
 
+async def export_fills(pool, asset: str = "btc") -> str:
+    """Every fill this desk ever made (all strategy versions, paper and live) as CSV: one row per fill, with the window's result and P&L."""
+    import csv
+    import io
+
+    await _ensure(pool)
+    sql = ("SELECT f.ts, f.mode, f.slug, f.side, f.price, f.qty, f.cost, f.fair, f.features, "
+           "w.up, w.pnl, w.window_end, coalesce(w.version, '1.0') AS version "
+           "FROM polybot_fills f LEFT JOIN polybot_windows w ON w.slug = f.slug AND w.mode = f.mode "
+           f"WHERE {desk_sql('f.slug')} = $1 ORDER BY f.ts")
+    async with pool.acquire() as c:
+        rows = await c.fetch(sql, asset)
+    buf = io.StringIO()
+    wr = csv.writer(buf)
+    wr.writerow(["time_utc", "mode", "version", "window_end_utc", "slug", "side", "price", "qty", "cost", "fair",
+                 "model_prob_side", "sweep", "window_result", "window_pnl"])
+    for r in rows:
+        feat = _j(r["features"])
+        m = feat.get("model")
+        conf = None if not isinstance(m, (int, float)) else round(m if r["side"] == "up" else 1.0 - m, 3)
+        res = None if r["up"] is None else ("UP" if r["up"] else "DOWN")
+        wr.writerow([r["ts"].isoformat(), r["mode"], r["version"],
+                     r["window_end"].isoformat() if r["window_end"] else "", r["slug"], r["side"], r["price"], r["qty"],
+                     round(r["cost"], 2), r["fair"], conf, feat.get("sweep") is True, res, r["pnl"]])
+    return buf.getvalue()
+
+
 BUCKETS = {
     # feature: [(label, low, high)] - which conditions a fill happened in
     "edge": [("edge under 3c", -9, 0.03), ("edge 3-6c", 0.03, 0.06), ("edge 6-10c", 0.06, 0.10), ("edge over 10c", 0.10, 9)],
