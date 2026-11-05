@@ -1182,14 +1182,11 @@ function deskSec(key) {
     const sh = v.shadow || {};   // v1.14 learned pair sizing, shadow mode: what bigger bets on proven pair setups would have made
     if (sh.windows) box.append(mk('div', 'dim', 'Learned pair sizing (shadow, not trading yet): ' + sh.windows + ' pair windows · actual ' + signed(sh.actual)
       + ' · at learned sizes ' + signed(sh.shadow) + ' · ' + Object.entries(sh.tiers || {}).map(([t, n]) => n + ' ' + t).join(', ')));
-    const sd = v.shadow_detail;   // v1.21 shadow results: calibration by confidence bucket and the scalp shadow
+    const sd = v.shadow_detail;   // shadow results: calibration by confidence bucket
     if (sd) {
       const cal = (sd.calib && sd.calib.model) || [];
       const seen = cal.filter(r => r.trades > 0).map(r => r.bucket + ': ' + r.won + '/' + r.trades + ' won' + (r.win_rate == null ? '' : ' (' + r.win_rate + '%)'));
       box.append(mk('div', 'dim', 'Shadow calibration (model confidence → result): ' + (seen.length ? seen.join(' · ') : 'no settled windows yet')));
-      const sc = sd.scalp || {};
-      if (sc.entries) box.append(mk('div', 'dim', 'Scalp shadow: ' + sc.entries + ' entries · ' + (sc.target || 0) + ' target · ' + (sc.stop || 0)
-        + ' stop · profit ' + signed(sc.profit || 0)));
     }
     const sets = (st.setups || []).filter(x => x.windows >= 3).slice(0, 5);
     if (sets.length) box.append(mk('div', 'dim', 'Pair setups: ' + sets.map(x => x.label + ' — ' + x.wins + '/' + x.windows + ' won, floor ' + x.floor + '%, ' + signed(x.profit)).join(' | ')));
@@ -1304,7 +1301,7 @@ function deskSec(key) {
   }
   return s;
 }
-// shadow breakdown: every shadow strategy and calibration result, per desk, opened from a button under the desk log
+// shadow breakdown: the six shadow strategies (three per timeframe) and calibration result, per desk, opened from a button under the desk log
 let SHADOW_OPEN = false;   // kept across re-renders: the desk panel rebuilds whenever a desk reloads
 function shadowBreakdownSec() {
   const wrap = mk('div'); wrap.style.marginTop = '10px';
@@ -1333,14 +1330,10 @@ function renderShadow(panel) {
         mk('span', null, (x.win_rate == null ? '—' : x.win_rate + '% won')), mk('span', null, 'staked ' + money(x.staked)));
       const p = mk('span', null, signed(x.profit)); p.style.color = pnlColor(x.profit); row.append(p); panel.append(row);
       if (x.rule) panel.append(mk('div', 'dim', x.rule));
-      if (x.windows === 0 && x.passed_over && x.passed_over.length) panel.append(mk('div', 'dim', 'Passed over: ' + x.passed_over.map(([r, n]) => r + ' ×' + n).join(' · ')));
     });
     const cal = (sd.calib && sd.calib.model) || [];
     const seen = cal.filter(r => r.trades > 0).map(r => r.bucket + ': ' + r.won + '/' + r.trades + ' won');
     panel.append(mk('div', 'dim', 'Calibration (model): ' + (seen.length ? seen.join(' · ') : 'no settled windows yet')));
-    const sc = sd.scalp || {};
-    panel.append(mk('div', 'dim', 'Scalp shadow: ' + (sc.entries || 0) + ' entries · ' + (sc.target || 0) + ' target · ' + (sc.stop || 0)
-      + ' stop · profit ' + signed(sc.profit || 0)));
   });
 }
 // one desk log for all three desks, newest first, each line marked with its desk

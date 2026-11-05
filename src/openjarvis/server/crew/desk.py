@@ -135,33 +135,39 @@ async def scoreboard(pool, mode: str, now: Optional[dt.datetime] = None, version
     return out
 
 
+SHADOW_RULES = {
+    "s5_late": "5-minute: the model is 85%+ sure of a side, the book leans the same way, and the side costs 90c or less, in the last 10-60 s",
+    "s5_cheap": "5-minute: buys a cheap side (20c or less) that the model prices at least 8c higher, 90-240 s before the close",
+    "s5_book": "5-minute: the book leans 65%+ one way, the model agrees at 60%+, and the ask is 45-65c with a 5c edge, 60-180 s before the close",
+    "s15_trend": "15-minute: buys the side recent spot movement favours, when its ask is 5c under fair and at most 80c, 180-600 s before the close",
+    "s15_distance": "15-minute: the model is 80%+ sure and the side is at least 7c under fair, 120-300 s before the close",
+    "s15_vol": "15-minute: the model is 70%+ sure under both the tighter and wider volatility, and the ask is 5c under both, 120-600 s before the close",
+}
+
+
 async def shadow_detail(pool, asset: str, account: str = "") -> Optional[Dict[str, Any]]:
-    """v1.21 shadow results, readable from the Station and the API: the calibration of the model and the book by confidence
-    bucket (trades and wins per bucket) and the scalp shadow's entries, targets, stops and profit. Saved by the desk each window
-    under polybot_kv (key 'shadow' for BTC, 'shadow:<asset>' for the others)."""
+    """Shadow results, readable from the Station and the API: the six shadow strategies for this desk's timeframe (recorded only,
+    never traded) and the model's calibration by confidence bucket. Saved by the desk each window under polybot_kv
+    (key 'shadow' for BTC, 'shadow:<asset>' for the others)."""
+    from openjarvis.polybot import shadow as shadow_mod
+
     async with pool.acquire() as c:
         raw = await c.fetchval("SELECT value FROM polybot_kv WHERE key = $1", kv_key("shadow", asset, account))
     if raw is None:
         return None
     d = json.loads(raw) if isinstance(raw, str) else (raw or {})
     calib = d.get("calib") or {}
-    out: Dict[str, Any] = {"calib": {}, "scalp": d.get("scalp") or {}}
-    names = {"edge": "buys a side at least 6c under the model's fair price, 60-240 s before the close",
-             "pairs": "buys both sides when the two asks total 97c or less, with 90 s or more left",
-             "late": "buys the likely winner (model 90%+ or 10%-) at 95c or less, in the last 60 s",
-             "book": "buys a side when the model is 80%+ and the order book agrees (60%+), 60-240 s before the close, at 90c or less",
-             "imbalance": "buys the side the order book leans toward (75%+ bid share), 60-240 s before the close, at 85c or less",
-             "vol_narrow": "the model with volatility cut to 0.7x: buys a side it puts at 85%+ when the ask is 5c or more under that",
-             "vol_wide": "the model with volatility raised to 1.4x: buys a side it puts at 85%+ when the ask is 5c or more under that"}
-    diag = d.get("diag") or {}
+    rec = d.get("rec") or {}
+    out: Dict[str, Any] = {"calib": {}}
+    names = shadow_mod.names_for(900 if str(asset).endswith("15") else 300)
     out["strategies"] = []
-    for n, r in (d.get("rec") or {}).items():
+    for n in names:
+        r = rec.get(n) or {}
         w, staked, profit = int(r.get("windows", 0)), float(r.get("staked", 0)), float(r.get("profit", 0))
-        out["strategies"].append({"name": n, "rule": names.get(n, ""), "windows": w, "wins": int(r.get("wins", 0)),
+        out["strategies"].append({"name": n, "rule": SHADOW_RULES.get(n, ""), "windows": w, "wins": int(r.get("wins", 0)),
                                   "win_rate": round(100.0 * int(r.get("wins", 0)) / w, 1) if w else None,
                                   "staked": round(staked, 2), "profit": round(profit, 2),
-                                  "return_pct": round(100.0 * profit / staked, 1) if staked else None,
-                                  "passed_over": sorted(((k, v) for k, v in (diag.get(n) or {}).items() if k != "fired"), key=lambda kv: -kv[1])[:4]})
+                                  "return_pct": round(100.0 * profit / staked, 1) if staked else None})
     for kind in ("model", "book"):
         rows = []
         for lab, cell in (calib.get(kind) or {}).items():
