@@ -142,7 +142,8 @@ class Shadow:
         self.maker_fills: Dict[str, Dict[str, float]] = {}    # slug -> side -> price a resting bid was filled at
         self.last_fair: Dict[str, Dict[str, Any]] = {}        # slug -> the latest fair values seen in the window (kept until settlement)
         self.log: List[Dict[str, Any]] = []                   # one row per settled window: the model, the tighter and wider volatility, the book, and the result
-        self.sizing: Dict[str, float] = {"windows": 0, "sigma_pct": 0.0, "conf_pct": 0.0, "sigma_pts": 0.0, "conf_pts": 0.0}   # sigma-tier vs confidence-tier sizing on the same trades; pts = % of balance x return
+        self.sizing: Dict[str, float] = {"windows": 0, "sigma_pct": 0.0, "conf_pct": 0.0, "cal_pct": 0.0,
+                                         "sigma_pts": 0.0, "conf_pts": 0.0, "cal_pts": 0.0}   # sizing on the same trades; pts = % of balance x return
 
     def tick(self, slug: str, secs_left: float, fair_up: Optional[float], ask_up: Optional[float], ask_down: Optional[float],
              extra: Optional[Dict[str, Optional[float]]] = None) -> None:
@@ -254,19 +255,31 @@ class Shadow:
                         "win_rate": round(100.0 * c["wins"] / c["n"], 1) if c["n"] else None}
                        for _, _, lab in BUCKETS for c in [self.calib[kind][lab]]] for kind in ("model", "book")}
 
-    def add_sizing(self, slug: str, sigma: Optional[float], conf: Optional[float], conf_lot: float, ret: float) -> None:
-        """A traded window's return, sized two ways: by the sigma tier at entry, and by the confidence tier the bot actually used."""
+    def calibrated_conf(self, raw: Optional[float], prior_n: float = 20.0) -> Optional[float]:
+        """The model's confidence corrected toward what its bucket has actually won: the bucket's win rate, shrunk toward the raw
+        number so a thin bucket counts for little (prior_n trades' worth of weight on the raw value)."""
+        if raw is None or not (0.0 <= raw < 1.01):
+            return None
+        n, wins = self.bucket_stats(raw)
+        return round((wins + prior_n * raw) / (n + prior_n), 4)
+
+    def add_sizing(self, slug: str, sigma: Optional[float], conf: Optional[float], conf_lot: float, cal_conf: Optional[float],
+                   cal_lot: float, ret: float) -> None:
+        """A traded window's return, sized three ways on the same trades: by the sigma tier, by the confidence tier the bot used,
+        and by the same tiers applied to the calibrated confidence."""
         s_pct = sigma_pct(sigma)
         r = self.sizing
         r["windows"] += 1
         r["sigma_pct"] += s_pct
         r["conf_pct"] += conf_lot
+        r["cal_pct"] += cal_lot
         r["sigma_pts"] = round(r["sigma_pts"] + s_pct * ret, 4)
         r["conf_pts"] = round(r["conf_pts"] + conf_lot * ret, 4)
+        r["cal_pts"] = round(r["cal_pts"] + cal_lot * ret, 4)
         for row in reversed(self.log):
             if row.get("slug") == slug:
-                row.update({"entry_sigma": sigma, "entry_conf": conf, "window_return": round(ret, 4),
-                            "sigma_lot_pct": s_pct, "conf_lot_pct": conf_lot})
+                row.update({"entry_sigma": sigma, "entry_conf": conf, "entry_cal_conf": cal_conf, "window_return": round(ret, 4),
+                            "sigma_lot_pct": s_pct, "conf_lot_pct": conf_lot, "cal_lot_pct": cal_lot})
                 break
 
     def to_dict(self) -> Dict[str, Any]:
