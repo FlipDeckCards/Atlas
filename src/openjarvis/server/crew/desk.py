@@ -150,6 +150,24 @@ SHADOW_RULES = {
 }
 
 
+async def export_shadow(pool, asset: str = "btc", account: str = "") -> str:
+    """The shadow log for this desk as CSV: one row per settled window, with the model's probability that Up wins at its
+    standard view (1.0x volatility), tighter (0.7x) and wider (1.4x), the book's view, the seconds left at the last tick, and the result."""
+    import csv
+    import io
+
+    async with pool.acquire() as c:
+        raw = await c.fetchval("SELECT value FROM polybot_kv WHERE key = $1", kv_key("shadow", asset, account))
+    d = {} if raw is None else (json.loads(raw) if isinstance(raw, str) else raw)
+    buf = io.StringIO()
+    wr = csv.writer(buf)
+    wr.writerow(["slug", "result", "up_won", "secs_left_at_last_tick", "p_up_model_1.0x", "p_up_tight_0.7x", "p_up_wide_1.4x", "p_up_book"])
+    for r in (d or {}).get("log") or []:
+        wr.writerow([r.get("slug"), "UP" if r.get("up") else "DOWN", 1 if r.get("up") else 0, r.get("secs_left"),
+                     r.get("fair"), r.get("lo"), r.get("hi"), r.get("book")])
+    return buf.getvalue()
+
+
 async def shadow_detail(pool, asset: str, account: str = "") -> Optional[Dict[str, Any]]:
     """Shadow results, readable from the Station and the API: the six shadow strategies for this desk's timeframe (recorded only,
     never traded) and the model's calibration by confidence bucket. Saved by the desk each window under polybot_kv

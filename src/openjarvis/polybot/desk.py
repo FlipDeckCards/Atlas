@@ -616,6 +616,7 @@ class Desk:
                                    None if b.best_bid is None else round(1.0 - b.best_bid, 6))
             self.shadow.gate_tick(w.slug, w.end - now, self.fair_model, b.best_ask,
                                   None if b.best_bid is None else round(1.0 - b.best_bid, 6))
+            self.shadow.record_fair(w.slug, w.end - now, self.fair_model, fair_lo, fair_hi, book_view)   # the model's views, logged per window
         if self.guard and not (self.rs.kill or self.rs.paused):
             reason = self.guard
         elif w is None and not (self.rs.kill or self.rs.paused):

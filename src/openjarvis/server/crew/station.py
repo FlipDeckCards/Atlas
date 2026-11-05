@@ -1242,7 +1242,21 @@ function deskSec(key) {
       dl.textContent = '⬇ CSV';
     } catch (e) { dl.textContent = 'CSV failed'; }
   };
-  tl.append(dl); s.append(tl);
+  tl.append(dl);
+  // the shadow log for this bot: the model at 1.0x, 0.7x and 1.4x volatility per settled window
+  const sh = mk('span', 'tag', '⬇ shadow'); sh.style.cursor = 'pointer'; sh.style.marginLeft = '6px';
+  sh.onclick = async () => {
+    sh.textContent = '…';
+    try {
+      const res = await fetch('/api/crew/desk/shadow.csv?asset=' + encodeURIComponent(A), { headers: { 'Authorization': 'Bearer ' + token() } });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a'); a.href = url; a.download = 'desk-' + A + '-shadow.csv';
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      sh.textContent = '⬇ shadow';
+    } catch (e) { sh.textContent = 'shadow failed'; }
+  };
+  tl.append(sh); s.append(tl);
   const rows = (DESK.trades || {})[DESK_VIEW] || [];
   if (!rows.length) s.append(mk('div', 'dim', 'No trades yet.'));
   else {
