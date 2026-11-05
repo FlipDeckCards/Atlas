@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import math
 import time
 from typing import Any, Dict, List, Optional
 
@@ -219,6 +220,16 @@ async def sweep_stats(pool, mode: str, version: str, asset: str) -> Dict[str, An
     return {"trades": n, "wins": wins, "win_rate": round(100.0 * wins / n, 1) if n else None, "profit": round(sum(per.values()), 2)}
 
 
+def sd_from_strike(conf) -> Optional[float]:
+    """How many standard deviations of remaining move the index sits from the strike, implied by the model's confidence in the side bought:
+    the inverse normal of the confidence (0 = a coin flip at the strike; +2 = two sigmas on the bet's side)."""
+    if not isinstance(conf, (int, float)):
+        return None
+    from statistics import NormalDist
+    c = min(max(float(conf), 0.001), 0.999)
+    return round(NormalDist().inv_cdf(c), 2)
+
+
 def buy_price(f: Dict[str, Any]) -> float:
     """What a fill actually paid per contract: the Up price for an Up buy, 1 minus it for a Down buy."""
     return float(f["price"]) if f["side"] == "up" else 1.0 - float(f["price"])
@@ -240,7 +251,8 @@ async def trades(pool, mode: str, limit: int = 50, version: str = STRATEGY_VERSI
         conf = None if not isinstance(m, (int, float)) else round(m if f["side"] == "up" else 1.0 - m, 3)
         by.setdefault(f["slug"], []).append({"ts": f["ts"].isoformat(), "side": f["side"], "price": f["price"], "qty": f["qty"],
                                              "sweep": feat.get("sweep") is True, "conf": conf,
-                                             "cost": round(f["cost"], 2), "fair": round(f["fair"], 3) if f["fair"] is not None else None})
+                                             "cost": round(f["cost"], 2), "fair": round(f["fair"], 3) if f["fair"] is not None else None,
+                                             "sigma": feat.get("sigma"), "secs_left": feat.get("secs_left")})
     out = []
     for w in ws:
         uq, dq = float(w["up_qty"] or 0), float(w["down_qty"] or 0)
@@ -255,12 +267,17 @@ async def trades(pool, mode: str, limit: int = 50, version: str = STRATEGY_VERSI
             wconf = None if not mf else round(sum(f["conf"] * f["cost"] for f in mf) / (sum(f["cost"] for f in mf) or 1), 3)
             qty = sum(f["qty"] for f in mf)
             wedge = None if not mf or not qty else round(wconf - sum(buy_price(f) * f["qty"] for f in mf) / qty, 3)
+        mv = next((f for f in wf if f["side"] == main), None) if not pair else None
+        sd = sd_from_strike(mv["conf"]) if mv else None
+        move = None
+        if mv and isinstance(mv.get("sigma"), (int, float)) and isinstance(mv.get("secs_left"), (int, float)):
+            move = round(mv["sigma"] * math.sqrt(max(1.0, mv["secs_left"])), 2)     # dollars the index can still travel before the close
         out.append({"slug": w["slug"], "window_start": w["window_start"].isoformat() if w["window_start"] else None,
                     "window_end": w["window_end"].isoformat() if w["window_end"] else None, "price_to_beat": w["price_to_beat"],
                     "close_price": w["close_price"], "result": None if w["up"] is None else ("UP" if w["up"] else "DOWN"),
                     "up_qty": w["up_qty"], "up_cost": w["up_cost"], "down_qty": w["down_qty"], "down_cost": w["down_cost"],
                     "paid": round((w["up_cost"] or 0) + (w["down_cost"] or 0), 2), "pnl": w["pnl"], "fills": by.get(w["slug"], []),
-                    "pair": pair, "conf": wconf, "edge": wedge})
+                    "pair": pair, "conf": wconf, "edge": wedge, "move": move, "sd": sd})
     return out
 
 
@@ -279,7 +296,7 @@ async def export_fills(pool, asset: str = "btc") -> str:
     buf = io.StringIO()
     wr = csv.writer(buf)
     wr.writerow(["time_utc", "mode", "version", "window_end_utc", "slug", "side", "price", "qty", "cost", "fair",
-                 "model_prob_side", "edge", "sweep", "window_result", "window_pnl"])
+                 "model_prob_side", "edge", "sd_from_strike", "sigma", "secs_left", "move_left_usd", "sweep", "window_result", "window_pnl"])
     for r in rows:
         feat = _j(r["features"])
         m = feat.get("model")
@@ -287,9 +304,11 @@ async def export_fills(pool, asset: str = "btc") -> str:
         res = None if r["up"] is None else ("UP" if r["up"] else "DOWN")
         bp = r["price"] if r["side"] == "up" else 1.0 - r["price"]
         edge = None if conf is None else round(conf - bp, 3)
+        sg, sl = feat.get("sigma"), feat.get("secs_left")
+        mv = round(sg * math.sqrt(max(1.0, sl)), 2) if isinstance(sg, (int, float)) and isinstance(sl, (int, float)) else None
         wr.writerow([r["ts"].isoformat(), r["mode"], r["version"],
                      r["window_end"].isoformat() if r["window_end"] else "", r["slug"], r["side"], r["price"], r["qty"],
-                     round(r["cost"], 2), r["fair"], conf, edge, feat.get("sweep") is True, res, r["pnl"]])
+                     round(r["cost"], 2), r["fair"], conf, edge, sd_from_strike(conf), sg, sl, mv, feat.get("sweep") is True, res, r["pnl"]])
     return buf.getvalue()
 
 
