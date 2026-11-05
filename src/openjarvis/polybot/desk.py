@@ -89,7 +89,9 @@ class Desk:
         self._dir_pending: set = set()                       # v1.18: windows where a directional trade was placed
         self._bets: Dict[str, Dict[str, Tuple[str, float, float]]] = {}   # v1.22: window -> {method: (side, usd, qty)}, one bet per method
         self._fill_conf: Dict[str, List[Tuple[str, Optional[float], Optional[float]]]] = {}   # per window: (side, model conf, book conf)
-        self._entry_sig: Dict[str, Tuple[Optional[float], Optional[float]]] = {}              # per window: (sigma, model conf) at the first entry
+        # live calibration: a side's raw model confidence -> the win rate its bucket has actually shown (shrunk toward the raw value)
+        self._calib = lambda p: (self.shadow.calibrated_conf(p) if self.shadow.calibrated_conf(p) is not None else p)
+        self._entry_sig: Dict[str, Tuple[Any, ...]] = {}   # per window: (sigma, model conf, calibrated conf, calibrated lot) at the first entry
         self.shadow = shadow.Shadow(window_secs=900 if str(self.cfg.asset).endswith("15") else 300)   # six hidden shadow strategies, three per timeframe (recorded, never traded or shown)
         self.setups = setups.SetupBook()                     # v1.14 learned pair sizing (shadow): record per pair setup
         self._pair_fills: Dict[str, List[Dict[str, Any]]] = {}   # non-sweep fills per open window, to file the pair under its setup
@@ -359,7 +361,9 @@ class Desk:
         feats.update({"book_up": bu})                                        # v1.15: the order book's own view, recorded (not traded)
         self._fill_conf.setdefault(w.slug, []).append((f.side, mconf, bconf))
         if not feats["sweep"]:
-            self._entry_sig.setdefault(w.slug, (feats["sigma"], mconf))           # the window's first entry: its sigma and confidence
+            cal_c = self.shadow.calibrated_conf(mconf)
+            cal_lot = directional.size_pct(cal_c, self.cfg.asset) if cal_c is not None else 0.0
+            self._entry_sig.setdefault(w.slug, (feats["sigma"], mconf, cal_c, cal_lot))   # the window's first entry
         if not feats["sweep"]:
             # v1.14 shadow sizing: the window's pair is filed under the setup its FIRST leg opened in; record what size that setup
             # has earned next to the size actually used (trading still uses the normal size)
@@ -442,7 +446,8 @@ class Desk:
             pnl = round(payout - w.inv.spent, 4)
             ent = self._entry_sig.pop(slug, None)
             if ent is not None and w.inv.spent > 0:
-                self.shadow.add_sizing(slug, ent[0], ent[1], directional.size_pct(ent[1] or 0.0, self.cfg.asset), pnl / w.inv.spent)
+                self.shadow.add_sizing(slug, ent[0], ent[1], directional.size_pct(ent[1] or 0.0, self.cfg.asset), ent[2], ent[3],
+                                       pnl / w.inv.spent)
                 try:
                     await self.store.put("shadow", self.shadow.to_dict())
                 except Exception:
@@ -729,7 +734,7 @@ class Desk:
                         z = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)
                         pick = directional.decide(self.fair_model, b.best_ask, round(1.0 - b.best_bid, 6),
                                                   self.shadow.bucket_stats(self.fair_model), self.shadow.bucket_stats(1.0 - self.fair_model), z=z,
-                                                  up_ok=can_up_m, down_ok=can_down_m, asset=self.cfg.asset)
+                                                  up_ok=can_up_m, down_ok=can_down_m, asset=self.cfg.asset, calib=self._calib)
                         if pick is not None:
                             side, cost, tier, edge, lot_pct = pick
                             size_here = (b.offers[0][1] if b.offers else 0.0) if side == "up" else (b.bids[0][1] if b.bids else 0.0)
@@ -750,7 +755,7 @@ class Desk:
                                 continue
                             z = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)
                             pick = directional.method_pick(method, self.fair_model, b.best_ask, round(1.0 - b.best_bid, 6), z=z,
-                                                           up_ok=can_up_m, down_ok=can_down_m, asset=self.cfg.asset)
+                                                           up_ok=can_up_m, down_ok=can_down_m, asset=self.cfg.asset, calib=self._calib)
                             if pick is None:
                                 continue
                             side, cost, _, gap, lot_pct = pick

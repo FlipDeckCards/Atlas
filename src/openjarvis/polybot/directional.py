@@ -11,7 +11,7 @@ Only one side is bought per window. Each coin has its own confidence tiers and l
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 from openjarvis.polybot import setups
 from openjarvis.polybot.strategy import taker_fee
@@ -69,12 +69,16 @@ LATE_MAX_COST = 0.95     # ... and the side costs 95 cents or less
 
 
 def method_pick(method: str, prob_up: float, up_cost: Optional[float], down_cost: Optional[float], z: Optional[float] = None,
-                up_ok: bool = True, down_ok: bool = True, asset: str = "btc") -> Optional[Tuple[str, float, str, float, float]]:
-    """(side, cost, method, edge, lot % of balance) for an edge or late bet, or None. The caller checks the window timing."""
+                up_ok: bool = True, down_ok: bool = True, asset: str = "btc",
+                calib: Optional[Callable[[float], float]] = None) -> Optional[Tuple[str, float, str, float, float]]:
+    """(side, cost, method, edge, lot % of balance) for an edge or late bet, or None. The caller checks the window timing.
+    calib (live calibration): maps a side's raw model confidence to what that confidence has actually won; the floor and lot use it."""
     if method not in ("edge", "late"):
         return None
     best = None
     for side, prob, cost, ok in (("up", prob_up, up_cost, up_ok), ("down", 1.0 - prob_up, down_cost, down_ok)):
+        if calib is not None:
+            prob = calib(prob)
         if cost is None or not (0.05 <= cost <= 0.95) or prob < min_conf(asset) or not ok:
             continue
         if z is not None and (z if side == "up" else -z) < CUSHION_Z:
@@ -120,11 +124,13 @@ def cushion_z(index: Optional[float], beat: Optional[float], sigma_per_s: Option
 def decide(prob_up: float, up_cost: Optional[float], down_cost: Optional[float],
            bucket_up: Tuple[int, int], bucket_down: Tuple[int, int],
            z: Optional[float] = None, up_ok: bool = True, down_ok: bool = True,
-           asset: str = "btc") -> Optional[Tuple[str, float, str, float, float]]:
+           asset: str = "btc", calib: Optional[Callable[[float], float]] = None) -> Optional[Tuple[str, float, str, float, float]]:
     """(side, cost per contract, tier, edge after fees, lot % of balance) for the better side, or None.
     bucket_up / bucket_down: (trades, wins) in the calibration bucket of that side's model confidence."""
     best = None
     for side, prob, cost, (n, wins) in (("up", prob_up, up_cost, bucket_up), ("down", 1.0 - prob_up, down_cost, bucket_down)):
+        if calib is not None:
+            prob = calib(prob)                        # live calibration: the confidence the bot trusts is what the bucket has actually won
         if cost is None or not (0.05 <= cost <= 0.95) or prob < min_conf(asset):
             continue
         if z is not None and (z if side == "up" else -z) < CUSHION_Z:
