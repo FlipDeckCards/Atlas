@@ -18,6 +18,19 @@ from openjarvis.polybot.strategy import taker_fee
 
 PROVEN_N = 50
 PROVEN_EDGE = 0.03
+# Hour switch (owner, 2026-11-05): in these Los Angeles hours (window open) the bot trades on the raw model; in every other hour
+# on the calibrated model. Green hours from each bot's hourly results. Reviewed every Friday; not changed in between.
+RAW_HOURS = {
+    "btc": frozenset({0, 1, 3, 4, 5, 10, 11, 12, 13, 15, 18, 19, 20, 21, 22}),        # BTC 5m
+    "btc15": frozenset({0, 1, 2, 3, 4, 5, 6, 9, 10, 12, 14, 16, 17, 18, 20, 22}),     # BTC 15m
+}
+
+
+def raw_hour(asset: str, ts: float) -> bool:
+    """True when a window opening at ts trades on the raw model for this bot (its hour is green)."""
+    import datetime as dt
+    from zoneinfo import ZoneInfo
+    return dt.datetime.fromtimestamp(ts, ZoneInfo("America/Los_Angeles")).hour in RAW_HOURS.get((asset or "btc").lower(), frozenset())
 EXPLORE_EDGE = 0.05
 # v1.20, the owner's direction plan: lot % of the balance by the model's confidence, per coin (floor of the percentage).
 # BTC: 80-84 = 5%, 85-89 = 7%, 90-94 = 8%, 95%+ = 10%; under 80 = no trade.

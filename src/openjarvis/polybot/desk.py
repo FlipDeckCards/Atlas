@@ -500,6 +500,10 @@ class Desk:
                 ext += abs(money(p.get("cost")) or 0.0)
         self.external_at_risk = round(ext, 2)
 
+    def _calib_for(self, w):
+        """The confidence the bot trades on for this window: raw in the bot's green hours, calibrated in every other hour."""
+        return None if directional.raw_hour(self.cfg.asset, w.start) else self._calib
+
     def hour_factor(self, ts: float) -> float:
         """v1.25: the size factor for a window opening at ts (Los Angeles hour): 1 normally, 0.5 at 7 AM, 0 to skip the hour."""
         h = dt.datetime.fromtimestamp(ts, risk.LA).hour
@@ -734,7 +738,7 @@ class Desk:
                         z = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)
                         pick = directional.decide(self.fair_model, b.best_ask, round(1.0 - b.best_bid, 6),
                                                   self.shadow.bucket_stats(self.fair_model), self.shadow.bucket_stats(1.0 - self.fair_model), z=z,
-                                                  up_ok=can_up_m, down_ok=can_down_m, asset=self.cfg.asset, calib=self._calib)
+                                                  up_ok=can_up_m, down_ok=can_down_m, asset=self.cfg.asset, calib=self._calib_for(w))
                         if pick is not None:
                             side, cost, tier, edge, lot_pct = pick
                             size_here = (b.offers[0][1] if b.offers else 0.0) if side == "up" else (b.bids[0][1] if b.bids else 0.0)
@@ -755,7 +759,7 @@ class Desk:
                                 continue
                             z = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)
                             pick = directional.method_pick(method, self.fair_model, b.best_ask, round(1.0 - b.best_bid, 6), z=z,
-                                                           up_ok=can_up_m, down_ok=can_down_m, asset=self.cfg.asset, calib=self._calib)
+                                                           up_ok=can_up_m, down_ok=can_down_m, asset=self.cfg.asset, calib=self._calib_for(w))
                             if pick is None:
                                 continue
                             side, cost, _, gap, lot_pct = pick
