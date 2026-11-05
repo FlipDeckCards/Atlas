@@ -533,6 +533,20 @@ async def crew_desk(request: Request, limit: int = 50, asset: str = "btc", view:
     return out
 
 
+@router.get("/api/crew/desk/export.csv")
+async def crew_desk_export(request: Request, asset: str = "btc"):
+    """Every fill the desk ever made (all strategy versions, paper and live) as one CSV file, for the owner."""
+    g = await _desk_gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    from openjarvis.server.crew import desk
+
+    a = (asset or "btc").lower()
+    body = await desk.export_fills(g[2], asset=a)
+    return Response(content=body, media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="desk-{a}-fills.csv"'})
+
+
 @router.post("/api/crew/desk/control")
 async def crew_desk_control(body: DeskControlIn, request: Request):
     """Pause, resume, kill or back to paper from the Station. The owner's go-live is an Approve card from Helix; a subscriber's
