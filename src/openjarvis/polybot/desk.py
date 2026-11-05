@@ -362,7 +362,7 @@ class Desk:
         self._fill_conf.setdefault(w.slug, []).append((f.side, mconf, bconf))
         if not feats["sweep"]:
             cal_c = self.shadow.calibrated_conf(mconf)
-            cal_lot = directional.size_pct(cal_c, self.cfg.asset) if cal_c is not None else 0.0
+            cal_lot = directional.size_pct(cal_c, self.cfg.asset, calibrated=True) if cal_c is not None else 0.0
             self._entry_sig.setdefault(w.slug, (feats["sigma"], mconf, cal_c, cal_lot))   # the window's first entry
         if not feats["sweep"]:
             # v1.14 shadow sizing: the window's pair is filed under the setup its FIRST leg opened in; record what size that setup
