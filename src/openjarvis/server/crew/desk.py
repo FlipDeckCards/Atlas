@@ -144,6 +144,8 @@ SHADOW_RULES = {
     "s15_vol": "15-minute: the model is 70%+ sure under both the tighter and wider volatility, and the ask is 5c under both, 120-600 s before the close",
     "m5_pair": "5-minute maker: rests a bid on both sides at fair value minus 3c, 150-240 s before the close; fills when the market sells down to it, pulled in the last minute",
     "m15_maker": "15-minute maker: rests a bid on the side the model favours (60%+) at fair value minus 6c, 300-600 s before the close; pulled in the last minute",
+    "s5_gate": "5-minute gate: buys a side only when its ask is at least 5c under the measured win rate of its confidence bucket (30+ settled trades), 60-240 s before the close",
+    "s15_gate": "15-minute gate: buys a side only when its ask is at least 5c under the measured win rate of its confidence bucket (30+ settled trades), 120-600 s before the close",
 }
 
 

@@ -25,8 +25,12 @@ from openjarvis.polybot.strategy import taker_fee
 MAKER_5M = "m5_pair"        # maker shadow, 5-minute: rest a bid on both sides under fair value and earn the spread
 MAKER_15M = "m15_maker"     # maker shadow, 15-minute: rest a bid on the side the model favours, under fair value
 MAKER_MIN_SECS = 60         # resting quotes are pulled in the last minute
-NAMES_5M = ("s5_late", "s5_cheap", "s5_book", MAKER_5M)
-NAMES_15M = ("s15_trend", "s15_distance", "s15_vol", MAKER_15M)
+GATE_5M = "s5_gate"         # gate shadow, 5-minute: buy only when the ask is 5c under the measured win rate of its confidence bucket
+GATE_15M = "s15_gate"       # gate shadow, 15-minute: the same rule on 15-minute windows
+GATE_MIN_TRADES = 30        # the bucket needs this many settled trades before the gate trusts it
+GATE_MARGIN = 0.05
+NAMES_5M = ("s5_late", "s5_cheap", "s5_book", MAKER_5M, GATE_5M)
+NAMES_15M = ("s15_trend", "s15_distance", "s15_vol", MAKER_15M, GATE_15M)
 NAMES = tuple(dict.fromkeys(NAMES_5M + NAMES_15M))
 
 
@@ -118,6 +122,7 @@ class Shadow:
         self.open: Dict[str, Dict[str, List[Tuple[str, float]]]] = {}   # slug -> strategy -> legs taken
         self.done: Dict[str, set] = {}                                  # slug -> strategies that already traded this window
         self.maker_name = MAKER_15M if window_secs >= 900 else MAKER_5M
+        self.window_secs = window_secs
         self.maker_quotes: Dict[str, Dict[str, float]] = {}   # slug -> side -> resting bid price
         self.maker_fills: Dict[str, Dict[str, float]] = {}    # slug -> side -> price a resting bid was filled at
 
@@ -154,6 +159,22 @@ class Shadow:
             ask = ask_up if side == "up" else ask_down
             if side not in fills and ask is not None and ask <= price:
                 fills[side] = price
+
+    def gate_tick(self, slug: str, secs_left: float, fair_up: Optional[float], ask_up: Optional[float],
+                  ask_down: Optional[float]) -> None:
+        """Gate shadow: buy a side only when its ask is at least GATE_MARGIN under the measured win rate of its confidence bucket."""
+        name = GATE_15M if self.window_secs >= 900 else GATE_5M
+        lo, hi = (120, 600) if self.window_secs >= 900 else (60, 240)
+        if fair_up is None or not (lo <= secs_left <= hi) or slug in self.done.get(slug, set()) or name in self.done.get(slug, set()):
+            return
+        for side, conf, ask in (("up", fair_up, ask_up), ("down", 1.0 - fair_up, ask_down)):
+            if ask is None or not (0.0 < conf < 1.0):
+                continue
+            n, wins = self.bucket_stats(conf)
+            if n >= GATE_MIN_TRADES and wins / n - GATE_MARGIN >= ask:
+                self.open.setdefault(slug, {})[name] = [(side, ask)]
+                self.done.setdefault(slug, set()).add(name)
+                return
 
     def settle(self, slug: str, up: bool) -> None:
         filled = self.maker_fills.pop(slug, {})

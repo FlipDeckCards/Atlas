@@ -4,8 +4,8 @@ from openjarvis.polybot import shadow
 
 
 def test_six_shadows_split_by_timeframe():
-    assert shadow.NAMES_5M == ("s5_late", "s5_cheap", "s5_book", "m5_pair")
-    assert shadow.NAMES_15M == ("s15_trend", "s15_distance", "s15_vol", "m15_maker")
+    assert shadow.NAMES_5M == ("s5_late", "s5_cheap", "s5_book", "m5_pair", "s5_gate")
+    assert shadow.NAMES_15M == ("s15_trend", "s15_distance", "s15_vol", "m15_maker", "s15_gate")
     assert set(shadow.Shadow(window_secs=300).rec) == set(shadow.NAMES)
     assert shadow.Shadow(window_secs=300).names == shadow.NAMES_5M
     assert shadow.Shadow(window_secs=900).names == shadow.NAMES_15M
@@ -94,3 +94,21 @@ def test_15m_maker_posts_one_bid_on_the_favoured_side():
     s.maker_tick("m2", 400, 0.70, 0.60, 0.40)                       # ask 60c <= 64c: fills
     s.settle("m2", up=False)                                        # the up side loses
     assert s.rec["m15_maker"]["windows"] == 1 and s.rec["m15_maker"]["wins"] == 0 and round(s.rec["m15_maker"]["profit"], 2) == -0.64
+
+
+def test_gate_buys_only_under_the_measured_win_rate():
+    s = shadow.Shadow(window_secs=300)
+    for _ in range(40):                                  # 40 settled 80-89 trades, 34 won: 85% measured
+        s.calib_add(0.85, None, True) if _ < 34 else s.calib_add(0.85, None, False)
+    s.gate_tick("g1", 120, 0.85, 0.85, 0.15)             # ask 85c, measured 85% - 5c = 80%: no
+    assert "g1" not in s.open
+    s.gate_tick("g2", 120, 0.85, 0.78, 0.15)             # ask 78c <= 80%: buy up
+    assert s.open["g2"]["s5_gate"] == [("up", 0.78)]
+
+
+def test_gate_needs_a_big_enough_bucket():
+    s = shadow.Shadow(window_secs=900)
+    for _ in range(10):
+        s.calib_add(0.85, None, True)
+    s.gate_tick("g3", 300, 0.85, 0.40, 0.60)             # only 10 trades in the bucket: no
+    assert "g3" not in s.open

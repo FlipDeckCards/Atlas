@@ -614,6 +614,8 @@ class Desk:
                              {"book_up": book_view, "fair_lo": fair_lo, "fair_hi": fair_hi, "momentum": self.momentum})
             self.shadow.maker_tick(w.slug, w.end - now, self.fair_model, b.best_ask,
                                    None if b.best_bid is None else round(1.0 - b.best_bid, 6))
+            self.shadow.gate_tick(w.slug, w.end - now, self.fair_model, b.best_ask,
+                                  None if b.best_bid is None else round(1.0 - b.best_bid, 6))
         if self.guard and not (self.rs.kill or self.rs.paused):
             reason = self.guard
         elif w is None and not (self.rs.kill or self.rs.paused):
