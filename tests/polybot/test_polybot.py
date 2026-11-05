@@ -957,24 +957,6 @@ def test_v114_learned_pair_sizing():
     assert setups.version_at_least("1.13", "1.12") and not setups.version_at_least("1.9", "1.12")
 
 
-def test_v115_shadow_strategies():
-    from openjarvis.polybot import shadow
-    assert shadow.decide("edge", 120, 0.60, 0.50, 0.45) == [("up", 0.50)]          # 10c above the ask
-    assert shadow.decide("edge", 30, 0.60, 0.50, 0.45) == []                       # too late for edge
-    assert shadow.decide("pairs", 120, 0.5, 0.45, 0.50) == [("up", 0.45), ("down", 0.50)]   # 95c for the pair
-    assert shadow.decide("pairs", 120, 0.5, 0.50, 0.50) == []                      # 100c: no pair
-    assert shadow.decide("late", 30, 0.93, 0.90, 0.10) == [("up", 0.90)]
-    assert shadow.decide("late", 30, 0.93, 0.97, 0.10) == []                       # 97c: too expensive
-    s = shadow.Shadow()
-    s.tick("w1", 120, 0.60, 0.50, 0.45)                                            # edge fires
-    s.tick("w1", 50, 0.95, 0.90, 0.10)                                             # late fires; edge does not fire twice
-    assert set(s.open["w1"]) == {"edge", "pairs", "late"}          # pairs also qualifies at 95c on the first tick
-    s.settle("w1", up=True)
-    assert s.rec["edge"]["windows"] == 1 and s.rec["edge"]["wins"] == 1 and s.rec["edge"]["profit"] > 0
-    assert s.rec["late"]["wins"] == 1 and s.rec["pairs"]["windows"] == 1 and s.rec["pairs"]["wins"] == 1
-    s2 = shadow.Shadow(); s2.load(s.to_dict()); assert s2.rec["edge"]["wins"] == 1
-
-
 def test_v115_book_view_and_calibration():
     from openjarvis.polybot import shadow
     assert shadow.book_up([(0.5, 30)], [(0.51, 10)]) == 0.75          # heavy bid side: Up looks likelier
@@ -1034,26 +1016,6 @@ def test_v118_cushion_blocks_thin_leads():
     # a clear cushion (z=1.0) passes
     assert directional.decide(0.80, 0.60, 0.45, (3, 1), (0, 0), z=1.0)[0] == "up"
     assert directional.cushion_z(None, 100.0, 1.0, 100.0) is None
-
-
-def test_v118_shadow_scalp_target_and_stop():
-    from openjarvis.polybot import shadow
-    s = shadow.Shadow()
-    s.scalp_tick("w1", 120, 0.63, 0.65, 0.8)               # up ask 65c, trending up: enter at 65c
-    assert s.scalp_stats["entries"] == 1 and "up" in s.scalp_open["w1"]
-    s.scalp_tick("w1", 100, 0.79, 0.81, 0.8)               # bid 79c: not yet
-    assert s.scalp_stats["target"] == 0
-    s.scalp_tick("w1", 90, 0.81, 0.83, 0.8)                # bid 81c >= 65 + 15: target hit
-    assert s.scalp_stats["target"] == 1 and s.scalp_stats["profit"] > 0
-    s.scalp_tick("w2", 120, 0.31, 0.33, -0.8)              # a down entry: down ask 0.69 is out of range -> none
-    assert s.scalp_stats["entries"] == 1
-    s.scalp_tick("w3", 120, 0.63, 0.65, 0.8)               # enter again
-    s.scalp_tick("w3", 100, 0.48, 0.50, 0.8)               # bid 48c <= 65 - 15: stop
-    assert s.scalp_stats["stop"] == 1
-    s.scalp_tick("w4", 120, 0.63, 0.65, 0.8)               # enter, then held to settlement and it loses
-    s.settle_scalp("w4", up=False)
-    assert s.scalp_stats["settled"] == 1
-    t = shadow.Shadow(); t.load(s.to_dict()); assert t.scalp_stats["target"] == 1
 
 
 def test_v118_tiered_lot_sizes():

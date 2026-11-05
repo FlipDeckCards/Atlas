@@ -89,7 +89,7 @@ class Desk:
         self._dir_pending: set = set()                       # v1.18: windows where a directional trade was placed
         self._bets: Dict[str, Dict[str, Tuple[str, float, float]]] = {}   # v1.22: window -> {method: (side, usd, qty)}, one bet per method
         self._fill_conf: Dict[str, List[Tuple[str, Optional[float], Optional[float]]]] = {}   # per window: (side, model conf, book conf)
-        self.shadow = shadow.Shadow()                        # v1.15: three hidden shadow strategies (recorded, never traded or shown)
+        self.shadow = shadow.Shadow(window_secs=900 if str(self.cfg.asset).endswith("15") else 300)   # six hidden shadow strategies, three per timeframe (recorded, never traded or shown)
         self.setups = setups.SetupBook()                     # v1.14 learned pair sizing (shadow): record per pair setup
         self._pair_fills: Dict[str, List[Dict[str, Any]]] = {}   # non-sweep fills per open window, to file the pair under its setup
         self.sigma: Optional[float] = None
@@ -419,7 +419,6 @@ class Desk:
                 continue
             close, up = res
             self.shadow.settle(slug, up)
-            self.shadow.settle_scalp(slug, up)
             for method, (side, usd, qty) in self._bets.pop(slug, {}).items():
                 if method != "directional":
                     self.shadow.add_result(method, round((qty if (side == "up") == bool(up) else 0.0) - usd, 4), usd)
@@ -612,9 +611,7 @@ class Desk:
                                     drift_beta=self.cfg.drift_beta, drift_lookback_s=int(self.cfg.momentum_s)) if self.sigma else None
             self.shadow.tick(w.slug, w.end - now, self.fair_model, b.best_ask,
                              None if b.best_bid is None else round(1.0 - b.best_bid, 6),
-                             {"book_up": book_view, "fair_lo": fair_lo, "fair_hi": fair_hi})
-        if w is not None and b is not None:                       # v1.18 shadow scalp: enter cheap trending sides, exit at target/stop
-            self.shadow.scalp_tick(w.slug, w.end - now, b.best_bid, b.best_ask, self.momentum)
+                             {"book_up": book_view, "fair_lo": fair_lo, "fair_hi": fair_hi, "momentum": self.momentum})
         if self.guard and not (self.rs.kill or self.rs.paused):
             reason = self.guard
         elif w is None and not (self.rs.kill or self.rs.paused):

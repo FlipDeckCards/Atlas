@@ -1,12 +1,17 @@
-"""v1.15 shadow strategies: three fixed rulebooks that run beside the desk and only RECORD what they would have done.
+"""Shadow strategies: six fixed rulebooks (three per timeframe) that run beside the desk and only RECORD what they would have done.
 
-They never place orders and are not shown on the Station. Each one buys 1 contract per leg at the ask (plus the taker fee) and is
-settled like any window, so the profit per dollar staked can be compared across the three. Results are kept in the desk's
-key/value row 'shadow' (or 'shadow:<asset>'), readable in the database.
+They never place orders and are not shown on the Station. Each buys 1 contract per leg at the ask (plus the taker fee) and settles
+like any window. Results are kept in the desk's key/value row 'shadow' (or 'shadow:<asset>'), readable in the database.
 
-  edge   one tick per window, 60-240 s before the close: buy the side the model prices at least 6c above its ask.
-  pairs  once per window, from 90 s before the close: buy both sides when their asks total at most 97c.
-  late   once per window, in the last 60 s: buy the likely side when the model is at least 90% sure and it costs 95c or less.
+5-minute windows (desk btc):
+  s5_late    10-60 s before the close: the model is 85%+ sure of a side, the book leans the same way, and the side costs 90c or less.
+  s5_cheap   90-240 s before the close: buy a cheap side (20c or less) when the model prices it at least 8c above its ask.
+  s5_book    60-180 s before the close: the book leans 65%+ one way, the model agrees at 60%+, and the ask is 45-65c with a 5c edge.
+
+15-minute windows (desk btc15):
+  s15_trend     180-600 s before the close: buy the side the last few seconds of spot movement favours, when its ask is 5c under fair.
+  s15_distance  120-300 s before the close: the model is 80%+ sure and the side is at least 7c under fair.
+  s15_vol       120-600 s before the close: the model is 70%+ sure under both the tighter and the wider volatility, and the ask is 5c under both.
 
 Rules are fixed; nothing is tuned from the results inside a test period.
 """
@@ -17,87 +22,75 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from openjarvis.polybot.strategy import taker_fee
 
-NAMES = ("edge", "pairs", "late", "book", "imbalance", "vol_narrow", "vol_wide")   # v1.21: the four confidence pieces as shadows
+NAMES_5M = ("s5_late", "s5_cheap", "s5_book")
+NAMES_15M = ("s15_trend", "s15_distance", "s15_vol")
+NAMES = NAMES_5M + NAMES_15M
 
 
-DIAG_NAMES = ("pairs", "book", "imbalance", "vol_narrow", "vol_wide")
+def names_for(window_secs: int) -> Tuple[str, ...]:
+    """The shadows that belong to one timeframe."""
+    return NAMES_15M if window_secs >= 900 else NAMES_5M
 
 
-def decide_new(name: str, secs_left: float, fair_up: Optional[float], ask_up: Optional[float],
-               ask_down: Optional[float], extra: Optional[Dict[str, Optional[float]]] = None) -> Tuple[List[Tuple[str, float]], str]:
-    """Same rules as decide(), plus the reason a window was passed over (v1.21 diagnostics; "fired" when it traded)."""
-    ex = extra or {}
-    if name == "pairs":
-        if ask_up is None or ask_down is None:
-            return [], "no book on one side"
-        if secs_left < 90:
-            return [], "last 90 s"
-        if ask_up + ask_down > 0.97:
-            return [], "asks total over 97c"
-        return [("up", ask_up), ("down", ask_down)], "fired"
-    if not (60 <= secs_left <= 240):
-        return [], "outside 60-240 s"
-    if name == "book":
-        bu = ex.get("book_up")
-        if fair_up is None or bu is None:
-            return [], "no model or book view"
-        if fair_up >= 0.80 and bu >= 0.60:
-            if ask_up is not None and ask_up <= 0.90:
-                return [("up", ask_up)], "fired"
-            return [], "Up ask over 90c"
-        if fair_up <= 0.20 and bu <= 0.40:
-            if ask_down is not None and ask_down <= 0.90:
-                return [("down", ask_down)], "fired"
-            return [], "Down ask over 90c"
-        return [], "model or book not agreeing (need 80%+ and 60%+)"
-    if name == "imbalance":
-        bu = ex.get("book_up")
-        if bu is None:
-            return [], "no book view"
-        if bu >= 0.75:
-            if ask_up is not None and ask_up <= 0.85:
-                return [("up", ask_up)], "fired"
-            return [], "Up ask over 85c"
-        if bu <= 0.25:
-            if ask_down is not None and ask_down <= 0.85:
-                return [("down", ask_down)], "fired"
-            return [], "Down ask over 85c"
-        return [], "book lean under 75%"
-    f = ex.get("fair_lo") if name == "vol_narrow" else ex.get("fair_hi")
-    if f is None:
-        return [], "no model value"
-    if f >= 0.85 and ask_up is not None and ask_up <= f - 0.05:
-        return [("up", ask_up)], "fired"
-    if (1.0 - f) >= 0.85 and ask_down is not None and ask_down <= (1.0 - f) - 0.05:
-        return [("down", ask_down)], "fired"
-    return [], "model under 85% or ask not 5c under it"
-
-
-def decide(name: str, secs_left: float, fair_up: Optional[float], ask_up: Optional[float],
-           ask_down: Optional[float], extra: Optional[Dict[str, Optional[float]]] = None) -> List[Tuple[str, float]]:
+def decide(name: str, secs_left: float, fair_up: Optional[float], ask_up: Optional[float], ask_down: Optional[float],
+           extra: Optional[Dict[str, Optional[float]]] = None) -> List[Tuple[str, float]]:
     """The legs this strategy would buy at this moment, as (side, price per contract); [] when it would not trade.
-    extra (v1.21): book_up (the book's own Up view), fair_lo / fair_hi (the model with a tighter / wider volatility)."""
-    if name in DIAG_NAMES:
-        return decide_new(name, secs_left, fair_up, ask_up, ask_down, extra)[0]
-    if name == "edge":
-        if fair_up is None or not (60 <= secs_left <= 240):
+    extra: book_up (the book's Up view), fair_lo / fair_hi (the model at tighter / wider volatility), momentum (spot trend, sd)."""
+    ex = extra or {}
+    bu = ex.get("book_up")
+    flo, fhi = ex.get("fair_lo"), ex.get("fair_hi")
+    mom = ex.get("momentum")
+    if fair_up is None:
+        return []
+    fd = 1.0 - fair_up
+    if name == "s5_late":
+        if not (10 <= secs_left <= 60) or bu is None:
             return []
-        if ask_up is not None and fair_up - ask_up >= 0.06:
+        if fair_up >= 0.85 and bu >= 0.60 and ask_up is not None and ask_up <= 0.90:
             return [("up", ask_up)]
-        if ask_down is not None and (1.0 - fair_up) - ask_down >= 0.06:
+        if fd >= 0.85 and bu <= 0.40 and ask_down is not None and ask_down <= 0.90:
             return [("down", ask_down)]
         return []
-    if name == "pairs":
-        if ask_up is None or ask_down is None or secs_left < 90:
+    if name == "s5_cheap":
+        if not (90 <= secs_left <= 240):
             return []
-        return [("up", ask_up), ("down", ask_down)] if ask_up + ask_down <= 0.97 else []
-    if name == "late":
-        if fair_up is None or secs_left > 60:
-            return []
-        if fair_up >= 0.90 and ask_up is not None and ask_up <= 0.95:
+        if ask_up is not None and ask_up <= 0.20 and fair_up - ask_up >= 0.08:
             return [("up", ask_up)]
-        if fair_up <= 0.10 and ask_down is not None and ask_down <= 0.95:
+        if ask_down is not None and ask_down <= 0.20 and fd - ask_down >= 0.08:
             return [("down", ask_down)]
+        return []
+    if name == "s5_book":
+        if not (60 <= secs_left <= 180) or bu is None:
+            return []
+        if bu >= 0.65 and fair_up >= 0.60 and ask_up is not None and 0.45 <= ask_up <= 0.65 and fair_up - ask_up >= 0.05:
+            return [("up", ask_up)]
+        if bu <= 0.35 and fd >= 0.60 and ask_down is not None and 0.45 <= ask_down <= 0.65 and fd - ask_down >= 0.05:
+            return [("down", ask_down)]
+        return []
+    if name == "s15_trend":
+        if not (180 <= secs_left <= 600) or mom is None:
+            return []
+        if mom >= 0.5 and ask_up is not None and ask_up <= 0.80 and fair_up - ask_up >= 0.05:
+            return [("up", ask_up)]
+        if mom <= -0.5 and ask_down is not None and ask_down <= 0.80 and fd - ask_down >= 0.05:
+            return [("down", ask_down)]
+        return []
+    if name == "s15_distance":
+        if not (120 <= secs_left <= 300):
+            return []
+        if fair_up >= 0.80 and ask_up is not None and fair_up - ask_up >= 0.07:
+            return [("up", ask_up)]
+        if fd >= 0.80 and ask_down is not None and fd - ask_down >= 0.07:
+            return [("down", ask_down)]
+        return []
+    if name == "s15_vol":
+        if not (120 <= secs_left <= 600) or flo is None or fhi is None:
+            return []
+        if min(flo, fhi) >= 0.70 and ask_up is not None and ask_up <= min(flo, fhi) - 0.05:
+            return [("up", ask_up)]
+        if min(1.0 - flo, 1.0 - fhi) >= 0.70 and ask_down is not None and ask_down <= min(1.0 - flo, 1.0 - fhi) - 0.05:
+            return [("down", ask_down)]
+        return []
     return []
 
 
@@ -114,44 +107,25 @@ def book_up(bids: Optional[List[tuple]], offers: Optional[List[tuple]], levels: 
     return round(min(0.999, max(0.001, b / (b + o))), 4)
 
 
-SCALP_ENTRY = (0.60, 0.68)      # v1.18 shadow scalp: buy a side priced 60-68c that is trending its way (momentum 0.5 sd+) ...
-SCALP_MOM = 0.5
-SCALP_TARGET = 0.15             # ... sell the moment its bid reaches entry + 15c (target), or cut at entry - 15c (stop)
-SCALP_MIN_SECS = 60             # no new entries in the last minute
-
-
 class Shadow:
-    def __init__(self) -> None:
-        self.scalp_stats: Dict[str, float] = {"entries": 0, "target": 0, "stop": 0, "settled": 0, "wins": 0, "profit": 0.0, "staked": 0.0}
-        self.scalp_open: Dict[str, Dict[str, Dict[str, float]]] = {}     # slug -> side -> {entry, cost}
-        self.scalp_done: Dict[str, set] = {}                              # slug -> sides already entered this window
+    def __init__(self, window_secs: int = 300) -> None:
+        self.names = names_for(window_secs)
         self.calib: Dict[str, Dict[str, Dict[str, int]]] = {m: {lab: {"n": 0, "wins": 0} for _, _, lab in BUCKETS} for m in ("model", "book")}
         self.rec: Dict[str, Dict[str, float]] = {n: {"windows": 0, "wins": 0, "staked": 0.0, "profit": 0.0} for n in NAMES}
         self.open: Dict[str, Dict[str, List[Tuple[str, float]]]] = {}   # slug -> strategy -> legs taken
         self.done: Dict[str, set] = {}                                  # slug -> strategies that already traded this window
-        self.why: Dict[str, Dict[str, str]] = {}                        # v1.21: slug -> strategy -> last reason it passed
-        self.diag: Dict[str, Dict[str, int]] = {n: {} for n in DIAG_NAMES}   # v1.21: strategy -> reason -> windows
 
     def tick(self, slug: str, secs_left: float, fair_up: Optional[float], ask_up: Optional[float], ask_down: Optional[float],
              extra: Optional[Dict[str, Optional[float]]] = None) -> None:
-        for n in NAMES:
+        for n in self.names:
             if n in self.done.get(slug, set()):
                 continue
-            if n in DIAG_NAMES:
-                legs, reason = decide_new(n, secs_left, fair_up, ask_up, ask_down, extra)
-                self.why.setdefault(slug, {})[n] = reason
-            else:
-                legs = decide(n, secs_left, fair_up, ask_up, ask_down, extra)
+            legs = decide(n, secs_left, fair_up, ask_up, ask_down, extra)
             if legs:
                 self.open.setdefault(slug, {})[n] = legs
                 self.done.setdefault(slug, set()).add(n)
 
     def settle(self, slug: str, up: bool) -> None:
-        traded = set(self.open.get(slug, {}))
-        for n in DIAG_NAMES:
-            reason = "fired" if n in traded else self.why.get(slug, {}).get(n, "no tick in the window")
-            self.diag[n][reason] = self.diag[n].get(reason, 0) + 1
-        self.why.pop(slug, None)
         for n, legs in self.open.pop(slug, {}).items():
             staked = sum(p + taker_fee(p) for _, p in legs)
             payout = sum(1.0 for side, _ in legs if (side == "up") == bool(up))
@@ -173,44 +147,6 @@ class Shadow:
             cell["n"] += 1
             cell["wins"] += 1 if won else 0
 
-    def _scalp_close(self, slug: str, side: str, pos: Dict[str, float], proceeds: float, how: str) -> None:
-        pnl = round(proceeds - pos["cost"], 4)
-        st = self.scalp_stats
-        st[how] += 1
-        st["profit"] = round(st["profit"] + pnl, 4)
-        st["staked"] = round(st["staked"] + pos["cost"], 4)
-        st["wins"] += 1 if pnl > 0 else 0
-        self.scalp_open.get(slug, {}).pop(side, None)
-
-    def scalp_tick(self, slug: str, secs_left: float, up_bid: Optional[float], up_ask: Optional[float], momentum_z: float) -> None:
-        """One look at the book: enter a side that is cheap and trending its way; exit it at target or stop as soon as the bid says so."""
-        if up_bid is None or up_ask is None:
-            return
-        sides = {"up": (up_ask, up_bid, momentum_z), "down": (1.0 - up_bid, 1.0 - up_ask, -momentum_z)}   # (buy price, sell price, trend)
-        for side, (buy, sell, mom) in sides.items():
-            pos = self.scalp_open.get(slug, {}).get(side)
-            if pos is not None:
-                if sell >= pos["entry"] + SCALP_TARGET:
-                    self._scalp_close(slug, side, pos, sell - taker_fee(sell), "target")
-                elif sell <= pos["entry"] - SCALP_TARGET:
-                    self._scalp_close(slug, side, pos, sell - taker_fee(sell), "stop")
-            elif (secs_left >= SCALP_MIN_SECS and SCALP_ENTRY[0] <= buy <= SCALP_ENTRY[1] and mom >= SCALP_MOM
-                  and side not in self.scalp_done.get(slug, set())):
-                self.scalp_open.setdefault(slug, {})[side] = {"entry": buy, "cost": buy + taker_fee(buy)}
-                self.scalp_done.setdefault(slug, set()).add(side)
-                self.scalp_stats["entries"] += 1
-
-    def settle_scalp(self, slug: str, up: bool) -> None:
-        """Positions still open at the close are held to settlement: the side pays $1 or nothing."""
-        for side, pos in self.scalp_open.pop(slug, {}).items():
-            won = (side == "up") == bool(up)
-            self.scalp_stats["settled"] += 1
-            pnl = round((1.0 if won else 0.0) - pos["cost"], 4)
-            self.scalp_stats["profit"] = round(self.scalp_stats["profit"] + pnl, 4)
-            self.scalp_stats["staked"] = round(self.scalp_stats["staked"] + pos["cost"], 4)
-            self.scalp_stats["wins"] += 1 if pnl > 0 else 0
-        self.scalp_done.pop(slug, None)
-
     def bucket_stats(self, prob: float) -> Tuple[int, int]:
         """(trades, wins) of the calibration bucket that a model confidence falls in."""
         lab = next(l for lo, hi, l in BUCKETS if lo <= prob < hi) if 0.0 <= prob < 1.01 else "90+"
@@ -230,18 +166,13 @@ class Shadow:
                        for _, _, lab in BUCKETS for c in [self.calib[kind][lab]]] for kind in ("model", "book")}
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"rec": self.rec, "calib": self.calib, "scalp": self.scalp_stats, "diag": self.diag}
+        return {"rec": self.rec, "calib": self.calib}
 
     def load(self, d: Optional[Dict[str, Any]]) -> None:
+        """Older saved results (the v1.15-v1.21 shadows) are dropped here: only the six current strategies are kept."""
         for n, r in ((d or {}).get("rec") or {}).items():
             if n in self.rec and isinstance(r, dict):
                 self.rec[n] = {k: float(r.get(k, 0) or 0) for k in ("windows", "wins", "staked", "profit")}
-        for n, reasons in ((d or {}).get("diag") or {}).items():
-            if n in self.diag and isinstance(reasons, dict):
-                self.diag[n] = {str(k): int(v) for k, v in reasons.items()}
-        for k, v in ((d or {}).get("scalp") or {}).items():
-            if k in self.scalp_stats:
-                self.scalp_stats[k] = float(v or 0)
         for kind, rows in ((d or {}).get("calib") or {}).items():
             if kind in self.calib and isinstance(rows, dict):
                 for lab, c in rows.items():
