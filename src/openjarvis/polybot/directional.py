@@ -48,16 +48,25 @@ TIERS = {
 }
 
 
-def min_conf(asset: str = "btc") -> float:
+# Calibrated tiers (owner, 2026-11-05): when a bot trades on the calibrated confidence (every hour outside its green hours), the lot is
+# set by the win rate that confidence has actually shown, not by the raw number. Raw-confidence tiers (TIERS) are unchanged.
+CAL_TIERS = ((88, 10.0), (84, 8.0), (80, 7.0), (77, 5.0))
+CAL_ASSETS = ("btc", "btc15", "btclate")
+
+
+def min_conf(asset: str = "btc", calibrated: bool = False) -> float:
     """The lowest model confidence this coin will trade at (no trade below it)."""
+    if calibrated and asset in CAL_ASSETS:
+        return min(floor for floor, _ in CAL_TIERS) / 100.0
     tiers = TIERS.get(asset)
     return min(floor for floor, _ in tiers) / 100.0 if tiers else 1.0
 
 
-def size_pct(prob: float, asset: str = "btc") -> float:
+def size_pct(prob: float, asset: str = "btc", calibrated: bool = False) -> float:
     """Lot size as a % of the balance for this coin and the model's confidence (0 = no trade). The percentage is floored: 84.6% counts as 84%."""
     pct = int(prob * 100 + 1e-9)
-    for floor, lot in TIERS.get(asset, ()):
+    tiers = CAL_TIERS if (calibrated and asset in CAL_ASSETS) else TIERS.get(asset, ())
+    for floor, lot in tiers:
         if pct >= floor:
             return lot
     return 0.0
@@ -92,11 +101,11 @@ def method_pick(method: str, prob_up: float, up_cost: Optional[float], down_cost
     for side, prob, cost, ok in (("up", prob_up, up_cost, up_ok), ("down", 1.0 - prob_up, down_cost, down_ok)):
         if calib is not None:
             prob = calib(prob)
-        if cost is None or not (0.05 <= cost <= 0.95) or prob < min_conf(asset) or not ok:
+        if cost is None or not (0.05 <= cost <= 0.95) or prob < min_conf(asset, calib is not None) or not ok:
             continue
         if z is not None and (z if side == "up" else -z) < CUSHION_Z:
             continue
-        pct = size_pct(prob, asset)
+        pct = size_pct(prob, asset, calibrated=calib is not None)
         if pct <= 0:
             continue
         if method == "edge":
@@ -144,7 +153,7 @@ def decide(prob_up: float, up_cost: Optional[float], down_cost: Optional[float],
     for side, prob, cost, (n, wins) in (("up", prob_up, up_cost, bucket_up), ("down", 1.0 - prob_up, down_cost, bucket_down)):
         if calib is not None:
             prob = calib(prob)                        # live calibration: the confidence the bot trusts is what the bucket has actually won
-        if cost is None or not (0.05 <= cost <= 0.95) or prob < min_conf(asset):
+        if cost is None or not (0.05 <= cost <= 0.95) or prob < min_conf(asset, calib is not None):
             continue
         if z is not None and (z if side == "up" else -z) < CUSHION_Z:
             continue                                  # v1.18: the index is too close to the price to beat on this side
@@ -155,7 +164,7 @@ def decide(prob_up: float, up_cost: Optional[float], down_cost: Optional[float],
         else:
             conf, need, tier = prob, EXPLORE_EDGE, "exploring"
         edge = conf - cost - taker_fee(cost)
-        pct = size_pct(prob, asset)
+        pct = size_pct(prob, asset, calibrated=calib is not None)
         if edge >= need and pct > 0 and (best is None or edge > best[3]):
             best = (side, cost, tier, round(edge, 4), pct)
     return best
