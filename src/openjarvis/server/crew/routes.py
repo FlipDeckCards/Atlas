@@ -547,6 +547,19 @@ async def crew_desk_shadow_export(request: Request, asset: str = "btc"):
                     headers={"Content-Disposition": f'attachment; filename="desk-{a}-shadow.csv"'})
 
 
+@router.get("/api/crew/desk/log.csv")
+async def crew_desk_log_export(request: Request):
+    """The full desk log for every desk as one CSV file, for the owner."""
+    g = await _desk_gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    from openjarvis.server.crew import desk
+
+    body = await desk.export_events(g[2])
+    return Response(content=body, media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="desk-log.csv"'})
+
+
 @router.get("/api/crew/desk/export.csv")
 async def crew_desk_export(request: Request, asset: str = "btc"):
     """Every fill the desk ever made (all strategy versions, paper and live) as one CSV file, for the owner."""

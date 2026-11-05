@@ -1381,6 +1381,19 @@ function deskLogSec() {
   DESK_ORDER.forEach(a => { const d = DESKS[a]; (d && !d.error ? d.events || [] : []).forEach(e => ev.push(Object.assign({ asset: a }, e))); });
   ev.sort((x, y) => new Date(y.ts) - new Date(x.ts));
   const el = mk('div', 'lbl'); el.style.marginTop = '12px'; el.textContent = 'Desk log · all desks'; s.append(el);
+  // the full desk log for every desk, as a CSV file (not just the last few lines shown here)
+  const dlg = mk('span', 'tag', '⬇ log'); dlg.style.cursor = 'pointer'; dlg.style.marginLeft = '6px'; el.append(dlg);
+  dlg.onclick = async () => {
+    dlg.textContent = '…';
+    try {
+      const res = await fetch('/api/crew/desk/log.csv', { headers: { 'Authorization': 'Bearer ' + token() } });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a'); a.href = url; a.download = 'desk-log.csv';
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      dlg.textContent = '⬇ log';
+    } catch (e) { dlg.textContent = 'log failed'; }
+  };
   if (!ev.length) s.append(mk('div', 'dim', 'Nothing logged yet.'));
   ev.slice(0, 24).forEach(e => { const r = mk('div', 'desk-fill'); const t = mk('span', null, DESK_LABEL(e.asset) + ' ');
     t.style.color = ({ btc: '#00e5ff', btc15: '#4fc3f7', btclate: '#ff7ad9', eth: '#8c8cff', sol: '#14f195', xrp: '#ffb347' })[e.asset]; r.append(t, document.createTextNode(new Date(e.ts).toLocaleTimeString() + ' · ' + e.text)); s.append(r); });

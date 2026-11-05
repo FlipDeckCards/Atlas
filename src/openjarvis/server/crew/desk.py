@@ -427,6 +427,24 @@ def analysis_text(a: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+async def export_events(pool, account: str = "") -> str:
+    """The full desk log for every desk as CSV, newest last: time, desk, level and the plain-language line."""
+    import csv
+    import io
+
+    await _ensure(pool)
+    keys = {event_asset(a, account): a for a in ("btc", "btc15", "btclate", "eth", "sol", "xrp")}
+    async with pool.acquire() as c:
+        rows = await c.fetch("SELECT ts, level, text, coalesce(asset, 'btc') AS asset FROM polybot_events "
+                             "WHERE coalesce(asset, 'btc') = ANY($1::text[]) ORDER BY id", list(keys))
+    buf = io.StringIO()
+    wr = csv.writer(buf)
+    wr.writerow(["time_utc", "desk", "level", "text"])
+    for r in rows:
+        wr.writerow([r["ts"].isoformat(), keys.get(r["asset"], r["asset"]).upper(), r["level"], r["text"]])
+    return buf.getvalue()
+
+
 async def events(pool, limit: int = 30, asset: str = "btc", account: str = "") -> List[Dict[str, Any]]:
     await _ensure(pool)
     async with pool.acquire() as c:
