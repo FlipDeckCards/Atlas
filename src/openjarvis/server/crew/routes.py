@@ -534,55 +534,55 @@ async def crew_desk(request: Request, limit: int = 50, asset: str = "btc", view:
 
 
 @router.get("/api/crew/desk/shadow.csv")
-async def crew_desk_shadow_export(request: Request, asset: str = "btc"):
+async def crew_desk_shadow_export(request: Request, asset: str = "btc", view: str = ""):
     """The shadow log for one bot as CSV: the model at 1.0x, 0.7x and 1.4x volatility per settled window, for the owner."""
-    g = await _desk_gate(request)
+    g = await _desk_gate(request, view)
     if isinstance(g, JSONResponse):
         return g
     from openjarvis.server.crew import desk
 
     a = (asset or "btc").lower()
-    body = await desk.export_shadow(g[2], asset=a)
+    body = await desk.export_shadow(g[2], asset=a, account=g[3])                 # this account's desks only
     return Response(content=body, media_type="text/csv",
                     headers={"Content-Disposition": f'attachment; filename="desk-{a}-shadow.csv"'})
 
 
 @router.get("/api/crew/desk/daily.xlsx")
-async def crew_desk_daily_export(request: Request):
+async def crew_desk_daily_export(request: Request, view: str = ""):
     """Profit by trading day for each bot, with the day total, for the owner."""
-    g = await _desk_gate(request)
+    g = await _desk_gate(request, view)
     if isinstance(g, JSONResponse):
         return g
     from openjarvis.server.crew import desk
 
-    body = await desk.export_daily(g[2])
+    body = await desk.export_daily(g[2], account=g[3])                           # this account's trades only, never the owner's
     return Response(content=body, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": 'attachment; filename="desk-daily-pnl.xlsx"'})
 
 
 @router.get("/api/crew/desk/log.csv")
-async def crew_desk_log_export(request: Request):
+async def crew_desk_log_export(request: Request, view: str = ""):
     """The full desk log for every desk as one CSV file, for the owner."""
-    g = await _desk_gate(request)
+    g = await _desk_gate(request, view)
     if isinstance(g, JSONResponse):
         return g
     from openjarvis.server.crew import desk
 
-    body = await desk.export_events(g[2])
+    body = await desk.export_events(g[2], account=g[3])
     return Response(content=body, media_type="text/csv",
                     headers={"Content-Disposition": 'attachment; filename="desk-log.csv"'})
 
 
 @router.get("/api/crew/desk/export.csv")
-async def crew_desk_export(request: Request, asset: str = "btc"):
+async def crew_desk_export(request: Request, asset: str = "btc", view: str = ""):
     """Every fill the desk ever made (all strategy versions, paper and live) as one CSV file, for the owner."""
-    g = await _desk_gate(request)
+    g = await _desk_gate(request, view)
     if isinstance(g, JSONResponse):
         return g
     from openjarvis.server.crew import desk
 
     a = (asset or "btc").lower()
-    body = await desk.export_fills(g[2], asset=a)
+    body = await desk.export_fills(g[2], asset=a, account=g[3])
     return Response(content=body, media_type="text/csv",
                     headers={"Content-Disposition": f'attachment; filename="desk-{a}-fills.csv"'})
 

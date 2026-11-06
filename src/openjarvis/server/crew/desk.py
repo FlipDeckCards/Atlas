@@ -307,7 +307,13 @@ async def trades(pool, mode: str, limit: int = 50, version: str = STRATEGY_VERSI
     return out
 
 
-async def export_fills(pool, asset: str = "btc") -> str:
+def _acct_mode_sql(col: str, param: str = "$2") -> str:
+    """Rows of ONE account only: the owner's ledger labels carry no '@'; a subscriber's end in '@<tag>' (param = the tag, '' for the owner)."""
+    return (f"(CASE WHEN {param}::text = '' THEN position('@' in {col}) = 0 "
+            f"ELSE {col} LIKE '%@' || {param}::text END)")
+
+
+async def export_fills(pool, asset: str = "btc", account: str = "") -> str:
     """Every fill this desk ever made (all strategy versions, paper and live) as CSV: one row per fill, with the window's result and P&L."""
     import csv
     import io
@@ -316,9 +322,9 @@ async def export_fills(pool, asset: str = "btc") -> str:
     sql = ("SELECT f.ts, f.mode, f.slug, f.side, f.price, f.qty, f.cost, f.fair, f.features, "
            "w.up, w.pnl, w.window_end, coalesce(w.version, '1.0') AS version "
            "FROM polybot_fills f LEFT JOIN polybot_windows w ON w.slug = f.slug AND w.mode = f.mode "
-           f"WHERE {desk_sql('f.slug')} = $1 ORDER BY f.ts")
+           f"WHERE {desk_sql('f.slug')} = $1 AND " + _acct_mode_sql("f.mode") + " ORDER BY f.ts")
     async with pool.acquire() as c:
-        rows = await c.fetch(sql, asset)
+        rows = await c.fetch(sql, asset, account)
     buf = io.StringIO()
     wr = csv.writer(buf)
     wr.writerow(["time_utc", "mode", "version", "window_end_utc", "slug", "side", "price", "qty", "cost", "fair",
@@ -442,7 +448,7 @@ async def export_daily(pool, account: str = "") -> bytes:
     async with pool.acquire() as c:
         rows = await c.fetch(f"SELECT settled_at, window_end, pnl, {VER} AS version, {ASSET_SQL} AS asset FROM polybot_windows "
                              f"WHERE mode = $1 AND settled_at IS NOT NULL AND {ASSET_SQL} = ANY($2::text[])",
-                             "live", ["btc", "btc15"])
+                             label_for("live", account), ["btc", "btc15"])
     names = {"btc": "BTC 5m", "btc15": "BTC 15m"}
     bots = ["BTC 5m", "BTC 15m"]
     per_day: Dict[Any, float] = defaultdict(float)

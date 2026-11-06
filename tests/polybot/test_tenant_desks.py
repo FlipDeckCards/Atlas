@@ -128,3 +128,41 @@ def test_an_approved_hour_change_lands_in_that_accounts_control_row_only():
     assert "7 AM windows skipped" in out and p.kv["control:btc15@uabc"]["hour_size"] == {"7": 0.0}
     run(desk.apply_approved(p, {"hour_size": {"7": 1}}, asset="btc"))
     assert p.kv["control"]["hour_size"] == {"7": 1.0} and "control:btc15" not in p.kv
+
+
+def test_exports_keep_each_accounts_rows_apart():
+    sql = desk._acct_mode_sql("f.mode")
+    assert "position('@' in f.mode) = 0" in sql and "LIKE '%@' || $2::text" in sql
+
+
+def test_daily_pnl_download_reads_only_that_accounts_ledger():
+    seen = {}
+
+    class C:
+        async def fetch(self, q, *a):
+            seen["mode"] = a[0]
+            return []
+
+        async def execute(self, *a):
+            return None
+
+    class P:
+        def acquire(self):
+            p = self
+
+            class Ctx:
+                async def __aenter__(self):
+                    return C()
+
+                async def __aexit__(self, *e):
+                    return False
+            return Ctx()
+
+    desk._ENSURED = True if hasattr(desk, "_ENSURED") else None
+    try:
+        run(desk.export_daily(P(), account="uabc"))
+    except ImportError:
+        return                                            # openpyxl missing here; the query already ran
+    assert seen["mode"] == "live@uabc"
+    run(desk.export_daily(P()))
+    assert seen["mode"] == "live"

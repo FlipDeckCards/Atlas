@@ -1235,7 +1235,7 @@ function deskSec(key) {
   dl.onclick = async () => {
     dl.textContent = '…';
     try {
-      const res = await fetch('/api/crew/desk/export.csv?asset=' + encodeURIComponent(A), { headers: { 'Authorization': 'Bearer ' + token() } });
+      const res = await fetch('/api/crew/desk/export.csv?asset=' + encodeURIComponent(A) + (VIEW_AS ? '&view=' + encodeURIComponent(VIEW_AS) : ''), { headers: { 'Authorization': 'Bearer ' + token() } });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const url = URL.createObjectURL(await res.blob());
       const a = document.createElement('a'); a.href = url; a.download = 'desk-' + A + '-fills.csv';
@@ -1249,7 +1249,7 @@ function deskSec(key) {
   sh.onclick = async () => {
     sh.textContent = '…';
     try {
-      const res = await fetch('/api/crew/desk/shadow.csv?asset=' + encodeURIComponent(A), { headers: { 'Authorization': 'Bearer ' + token() } });
+      const res = await fetch('/api/crew/desk/shadow.csv?asset=' + encodeURIComponent(A) + (VIEW_AS ? '&view=' + encodeURIComponent(VIEW_AS) : ''), { headers: { 'Authorization': 'Bearer ' + token() } });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const url = URL.createObjectURL(await res.blob());
       const a = document.createElement('a'); a.href = url; a.download = 'desk-' + A + '-shadow.csv';
@@ -1347,7 +1347,7 @@ function dailyPnlSec() {
   b.onclick = async () => {
     b.textContent = 'Downloading…';
     try {
-      const res = await fetch('/api/crew/desk/daily.xlsx', { headers: { 'Authorization': 'Bearer ' + token() } });
+      const res = await fetch('/api/crew/desk/daily.xlsx' + (VIEW_AS ? '?view=' + encodeURIComponent(VIEW_AS) : ''), { headers: { 'Authorization': 'Bearer ' + token() } });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const url = URL.createObjectURL(await res.blob());
       const a = document.createElement('a'); a.href = url; a.download = 'desk-daily-pnl.xlsx';
@@ -1405,7 +1405,7 @@ function deskLogSec() {
   dlg.onclick = async () => {
     dlg.textContent = '…';
     try {
-      const res = await fetch('/api/crew/desk/log.csv', { headers: { 'Authorization': 'Bearer ' + token() } });
+      const res = await fetch('/api/crew/desk/log.csv' + (VIEW_AS ? '?view=' + encodeURIComponent(VIEW_AS) : ''), { headers: { 'Authorization': 'Bearer ' + token() } });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const url = URL.createObjectURL(await res.blob());
       const a = document.createElement('a'); a.href = url; a.download = 'desk-log.csv';
