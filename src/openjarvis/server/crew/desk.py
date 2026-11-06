@@ -429,8 +429,8 @@ def analysis_text(a: Dict[str, Any]) -> str:
 
 async def export_daily(pool, account: str = "") -> bytes:
     """The owner's live account profit by trading day (Los Angeles date), newest day on top. Every strategy version before the
-    current one is one row at the bottom, as a date range. Two columns: date and profit, green when the day made money, red when it
-    lost money. Returns an .xlsx file."""
+    current one is one row at the bottom, as a date range. Green when the day made money, red when it lost. A total box shows
+    all profit. Below, each bot's profit by the same days. Returns an .xlsx file."""
     import io
     from collections import defaultdict
     from openpyxl import Workbook
@@ -440,65 +440,111 @@ async def export_daily(pool, account: str = "") -> bytes:
 
     await _ensure(pool)
     async with pool.acquire() as c:
-        rows = await c.fetch(f"SELECT settled_at, window_end, pnl, {VER} AS version FROM polybot_windows "
+        rows = await c.fetch(f"SELECT settled_at, window_end, pnl, {VER} AS version, {ASSET_SQL} AS asset FROM polybot_windows "
                              f"WHERE mode = $1 AND settled_at IS NOT NULL AND {ASSET_SQL} = ANY($2::text[])",
                              "live", ["btc", "btc15"])
+    names = {"btc": "BTC 5m", "btc15": "BTC 15m"}
+    bots = ["BTC 5m", "BTC 15m"]
     per_day: Dict[Any, float] = defaultdict(float)
-    old_profit = 0.0
+    per_day_bot: Dict[Any, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    old_bot: Dict[str, float] = defaultdict(float)
     old_days: List[Any] = []
     for r in rows:
         t = r["settled_at"] or r["window_end"]
         if t is None:
             continue
         pnl = float(r["pnl"] or 0)
+        bot = names.get(r["asset"], r["asset"])
         if r["version"] == STRATEGY_VERSION:
-            per_day[t.astimezone(LA).date()] += pnl
+            day = t.astimezone(LA).date()
+            per_day[day] += pnl
+            per_day_bot[day][bot] += pnl
         else:
             old_days.append(t.astimezone(LA).date())
-            old_profit += pnl
+            old_bot[bot] += pnl
+    old_profit = sum(old_bot.values())
+    total_profit = sum(per_day.values()) + old_profit
 
     thin = Side(style="thin", color="BFBFBF")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     green = (PatternFill("solid", fgColor="C6EFCE"), Font(color="006100", bold=True))
     red = (PatternFill("solid", fgColor="FFC7CE"), Font(color="9C0006", bold=True))
+    head_fill = PatternFill("solid", fgColor="1F3864")
     money = '$#,##0.00;-$#,##0.00'
+
+    def style_for(value):
+        return green if value > 0 else red if value < 0 else (None, None)
+
+    def header(row, col, text):
+        c = ws.cell(row=row, column=col, value=text)
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = head_fill
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        c.border = border
+
+    def value(row, col, v, label=False, fmt=None):
+        c = ws.cell(row=row, column=col, value=v if label else round(v, 2))
+        c.alignment = Alignment(horizontal="center")
+        c.border = border
+        if not label:
+            c.number_format = fmt or money
+            fill, font = style_for(v)
+            if fill is not None:
+                c.fill = fill
+                c.font = font
+        return c
+
+    def range_label(days):
+        lo, hi = min(days), max(days)
+        return f"{lo.month}/{lo.day}/{lo:%y} - {hi.month}/{hi.day}/{hi:%y}"
 
     wb = Workbook()
     ws = wb.active
     ws.title = "Daily P&L"
-    head_fill = PatternFill("solid", fgColor="1F3864")
-    for col, text in ((1, "Date"), (2, "Daily profit or loss")):
-        c = ws.cell(row=1, column=col, value=text)
-        c.font = Font(bold=True, color="FFFFFF")
-        c.fill = head_fill
-        c.alignment = Alignment(horizontal="center", vertical="center")
-        c.border = border
-    ws.row_dimensions[1].height = 22
 
-    def put(row, label, profit, label_format=None):
-        a = ws.cell(row=row, column=1, value=label)
-        b = ws.cell(row=row, column=2, value=round(profit, 2))
-        a.alignment = Alignment(horizontal="center")
-        b.number_format = money
-        b.alignment = Alignment(horizontal="center")
-        fill, font = green if profit > 0 else red if profit < 0 else (None, None)
-        for cell in (a, b):
-            cell.border = border
-            if fill is not None:
-                cell.fill = fill
-                cell.font = font
-        if label_format:
-            a.number_format = label_format
-
+    # section 1: date and daily profit, newest on top
+    header(1, 1, "Date")
+    header(1, 2, "Daily profit or loss")
     row = 2
     for day in sorted(per_day, reverse=True):
-        put(row, day, per_day[day], label_format="m/d/yyyy")
+        value(row, 1, day, label=True, fmt="m/d/yyyy").number_format = "m/d/yyyy"
+        value(row, 2, per_day[day])
         row += 1
     if old_days:
-        lo, hi = min(old_days), max(old_days)
-        put(row, f"{lo.month}/{lo.day}/{lo:%y} - {hi.month}/{hi.day}/{hi:%y}", old_profit)
+        value(row, 1, range_label(old_days), label=True)
+        value(row, 2, old_profit)
+        row += 1
+    last_day_row = row - 1
+
+    # the total box, to the right of the list
+    header(1, 4, "Total profit")
+    value(2, 4, total_profit)
+
+    # section 2: each bot by the same days
+    row += 2
+    ws.cell(row=row, column=1, value="By bot").font = Font(bold=True, size=12)
+    row += 1
+    for col, text in ((1, "Date"), (2, "BTC 5m"), (3, "BTC 15m"), (4, "Day total")):
+        header(row, col, text)
+    row += 1
+    for day in sorted(per_day, reverse=True):
+        value(row, 1, day, label=True).number_format = "m/d/yyyy"
+        for col, bot in ((2, "BTC 5m"), (3, "BTC 15m")):
+            value(row, col, per_day_bot[day].get(bot, 0.0))
+        value(row, 4, per_day[day])
+        row += 1
+    if old_days:
+        value(row, 1, range_label(old_days), label=True)
+        value(row, 2, old_bot.get("BTC 5m", 0.0))
+        value(row, 3, old_bot.get("BTC 15m", 0.0))
+        value(row, 4, old_profit)
+        row += 1
+
     ws.column_dimensions["A"].width = 26
-    ws.column_dimensions["B"].width = 22
+    ws.column_dimensions["B"].width = 20
+    ws.column_dimensions["C"].width = 16
+    ws.column_dimensions["D"].width = 18
+    ws.row_dimensions[1].height = 22
     ws.freeze_panes = "A2"
     buf = io.BytesIO()
     wb.save(buf)
