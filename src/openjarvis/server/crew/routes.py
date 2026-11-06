@@ -547,7 +547,7 @@ async def crew_desk_shadow_export(request: Request, asset: str = "btc"):
                     headers={"Content-Disposition": f'attachment; filename="desk-{a}-shadow.csv"'})
 
 
-@router.get("/api/crew/desk/daily.csv")
+@router.get("/api/crew/desk/daily.xlsx")
 async def crew_desk_daily_export(request: Request):
     """Profit by trading day for each bot, with the day total, for the owner."""
     g = await _desk_gate(request)
@@ -556,8 +556,8 @@ async def crew_desk_daily_export(request: Request):
     from openjarvis.server.crew import desk
 
     body = await desk.export_daily(g[2])
-    return Response(content=body, media_type="text/csv",
-                    headers={"Content-Disposition": 'attachment; filename="desk-daily-pnl.csv"'})
+    return Response(content=body, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": 'attachment; filename="desk-daily-pnl.xlsx"'})
 
 
 @router.get("/api/crew/desk/log.csv")
