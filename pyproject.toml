@@ -46,6 +46,7 @@ dependencies = [
     # so they are core dependencies: a plain `uv sync` / `pip install .` must be enough to run and test it.
     "fastapi>=0.110",
     "uvicorn>=0.30",
+    "openpyxl>=3.1",
     "pydantic>=2.0",
     "python-multipart>=0.0.9",
     "asyncpg>=0.29",
