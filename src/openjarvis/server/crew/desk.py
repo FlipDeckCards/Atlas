@@ -427,40 +427,115 @@ def analysis_text(a: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-async def export_daily(pool, account: str = "") -> str:
-    """Profit by trading day (Los Angeles date) for each bot, with a day total: windows, wins, staked and profit, owner's live
-    desks, every strategy version (the same data as the hour table)."""
-    import csv
+async def export_daily(pool, account: str = "") -> bytes:
+    """The owner's live profit by trading day (Los Angeles date), account total: one block for every strategy version before the
+    current one (a date range), then one block per day of the current version, newest first. Each block lists BTC 5m, BTC 15m and
+    the day total. Returns an .xlsx file with a bar chart of the day totals above the table."""
     import io
+    from collections import defaultdict
+    from openpyxl import Workbook
+    from openpyxl.chart import BarChart, Reference
+    from openpyxl.styles import Font
+    from openjarvis.polybot.brain import STRATEGY_VERSION
     from openjarvis.server.crew.finance import LA
 
     await _ensure(pool)
     async with pool.acquire() as c:
-        rows = await c.fetch(f"SELECT settled_at, window_start, window_end, up_cost, down_cost, pnl, {ASSET_SQL} AS asset "
+        rows = await c.fetch(f"SELECT settled_at, window_end, up_cost, down_cost, pnl, {ASSET_SQL} AS asset, {VER} AS version "
                              f"FROM polybot_windows WHERE mode = $1 AND settled_at IS NOT NULL AND {ASSET_SQL} = ANY($2::text[])",
                              "live", ["btc", "btc15"])
-    per: Dict[Any, Dict[str, float]] = {}
-    total: Dict[Any, Dict[str, float]] = {}
     names = {"btc": "BTC 5m", "btc15": "BTC 15m"}
+    fresh = lambda: {"windows": 0, "wins": 0, "staked": 0.0, "profit": 0.0}
+    old_bots: Dict[str, Dict[str, float]] = defaultdict(fresh)
+    old_total = fresh()
+    old_days: List[Any] = []
+    cur: Dict[Any, Dict[str, Dict[str, float]]] = defaultdict(lambda: defaultdict(fresh))
+    cur_total: Dict[Any, Dict[str, float]] = defaultdict(fresh)
+
+    def add(g, r):
+        pnl = float(r["pnl"] or 0)
+        g["windows"] += 1
+        g["wins"] += 1 if pnl > 0 else 0
+        g["staked"] += float(r["up_cost"] or 0) + float(r["down_cost"] or 0)
+        g["profit"] += pnl
+
     for r in rows:
         t = r["settled_at"] or r["window_end"]
         if t is None:
             continue
-        day = t.astimezone(LA).date().isoformat()
-        for store, key in ((per, (day, names.get(r["asset"], r["asset"]))), (total, (day, "DAY TOTAL"))):
-            g = store.setdefault(key, {"windows": 0, "wins": 0, "staked": 0.0, "profit": 0.0})
-            pnl = float(r["pnl"] or 0)
-            g["windows"] += 1
-            g["wins"] += 1 if pnl > 0 else 0
-            g["staked"] += float(r["up_cost"] or 0) + float(r["down_cost"] or 0)
-            g["profit"] += pnl
-    buf = io.StringIO()
-    wr = csv.writer(buf)
-    wr.writerow(["date_pt", "bot", "windows", "won", "win_rate_pct", "staked", "profit", "return_on_staked_pct"])
-    for (day, bot) in sorted(set(per) | set(total), key=lambda k: (k[0], k[1] == "DAY TOTAL")):
-        g = per.get((day, bot)) or total.get((day, bot))
-        wr.writerow([day, bot, g["windows"], g["wins"], round(100.0 * g["wins"] / g["windows"], 1), round(g["staked"], 2),
-                     round(g["profit"], 2), round(100.0 * g["profit"] / g["staked"], 1) if g["staked"] else ""])
+        day = t.astimezone(LA).date()
+        bot = names.get(r["asset"], r["asset"])
+        if r["version"] == STRATEGY_VERSION:
+            add(cur[day][bot], r)
+            add(cur_total[day], r)
+        else:
+            old_days.append(day)
+            add(old_bots[bot], r)
+            add(old_total, r)
+
+    def label(d):
+        return f"{d.month}/{d.day}/{d:%y}"
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Daily P&L"
+    ws["A1"] = "BTC desks: live profit by trading day, account total (Los Angeles time)"
+    ws["A1"].font = Font(bold=True, size=12)
+    head = 22
+    cols = ["Date", "Bot", "Windows", "Won", "Win rate %", "Staked", "Profit", "Return on staked %"]
+    for i, h in enumerate(cols, start=1):
+        ws.cell(row=head, column=i, value=h).font = Font(bold=True)
+    ws.cell(row=head, column=10, value="Chart: day").font = Font(italic=True)
+    ws.cell(row=head, column=11, value="Day total profit").font = Font(italic=True)
+
+    out_rows: List[Any] = []   # (date label, bot label, stats, is_total)
+    if old_days:
+        lo, hi = min(old_days), max(old_days)
+        before = f"{lo.month}/{lo.day}/{lo:%y} to {hi.month}/{hi.day}"
+        for bot in ["BTC 5m", "BTC 15m"]:
+            if old_bots.get(bot, {}).get("windows"):
+                out_rows.append((before, bot, old_bots[bot], False))
+        out_rows.append((before, "DAY TOTAL", old_total, True))
+    for day in sorted(cur_total, reverse=True):
+        for bot in ["BTC 5m", "BTC 15m"]:
+            if cur[day].get(bot, {}).get("windows"):
+                out_rows.append((label(day), bot, cur[day][bot], False))
+        out_rows.append((label(day), "DAY TOTAL", cur_total[day], True))
+
+    r_at = head + 1
+    chart_at = head + 1
+    for d_label, bot, g, is_total in out_rows:
+        vals = [d_label, bot, g["windows"], g["wins"], round(100.0 * g["wins"] / g["windows"], 1) if g["windows"] else None,
+                round(g["staked"], 2), round(g["profit"], 2),
+                round(100.0 * g["profit"] / g["staked"], 1) if g["staked"] else None]
+        for i, v in enumerate(vals, start=1):
+            cell = ws.cell(row=r_at, column=i, value=v)
+            if is_total:
+                cell.font = Font(bold=True)
+        if is_total:
+            ws.cell(row=chart_at, column=10, value=d_label)
+            ws.cell(row=chart_at, column=11, value=round(g["profit"], 2))
+            chart_at += 1
+        r_at += 1
+
+    if chart_at > head + 1:
+        chart = BarChart()
+        chart.type = "col"
+        chart.title = "Daily profit, account total ($)"
+        chart.legend = None
+        chart.height, chart.width = 9, 22
+        data = Reference(ws, min_col=11, min_row=head, max_row=chart_at - 1)
+        cats = Reference(ws, min_col=10, min_row=head + 1, max_row=chart_at - 1)
+        chart.add_data(data, titles_from_data=True)
+        chart.set_categories(cats)
+        chart.x_axis.delete = False
+        chart.y_axis.delete = False
+        ws.add_chart(chart, "A3")
+
+    for col, width in zip("ABCDEFGHIJK", [22, 12, 10, 8, 12, 12, 12, 18, 3, 22, 18]):
+        ws.column_dimensions[col].width = width
+    buf = io.BytesIO()
+    wb.save(buf)
     return buf.getvalue()
 
 

@@ -940,6 +940,7 @@ function factorySec(key) {
   if (CATALOG_KEYS.includes(key)) s.append(catalogSec(key));
   const site = (S && S.products && S.products[key]) || (FIN && FIN.products && FIN.products[key]) || null;
   if (site) s.append(mk('div', 'dim', (site.live ? 'Site live' : 'Site NOT answering') + (site.url ? ' · ' + site.url : '') + (site.checked_at ? ' · checked ' + ago(site.checked_at) : '')));
+  if (key === 'polymarket') s.append(dailyPnlSec());
   const r = FIN && FIN.factories ? FIN.factories[key] : null;
   if (r) { s.append(pnlBlock(r, 'P&L')); s.append(mk('div', 'dim', costLine(r))); }
   else s.append(mk('div', 'dim', FIN ? 'No money in or out for this factory yet.' : 'Loading the numbers…'));
@@ -1311,20 +1312,6 @@ function deskSec(key) {
       s.append(mk('div', 'dim', 'Hours with only a few trades can swing on one result; look for hours that stay red as trades pile up.'));
     }
   }
-  // the daily breakdown: each trading day's profit per bot and the day total, as a CSV file
-  const dpb = mk('span', 'tag', '⬇ daily P&L'); dpb.style.cursor = 'pointer'; dpb.style.marginTop = '10px'; dpb.style.display = 'inline-block';
-  dpb.onclick = async () => {
-    dpb.textContent = '…';
-    try {
-      const res = await fetch('/api/crew/desk/daily.csv', { headers: { 'Authorization': 'Bearer ' + token() } });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const url = URL.createObjectURL(await res.blob());
-      const a = document.createElement('a'); a.href = url; a.download = 'desk-daily-pnl.csv';
-      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-      dpb.textContent = '⬇ daily P&L';
-    } catch (e) { dpb.textContent = 'daily P&L failed'; }
-  };
-  s.append(dpb);
   // what makes money and what loses it: every settled fill, cut by the conditions it happened in
   const an = DESK.analysis;
   if (an && DESK_VIEW === an.mode) {
@@ -1353,6 +1340,24 @@ function edgeCell(e) {
 function sdCell(z) { return mk('span', null, z == null ? '—' : (z >= 0 ? '+' : '') + Number(z).toFixed(2) + 'σ'); }
 // move: how far the index can still travel before the close, in dollars (sigma x square root of seconds left)
 function moveCell(m) { return mk('span', null, m == null ? '—' : '±$' + Number(m).toFixed(0)); }
+// one account-wide download: live profit by trading day (both BTC desks), as an Excel file with a chart
+function dailyPnlSec() {
+  const wrap = mk('div'); wrap.style.marginTop = '10px';
+  const b = mk('button', null, '⬇ Daily P&L (Excel)'); b.style.cursor = 'pointer';
+  b.onclick = async () => {
+    b.textContent = 'Downloading…';
+    try {
+      const res = await fetch('/api/crew/desk/daily.xlsx', { headers: { 'Authorization': 'Bearer ' + token() } });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a'); a.href = url; a.download = 'desk-daily-pnl.xlsx';
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      b.textContent = '⬇ Daily P&L (Excel)';
+    } catch (e) { b.textContent = 'Daily P&L failed'; }
+  };
+  wrap.append(b);
+  return wrap;
+}
 // shadow breakdown: the six shadow strategies (three per timeframe) and calibration result, per desk, opened from a button under the desk log
 let SHADOW_OPEN = false;   // kept across re-renders: the desk panel rebuilds whenever a desk reloads
 function shadowBreakdownSec() {
