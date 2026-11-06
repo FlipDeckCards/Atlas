@@ -817,7 +817,7 @@ def test_three_desks_keep_apart():
     from openjarvis.polybot.runtime import lock_id
     from openjarvis.polybot.state import ScopedStore, asset_of, kv_key
 
-    assert assets_from_env({}) == ["btc", "btc15"]
+    assert assets_from_env({})[:2] == ["btc", "btc15"] and len(assets_from_env({})) == 12      # v1.26
     assert kv_key("status", "btc") == "status" and kv_key("control", "sol") == "control:sol"
     assert len({lock_id("btc"), lock_id("eth"), lock_id("sol"), lock_id("xrp")}) == 4
     assert asset_of("cpc-eth-updown-5m-2026-10-30-0100z") == "eth"

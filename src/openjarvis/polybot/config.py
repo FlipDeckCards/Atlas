@@ -125,9 +125,16 @@ class Config:
         return replace(self, limits=limits.clean())
 
 
-ASSETS = ("btc", "btc15")                 # ETH, SOL and XRP desks retired (they still exist in the code, just not run)
-COIN = {"btc15": "btc"}                 # desk id -> the coin it trades (default: the same name)
+COINS = ("btc", "eth", "sol", "xrp")
+HORIZON_SUFFIX = {"5m": "", "15m": "15", "1h": "1h"}   # desk id = coin + suffix: btc, btc15, btc1h, eth, eth15, eth1h, ...
+# v1.26 (owner, 2026-11-06): 12 desks, 5-minute, 15-minute and 1-hour for each of BTC, ETH, SOL and XRP. BTC 5m and BTC 15m keep
+# trading as before; the 10 new desks start in PAPER (no control row yet) until the owner taps Go live on each.
+ASSETS = tuple(c + s for c in COINS for s in ("", "15", "1h"))
+COIN = {c + s: c for c in COINS for s in ("15", "1h")}  # desk id -> the coin it trades (default: the same name)
 FIXED_HORIZON = {"btc15": "15m", "btclate": "5m"}        # desks pinned to one window length (a shared POLYBOT_HORIZON never changes them)
+# the new desks are pinned hard to their window length: no environment setting (old POLYBOT_HORIZON_ETH and the like) can move them
+PINNED_HORIZON = {c + s: h for c in COINS for h, s in HORIZON_SUFFIX.items() if c + s not in ("btc", "btc15")}
+NEW_DESKS = tuple(PINNED_HORIZON)                        # the 10 desks added in v1.26 (paper until the owner takes each live)
 COIN["btclate"] = "btc"                 # v1.23: a paper desk on BTC's 5-minute market that runs only the late method
 LEDGER = {"btclate": "paper-late"}
 LIVE_LEDGER = {"btclate": "live-late"}
@@ -152,6 +159,15 @@ def for_account(cfg: "Config", account: str, key_id: str, secret_key: str, notif
                    ledger=label_for(cfg.ledger, account), live_ledger=label_for(cfg.live_ledger, account))
 METHODS = {"btclate": ("late",)}
 PAPER_ONLY = ()                          # desks that can never trade real money (none now: btclate trades live, on its own ledger)
+
+
+def desk_label(asset: str) -> str:
+    """btc -> BTC 5m, eth15 -> ETH 15m, sol1h -> SOL 1h (btclate keeps its own name)."""
+    a = (asset or "btc").lower()
+    if a == "btclate":
+        return "BTC Late"
+    c = coin_of(a)
+    return f"{c.upper()} " + ("15m" if a == c + "15" else "1h" if a == c + "1h" else "5m")
 
 
 def coin_of(asset: str) -> str:
@@ -201,6 +217,8 @@ def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Con
     if a in FIXED_HORIZON:                  # only its own setting (POLYBOT_HORIZON_BTC15) may change a pinned desk
         horizon = (e.get(f"POLYBOT_HORIZON_{a.upper()}") or FIXED_HORIZON[a]).strip().lower()
         night = (e.get(f"POLYBOT_HORIZON_NIGHT_{a.upper()}") or "").strip().lower()
+    if a in PINNED_HORIZON:                 # v1.26: one window length, day and night, whatever the environment says
+        horizon, night = PINNED_HORIZON[a], ""
     return Config(
         mode="paper",
         allow_live=(e.get("POLYBOT_ALLOW_LIVE") or "").strip().lower() in _TRUE,
@@ -210,6 +228,7 @@ def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Con
         horizon_night=(night if night in ("5m", "15m", "1h") else ""),
         asset=a,
         coin=coin_of(a),
+        tick_s=2.0 if a in PINNED_HORIZON else 1.0,     # v1.26: the 10 paper desks think every 2 s (less load on Polymarket's API)
         limits=lim,
         quote_after_open_s=_f(e, "POLYBOT_QUOTE_AFTER_OPEN_S", 20.0, 5.0, 600.0),
         stop_before_end_s=_f(e, "POLYBOT_STOP_BEFORE_END_S", 25.0, 5.0, 600.0),

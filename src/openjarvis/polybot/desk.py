@@ -53,7 +53,9 @@ def window_from_market(m: Dict[str, Any]) -> Optional[Window]:
 def is_series(m: Dict[str, Any], asset: str, horizon: str) -> bool:
     apt = m.get("assetPriceTerms") or {}
     sym = str(((apt.get("asset") or {}).get("symbol")) or "").lower()
-    return (apt.get("marketType") == "ASSET_PRICE_MARKET_TYPE_UP_DOWN" and sym == asset and str(apt.get("horizon") or "") == horizon)
+    h = str(apt.get("horizon") or "").lower().replace("horizon_", "")
+    same = h == horizon or (horizon == "1h" and h in ("1h", "60m", "1hr", "hourly", "hour"))
+    return apt.get("marketType") == "ASSET_PRICE_MARKET_TYPE_UP_DOWN" and sym == asset and same
 
 
 class Desk:
@@ -66,7 +68,8 @@ class Desk:
         self.rs = risk.RiskState()
         from openjarvis.polybot.state import event_asset
         self.ledger = Ledger(event_asset(base.asset, base.account))
-        self.name = {"btc15": "BTC 15m", "btclate": "BTC Late"}.get(base.asset, base.asset.upper())
+        from openjarvis.polybot.config import desk_label
+        self.name = "BTC" if base.asset == "btc" else desk_label(base.asset)   # BTC 5m keeps its name in the log
         from openjarvis.polybot.config import HORIZON_S
         self._prefixes: Dict[str, str] = {}                  # learned market address pattern per window length
         self.broker = PaperBroker()
@@ -214,7 +217,7 @@ class Desk:
     async def window_by_slug(self, now: float) -> Optional[Window]:
         """The current window looked up by its slug (cpc-btc-updown-5m-YYYY-MM-DD-HHMMz, the window's UTC start; 15m the same).
         Scanning the whole market list missed windows when the list was long, and the desk sat 'between windows' mid-window."""
-        if self.horizon not in ("5m", "15m"):
+        if self.horizon not in ("5m", "15m", "1h"):
             return None
         H = self.span
         start = int(now // H) * H
@@ -509,6 +512,11 @@ class Desk:
         h = dt.datetime.fromtimestamp(ts, risk.LA).hour
         return dict(self.cfg.hour_size).get(h, 1.0)
 
+    def _xacct(self) -> str:
+        """Whose cross-desk tally this desk's bets count in: live desks share their account's; a paper desk has its own, so
+        simulated bets never take room from real-money desks."""
+        return self.base.account if self.cfg.mode == "live" else f"{self.base.account}~paper~{self.base.asset}"
+
     def _acct_sfx(self) -> str:
         return f"@{self.base.account}" if self.base.account else ""
 
@@ -564,7 +572,7 @@ class Desk:
         """v1.22: record a bet the method just placed in this window (one per method), and count it against the windows' cap."""
         self._bets.setdefault(slug, {})[method] = (side, round(usd, 4), qty)
         self._dir_pending.add(slug)
-        exposure.reserve(self.name, usd, self.base.account)
+        exposure.reserve(self.name, usd, self._xacct())
 
     async def step(self) -> None:
         now = self.clock()
@@ -585,7 +593,7 @@ class Desk:
             self.balance = await self.broker.balance()
 
         self.rs.at_risk = round(sum(w.inv.spent for w in self.open_windows.values()) + self.external_at_risk, 4)
-        exposure.publish(self.name, account=self.base.account, usd=sum(w.inv.spent for w in self.open_windows.values() if w.slug in self._dir_pending))   # v1.20 cross-desk cap
+        exposure.publish(self.name, account=self._xacct(), usd=sum(w.inv.spent for w in self.open_windows.values() if w.slug in self._dir_pending))   # v1.20 cross-desk cap
         if self.version_start is None and self.cfg.mode == "live" and self.balance is not None:
             self.version_start = round(self.account_value(), 2)
             try:
@@ -743,7 +751,7 @@ class Desk:
                             side, cost, tier, edge, lot_pct = pick
                             size_here = (b.offers[0][1] if b.offers else 0.0) if side == "up" else (b.bids[0][1] if b.bids else 0.0)
                             bets = self._bets.get(w.slug, {})
-                            usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self.base.account), directional.window_room(bets, equity))   # lot by coin and confidence; capped across all desks and the window
+                            usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self._xacct()), directional.window_room(bets, equity))   # lot by coin and confidence; capped across all desks and the window
                             ok_win, _ = directional.may_take(bets, side, usd, equity)
                             q = strategy._qty(usd, cost, w.min_qty)
                             q = min(q, round(size_here // w.min_qty * w.min_qty, 6))
@@ -764,7 +772,7 @@ class Desk:
                                 continue
                             side, cost, _, gap, lot_pct = pick
                             bets = self._bets.get(w.slug, {})
-                            usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self.base.account), directional.window_room(bets, equity))
+                            usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self._xacct()), directional.window_room(bets, equity))
                             ok_win, why_win = directional.may_take(bets, side, usd, equity)
                             if not ok_win:
                                 why = f"{method.title()}: {why_win}."

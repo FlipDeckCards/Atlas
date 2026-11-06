@@ -381,9 +381,12 @@ def create_app(
             from openjarvis.polybot.config import assets_from_env, from_env
             from openjarvis.polybot.runtime import Runner
 
+            from openjarvis.server.crew.desk import paper_first
+
             assets = assets_from_env()
             # its own small pool (each desk holds one connection for its lock, plus one to work): never starves the app's
             pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2 * len(assets) + 1)
+            assets = await paper_first(pool, assets)                 # v1.26: the 10 new desks start in paper
             runners = [Runner(from_env(asset=a), pool) for a in assets]
             for r in runners:
                 r.start()

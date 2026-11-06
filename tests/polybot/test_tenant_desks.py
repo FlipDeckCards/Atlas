@@ -166,3 +166,49 @@ def test_daily_pnl_download_reads_only_that_accounts_ledger():
     assert seen["mode"] == "live@uabc"
     run(desk.export_daily(P()))
     assert seen["mode"] == "live"
+
+
+def test_twelve_desks_five_fifteen_and_one_hour_for_every_coin():
+    from openjarvis.polybot.config import ASSETS, NEW_DESKS, desk_label
+    from openjarvis.polybot.state import asset_of as desk_of
+    from openjarvis.polybot import directional
+
+    assert len(ASSETS) == 12 and len(NEW_DESKS) == 10 and "btc" not in NEW_DESKS and "btc15" not in NEW_DESKS
+    for a in ASSETS:
+        cfg = from_env({"POLYBOT_HORIZON_ETH": "15m", "POLYBOT_HORIZON_NIGHT": "5m"}, asset=a)   # old settings never move a new desk
+        want = "15m" if a.endswith("15") else "1h" if a.endswith("1h") else "5m"
+        if a != "btc":
+            assert cfg.horizon == want and (cfg.horizon_night == "" or a == "btc15"), a
+        assert desk_of(f"cpc-{cfg.coin}-updown-{want}-2026-11-06-1300z") == a
+    assert desk_of("cpceth-eth-updown-15m-2026-11-06-1300z") == "eth15"
+    assert desk_label("sol1h") == "SOL 1h" and desk_label("btc") == "BTC 5m"
+    assert directional.min_conf("eth15") == directional.min_conf("eth") and directional.min_conf("btc1h") == directional.min_conf("btc")
+    assert len({lock_id(a) for a in ASSETS}) == 12
+
+
+def test_new_desks_start_in_paper_even_if_an_old_row_says_live():
+    p = FakePool()
+    run(desk.put_control(p, {"mode": "live", "limits": {"bankroll_usd": 50}}, "eth"))      # ETH 5m traded live before it was retired
+    run(desk.put_control(p, {"mode": "live"}, "btc"))
+    ok = run(desk.paper_first(p, ["btc", "btc15", "eth", "sol1h"]))
+    assert ok == ["btc", "btc15", "eth", "sol1h"]
+    assert p.kv["control:eth"]["mode"] == "paper" and p.kv["control"]["mode"] == "live"            # BTC 5m untouched
+    p.kv["control:eth"]["mode"] = "live"                                                           # the owner's Go live tap later ...
+    run(desk.paper_first(p, ["eth"]))
+    assert p.kv["control:eth"]["mode"] == "live"                                                   # ... is never undone by a restart
+
+
+def test_paper_desks_never_take_room_from_the_live_cap():
+    from openjarvis.polybot.desk import Desk
+
+    exposure.reset()
+    d = Desk(from_env({}, asset="eth15"), None, None)
+    assert d._xacct() != ""                                   # paper: its own tally
+    d.cfg = replace_mode(d.cfg, "live")
+    assert d._xacct() == ""                                   # live: the owner's account tally
+    exposure.reset()
+
+
+def replace_mode(cfg, mode):
+    from dataclasses import replace
+    return replace(cfg, mode=mode)

@@ -23,8 +23,15 @@ from openjarvis.polybot.config import label_for
 from openjarvis.polybot.state import DDL, desk_sql, event_asset, kv_key
 
 KEY = "polymarket"                                   # the BTC desk keeps the original factory key
+import logging
+logger = logging.getLogger("crew.desk")
+
 KEYS = {"btc": "polymarket", "btc15": "polymarket-btc15", "eth": "polymarket-eth", "sol": "polymarket-sol", "xrp": "polymarket-xrp",
         "btclate": "polymarket-btclate"}
+from openjarvis.polybot.config import COINS as _COINS, desk_label as _label
+for _c in _COINS:                                    # v1.26: 1-hour desks for every coin, 15-minute for ETH, SOL and XRP
+    for _s in ("15", "1h"):
+        KEYS.setdefault(_c + _s, f"polymarket-{_c}{_s}")
 # v1.23: the late-only paper desk trades BTC 5m markets, so its rows are read as BTC with its own paper label
 LEDGER_OF = {"btclate": "paper-late"}
 LIVE_OF = {"btclate": "live-late"}                  # the late desk's real-money rows: its own live scoreboard
@@ -33,13 +40,18 @@ ASSET_OF = {v: k for k, v in KEYS.items()}
 NAMES = {"btc": "Polymarket Desk", "btc15": "Polymarket BTC 15m Desk", "eth": "Polymarket ETH Desk", "sol": "Polymarket SOL Desk",
          "xrp": "Polymarket XRP Desk", "btclate": "Polymarket BTC Late Desk (paper)"}
 COLORS = {"btc": "#00e5ff", "btc15": "#4fc3f7", "eth": "#8c8cff", "sol": "#14f195", "xrp": "#ffb347", "btclate": "#ff7ad9"}
+for _a in KEYS:
+    NAMES.setdefault(_a, f"Polymarket {_label(_a)} Desk")
+    COLORS.setdefault(_a, COLORS.get(_a[:3], "#00e5ff"))
 
 
 def business(asset: str = "btc") -> Dict[str, str]:
     a = asset.lower()
     return {"key": KEYS[a], "name": NAMES[a], "url": "https://polymarket.us", "color": COLORS[a],
-            "description": f"{NAMES[a]} is a trading bot that makes markets in Polymarket US's "
-                           f"{'15-minute BTC' if a == 'btc15' else 'BTC 5-minute, late method only (paper)' if a == 'btclate' else '5-minute ' + a.upper()} Up/Down contracts."}
+            "description": (f"Polymarket Desk runs 12 trading bots in Polymarket US's Up/Down contracts: 5-minute, 15-minute and 1-hour "
+                            f"windows for BTC, ETH, SOL and XRP." if a == "btc" else
+                            f"{NAMES[a]} is a trading bot in Polymarket US's "
+                            f"{'BTC 5-minute, late method only (paper)' if a == 'btclate' else _label(a)} Up/Down contracts.")}
 
 
 BUSINESS = business("btc")
@@ -71,6 +83,29 @@ async def get_kv(pool, key: str) -> Dict[str, Any]:
     await _ensure(pool)
     async with pool.acquire() as c:
         return _j(await c.fetchval("SELECT value FROM polybot_kv WHERE key = $1", key))
+
+
+async def paper_first(pool, assets) -> list:
+    """v1.26: the 10 new desks start in PAPER. ETH, SOL and XRP 5m once traded live, so their old control rows may still say live:
+    each new desk is set to paper once (marked v126_paper), after which only the owner's Go live tap changes it. A desk whose row
+    cannot be checked is not started (never risk it going live by accident)."""
+    from openjarvis.polybot.config import NEW_DESKS
+
+    ok = []
+    for a in assets:
+        if a not in NEW_DESKS:
+            ok.append(a)
+            continue
+        try:
+            await _ensure(pool)
+            ctl = await get_kv(pool, kv_key("control", a))
+            if not ctl.get("v126_paper"):
+                ctl.update(mode="paper", v126_paper=True, paused=False, kill=False)
+                await put_control(pool, ctl, a)
+            ok.append(a)
+        except Exception:
+            logger.exception("could not check the %s desk's control row; not starting it", a)
+    return ok
 
 
 async def put_control(pool, control: Dict[str, Any], asset: str = "btc", account: str = "") -> None:

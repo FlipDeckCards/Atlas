@@ -26,6 +26,13 @@ RAW_HOURS = {
 }
 
 
+def _tiers(asset: str):
+    """A desk's tiers, or its coin's (eth15 and eth1h trade like ETH 5m; btc1h like BTC)."""
+    from openjarvis.polybot.config import coin_of
+    a = (asset or "btc").lower()
+    return TIERS.get(a) or TIERS.get(coin_of(a))
+
+
 def raw_hour(asset: str, ts: float) -> bool:
     """True when a window opening at ts trades on the raw model for this bot (its hour is green)."""
     import datetime as dt
@@ -58,14 +65,14 @@ def min_conf(asset: str = "btc", calibrated: bool = False) -> float:
     """The lowest model confidence this coin will trade at (no trade below it)."""
     if calibrated and asset in CAL_ASSETS:
         return min(floor for floor, _ in CAL_TIERS) / 100.0
-    tiers = TIERS.get(asset)
+    tiers = _tiers(asset)
     return min(floor for floor, _ in tiers) / 100.0 if tiers else 1.0
 
 
 def size_pct(prob: float, asset: str = "btc", calibrated: bool = False) -> float:
     """Lot size as a % of the balance for this coin and the model's confidence (0 = no trade). The percentage is floored: 84.6% counts as 84%."""
     pct = int(prob * 100 + 1e-9)
-    tiers = CAL_TIERS if (calibrated and asset in CAL_ASSETS) else TIERS.get(asset, ())
+    tiers = CAL_TIERS if (calibrated and asset in CAL_ASSETS) else (_tiers(asset) or ())
     for floor, lot in tiers:
         if pct >= floor:
             return lot

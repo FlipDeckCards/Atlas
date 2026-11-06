@@ -479,6 +479,7 @@ async function refresh() {
   gate(null);
   S = r.data;
   document.getElementById('t-acct').hidden = !S.owner;
+  DESK_ORDER = (S.owner && !VIEW_AS) ? OWNER_DESK_ORDER : ['btc', 'btc15'];
   spinOnMissionChange(S.missions || []);                  // a mission started or finished: spin the ring
   document.getElementById('c-run').textContent = S.running;
   document.getElementById('c-spend').textContent = money(S.spend.today_usd) + (S.spend.daily_cap_usd == null ? ' · no cap' : ' of ' + money(S.spend.daily_cap_usd) + ' cap');
@@ -980,16 +981,21 @@ const CATALOG_KEYS = ['etsy', 'stripe', 'google_play', 'app_store', 'deadzone'];
 const CATALOG_TITLE = { etsy: 'Listings in the shop', stripe: 'Products on Stripe', google_play: 'Apps on Google Play', app_store: 'Apps on the App Store', deadzone: 'Games on the Deadzone site' };
 // ── the Polymarket Desk: scoreboard (win rate, total profit, trades), switches and the full trade log ──
 // three desks (BTC, ETH, SOL), one Polymarket account: each factory key maps to its asset
-const DESK_ASSET = { 'polymarket': 'btc', 'polymarket-btc15': 'btc15', 'polymarket-eth': 'eth', 'polymarket-sol': 'sol', 'polymarket-xrp': 'xrp', 'polymarket-btclate': 'btclate' };
+const DESK_COINS = ['btc', 'eth', 'sol', 'xrp'];
 const DESK_KEY = { btc: 'polymarket', btc15: 'polymarket-btc15', eth: 'polymarket-eth', sol: 'polymarket-sol', xrp: 'polymarket-xrp', btclate: 'polymarket-btclate' };
-const DESK_ORDER = ['btc', 'btc15'];   // v1.24: BTC 5m (with late) then BTC 15m; the BTC 5m Late desk is removed from the Station (its rows stay in the database)
-const DESK_LABEL = a => a === 'btc15' ? 'BTC 15m' : a === 'btclate' ? 'BTC 5m Late' : a.toUpperCase();   // the desk's name
-const DESK_COIN = a => (a === 'btc15' || a === 'btclate') ? 'BTC' : a.toUpperCase();                 // the coin it trades
+DESK_COINS.forEach(c => ['15', '1h'].forEach(sfx => { if (!DESK_KEY[c + sfx]) DESK_KEY[c + sfx] = 'polymarket-' + c + sfx; }));   // v1.26: 12 desks
+const DESK_ASSET = Object.fromEntries(Object.entries(DESK_KEY).map(([a, k]) => [k, a]));
+// v1.26: BTC 5m, 15m, 1h, then ETH, SOL and XRP the same (the 10 new desks start in paper). Subscribers' Stations keep their own two.
+const OWNER_DESK_ORDER = DESK_COINS.flatMap(c => [c, c + '15', c + '1h']);
+let DESK_ORDER = ['btc', 'btc15'];
+const DESK_LABEL = a => a === 'btclate' ? 'BTC 5m Late' : (DESK_COIN(a) + ' ' + (/15$/.test(a) ? '15m' : /1h$/.test(a) ? '1h' : '5m'));   // the desk's name
+const DESK_COIN = a => (a === 'btclate' ? 'btc' : a.replace(/(15|1h)$/, '')).toUpperCase();                 // the coin it trades
 let DESKS = {}, DESK_ATS = {}, DESK_LOADINGS = {}, DESK_VIEW = '', DESK_OPEN = {};
 let PANEL_OPEN = {};   // per desk: 'detail' (version details), 'trades' (full trade log), 'wins' (what wins and loses); all start retracted
 function loadDesk(force, asset) {
   const a = asset || 'btc';
-  if (DESK_LOADINGS[a] || (!force && Date.now() - (DESK_ATS[a] || 0) < 15000)) return;
+  const every = (a === 'btc' || a === 'btc15' || selected === 'f:polymarket') ? 15000 : 60000;   // the new desks refresh slower unless open
+  if (DESK_LOADINGS[a] || (!force && Date.now() - (DESK_ATS[a] || 0) < every)) return;
   DESK_LOADINGS[a] = true;
   const view = VIEW_AS, into = DESKS;
   api('/api/crew/desk?limit=100&asset=' + a + (view ? '&view=' + encodeURIComponent(view) : '')).then(r => { if (view !== VIEW_AS || into !== DESKS) { DESK_LOADINGS[a] = false; return; }
@@ -1013,7 +1019,7 @@ async function accountMenu() {
 }
 function enterAccount(a) {
   if (!VIEW_AS) OWN_DESKS = { d: DESKS, at: DESK_ATS, ld: DESK_LOADINGS, v: DESK_VIEW };
-  VIEW_AS = a.id; VIEW_INFO = { name: a.name, email: a.email, loading: true };
+  VIEW_AS = a.id; VIEW_INFO = { name: a.name, email: a.email, loading: true }; DESK_ORDER = ['btc', 'btc15'];
   DESKS = {}; DESK_ATS = {}; DESK_LOADINGS = {}; DESK_VIEW = '';
   document.getElementById('t-acct').textContent = String(a.name).toUpperCase().slice(0, 14) + ' ▾'; document.getElementById('t-acct').classList.add('on');
   selected = 'acct'; renderSide(true);
@@ -1023,7 +1029,7 @@ function enterAccount(a) {
 }
 function exitAccount() {
   if (VIEW_AS && OWN_DESKS) { DESKS = OWN_DESKS.d; DESK_ATS = OWN_DESKS.at; DESK_LOADINGS = OWN_DESKS.ld; DESK_VIEW = OWN_DESKS.v; }
-  VIEW_AS = ''; VIEW_INFO = null; OWN_DESKS = null;
+  VIEW_AS = ''; VIEW_INFO = null; OWN_DESKS = null; DESK_ORDER = (S && S.owner) ? OWNER_DESK_ORDER : ['btc', 'btc15'];
   const b = document.getElementById('t-acct'); b.textContent = 'ACCOUNTS ▾'; b.classList.remove('on');
   if (selected === 'acct') selected = 'hub';
   renderSide(true);
@@ -1130,7 +1136,7 @@ function deskSec(key) {
   const DESK = DESKS[A];
   const s = mk('div'); s.style.marginTop = '10px';
   s.style.borderTop = '1px solid rgba(0,229,255,0.25)'; s.style.paddingTop = '10px';
-  const hd = mk('div', 'h', DESK_LABEL(A) + ' Desk'); hd.style.color = ({ btc: '#00e5ff', btc15: '#4fc3f7', btclate: '#ff7ad9', eth: '#8c8cff', sol: '#14f195', xrp: '#ffb347' })[A]; hd.style.fontSize = '16px'; s.append(hd);
+  const hd = mk('div', 'h', DESK_LABEL(A) + ' Desk'); hd.style.color = ({ btc: '#00e5ff', btc15: '#4fc3f7', btclate: '#ff7ad9', eth: '#8c8cff', sol: '#14f195', xrp: '#ffb347' })[A] || ({ BTC: '#00e5ff', ETH: '#8c8cff', SOL: '#14f195', XRP: '#ffb347' })[DESK_COIN(A)]; hd.style.fontSize = '16px'; s.append(hd);
   if (A === 'btc') s.append(mk('div', 'dim', 'Strategy: pairs, directional, edge and late, one bet per method per window; 20% cap per window; never against a side already bet.'));
   if (A === 'btclate') s.append(mk('div', 'dim', 'Strategy: late only, paper. One bet per window, 30-60 s before the close, when the model is 90%+ and the side costs 95c or less.'));
   if (!DESK) { s.append(mk('div', 'dim', 'Loading the desk…')); return s; }

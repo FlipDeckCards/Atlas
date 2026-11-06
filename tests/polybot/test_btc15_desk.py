@@ -27,7 +27,7 @@ def test_btc15_has_its_own_store_lock_and_history():
     assert asset_of("cpc-btc-updown-15m-2026-10-31-2300z") == "btc15"
     assert asset_of("cpc-btc-updown-5m-2026-10-31-2300z") == "btc"
     assert asset_of("cpcsol-sol-updown-5m-2026-10-31-2300z") == "sol"
-    assert "btc15" in desk_sql("f.slug") and "f.slug" in desk_sql("f.slug")
+    assert "|| '15'" in desk_sql("f.slug") and "f.slug" in desk_sql("f.slug")         # v1.26: every coin's 15m desk
 
 
 def test_btc15_uses_btc_tiers():
