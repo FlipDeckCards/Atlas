@@ -1325,7 +1325,6 @@ function deskSec(key) {
     } catch (e) { dpb.textContent = 'daily P&L failed'; }
   };
   s.append(dpb);
-  }
   // what makes money and what loses it: every settled fill, cut by the conditions it happened in
   const an = DESK.analysis;
   if (an && DESK_VIEW === an.mode) {
