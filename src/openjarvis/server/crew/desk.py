@@ -427,43 +427,6 @@ def analysis_text(a: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-async def export_daily(pool, account: str = "") -> str:
-    """Profit by trading day (Los Angeles date) for each bot, with a day total: windows, wins, staked and profit, owner's live
-    desks, every strategy version (the same data as the hour table)."""
-    import csv
-    import io
-    from openjarvis.server.crew.finance import LA
-
-    await _ensure(pool)
-    async with pool.acquire() as c:
-        rows = await c.fetch(f"SELECT settled_at, window_start, window_end, up_cost, down_cost, pnl, {ASSET_SQL} AS asset "
-                             f"FROM polybot_windows WHERE mode = $1 AND settled_at IS NOT NULL AND {ASSET_SQL} = ANY($2::text[])",
-                             "live", ["btc", "btc15"])
-    per: Dict[Any, Dict[str, float]] = {}
-    total: Dict[Any, Dict[str, float]] = {}
-    names = {"btc": "BTC 5m", "btc15": "BTC 15m"}
-    for r in rows:
-        t = r["settled_at"] or r["window_end"]
-        if t is None:
-            continue
-        day = t.astimezone(LA).date().isoformat()
-        for store, key in ((per, (day, names.get(r["asset"], r["asset"]))), (total, (day, "DAY TOTAL"))):
-            g = store.setdefault(key, {"windows": 0, "wins": 0, "staked": 0.0, "profit": 0.0})
-            pnl = float(r["pnl"] or 0)
-            g["windows"] += 1
-            g["wins"] += 1 if pnl > 0 else 0
-            g["staked"] += float(r["up_cost"] or 0) + float(r["down_cost"] or 0)
-            g["profit"] += pnl
-    buf = io.StringIO()
-    wr = csv.writer(buf)
-    wr.writerow(["date_pt", "bot", "windows", "won", "win_rate_pct", "staked", "profit", "return_on_staked_pct"])
-    for (day, bot) in sorted(set(per) | set(total), key=lambda k: (k[0], k[1] == "DAY TOTAL")):
-        g = per.get((day, bot)) or total.get((day, bot))
-        wr.writerow([day, bot, g["windows"], g["wins"], round(100.0 * g["wins"] / g["windows"], 1), round(g["staked"], 2),
-                     round(g["profit"], 2), round(100.0 * g["profit"] / g["staked"], 1) if g["staked"] else ""])
-    return buf.getvalue()
-
-
 async def export_events(pool, account: str = "") -> str:
     """The full desk log for every desk as CSV, newest last: time, desk, level and the plain-language line."""
     import csv

@@ -1311,21 +1311,6 @@ function deskSec(key) {
       s.append(mk('div', 'dim', 'Hours with only a few trades can swing on one result; look for hours that stay red as trades pile up.'));
     }
   }
-  // the daily breakdown: each trading day's profit per bot and the day total, as a CSV file
-  const dpb = mk('span', 'tag', '⬇ daily P&L'); dpb.style.cursor = 'pointer'; dpb.style.marginTop = '10px'; dpb.style.display = 'inline-block';
-  dpb.onclick = async () => {
-    dpb.textContent = '…';
-    try {
-      const res = await fetch('/api/crew/desk/daily.csv', { headers: { 'Authorization': 'Bearer ' + token() } });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const url = URL.createObjectURL(await res.blob());
-      const a = document.createElement('a'); a.href = url; a.download = 'desk-daily-pnl.csv';
-      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-      dpb.textContent = '⬇ daily P&L';
-    } catch (e) { dpb.textContent = 'daily P&L failed'; }
-  };
-  s.append(dpb);
-  }
   // what makes money and what loses it: every settled fill, cut by the conditions it happened in
   const an = DESK.analysis;
   if (an && DESK_VIEW === an.mode) {
