@@ -185,9 +185,20 @@ def assets_from_env(env: Optional[Mapping[str, str]] = None) -> list:
     return list(dict.fromkeys(out)) or ["btc"]
 
 
-# 5-minute BTC only (review of the 1.21 fills): 4 PM and 7 AM skipped; 4 AM, 6 AM, 12 PM and 2 PM at half size.
-# The other desks keep the old default (7 AM at half size).
-BTC_5M_HOUR_SIZE = ((4, 0.5), (6, 0.5), (7, 0.0), (12, 0.5), (14, 0.5), (16, 0.0))
+# v1.31 (owner, 2026-11-07): each 5-minute desk sized by Los Angeles hour from its own profit-by-hour table.
+# Rules: 15+ trades and clearly losing -> skip; losing on 8+ trades -> half; too few trades -> BTC's setting; winning -> full.
+HOUR_SIZE_5M = {
+    "btc": ((4, 0.5), (6, 0.5), (7, 0.0), (8, 0.5), (9, 0.5), (12, 0.5), (14, 0.0), (16, 0.0)),
+    "eth": ((4, 0.5), (6, 0.5), (7, 0.0), (8, 0.5), (9, 0.0), (12, 0.5), (14, 0.0), (16, 0.0)),
+    "sol": ((4, 0.5), (6, 0.5), (7, 0.0), (8, 0.5), (9, 0.5), (10, 0.5), (12, 0.5), (14, 0.0), (16, 0.0), (22, 0.5)),
+    "xrp": ((3, 0.5), (4, 0.5), (5, 0.5), (6, 0.5), (7, 0.0), (8, 0.5), (9, 0.5), (12, 0.5), (14, 0.0), (16, 0.0)),
+}
+BTC_5M_HOUR_SIZE = HOUR_SIZE_5M["btc"]
+DEFAULT_HOUR_SIZE = ((7, 0.5),)      # the 15-minute and 1-hour desks
+
+
+def default_hour_size(asset: str) -> tuple:
+    return HOUR_SIZE_5M.get((asset or "btc").lower(), DEFAULT_HOUR_SIZE)
 
 
 def parse_hour_size(raw: Any) -> tuple:
@@ -281,7 +292,7 @@ def _from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Co
         control_s=_f(e, "POLYBOT_CONTROL_SECONDS", 5.0, 2.0, 600.0),
         database_url=(e.get("DATABASE_URL") or "").strip(),
         data_dir=(e.get("POLYBOT_DATA_DIR") or "polybot_data").strip(),
-        hour_size=parse_hour_size(e.get("POLYBOT_HOUR_SIZE")) if e.get("POLYBOT_HOUR_SIZE") is not None else (BTC_5M_HOUR_SIZE if a == "btc" else ((7, 0.5),)),
+        hour_size=parse_hour_size(e.get("POLYBOT_HOUR_SIZE")) if e.get("POLYBOT_HOUR_SIZE") is not None else default_hour_size(a),
         notify_url=(e.get("POLYBOT_NOTIFY_URL") or e.get("CREW_NOTIFY_URL") or "").strip(),
     )
 
@@ -321,7 +332,15 @@ def apply_control(base: Config, control: Dict[str, Any]) -> Config:
                     pass
         cfg = cfg.with_limits(Limits(**cur))
     if isinstance(control, dict) and isinstance(control.get("hour_size"), dict):     # an approved change from the daily hour review
-        cfg = replace(cfg, hour_size=parse_hour_size(control["hour_size"]))
+        hs = dict(cfg.hour_size)                     # v1.31: approved hours override only those hours; the desk's own table stays for the rest
+        for h, f in control["hour_size"].items():
+            try:
+                h, f = int(str(h).strip()), float(f)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= h <= 23:
+                hs[h] = min(1.0, max(0.0, f))
+        cfg = replace(cfg, hour_size=tuple(sorted((h, f) for h, f in hs.items() if f != 1.0)))
     want = str((control or {}).get("mode") or "paper").lower()
     if base.asset in PAPER_ONLY:
         return replace(cfg, mode="paper")

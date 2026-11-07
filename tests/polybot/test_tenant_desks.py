@@ -94,7 +94,7 @@ def test_seven_am_windows_are_half_size_by_default_and_the_control_row_can_chang
     from openjarvis.polybot.desk import Desk
     from openjarvis.polybot.risk import LA
 
-    assert from_env({}).hour_size == ((4, 0.5), (6, 0.5), (7, 0.0), (12, 0.5), (14, 0.5), (16, 0.0))   # 5-minute BTC
+    assert from_env({}).hour_size == ((4, 0.5), (6, 0.5), (7, 0.0), (8, 0.5), (9, 0.5), (12, 0.5), (14, 0.0), (16, 0.0))   # 5-minute BTC
     assert from_env({}, asset="btc15").hour_size == ((7, 0.5),)                # 15-minute keeps the old default
     assert from_env({"POLYBOT_HOUR_SIZE": ""}).hour_size == ()                 # an empty setting turns it off
     assert parse_hour_size("7:0.5,16:0,25:1,x:y,9:1") == ((7, 0.5), (16, 0.0))
@@ -108,6 +108,25 @@ def test_seven_am_windows_are_half_size_by_default_and_the_control_row_can_chang
     assert d.hour_factor(seven) == 1.0
     tenant = for_account(from_env({}, asset="btc15"), "uabc", "k", "s")
     assert tenant.hour_size == ((7, 0.5),)                                     # the brother's copies get it too
+
+
+def test_each_five_minute_desk_has_its_own_hours_and_an_approved_hour_only_changes_that_hour():
+    import datetime as dt
+    from openjarvis.polybot.config import apply_control
+    from openjarvis.polybot.desk import Desk
+    from openjarvis.polybot.risk import LA
+
+    at = lambda h: dt.datetime(2026, 11, 4, h, 5, tzinfo=LA).timestamp()
+    f = {a: Desk(from_env({}, asset=a), None, None) for a in ("btc", "eth", "sol", "xrp")}
+    assert [f[a].hour_factor(at(9)) for a in ("btc", "eth", "sol", "xrp")] == [0.5, 0.0, 0.5, 0.5]
+    assert [f[a].hour_factor(at(10)) for a in ("btc", "eth", "sol", "xrp")] == [1.0, 1.0, 0.5, 1.0]
+    assert [f[a].hour_factor(at(3)) for a in ("btc", "eth", "sol", "xrp")] == [1.0, 1.0, 1.0, 0.5]
+    assert f["sol"].hour_factor(at(22)) == 0.5 and f["btc"].hour_factor(at(23)) == 1.0
+    assert all(f[a].hour_factor(at(14)) == 0.0 and f[a].hour_factor(at(7)) == 0.0 for a in f)
+    d = f["btc"]
+    d.cfg = apply_control(d.base, {"hour_size": {"7": 0.5}})                 # an older 7 AM approval keeps the rest of the table
+    assert d.hour_factor(at(7)) == 0.5 and d.hour_factor(at(14)) == 0.0 and d.hour_factor(at(9)) == 0.5
+    assert for_account(from_env({}, asset="btc"), "uabc", "k", "s").hour_size == from_env({}, asset="btc").hour_size
 
 
 def test_the_daily_review_decides_from_the_seven_am_numbers():

@@ -72,7 +72,10 @@ async def review_desk(pool, asset: str, account: str, now: dt.datetime) -> Dict[
     since = dt.datetime.fromisoformat(mem.get("since") or HALF_SINCE)      # reset whenever an approved change takes effect
     live = label_for(desk.LIVE_OF.get(asset, "live"), account)
     ctl = await desk.get_kv(pool, kv_key("control", asset, account))
-    hs = dict(parse_hour_size(ctl["hour_size"])) if isinstance(ctl.get("hour_size"), dict) else {HOUR: 0.5}
+    from openjarvis.polybot.config import default_hour_size
+    hs = dict(default_hour_size(asset))
+    if isinstance(ctl.get("hour_size"), dict):
+        hs.update({int(h): min(1.0, max(0.0, float(f))) for h, f in ctl["hour_size"].items() if str(h).strip().isdigit()})
     current = hs.get(HOUR, 1.0)
     recent, all_time = stats(await _hour_rows(pool, live, asset, since)), stats(await _hour_rows(pool, live, asset, None))
     d = decide(recent["trades"], recent["return_pct"], current)
