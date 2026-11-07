@@ -93,7 +93,7 @@ class Desk:
         self._bets: Dict[str, Dict[str, Tuple[str, float, float]]] = {}   # v1.22: window -> {method: (side, usd, qty)}, one bet per method
         self._fill_conf: Dict[str, List[Tuple[str, Optional[float], Optional[float]]]] = {}   # per window: (side, model conf, book conf)
         # live calibration: a side's raw model confidence -> the win rate its bucket has actually shown (shrunk toward the raw value)
-        self._calib = lambda p: (self.shadow.calibrated_conf(p) if self.shadow.calibrated_conf(p) is not None else p)
+        self._calib = lambda p: self._calibrated(p)
         self._entry_sig: Dict[str, Tuple[Any, ...]] = {}   # per window: (sigma, model conf, calibrated conf, calibrated lot) at the first entry
         self.shadow = shadow.Shadow(window_secs=900 if str(self.cfg.asset).endswith("15") else 300)   # six hidden shadow strategies, three per timeframe (recorded, never traded or shown)
         self.setups = setups.SetupBook()                     # v1.14 learned pair sizing (shadow): record per pair setup
@@ -438,6 +438,8 @@ class Desk:
                     self.shadow.add_result("directional", (w.inv.up_qty if up else w.inv.down_qty) - w.inv.spent, w.inv.spent)
             for side, mc, bc in self._fill_conf.pop(slug, []):
                 self.shadow.calib_add(mc, bc, (side == "up") == bool(up))
+                if is_live_label(w.mode):                              # v1.33: live fills feed the live-only tally (XRP's calibration)
+                    self.shadow.live_add(mc, (side == "up") == bool(up))
             try:
                 await self.store.put("shadow", self.shadow.to_dict())
             except Exception:
@@ -503,6 +505,14 @@ class Desk:
             if "-updown-" in slug:                       # every desk's open contracts count: they all share one account
                 ext += abs(money(p.get("cost")) or 0.0)
         self.external_at_risk = round(ext, 2)
+
+    def _calibrated(self, p):
+        """v1.33: XRP's confidence is corrected toward its LIVE fills only (paper ran far better and hid the real losses); other desks as before."""
+        if self.cfg.asset == "xrp":
+            c = self.shadow.live_calibrated_conf(p)
+        else:
+            c = self.shadow.calibrated_conf(p)
+        return p if c is None else c
 
     def _calib_for(self, w):
         """The confidence the bot trades on for this window: raw in the bot's green hours, calibrated in every other hour."""
