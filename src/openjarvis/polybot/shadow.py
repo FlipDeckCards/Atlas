@@ -133,6 +133,8 @@ class Shadow:
     def __init__(self, window_secs: int = 300) -> None:
         self.names = names_for(window_secs)
         self.calib: Dict[str, Dict[str, Dict[str, int]]] = {m: {lab: {"n": 0, "wins": 0} for _, _, lab in BUCKETS} for m in ("model", "book")}
+        # v1.33 (owner, 2026-11-07): live fills only (real money), by the model's confidence. XRP's live calibration reads this, not the paper-mixed tally.
+        self.live_calib: Dict[str, Dict[str, int]] = {lab: {"n": 0, "wins": 0} for _, _, lab in BUCKETS}
         self.rec: Dict[str, Dict[str, float]] = {n: {"windows": 0, "wins": 0, "staked": 0.0, "profit": 0.0} for n in NAMES}
         self.open: Dict[str, Dict[str, List[Tuple[str, float]]]] = {}   # slug -> strategy -> legs taken
         self.done: Dict[str, set] = {}                                  # slug -> strategies that already traded this window
@@ -237,6 +239,22 @@ class Shadow:
             cell["n"] += 1
             cell["wins"] += 1 if won else 0
 
+    def live_add(self, model_conf: Optional[float], won: bool) -> None:
+        """v1.33: one settled LIVE fill, by the model confidence of the side it bought."""
+        if model_conf is None:
+            return
+        lab = next(l for lo, hi, l in BUCKETS if lo <= model_conf < hi)
+        self.live_calib[lab]["n"] += 1
+        self.live_calib[lab]["wins"] += 1 if won else 0
+
+    def live_calibrated_conf(self, raw: Optional[float], prior_n: float = 20.0) -> Optional[float]:
+        """v1.33: the raw confidence pulled toward the live win rate of its bucket (same shrinkage as calibrated_conf)."""
+        if raw is None or not (0.0 <= raw < 1.01):
+            return None
+        lab = next(l for lo, hi, l in BUCKETS if lo <= raw < hi) if raw < 1.01 else "90+"
+        c = self.live_calib[lab]
+        return round((c["wins"] + prior_n * raw) / (c["n"] + prior_n), 4)
+
     def bucket_stats(self, prob: float) -> Tuple[int, int]:
         """(trades, wins) of the calibration bucket that a model confidence falls in."""
         lab = next(l for lo, hi, l in BUCKETS if lo <= prob < hi) if 0.0 <= prob < 1.01 else "90+"
@@ -283,7 +301,7 @@ class Shadow:
                 break
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"rec": self.rec, "calib": self.calib, "log": self.log, "sizing": self.sizing}
+        return {"rec": self.rec, "calib": self.calib, "live_calib": self.live_calib, "log": self.log, "sizing": self.sizing}
 
     def load(self, d: Optional[Dict[str, Any]]) -> None:
         """Older saved results (the v1.15-v1.21 shadows) are dropped here: only the six current strategies are kept."""
@@ -294,6 +312,9 @@ class Shadow:
             self.sizing.update({k: float((d or {})["sizing"].get(k, 0) or 0) for k in self.sizing})
         if isinstance((d or {}).get("log"), list):
             self.log = [x for x in d["log"] if isinstance(x, dict)][-600:]
+        for lab, c in (((d or {}).get("live_calib")) or {}).items():
+            if lab in self.live_calib and isinstance(c, dict):
+                self.live_calib[lab] = {"n": int(c.get("n", 0) or 0), "wins": int(c.get("wins", 0) or 0)}
         for kind, rows in ((d or {}).get("calib") or {}).items():
             if kind in self.calib and isinstance(rows, dict):
                 for lab, c in rows.items():
