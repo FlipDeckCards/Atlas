@@ -42,11 +42,11 @@ def test_keys_labels_and_locks_never_collide_with_the_owners():
 
 def test_cross_desk_cap_is_per_account():
     exposure.reset()
-    exposure.publish("BTC", 24.0)                       # the owner's desks have used their whole cap (30% of 80) ...
+    exposure.publish("BTC", 16.0)                       # the owner's desks have used their whole cap (20% of 80) ...
     assert exposure.headroom(80.0) == 0.0
-    assert exposure.headroom(80.0, "uabc") == 24.0      # ... which takes nothing from a subscriber's
+    assert exposure.headroom(80.0, "uabc") == 16.0      # ... which takes nothing from a subscriber's
     exposure.reserve("BTC", 5.0, "uabc")
-    assert exposure.total_open("uabc") == 5.0 and exposure.total_open() == 24.0
+    assert exposure.total_open("uabc") == 5.0 and exposure.total_open() == 16.0
     exposure.reset()
 
 
@@ -248,13 +248,13 @@ def test_one_hour_desks_get_one_hour_timing_and_the_others_keep_theirs():
     assert "30-240 second" in directional.explain(None, None, None, (0, 0), (0, 0), None, False)
 
 
-def test_all_desk_cap_is_30_percent_and_the_5m_block_covers_every_coin():
+def test_all_desk_cap_is_20_percent_and_the_5m_block_covers_every_coin():
     from openjarvis.polybot.desk import Desk
 
     exposure.reset()
-    assert exposure.headroom(100.0) == 30.0
-    exposure.publish("BTC", 20.0)
-    exposure.publish("ETH 5m", 8.0)
+    assert exposure.headroom(100.0) == 20.0
+    exposure.publish("BTC", 13.0)
+    exposure.publish("ETH 5m", 5.0)
     assert exposure.headroom(100.0) == 2.0
     exposure.reset()
     for a in ("btc", "eth", "sol", "xrp"):

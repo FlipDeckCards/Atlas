@@ -33,11 +33,11 @@ def test_btc_trades_at_its_tier_and_eth_does_not_at_the_same_confidence():
     assert directional.decide(0.84, 0.60, 0.40, (0, 0), (0, 0), asset="eth") is None
 
 
-def test_exposure_cap_is_30_percent_across_desks():
+def test_exposure_cap_is_20_percent_across_desks():
     exposure.reset()
-    assert exposure.headroom(1000.0) == 300.0
+    assert exposure.headroom(1000.0) == 200.0
     exposure.publish("BTC", 100.0)
-    exposure.publish("ETH", 150.0)
+    exposure.publish("ETH", 50.0)
     assert exposure.headroom(1000.0) == 50.0
     exposure.reserve("SOL", 60.0)                  # over the cap now: no room left
     assert exposure.headroom(1000.0) == 0.0

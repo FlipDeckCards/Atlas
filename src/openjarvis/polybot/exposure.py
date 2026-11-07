@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from typing import Dict
 
-CROSS_DESK_PCT = 30.0          # % of the account value at risk at once, across every live desk's directional, edge, late AND sweep
+CROSS_DESK_PCT = 20.0          # owner, 2026-11-07 (v1.33): was 30.
+                               # % of the account value at risk at once, across every live desk's directional, edge, late AND sweep
                                # bets together (v1.28, owner 2026-11-06: was 25% without sweeps; sweeps now count too)
 
 _open: Dict[str, float] = {}   # desk name -> dollars at risk in its directional windows

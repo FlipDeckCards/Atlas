@@ -871,7 +871,7 @@ class Desk:
                                                    hedge_loss=hedge, min_cost=self.cfg.min_buy_price, max_cost=self.cfg.max_buy_price)
             if self.cfg.sweep_pct > 0 and not self.cfg.pairs_only and w.end - now <= sweep_s and self.fair_model is not None:
                 cap = min(max(0.0, equity) * self.cfg.sweep_pct / 100.0,
-                          exposure.headroom(equity, self._xacct()))      # v1.28: sweeps count under the all-desk cap (30%) too
+                          exposure.headroom(equity, self._xacct()))      # v1.28: sweeps count under the all-desk cap (20% since v1.33) too
                 sw = strategy.sweep(self.fair_model, self.mid, strategy.Book(b.best_bid, b.best_ask, w.tick, w.min_qty), inv,
                                     cap_usd=cap, budget_left=budget, min_price=self.cfg.sweep_min_price,
                                     max_price=self.cfg.sweep_max_price, min_edge=self.cfg.sweep_min_edge,
