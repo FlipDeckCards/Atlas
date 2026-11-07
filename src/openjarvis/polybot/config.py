@@ -184,6 +184,11 @@ def assets_from_env(env: Optional[Mapping[str, str]] = None) -> list:
     return list(dict.fromkeys(out)) or ["btc"]
 
 
+# 5-minute BTC only (review of the 1.21 fills): 4 PM and 7 AM skipped; 4 AM, 6 AM, 12 PM and 2 PM at half size.
+# The other desks keep the old default (7 AM at half size).
+BTC_5M_HOUR_SIZE = ((4, 0.5), (6, 0.5), (7, 0.0), (12, 0.5), (14, 0.5), (16, 0.0))
+
+
 def parse_hour_size(raw: Any) -> tuple:
     """'7:0.5,16:0' or {"7": 0.5} -> ((7, 0.5), (16, 0.0)); bad entries are dropped; factors are clamped to 0..1."""
     items = raw.items() if isinstance(raw, dict) else (p.split(":", 1) for p in str(raw or "").split(",") if ":" in p)
@@ -275,7 +280,7 @@ def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Con
         control_s=_f(e, "POLYBOT_CONTROL_SECONDS", 5.0, 2.0, 600.0),
         database_url=(e.get("DATABASE_URL") or "").strip(),
         data_dir=(e.get("POLYBOT_DATA_DIR") or "polybot_data").strip(),
-        hour_size=parse_hour_size(e.get("POLYBOT_HOUR_SIZE")) if e.get("POLYBOT_HOUR_SIZE") is not None else ((7, 0.5),),
+        hour_size=parse_hour_size(e.get("POLYBOT_HOUR_SIZE")) if e.get("POLYBOT_HOUR_SIZE") is not None else (BTC_5M_HOUR_SIZE if a == "btc" else ((7, 0.5),)),
         notify_url=(e.get("POLYBOT_NOTIFY_URL") or e.get("CREW_NOTIFY_URL") or "").strip(),
     )
 

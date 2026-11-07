@@ -94,10 +94,11 @@ def test_seven_am_windows_are_half_size_by_default_and_the_control_row_can_chang
     from openjarvis.polybot.desk import Desk
     from openjarvis.polybot.risk import LA
 
-    assert from_env({}).hour_size == ((7, 0.5),)
+    assert from_env({}).hour_size == ((4, 0.5), (6, 0.5), (7, 0.0), (12, 0.5), (14, 0.5), (16, 0.0))   # 5-minute BTC
+    assert from_env({}, asset="btc15").hour_size == ((7, 0.5),)                # 15-minute keeps the old default
     assert from_env({"POLYBOT_HOUR_SIZE": ""}).hour_size == ()                 # an empty setting turns it off
     assert parse_hour_size("7:0.5,16:0,25:1,x:y,9:1") == ((7, 0.5), (16, 0.0))
-    d = Desk(from_env({}), None, None)
+    d = Desk(from_env({}, asset="btc15"), None, None)
     seven = dt.datetime(2026, 11, 4, 7, 5, tzinfo=LA).timestamp()
     eight = dt.datetime(2026, 11, 4, 8, 5, tzinfo=LA).timestamp()
     assert d.hour_factor(seven) == 0.5 and d.hour_factor(eight) == 1.0
@@ -105,7 +106,7 @@ def test_seven_am_windows_are_half_size_by_default_and_the_control_row_can_chang
     assert d.hour_factor(seven) == 0.0
     d.cfg = apply_control(d.base, {"hour_size": {"7": 1.0}})
     assert d.hour_factor(seven) == 1.0
-    tenant = for_account(from_env({}), "uabc", "k", "s")
+    tenant = for_account(from_env({}, asset="btc15"), "uabc", "k", "s")
     assert tenant.hour_size == ((7, 0.5),)                                     # the brother's copies get it too
 
 
