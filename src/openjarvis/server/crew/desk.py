@@ -348,6 +348,32 @@ def _acct_mode_sql(col: str, param: str = "$2") -> str:
             f"ELSE {col} LIKE '%@' || {param}::text END)")
 
 
+async def export_all(pool, kind: str, account: str = "") -> str:
+    """Every desk's fills ('fills') or shadow log ('shadow') in ONE CSV, with a desk column first. Fills are in time order across
+    desks; shadow rows are grouped by desk. Only this account's desks (a subscriber's two, the owner's twelve)."""
+    import csv
+    import io
+
+    from openjarvis.polybot.config import ASSETS, desk_label
+
+    assets = list(TENANT_ASSETS) if account else [a for a in ASSETS if a in KEYS]
+    header, out = None, []
+    for a in assets:
+        text = await (export_fills(pool, asset=a, account=account) if kind == "fills" else export_shadow(pool, asset=a, account=account))
+        rows = list(csv.reader(io.StringIO(text)))
+        if not rows:
+            continue
+        header = header or ["desk"] + rows[0]
+        out += [[desk_label(a)] + r for r in rows[1:] if r]
+    if kind == "fills":
+        out.sort(key=lambda r: r[1] if len(r) > 1 else "")      # the fill time, oldest first
+    buf = io.StringIO()
+    wr = csv.writer(buf)
+    wr.writerow(header or ["desk"])
+    wr.writerows(out)
+    return buf.getvalue()
+
+
 async def export_fills(pool, asset: str = "btc", account: str = "") -> str:
     """Every fill this desk ever made (all strategy versions, paper and live) as CSV: one row per fill, with the window's result and P&L."""
     import csv

@@ -542,7 +542,10 @@ async def crew_desk_shadow_export(request: Request, asset: str = "btc", view: st
     from openjarvis.server.crew import desk
 
     a = (asset or "btc").lower()
-    body = await desk.export_shadow(g[2], asset=a, account=g[3])                 # this account's desks only
+    if a == "all":                                                               # every desk in one file
+        body = await desk.export_all(g[2], "shadow", account=g[3])
+    else:
+        body = await desk.export_shadow(g[2], asset=a, account=g[3])             # this account's desks only
     return Response(content=body, media_type="text/csv",
                     headers={"Content-Disposition": f'attachment; filename="desk-{a}-shadow.csv"'})
 
@@ -582,7 +585,10 @@ async def crew_desk_export(request: Request, asset: str = "btc", view: str = "")
     from openjarvis.server.crew import desk
 
     a = (asset or "btc").lower()
-    body = await desk.export_fills(g[2], asset=a, account=g[3])
+    if a == "all":                                                               # every desk's fills in one file, in time order
+        body = await desk.export_all(g[2], "fills", account=g[3])
+    else:
+        body = await desk.export_fills(g[2], asset=a, account=g[3])
     return Response(content=body, media_type="text/csv",
                     headers={"Content-Disposition": f'attachment; filename="desk-{a}-fills.csv"'})
 
