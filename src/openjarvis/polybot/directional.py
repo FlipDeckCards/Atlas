@@ -178,10 +178,14 @@ def decide(prob_up: float, up_cost: Optional[float], down_cost: Optional[float],
 
 
 def explain(prob_up: Optional[float], up_cost: Optional[float], down_cost: Optional[float], bucket_up: Tuple[int, int],
-            bucket_down: Tuple[int, int], z: Optional[float], in_window: bool, asset: str = "btc") -> str:
+            bucket_down: Tuple[int, int], z: Optional[float], in_window: bool, asset: str = "btc",
+            window: Tuple[float, float] = (30.0, 240.0)) -> str:
     """Plain words for why the directional rule did not trade this moment (shown on the desk status)."""
     if not in_window:
-        return "Directional: outside its 30-240 second window."
+        lo, hi = window
+        if hi >= 600:
+            return f"Directional: outside its {lo / 60:.0f}-{hi / 60:.0f} minute window."
+        return f"Directional: outside its {lo:.0f}-{hi:.0f} second window."
     if prob_up is None:
         return "Directional: no model reading yet."
     parts = []

@@ -92,6 +92,7 @@ class Config:
     directional: bool = True           # v1.18: confident directional trades, paper only (see directional.py)
     directional_secs_left: float = 240.0   # ... considered from this many seconds before the close
     directional_min_secs: float = 30.0     # ... and not in the final 30 seconds
+    late_split_s: float = 60.0             # edge bets run from directional_secs_left down to here; late bets from here to directional_min_secs
     pair_margin: float = 0.02           # v1.17: a pair opens only when both sides plus both taker fees leave this much under $1.00
     sweep_pct: float = 5.0              # v1.13 closing sweep: at most this % of the balance on the likely winner near the close (0 = off)
     sweep_secs_left: float = 60.0       # sweeps run from this many seconds before the close until stop_before_end_s (trading hours;
@@ -203,7 +204,7 @@ def parse_hour_size(raw: Any) -> tuple:
     return tuple(sorted((h, f) for h, f in out.items() if f != 1.0))
 
 
-def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Config:
+def _from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Config:
     e = os.environ if env is None else env
     lim = Limits(bankroll_usd=_f(e, "POLYBOT_BANKROLL_USD", 50.0, 0.0),
                  max_window_usd=_f(e, "POLYBOT_MAX_WINDOW_USD", 50.0, 0.0),
@@ -283,6 +284,20 @@ def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Con
         hour_size=parse_hour_size(e.get("POLYBOT_HOUR_SIZE")) if e.get("POLYBOT_HOUR_SIZE") is not None else (BTC_5M_HOUR_SIZE if a == "btc" else ((7, 0.5),)),
         notify_url=(e.get("POLYBOT_NOTIFY_URL") or e.get("CREW_NOTIFY_URL") or "").strip(),
     )
+
+
+# v1.27 (owner, 2026-11-06): the 1-hour desks get 1-hour timing, not the 5-minute playbook squeezed into the last 4 minutes.
+# Directional bets 2-15 minutes before the close; edge bets 5-15 minutes out, late bets 2-5 minutes out; sweeps from 5 minutes out;
+# momentum looks back 2 minutes. The price model already scales with the time left (volatility x the square root of the seconds).
+ONE_HOUR_TIMING = {"directional_secs_left": 900.0, "directional_min_secs": 120.0, "late_split_s": 300.0,
+                   "sweep_secs_left": 300.0, "sweep_secs_left_night": 300.0, "momentum_s": 120.0}
+
+
+def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Config:
+    cfg = _from_env(env, asset)
+    if cfg.horizon == "1h" and cfg.asset in PINNED_HORIZON:
+        cfg = replace(cfg, **ONE_HOUR_TIMING)
+    return cfg
 
 
 def apply_control(base: Config, control: Dict[str, Any]) -> Config:

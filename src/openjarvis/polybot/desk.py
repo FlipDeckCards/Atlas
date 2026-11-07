@@ -777,7 +777,8 @@ class Desk:
                                 why = f"Directional ({tier}): {side} at {cost * 100:.0f}c, edge {edge * 100:.1f}c after fees, lot {lot_pct:.0f}%."
                     # v1.22: edge and late are extra single-bet methods: one bet each per window, never against a side already bet
                     if self.cfg.directional and self.fair_model is not None and b.best_ask is not None and b.best_bid is not None:
-                        for method, lo, hi in (("edge", 60.0, self.cfg.directional_secs_left), ("late", self.cfg.directional_min_secs, 60.0)):
+                        split = self.cfg.late_split_s                    # 60 s on 5m/15m desks; 300 s on the 1-hour desks (v1.27)
+                        for method, lo, hi in (("edge", split, self.cfg.directional_secs_left), ("late", self.cfg.directional_min_secs, split)):
                             if want or method not in self.cfg.methods or self._taken(w.slug, method) or not (lo <= w.end - now <= hi):
                                 continue
                             z = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)
@@ -809,7 +810,8 @@ class Desk:
                         why_dir = directional.explain(self.fair_model, b.best_ask,
                                                       None if b.best_bid is None else round(1.0 - b.best_bid, 6),
                                                       self.shadow.bucket_stats(self.fair_model or 0.5),
-                                                      self.shadow.bucket_stats(1.0 - (self.fair_model or 0.5)), z_now, in_win, asset=self.cfg.asset)
+                                                      self.shadow.bucket_stats(1.0 - (self.fair_model or 0.5)), z_now, in_win, asset=self.cfg.asset,
+                                                      window=(self.cfg.directional_min_secs, self.cfg.directional_secs_left))
                         why = (why + " " if why else "") + why_dir + ("" if can_up_m and can_down_m else f" Momentum: {mom_why}")
                 elif not want:
                     why = why or "Finishing the pair (one leg was left open)."

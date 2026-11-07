@@ -213,3 +213,17 @@ def test_paper_desks_never_take_room_from_the_live_cap():
 def replace_mode(cfg, mode):
     from dataclasses import replace
     return replace(cfg, mode=mode)
+
+
+def test_one_hour_desks_get_one_hour_timing_and_the_others_keep_theirs():
+    from openjarvis.polybot import directional
+
+    for a in ("btc1h", "eth1h", "sol1h", "xrp1h"):
+        c = from_env({}, asset=a)
+        assert (c.directional_min_secs, c.directional_secs_left, c.late_split_s) == (120.0, 900.0, 300.0), a
+        assert (c.sweep_secs_left, c.sweep_secs_left_night, c.momentum_s) == (300.0, 300.0, 120.0), a
+    for a in ("btc", "btc15", "eth", "eth15", "xrp15"):
+        c = from_env({}, asset=a)
+        assert (c.directional_min_secs, c.directional_secs_left, c.late_split_s, c.sweep_secs_left) == (30.0, 240.0, 60.0, 60.0), a
+    assert "2-15 minute" in directional.explain(None, None, None, (0, 0), (0, 0), None, False, window=(120.0, 900.0))
+    assert "30-240 second" in directional.explain(None, None, None, (0, 0), (0, 0), None, False)
