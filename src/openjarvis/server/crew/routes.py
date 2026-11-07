@@ -563,6 +563,23 @@ async def crew_desk_daily_export(request: Request, view: str = ""):
                     headers={"Content-Disposition": 'attachment; filename="desk-daily-pnl.xlsx"'})
 
 
+@router.get("/api/crew/desk/brief.docx")
+async def crew_desk_brief(request: Request):
+    """The Polymarket Desk business brief (Word), built from the live settings and ledger. Owner only, his own desks."""
+    g = await _desk_gate(request, "")
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine, pool, account, _ = g
+    if account or not await engine.is_owner(uid):
+        return JSONResponse({"detail": "The business brief is for the owner only."}, status_code=403)
+    from openjarvis.server.crew import brief
+
+    body = await brief.export_brief(engine, pool)
+    name = "Aibussol-Desk-Brief-" + __import__("datetime").date.today().isoformat() + ".docx"
+    return Response(content=body, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
 @router.get("/api/crew/desk/log.csv")
 async def crew_desk_log_export(request: Request, view: str = ""):
     """The full desk log for every desk as one CSV file, for the owner."""

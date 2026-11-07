@@ -942,6 +942,7 @@ function factorySec(key) {
   const site = (S && S.products && S.products[key]) || (FIN && FIN.products && FIN.products[key]) || null;
   if (site) s.append(mk('div', 'dim', (site.live ? 'Site live' : 'Site NOT answering') + (site.url ? ' · ' + site.url : '') + (site.checked_at ? ' · checked ' + ago(site.checked_at) : '')));
   if (key === 'polymarket') s.append(dailyPnlSec());
+  if (key === 'polymarket' && isOwner() && !VIEW_AS) s.append(briefSec());   // the business brief: the owner's own Station only
   const r = FIN && FIN.factories ? FIN.factories[key] : null;
   if (r) { s.append(pnlBlock(r, 'P&L')); s.append(mk('div', 'dim', costLine(r))); }
   else s.append(mk('div', 'dim', FIN ? 'No money in or out for this factory yet.' : 'Loading the numbers…'));
@@ -1387,6 +1388,25 @@ function dailyPnlSec() {
       document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
       b.textContent = '⬇ Daily P&L (Excel)';
     } catch (e) { b.textContent = 'Daily P&L failed'; }
+  };
+  wrap.append(b);
+  return wrap;
+}
+// the business brief (Word): the whole operation, desk by desk, built from the live settings when downloaded; owner only
+function briefSec() {
+  const wrap = mk('div'); wrap.style.marginTop = '10px';
+  const label = '⬇ Business brief (Word)';
+  const b = mk('button', null, label); b.style.cursor = 'pointer';
+  b.onclick = async () => {
+    b.textContent = 'Building the brief…';
+    try {
+      const res = await fetch('/api/crew/desk/brief.docx', { headers: { 'Authorization': 'Bearer ' + token() } });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a'); a.href = url; a.download = 'Aibussol-Desk-Brief-' + new Date().toISOString().slice(0, 10) + '.docx';
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      b.textContent = label;
+    } catch (e) { b.textContent = 'Brief failed'; }
   };
   wrap.append(b);
   return wrap;
