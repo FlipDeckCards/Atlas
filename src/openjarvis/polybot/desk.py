@@ -816,8 +816,8 @@ class Desk:
                             side, cost, tier, edge, lot_pct = pick
                             size_here = (b.offers[0][1] if b.offers else 0.0) if side == "up" else (b.bids[0][1] if b.bids else 0.0)
                             bets = self._bets.get(w.slug, {})
-                            usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self._xacct()), directional.window_room(bets, equity))   # lot by coin and confidence; capped across all desks and the window
-                            ok_win, _ = directional.may_take(bets, side, usd, equity)
+                            usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self._xacct()), directional.window_room(bets, equity, self.cfg.asset))   # lot by coin and confidence; capped across all desks and the window
+                            ok_win, _ = directional.may_take(bets, side, usd, equity, self.cfg.asset)
                             q = strategy._qty(usd, cost, w.min_qty)
                             q = min(q, round(size_here // w.min_qty * w.min_qty, 6))
                             if q >= w.min_qty and ok_win:
@@ -841,8 +841,8 @@ class Desk:
                                 why = f"{method.title()}: skipped by entry rule, buy at {cost * 100:.0f}c."
                                 continue
                             bets = self._bets.get(w.slug, {})
-                            usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self._xacct()), directional.window_room(bets, equity))
-                            ok_win, why_win = directional.may_take(bets, side, usd, equity)
+                            usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self._xacct()), directional.window_room(bets, equity, self.cfg.asset))
+                            ok_win, why_win = directional.may_take(bets, side, usd, equity, self.cfg.asset)
                             if not ok_win:
                                 why = f"{method.title()}: {why_win}."
                                 continue

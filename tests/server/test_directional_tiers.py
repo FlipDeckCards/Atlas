@@ -63,3 +63,14 @@ def test_open_sides_follow_the_coin_floor():
     assert directional.open_sides(None, "btc") == (False, False)
     assert directional.open_sides(0.84, "xrp") == (False, False)
     assert directional.open_sides(0.85, "xrp") == (True, False)
+
+
+def test_small_coins_keep_every_method_in_a_window_under_five_percent():
+    # v1.34: directional, edge and late bets on XRP, SOL and ETH share 5% per window; BTC keeps 20%
+    assert directional.window_total_pct("btc") == directional.window_total_pct("btc15") == 20.0
+    for a in ("xrp", "sol", "eth", "sol15", "eth1h"):
+        assert directional.window_total_pct(a) == 5.0, a
+    bets = {"directional": ("up", 30.0, 50.0)}
+    assert directional.window_room(bets, 1000.0, "xrp") == 20.0 and directional.window_room(bets, 1000.0, "btc") == 170.0
+    assert directional.may_take(bets, "up", 25.0, 1000.0, "sol")[0] is False
+    assert directional.may_take(bets, "up", 20.0, 1000.0, "sol")[0] is True

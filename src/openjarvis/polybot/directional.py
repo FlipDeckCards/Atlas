@@ -125,19 +125,27 @@ def method_pick(method: str, prob_up: float, up_cost: Optional[float], down_cost
     return best
 
 
-def may_take(bets: dict, side: str, usd: float, equity: float) -> Tuple[bool, str]:
+def window_total_pct(asset: str = "btc") -> float:
+    """Every method's bets in one window together: 20% on BTC; 5% on XRP, SOL and ETH (v1.34, owner 2026-11-07)."""
+    from openjarvis.polybot.config import SMALL_COINS, coin_of
+    small = SMALL_COINS.get(coin_of((asset or "btc").lower()))
+    return min(WINDOW_TOTAL_PCT, small[0]) if small else WINDOW_TOTAL_PCT
+
+
+def may_take(bets: dict, side: str, usd: float, equity: float, asset: str = "btc") -> Tuple[bool, str]:
     """Whether a new bet may go into this window: bets is {method: (side, usd, qty)} already placed in the window."""
     if bets and side not in {s for s, _, _ in bets.values()}:
         return False, "the other side is already bet in this window: not betting against it"
-    room = max(0.0, float(equity)) * WINDOW_TOTAL_PCT / 100.0 - sum(u for _, u, _ in bets.values())
+    total = window_total_pct(asset)
+    room = max(0.0, float(equity)) * total / 100.0 - sum(u for _, u, _ in bets.values())
     if usd <= 0 or room <= 0 or usd > room + 1e-9:
-        return False, f"the window's {WINDOW_TOTAL_PCT:.0f}% total in bets has no room for this one"
+        return False, f"the window's {total:.0f}% total in bets has no room for this one"
     return True, ""
 
 
-def window_room(bets: dict, equity: float) -> float:
-    """Dollars a new bet may still put into this window across every method (v1.22 per-window total)."""
-    return round(max(0.0, max(0.0, float(equity)) * WINDOW_TOTAL_PCT / 100.0 - sum(u for _, u, _ in bets.values())), 2)
+def window_room(bets: dict, equity: float, asset: str = "btc") -> float:
+    """Dollars a new bet may still put into this window across every method (v1.22 per-window total; per coin since v1.34)."""
+    return round(max(0.0, max(0.0, float(equity)) * window_total_pct(asset) / 100.0 - sum(u for _, u, _ in bets.values())), 2)
 
 
 def cushion_z(index: Optional[float], beat: Optional[float], sigma_per_s: Optional[float], secs_left: float) -> Optional[float]:
