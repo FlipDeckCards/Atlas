@@ -569,7 +569,7 @@ class Desk:
         """Entries the current review rules out (both on 1.21):
         5-minute BTC: no buy priced 30-70c in the final 60 seconds.
         15-minute BTC: no buy priced 70-90c at any time (about 80c needs an 80% win rate; this bot won 75%)."""
-        if self.cfg.asset == "btc":
+        if self.cfg.asset in ("btc", "eth", "sol", "xrp"):          # v1.28: BTC 5m's block, copied to the other 5-minute desks
             return secs_left <= 60.0 and 0.30 <= price <= 0.70
         if self.cfg.asset == "btc15":
             return 0.70 <= price < 0.90
@@ -820,16 +820,21 @@ class Desk:
                                                    budget_left=budget, can_up=can_up, can_down=can_down, sizing=sizing,
                                                    hedge_loss=hedge, min_cost=self.cfg.min_buy_price, max_cost=self.cfg.max_buy_price)
             if self.cfg.sweep_pct > 0 and not self.cfg.pairs_only and w.end - now <= sweep_s and self.fair_model is not None:
-                cap = max(0.0, equity) * self.cfg.sweep_pct / 100.0
+                cap = min(max(0.0, equity) * self.cfg.sweep_pct / 100.0,
+                          exposure.headroom(equity, self._xacct()))      # v1.28: sweeps count under the all-desk cap (30%) too
                 sw = strategy.sweep(self.fair_model, self.mid, strategy.Book(b.best_bid, b.best_ask, w.tick, w.min_qty), inv,
                                     cap_usd=cap, budget_left=budget, min_price=self.cfg.sweep_min_price,
                                     max_price=self.cfg.sweep_max_price, min_edge=self.cfg.sweep_min_edge,
                                     gap_bp=(None if not last or not w.price_to_beat else (last[1] - w.price_to_beat) / w.price_to_beat * 1e4),
                                     min_gap_bp=self.cfg.sweep_min_gap_bp)
                 decisive = max(self.fair_model, 1.0 - self.fair_model) >= self.cfg.sweep_min_price + self.cfg.sweep_min_edge
+                if sw is not None and sw.qty * sw.cost_per < 1.0:
+                    sw = None                                         # v1.28: no room left under the all-desk cap
                 if sw is not None:
                     want = [sw]
                     self._sweeps.add((w.slug, sw.side))
+                    self._dir_pending.add(w.slug)                     # v1.28: a sweep is a one-sided bet: it counts in the all-desk tally
+                    exposure.reserve(self.name, sw.qty * sw.cost_per, self._xacct())
                     if len(self._sweeps) > 50:
                         self._sweeps = set(list(self._sweeps)[-20:])
                     why = f"Closing sweep: buying {sw.side.upper()} at {sw.cost_per:.2f} (model {max(self.fair_model, 1 - self.fair_model):.0%})."
