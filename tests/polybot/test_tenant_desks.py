@@ -326,3 +326,11 @@ def test_desks_on_one_key_share_one_open_orders_read_and_back_off_after_a_429():
     assert cl.gate_for("kid-x", True).cool > 0      # the key cooled down after the 429
     cl._SHARED.clear()
     cl._GATES.clear()
+
+
+def test_sol_and_eth_desks_are_capped_at_one_percent_too():
+    for a in ("sol", "sol15", "sol1h", "eth", "eth15", "eth1h"):
+        c = from_env({"POLYBOT_WINDOW_PCT": "10", "POLYBOT_SWEEP_PCT": "10"}, asset=a)
+        assert c.window_pct == 1.0 and c.sweep_pct == 1.0, a
+    for a in ("btc", "btc15", "btc1h"):
+        assert from_env({"POLYBOT_WINDOW_PCT": "10"}, asset=a).window_pct == 10.0, a

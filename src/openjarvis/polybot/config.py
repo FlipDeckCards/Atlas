@@ -293,7 +293,7 @@ ONE_HOUR_TIMING = {"directional_secs_left": 900.0, "directional_min_secs": 120.0
                    "sweep_secs_left": 300.0, "sweep_secs_left_night": 300.0, "momentum_s": 120.0}
 
 
-SMALL_COINS = {"xrp": 1.0}   # owner, 2026-11-07: every XRP desk risks at most 1% of the balance per window (pairs and sweeps too)
+SMALL_COINS = {"xrp": 1.0, "sol": 1.0, "eth": 1.0}   # owner, 2026-11-07: every XRP, SOL and ETH desk risks at most 1% of the balance per window (pairs and sweeps too)
 
 
 def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Config:
