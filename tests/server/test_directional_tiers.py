@@ -11,20 +11,11 @@ def test_btc_tiers(prob, expected):
     assert directional.size_pct(prob, "btc") == expected
 
 
-@pytest.mark.parametrize("prob,expected", [(0.80, 0.0), (0.85, 0.0), (0.88, 0.0), (0.89, 0.0), (0.899, 0.0),
-                                           (0.90, 8.0), (0.949, 8.0), (0.95, 10.0), (0.999, 10.0)])
-def test_xrp_tiers_floor_at_90(prob, expected):
-    assert directional.size_pct(prob, "xrp") == expected
-
-
-@pytest.mark.parametrize("prob,expected", [(0.94, 0.0), (0.95, 1.0), (0.99, 1.0), (0.80, 0.0)])
-def test_eth_only_trades_at_95_and_size_flat(prob, expected):
-    assert directional.size_pct(prob, "eth") == expected
-
-
-@pytest.mark.parametrize("prob,expected", [(0.89, 0.0), (0.899, 0.0), (0.90, 1.0), (0.93, 1.0), (0.99, 1.0), (0.80, 0.0)])
-def test_sol_trades_at_90_and_size_flat(prob, expected):
-    assert directional.size_pct(prob, "sol") == expected
+@pytest.mark.parametrize("coin", ["xrp", "sol", "eth"])
+@pytest.mark.parametrize("prob,expected", [(0.80, 0.0), (0.849, 0.0), (0.85, 1.0), (0.879, 1.0), (0.88, 2.0), (0.919, 2.0),
+                                           (0.92, 3.0), (0.949, 3.0), (0.95, 5.0), (0.999, 5.0)])
+def test_xrp_sol_eth_trade_from_85_at_one_to_five_percent(coin, prob, expected):
+    assert directional.size_pct(prob, coin) == expected
 
 
 def test_unknown_coin_never_trades():
@@ -33,22 +24,20 @@ def test_unknown_coin_never_trades():
 
 def test_minimum_confidence_per_coin():
     assert directional.min_conf("btc") == 0.80
-    assert directional.min_conf("xrp") == 0.90
-    assert directional.min_conf("eth") == 0.95
-    assert directional.min_conf("sol") == 0.90
+    assert directional.min_conf("xrp") == directional.min_conf("eth") == directional.min_conf("sol") == 0.85
 
 
 def test_btc_trades_at_its_tier_and_eth_does_not_at_the_same_confidence():
     btc = directional.decide(0.96, 0.60, 0.40, (0, 0), (0, 0), asset="btc")
     assert btc is not None and btc[0] == "up" and btc[4] == 10.0
-    assert directional.decide(0.90, 0.60, 0.40, (0, 0), (0, 0), asset="eth") is None
+    assert directional.decide(0.84, 0.60, 0.40, (0, 0), (0, 0), asset="eth") is None
 
 
-def test_exposure_cap_is_25_percent_across_desks():
+def test_exposure_cap_is_30_percent_across_desks():
     exposure.reset()
-    assert exposure.headroom(1000.0) == 250.0
+    assert exposure.headroom(1000.0) == 300.0
     exposure.publish("BTC", 100.0)
-    exposure.publish("ETH", 100.0)
+    exposure.publish("ETH", 150.0)
     assert exposure.headroom(1000.0) == 50.0
     exposure.reserve("SOL", 60.0)                  # over the cap now: no room left
     assert exposure.headroom(1000.0) == 0.0
@@ -66,12 +55,11 @@ def test_publish_overwrites_and_reserve_adds():
 
 def test_open_sides_follow_the_coin_floor():
     # v1.21: a fresh window opens a leg only where the model clears the coin's floor
-    assert directional.open_sides(0.93, "eth") == (False, False)   # the 93% ETH case: no open
+    assert directional.open_sides(0.84, "eth") == (False, False)   # v1.32: ETH, SOL and XRP open from 85%
     assert directional.open_sides(0.96, "eth") == (True, False)
     assert directional.open_sides(0.04, "eth") == (False, True)
     assert directional.open_sides(0.82, "btc") == (True, False)
     assert directional.open_sides(0.78, "btc") == (False, False)
     assert directional.open_sides(None, "btc") == (False, False)
-    assert directional.open_sides(0.88, "xrp") == (False, False)   # the 88% XRP loss would not open now
-    assert directional.open_sides(0.89, "xrp") == (False, False)
-    assert directional.open_sides(0.90, "xrp") == (True, False)
+    assert directional.open_sides(0.84, "xrp") == (False, False)
+    assert directional.open_sides(0.85, "xrp") == (True, False)

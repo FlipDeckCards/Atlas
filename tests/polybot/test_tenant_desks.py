@@ -296,8 +296,8 @@ def test_xrp_desks_risk_at_most_one_percent():
 
     for a in ("xrp", "xrp15", "xrp1h"):
         c = from_env({"POLYBOT_WINDOW_PCT": "10", "POLYBOT_SWEEP_PCT": "10"}, asset=a)
-        assert c.window_pct == 1.0 and c.sweep_pct == 1.0, a
-    assert directional.size_pct(0.95, "xrp") == 1.0 and directional.size_pct(0.85, "xrp") == 0
+        assert c.window_pct == 5.0 and c.sweep_pct == 1.0, a
+    assert directional.size_pct(0.95, "xrp") == 5.0 and directional.size_pct(0.85, "xrp") == 1.0 and directional.size_pct(0.84, "xrp") == 0
     assert from_env({"POLYBOT_WINDOW_PCT": "10"}, asset="btc").window_pct == 10.0
 
 
@@ -350,6 +350,6 @@ def test_desks_on_one_key_share_one_open_orders_read_and_back_off_after_a_429():
 def test_sol_and_eth_desks_are_capped_at_one_percent_too():
     for a in ("sol", "sol15", "sol1h", "eth", "eth15", "eth1h"):
         c = from_env({"POLYBOT_WINDOW_PCT": "10", "POLYBOT_SWEEP_PCT": "10"}, asset=a)
-        assert c.window_pct == 1.0 and c.sweep_pct == 1.0, a
+        assert c.window_pct == 5.0 and c.sweep_pct == 1.0, a
     for a in ("btc", "btc15", "btc1h"):
         assert from_env({"POLYBOT_WINDOW_PCT": "10"}, asset=a).window_pct == 10.0, a

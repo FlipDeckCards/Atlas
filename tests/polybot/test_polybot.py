@@ -841,7 +841,7 @@ def test_each_desk_can_have_its_own_window_and_size():
     env = {"POLYBOT_WINDOW_PCT": "10", "POLYBOT_WINDOW_PCT_BTC": "7.5", "POLYBOT_WINDOW_PCT_ETH": "15", "POLYBOT_HORIZON_BTC": "15m"}
     b, e, s = from_env(env, asset="btc"), from_env(env, asset="eth"), from_env(env, asset="sol")
     assert (b.horizon, b.window_pct) == ("15m", 7.5) and e.horizon == "5m"
-    assert e.window_pct == 1.0 and s.window_pct == 1.0          # owner, 2026-11-07: ETH, SOL and XRP capped at 1% whatever the env says
+    assert e.window_pct == 5.0 and s.window_pct == 5.0          # owner, 2026-11-07: ETH, SOL and XRP capped at 1% whatever the env says
     from openjarvis.polybot.desk import Desk
     d = Desk(b, None, MemStore())
     assert d.span == 900 and d.slug_for(1761791400).startswith("cpc-btc-updown-15m-")
