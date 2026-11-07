@@ -595,10 +595,12 @@ class Desk:
         """v1.23: the ledger label for this desk's rows: live, or the desk's own paper label (btclate: paper-late)."""
         return self.cfg.live_ledger if self.cfg.mode == "live" else self.cfg.ledger
 
-    def _blocked_entry(self, secs_left: float, price: float) -> bool:
+    def _blocked_entry(self, secs_left: float, price: float, momentum: Optional[float] = None) -> bool:
         """Entries the current review rules out (both on 1.21):
-        5-minute BTC: no buy priced 30-70c in the final 60 seconds.
+        5-minute BTC: no buy priced 30-70c in the final 60 seconds, and none priced 30-70c while the price is flat (momentum between -0.3 and 0.3).
         15-minute BTC: no buy priced 70-90c at any time (about 80c needs an 80% win rate; this bot won 75%)."""
+        if self.cfg.asset == "btc" and momentum is not None and -0.3 <= momentum <= 0.3 and 0.30 <= price <= 0.70:
+            return True                                             # v1.34: BTC 5m's flat-price buys at 30-70c (19 live fills, 47% won, -$24)
         if self.cfg.asset in ("btc", "eth", "sol", "xrp"):          # v1.28: BTC 5m's block, copied to the other 5-minute desks
             return secs_left <= 60.0 and 0.30 <= price <= 0.70
         if self.cfg.asset == "btc15":
@@ -809,7 +811,7 @@ class Desk:
                                                     b.offers[0][1] if b.offers else 0.0, b.bids[0][1] if b.bids else 0.0,
                                                     budget_usd, sizing.window_cap(self.cfg.limits) * hf, w.min_qty, self.cfg.pair_margin) \
                         if (inv.spent <= 0 and "pairs" in self.cfg.methods and hf > 0) else ([], "Not trading this hour (hour size 0).") if hf <= 0 else ([], "Pairs are off for this desk." if "pairs" not in self.cfg.methods else "Already in this window; holding to settlement.")
-                    if want and any(self._blocked_entry(w.end - now, q.price) for q in want):
+                    if want and any(self._blocked_entry(w.end - now, q.price, self.momentum) for q in want):
                         want, why = [], "Skipped by entry rule: pair leg at a blocked price."
                     can_up_m, can_down_m, mom_why = brain.side_filters(self.momentum, self.cfg.momentum_z, self.name)
                     if not want and not self._taken(w.slug, "directional") and self.cfg.directional and "directional" in self.cfg.methods \
@@ -819,7 +821,7 @@ class Desk:
                         pick = directional.decide(self.fair_model, b.best_ask, round(1.0 - b.best_bid, 6),
                                                   self.shadow.bucket_stats(self.fair_model), self.shadow.bucket_stats(1.0 - self.fair_model), z=z,
                                                   up_ok=can_up_m, down_ok=can_down_m, asset=self.cfg.asset, calib=self._calib_for(w))
-                        if pick is not None and self._blocked_entry(w.end - now, pick[1]):
+                        if pick is not None and self._blocked_entry(w.end - now, pick[1], self.momentum):
                             why = f"Skipped by entry rule: buy at {pick[1] * 100:.0f}c."
                             pick = None
                         if pick is not None:
@@ -847,7 +849,7 @@ class Desk:
                             if pick is None:
                                 continue
                             side, cost, _, gap, lot_pct = pick
-                            if self._blocked_entry(w.end - now, cost):
+                            if self._blocked_entry(w.end - now, cost, self.momentum):
                                 why = f"{method.title()}: skipped by entry rule, buy at {cost * 100:.0f}c."
                                 continue
                             bets = self._bets.get(w.slug, {})
