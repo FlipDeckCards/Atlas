@@ -293,8 +293,14 @@ ONE_HOUR_TIMING = {"directional_secs_left": 900.0, "directional_min_secs": 120.0
                    "sweep_secs_left": 300.0, "sweep_secs_left_night": 300.0, "momentum_s": 120.0}
 
 
+SMALL_COINS = {"xrp": 1.0}   # owner, 2026-11-07: every XRP desk risks at most 1% of the balance per window (pairs and sweeps too)
+
+
 def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Config:
     cfg = _from_env(env, asset)
+    if cfg.coin in SMALL_COINS:
+        pct = SMALL_COINS[cfg.coin]
+        cfg = replace(cfg, window_pct=min(cfg.window_pct, pct), sweep_pct=min(cfg.sweep_pct, pct))
     if cfg.horizon == "1h" and cfg.asset in PINNED_HORIZON:
         cfg = replace(cfg, **ONE_HOUR_TIMING)
     return cfg

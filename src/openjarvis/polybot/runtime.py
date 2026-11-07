@@ -85,7 +85,11 @@ class Runner:
             except asyncio.TimeoutError:
                 pass
 
+    start_delay = 0.0          # v1.29: desks start a moment apart, so a restart is not one burst of requests on the key
+
     async def _main(self) -> None:
+        if self.start_delay > 0:
+            await asyncio.sleep(self.start_delay)
         from openjarvis.polybot.client import PolymarketUS
         from openjarvis.polybot.desk import Desk
         from openjarvis.polybot.state import DDL, PgStore, ScopedStore

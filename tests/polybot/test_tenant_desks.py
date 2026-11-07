@@ -242,3 +242,87 @@ def test_all_desk_cap_is_30_percent_and_the_5m_block_covers_every_coin():
         d = Desk(from_env({}, asset=a), None, None)
         assert d._blocked_entry(45.0, 0.5) and not d._blocked_entry(90.0, 0.5) and not d._blocked_entry(45.0, 0.8), a
     assert not Desk(from_env({}, asset="eth15"), None, None)._blocked_entry(45.0, 0.5)
+
+
+def test_every_live_desk_shares_one_day_start_for_the_account():
+    from openjarvis.polybot.desk import Desk
+    from openjarvis.polybot.state import ScopedStore
+
+    class Raw:
+        def __init__(self):
+            self.kv = {}
+
+        async def get(self, k):
+            return self.kv.get(k, {})
+
+        async def put(self, k, v):
+            self.kv[k] = v
+
+    raw = Raw()
+    btc = Desk(replace_mode(from_env({}, asset="btc"), "live"), None, ScopedStore(raw, "btc"))
+    eth = Desk(replace_mode(from_env({}, asset="eth"), "live"), None, ScopedStore(raw, "eth"))
+    for d in (btc, eth):
+        d.rs.roll(1_800_000_000)
+    btc.rs.day_start = 107.22                       # BTC 5m started the day at midnight
+    eth.rs.day_start = 100.00                       # ETH went live later in the day, from a lower balance
+    run(eth._share_day_start(1_800_000_000))
+    run(btc._share_day_start(1_800_000_000))
+    eth._t["dayshare"] = 0.0
+    run(eth._share_day_start(1_800_000_100))
+    assert raw.kv["account_day"]["start"] == 107.22 and eth.rs.day_start == 107.22 and btc.rs.day_start == 107.22
+
+
+def test_xrp_desks_risk_at_most_one_percent():
+    from openjarvis.polybot import directional
+
+    for a in ("xrp", "xrp15", "xrp1h"):
+        c = from_env({"POLYBOT_WINDOW_PCT": "10", "POLYBOT_SWEEP_PCT": "10"}, asset=a)
+        assert c.window_pct == 1.0 and c.sweep_pct == 1.0, a
+    assert directional.size_pct(0.95, "xrp") == 1.0 and directional.size_pct(0.85, "xrp") == 0
+    assert from_env({"POLYBOT_WINDOW_PCT": "10"}, asset="btc").window_pct == 10.0
+
+
+def test_desks_on_one_key_share_one_open_orders_read_and_back_off_after_a_429():
+    import types
+    from openjarvis.polybot import client as cl
+
+    calls = {"n": 0}
+
+    class Resp:
+        def __init__(self, code, body):
+            self.status_code, self._b, self.headers, self.text = code, body, {"Retry-After": "1"}, ""
+            self.content = b"x"
+
+        def json(self):
+            return self._b
+
+    class Http:
+        async def request(self, method, url, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return Resp(429, {})
+            return Resp(200, {"orders": [{"id": "1", "marketSlug": "a"}, {"id": "2", "marketSlug": "b"}]})
+
+    slept = []
+
+    async def fake_sleep(s):
+        slept.append(s)
+
+    cl._SHARED.clear()
+    cl._GATES.clear()
+    import base64
+    key = base64.b64encode(b"\1" * 32).decode()
+    a = cl.PolymarketUS("kid-x", key, http=Http(), sleep=fake_sleep)
+    b = cl.PolymarketUS("kid-x", key, http=Http(), sleep=fake_sleep)
+
+    async def go():
+        x = await a.open_orders(["a"])
+        y = await b.open_orders(["b"])            # same key, within a second: no new request
+        return x, y
+
+    x, y = run(go())
+    assert [o["id"] for o in x] == ["1"] and [o["id"] for o in y] == ["2"]
+    assert calls["n"] == 2                          # one 429, one success, shared by both desks
+    assert cl.gate_for("kid-x", True).cool > 0      # the key cooled down after the 429
+    cl._SHARED.clear()
+    cl._GATES.clear()

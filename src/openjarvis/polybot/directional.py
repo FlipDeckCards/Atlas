@@ -49,7 +49,7 @@ TIERS = {
     "btc": ((95, 10.0), (90, 8.0), (85, 7.0), (80, 5.0)),
     "btc15": ((95, 10.0), (90, 8.0), (85, 7.0), (80, 5.0)),
     "btclate": ((95, 10.0), (90, 8.0), (85, 7.0), (80, 5.0)),      # v1.23: the late-only paper desk on BTC 5m: the same tiers      # BTC's 15-minute desk: the same tiers as BTC 5m
-    "xrp": ((95, 10.0), (90, 8.0)),
+    "xrp": ((90, 1.0),),                       # owner, 2026-11-07: 1% (was 8-10%) while XRP builds a track record
     "eth": ((95, 1.0),),
     "sol": ((90, 1.0),),
 }

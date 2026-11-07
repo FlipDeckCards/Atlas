@@ -50,6 +50,48 @@ def money(v: Any) -> Optional[float]:
         return None
 
 
+class _Gate:
+    """v1.29: one pace for every desk that shares a Polymarket key (or, for public reads, the whole process). Requests are spaced
+    1/rps apart; after a 429 everyone on the key waits out the cool-down instead of each desk hammering on and failing."""
+
+    def __init__(self, rps: float) -> None:
+        self.rps, self.next, self.cool = max(0.5, rps), 0.0, 0.0
+        self._lock: Optional[asyncio.Lock] = None
+
+    async def wait(self, sleep) -> None:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            now = time.monotonic()
+            t = max(now, self.next, self.cool)
+            self.next = t + 1.0 / self.rps
+        if t > now:
+            await sleep(t - now)
+
+    def cool_down(self, seconds: float) -> None:
+        self.cool = max(self.cool, time.monotonic() + max(0.5, min(seconds, 30.0)))
+
+
+_GATES: Dict[str, _Gate] = {}
+_SHARED: Dict[str, Dict[str, Any]] = {}       # per key: open orders, positions and balance read once and shared by every desk on it
+
+
+def _rps(name: str, default: float) -> float:
+    import os
+    try:
+        return float(os.environ.get(name) or default)
+    except ValueError:
+        return default
+
+
+def gate_for(key: str, auth: bool) -> _Gate:
+    k = ("auth:" + key) if auth else "public"
+    g = _GATES.get(k)
+    if g is None:
+        g = _GATES[k] = _Gate(_rps("POLYBOT_AUTH_RPS", 5.0) if auth else _rps("POLYBOT_PUBLIC_RPS", 25.0))
+    return g
+
+
 class PolymarketUS:
     def __init__(self, key_id: str = "", secret_key: str = "", *, http=None, gateway: str = GATEWAY, api: str = API,
                  sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> None:
@@ -66,7 +108,9 @@ class PolymarketUS:
     async def _req(self, method: str, path: str, *, params=None, body=None, auth: bool = False, tries: int = 3) -> Any:
         base = self.api if auth else self.gateway
         last: Optional[Exception] = None
+        gate = gate_for(self.key_id, auth)
         for attempt in range(tries):
+            await gate.wait(self.sleep)                     # v1.29: every desk on this key shares one pace
             headers = {"Content-Type": "application/json", "User-Agent": "aibussol-polybot/1.0"}
             if auth:
                 if not (self.key_id and self.secret_key):
@@ -78,6 +122,12 @@ class PolymarketUS:
                 last = exc
                 await self.sleep(0.5 * (2 ** attempt))
                 continue
+            if r.status_code == 429:                      # v1.29: slow the whole key down, not just this request
+                try:
+                    wait = float((getattr(r, "headers", None) or {}).get("Retry-After") or 2.0)
+                except (TypeError, ValueError):
+                    wait = 2.0
+                gate.cool_down(wait * (attempt + 1))
             if r.status_code == 429 or r.status_code >= 500:
                 last = PMError(f"HTTP {r.status_code} on {path}", r.status_code, r.text[:300])
                 # a POST that may have reached the exchange is not resent blindly (it could double an order)
@@ -159,16 +209,47 @@ class PolymarketUS:
         return list(d.get("canceledOrderIds") or [])
 
     async def open_orders(self, slugs: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        return (await self._req("GET", "/v1/orders/open", params={"slugs": slugs} if slugs else None, auth=True)).get("orders") or []
+        # v1.29: one read of ALL open orders per key per second, shared by every desk on the key (each keeps only its own slugs)
+        orders = await self._shared("open_orders", 1.0, lambda: self._req("GET", "/v1/orders/open", auth=True))
+        orders = orders.get("orders") or [] if isinstance(orders, dict) else []
+        if not slugs:
+            return list(orders)
+        want = set(slugs)
+        return [o for o in orders if str(o.get("marketSlug") or o.get("slug") or "") in want]
+
+    async def _shared(self, what: str, ttl: float, fetch):
+        """One fetch per key per ttl seconds for every desk on the key; concurrent callers wait for the same fetch."""
+        box = _SHARED.setdefault(f"{self.key_id}|{what}", {"ts": -1e9, "val": None, "fut": None})
+        now = time.monotonic()
+        if box["val"] is not None and now - box["ts"] < ttl:
+            return box["val"]
+        if box["fut"] is not None and not box["fut"].done():
+            return await asyncio.shield(box["fut"])
+        fut = asyncio.get_event_loop().create_future()
+        box["fut"] = fut
+        try:
+            val = await fetch()
+            box["val"], box["ts"] = val, time.monotonic()
+            fut.set_result(val)
+            return val
+        except BaseException as exc:
+            fut.set_exception(exc) if not isinstance(exc, asyncio.CancelledError) else fut.cancel()
+            fut.exception() if not fut.cancelled() else None          # mark retrieved
+            raise
+
+    def forget(self, what: str) -> None:
+        """Drop a shared read (after placing or cancelling an order, the next read must be fresh)."""
+        _SHARED.pop(f"{self.key_id}|{what}", None)
 
     async def order(self, order_id: str) -> Dict[str, Any]:
         return (await self._req("GET", f"/v1/order/{order_id}", auth=True)).get("order") or {}
 
     async def positions(self) -> Dict[str, Any]:
-        return (await self._req("GET", "/v1/portfolio/positions", auth=True)).get("positions") or {}
+        d = await self._shared("positions", 10.0, lambda: self._req("GET", "/v1/portfolio/positions", auth=True))   # v1.29: shared 10 s
+        return (d or {}).get("positions") or {}
 
     async def buying_power(self) -> Optional[float]:
-        d = await self._req("GET", "/v1/account/balances", auth=True)
+        d = await self._shared("balances", 15.0, lambda: self._req("GET", "/v1/account/balances", auth=True))      # v1.29: shared 15 s
         for b in d.get("balances") or []:
             if (b.get("currency") or "USD") == "USD":
                 return money(b.get("buyingPower"))

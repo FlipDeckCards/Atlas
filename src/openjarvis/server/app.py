@@ -388,7 +388,8 @@ def create_app(
             pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2 * len(assets) + 1)
             assets = await paper_first(pool, assets)                 # v1.26: the 10 new desks start in paper
             runners = [Runner(from_env(asset=a), pool) for a in assets]
-            for r in runners:
+            for i, r in enumerate(runners):
+                r.start_delay = 0.8 * i          # v1.29: staggered, not all at once
                 r.start()
             app.state.desk_pool, app.state.desk_runner, app.state.desk_runners = pool, runners[0], runners
             logger.info("Polymarket Desks started inside Aibussol: %s", ", ".join(a.upper() for a in assets))

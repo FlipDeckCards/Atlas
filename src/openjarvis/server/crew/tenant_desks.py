@@ -84,7 +84,8 @@ class TenantDesks:
         await seed_control(self.pool, tag)
         notify = (await tenant.get(self.store, uid, "notify_url", self.env)) or ""       # THEIR phone topic, never the owner's
         rs = [Runner(for_account(from_env(asset=a), tag, key_id, secret, notify), self.pool) for a in desk.TENANT_ASSETS]
-        for r in rs:
+        for i, r in enumerate(rs):
+            r.start_delay = 10.0 + 0.8 * i + 2.0 * (len(self.runners) % 6)    # v1.29: after the owner's desks, spread out
             r.start()
         self.runners[uid] = rs
         logger.info("Polymarket Desk started for account %s", tag)

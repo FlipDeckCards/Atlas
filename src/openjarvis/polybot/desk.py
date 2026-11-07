@@ -495,6 +495,7 @@ class Desk:
             return
         await self.publish_open_spend()
         await self.check_positions(pos or {}, now)
+        await self.flag_untracked(pos or {})
         ext = 0.0
         for slug, p in (pos or {}).items():
             if slug in self.open_windows or p.get("expired"):
@@ -536,6 +537,25 @@ class Desk:
             total += float(await self._shared().get(f"openspend:{slug}:{other}{self._acct_sfx()}") or 0.0)
         return total
 
+    async def flag_untracked(self, pos: Dict[str, Any]) -> None:
+        """v1.29: money in one of THIS desk's markets that the desk never recorded (an order that filled while Polymarket was
+        rate-limiting the desk). It is not in the scoreboard, so say so loudly, once per window, with what Polymarket reports."""
+        mark = f"-{self.base.coin}-updown-{self.horizon}-"
+        seen = self.__dict__.setdefault("_untracked_seen", set())
+        for slug, p in pos.items():
+            if mark not in slug or slug in self.open_windows or slug in seen or (p or {}).get("expired"):
+                continue
+            cost = abs(money((p or {}).get("cost")) or 0.0)
+            if cost < 0.05:
+                continue
+            seen.add(slug)
+            msg = (f"Polymarket holds ${cost:.2f} in {slug} that this desk did not record (likely filled while the API was "
+                   f"rate-limited). It is NOT in the scoreboard. Polymarket says: {str(p)[:300]}")
+            self.log("warn", msg)
+            await self.push("Unrecorded trade", msg[:240])
+        if len(seen) > 200:
+            self.__dict__["_untracked_seen"] = set(list(seen)[-50:])
+
     async def check_positions(self, pos: Dict[str, Any], now: float) -> None:
         """v1.8 safety check: what Polymarket says the desk paid in each open window must match what the desk recorded.
         Earlier versions sometimes held far more than they knew (orders that filled after a cancel), which made windows of
@@ -574,6 +594,30 @@ class Desk:
         if self.cfg.asset == "btc15":
             return 0.70 <= price < 0.90
         return False
+
+    async def _share_day_start(self, now: float) -> None:
+        """v1.29: the daily stop is for the ACCOUNT. Every live desk measures today's loss from the same starting value: the account
+        value when the first live desk started the day (midnight Los Angeles, or the owner's reset). A desk that goes live mid-day no
+        longer starts its own fresh 18% from a lower balance. Read every 30 s; a desk whose shared value cannot be read keeps its own."""
+        if now - self._t.get("dayshare", 0.0) < 30.0 and self.rs.day_start is not None:
+            return
+        self._t["dayshare"] = now
+        raw = getattr(self.store, "store", None)                   # the unscoped store (one key for the whole account)
+        if raw is None:
+            return
+        key = "account_day" + (f"@{self.base.account}" if self.base.account else "")
+        try:
+            cur = await raw.get(key) or {}
+            reset = getattr(self, "_day_reset_seen", None) or ""
+            mine_first = (self.cfg.asset == "btc" and cur.get("by") != "btc" and self.rs.day_start is not None)  # BTC 5m (live all day) wins
+            if cur.get("day") == self.rs.day and cur.get("reset", "") == reset and cur.get("start") is not None and not mine_first:
+                self.rs.day_start = float(cur["start"])
+            else:
+                start = self.rs.day_start if self.rs.day_start is not None else round(self.account_value(), 2)
+                await raw.put(key, {"day": self.rs.day, "start": start, "reset": reset, "by": self.cfg.asset})
+                self.rs.day_start = start
+        except Exception:
+            logger.exception("shared day start unavailable; this desk keeps its own")
 
     def _taken(self, slug: str, method: str) -> bool:
         return method in self._bets.get(slug, {})
@@ -620,6 +664,8 @@ class Desk:
                     self.log("info", f"Day starts with ${self.rs.day_start:.2f}; today's loss limit is ${risk.day_limit(self.cfg, self.rs):.2f}.")
             else:
                 self.rs.day_start = self.cfg.limits.bankroll_usd
+        if self.cfg.mode == "live" and self.balance is not None:
+            await self._share_day_start(now)                  # v1.29: one day start for the whole account, every live desk
         if self.cfg.mode == "live" and self.balance is not None and self.rs.day_start is not None:
             self.rs.real_pnl = round(self.account_value() - self.rs.day_start, 2)
         self.rs.resting = round(self.broker.resting_cost, 4)

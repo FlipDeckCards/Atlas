@@ -926,7 +926,7 @@ function factorySec(key) {
   const h = mk('div', 'h', b.label); h.style.color = b.color; if (key === 'polymarket') h.style.fontSize = '17px'; s.append(h);
   const about = bizAbout(key); if (about) s.append(mk('div', 'dim', about));
   if (key === 'polymarket') { accountLines(DESKS.btc).forEach(el => s.append(el)); DESK_ORDER.forEach(a => {
-    const d = DESKS[a]; const wf = d && !d.error && (d.status || {}).mode === 'live' ? windowFlag(d.status || {}, DESK_LABEL(a) + ' Desk') : null; if (wf) s.append(wf);   // real-money desks only
+    const d = DESKS[a]; const wf = d && !d.error && ((d.status || {}).mode || 'paper') === (DESK_VIEW || 'live') ? windowFlag(d.status || {}, DESK_LABEL(a) + ' Desk') : null; if (wf) s.append(wf);   // the desks on the LIVE or PAPER side, as the switch says
   }); }
   if (key === 'polymarket' && !isOwner() && DESKS.btc && DESKS.btc.error && /Connect/.test(DESKS.btc.error)) s.append(polymarketConnectSec());
   else if (key === 'polymarket') { s.append(deskViewTabs()); DESK_ORDER.map(a => DESK_KEY[a]).forEach(k => s.append(deskSec(k))); s.append(deskLogSec()); }   // one LIVE/PAPER switch, every desk, then one log
