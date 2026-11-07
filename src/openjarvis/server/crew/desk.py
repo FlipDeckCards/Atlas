@@ -486,8 +486,6 @@ async def by_hour(pool, mode: str, asset: str = "btc") -> Dict[str, Any]:
 
 
 def analysis_text(a: Dict[str, Any]) -> str:
-    if a["fills"] < 30:
-        return f"Trade analysis ({a['mode']}, v{a['version']}): only {a['fills']} settled fills so far; at least 30 are needed before the cuts mean anything."
     lines = [f"Trade analysis ({a['mode']}, v{a['version']}, {a['fills']} settled fills): profit per contract by condition"]
     for rows in a["groups"].values():
         lines.append("  " + "; ".join(f"{r['condition']}: {r['fills']} fills, won {r['win_rate']}%, {r['per_contract']:+.3f}/contract ({r['profit']:+.2f})" for r in rows))

@@ -1347,14 +1347,13 @@ function deskSec(key) {
   const an = (DESK.analysis_by || {})[DESK_VIEW] || (DESK.analysis && DESK_VIEW === DESK.analysis.mode ? DESK.analysis : null);
   if (an && !an.fills) {                              // a new desk (or an empty tab): the breakdown is there and fills in as trades settle
     const al = mk('div', 'lbl'); al.style.marginTop = '12px'; al.textContent = 'What wins and what loses · 0 settled fills'; s.append(al);
-    s.append(mk('div', 'dim', 'No settled ' + DESK_VIEW + ' fills yet. The breakdown fills in as this desk\'s trades settle (it needs about 30 to mean anything).'));
+    s.append(mk('div', 'dim', 'No settled ' + DESK_VIEW + ' fills yet. The breakdown fills in as this desk\'s trades settle.'));
   } else if (an) {
     const wOpen = !!PANEL_OPEN[A + ':wins'];
     const al = mk('div', 'lbl'); al.style.marginTop = '12px'; al.textContent = 'What wins and what loses · ' + an.fills + ' settled fills'; s.append(al);
     const ww = mk('div', 'desk-tabs'), wb = mk('button', 'b', wOpen ? 'Hide breakdown ▾' : 'Show breakdown ▸');
     wb.onclick = () => { PANEL_OPEN[A + ':wins'] = !wOpen; renderSide(); }; ww.append(wb); s.append(ww);
-    if (wOpen && an.fills < 30) s.append(mk('div', 'dim', 'Needs at least 30 settled fills before these cuts mean anything.'));
-    else if (wOpen) Object.values(an.groups || {}).forEach(rows => {
+    if (wOpen) Object.values(an.groups || {}).forEach(rows => {
       const tb = mk('div', 'pnl-table');
       rows.forEach(r => { const row = mk('div', 'pnl-row'); row.append(mk('span', null, r.condition), mk('span', null, r.fills + ' fills'),
         mk('span', null, r.win_rate + '% won'), mk('span', null, (r.per_contract >= 0 ? '+' : '') + (r.per_contract * 100).toFixed(1) + 'c/ct'));
