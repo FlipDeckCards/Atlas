@@ -483,9 +483,12 @@ async def export_daily(pool, account: str = "") -> bytes:
     async with pool.acquire() as c:
         rows = await c.fetch(f"SELECT settled_at, window_end, pnl, {VER} AS version, {ASSET_SQL} AS asset FROM polybot_windows "
                              f"WHERE mode = $1 AND settled_at IS NOT NULL AND {ASSET_SQL} = ANY($2::text[])",
-                             label_for("live", account), ["btc", "btc15"])
-    names = {"btc": "BTC 5m", "btc15": "BTC 15m"}
-    bots = ["BTC 5m", "BTC 15m"]
+                             label_for("live", account), list(TENANT_ASSETS if account else KEYS))
+    from openjarvis.polybot.config import ASSETS as _ORDER, desk_label
+    names = {a: desk_label(a) for a in KEYS}
+    # every bot that has ever traded live, in the Station's order (BTC 5m, BTC 15m, BTC 1h, ETH 5m, ...); BTC 5m and 15m always shown
+    have = {r["asset"] for r in rows} | {"btc", "btc15"}
+    bots = [names[a] for a in _ORDER if a in have] + [names[a] for a in sorted(have) if a not in _ORDER and a in names]
     per_day: Dict[Any, float] = defaultdict(float)
     per_day_bot: Dict[Any, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
     old_bot: Dict[str, float] = defaultdict(float)
@@ -565,26 +568,28 @@ async def export_daily(pool, account: str = "") -> bytes:
     row += 2
     ws.cell(row=row, column=1, value="By bot").font = Font(bold=True, size=12)
     row += 1
-    for col, text in ((1, "Date"), (2, "BTC 5m"), (3, "BTC 15m"), (4, "Day total")):
+    tot_col = 2 + len(bots)
+    for col, text in [(1, "Date")] + [(2 + i, b) for i, b in enumerate(bots)] + [(tot_col, "Day total")]:
         header(row, col, text)
     row += 1
     for day in sorted(per_day, reverse=True):
         value(row, 1, day, label=True).number_format = "m/d/yyyy"
-        for col, bot in ((2, "BTC 5m"), (3, "BTC 15m")):
-            value(row, col, per_day_bot[day].get(bot, 0.0))
-        value(row, 4, per_day[day])
+        for i, bot in enumerate(bots):
+            value(row, 2 + i, per_day_bot[day].get(bot, 0.0))
+        value(row, tot_col, per_day[day])
         row += 1
     if old_days:
         value(row, 1, range_label(old_days), label=True)
-        value(row, 2, old_bot.get("BTC 5m", 0.0))
-        value(row, 3, old_bot.get("BTC 15m", 0.0))
-        value(row, 4, old_profit)
+        for i, bot in enumerate(bots):
+            value(row, 2 + i, old_bot.get(bot, 0.0))
+        value(row, tot_col, old_profit)
         row += 1
 
     ws.column_dimensions["A"].width = 26
     ws.column_dimensions["B"].width = 20
-    ws.column_dimensions["C"].width = 16
-    ws.column_dimensions["D"].width = 18
+    from openpyxl.utils import get_column_letter
+    for col in range(3, tot_col + 1):
+        ws.column_dimensions[get_column_letter(col)].width = 16
     ws.row_dimensions[1].height = 22
     ws.freeze_panes = "A2"
     buf = io.BytesIO()
