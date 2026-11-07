@@ -630,6 +630,10 @@ class Desk:
 
     async def step(self) -> None:
         now = self.clock()
+        try:
+            self.c.low_priority = self.cfg.mode != "live"      # v1.30: paper desks use the small lane, live desks never wait behind them
+        except Exception:
+            pass
         self.rs.roll(now)
         if self.stats["day"] != self.rs.day:
             self.stats = {"day": self.rs.day, "fills": 0, "windows": 0, "wins": 0}

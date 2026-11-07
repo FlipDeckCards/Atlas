@@ -85,10 +85,19 @@ def _rps(name: str, default: float) -> float:
 
 
 def gate_for(key: str, auth: bool) -> _Gate:
-    k = ("auth:" + key) if auth else "public"
-    g = _GATES.get(k)
+    """v1.30: Polymarket US limits by IP ADDRESS (20 requests/s, less through Cloudflare), so every desk on this server, every
+    account, shares ONE pace (POLYBOT_RPS, default 14/s). Keyed gates stay for per-account cool-downs."""
+    g = _GATES.get("ip")
     if g is None:
-        g = _GATES[k] = _Gate(_rps("POLYBOT_AUTH_RPS", 5.0) if auth else _rps("POLYBOT_PUBLIC_RPS", 25.0))
+        g = _GATES["ip"] = _Gate(_rps("POLYBOT_RPS", 14.0))
+    return g
+
+
+def paper_gate() -> _Gate:
+    """v1.30: paper desks share a smaller lane (POLYBOT_PAPER_RPS, default 3/s) so they can never crowd out real-money desks."""
+    g = _GATES.get("paper")
+    if g is None:
+        g = _GATES["paper"] = _Gate(_rps("POLYBOT_PAPER_RPS", 3.0))
     return g
 
 
@@ -110,7 +119,9 @@ class PolymarketUS:
         last: Optional[Exception] = None
         gate = gate_for(self.key_id, auth)
         for attempt in range(tries):
-            await gate.wait(self.sleep)                     # v1.29: every desk on this key shares one pace
+            if getattr(self, "low_priority", False):
+                await paper_gate().wait(self.sleep)         # v1.30: paper desks wait in their own small lane first
+            await gate.wait(self.sleep)                     # v1.30: every desk on this server shares one pace
             headers = {"Content-Type": "application/json", "User-Agent": "aibussol-polybot/1.0"}
             if auth:
                 if not (self.key_id and self.secret_key):
@@ -162,18 +173,25 @@ class PolymarketUS:
             offset += limit
 
     async def market(self, slug: str) -> Dict[str, Any]:
-        return (await self._req("GET", f"/v1/market/slug/{slug}")).get("market") or {}
+        d = await self._shared(f"market|{slug}", 3.0, lambda: self._req("GET", f"/v1/market/slug/{slug}"), public=True)
+        return (d or {}).get("market") or {}
 
     async def book(self, slug: str) -> Dict[str, Any]:
-        return (await self._req("GET", f"/v1/markets/{slug}/book")).get("marketData") or {}
+        # v1.30: public reads are shared by every desk and account on this server (one read per market per 0.8 s)
+        d = await self._shared(f"book|{slug}", 0.8, lambda: self._req("GET", f"/v1/markets/{slug}/book"), public=True)
+        return (d or {}).get("marketData") or {}
 
     async def bbo(self, slug: str) -> Dict[str, Any]:
         """Best bid/offer (the official SDK's markets.bbo): GET /v1/markets/{slug}/bbo on the public gateway."""
-        return await self._req("GET", f"/v1/markets/{slug}/bbo")
+        return await self._shared(f"bbo|{slug}", 0.8, lambda: self._req("GET", f"/v1/markets/{slug}/bbo"), public=True)
 
     async def index_prices(self, asset: str, start: int, end: int = 0, bucket: str = "ASSET_PRICE_BUCKET_1S") -> List[tuple]:
         """[(unix second, close)] for real prints only (gap-filled candles are dropped)."""
-        d = await self._req("GET", "/v1/asset-prices/history", params={"assets": f"crypto:{asset}", "from": int(start), "to": int(end), "bucket": bucket})
+        fetch = lambda: self._req("GET", "/v1/asset-prices/history", params={"assets": f"crypto:{asset}", "from": int(start), "to": int(end), "bucket": bucket})
+        if end == 0 and time.time() - start <= 30:                 # v1.30: the recent tape, shared by every desk on the coin (1 s)
+            d = await self._shared(f"idx|{asset}|{bucket}", 1.0, fetch, public=True)
+        else:
+            d = await fetch()
         out = []
         for s in d.get("series") or []:
             for c in s.get("candles") or []:
@@ -217,9 +235,9 @@ class PolymarketUS:
         want = set(slugs)
         return [o for o in orders if str(o.get("marketSlug") or o.get("slug") or "") in want]
 
-    async def _shared(self, what: str, ttl: float, fetch):
-        """One fetch per key per ttl seconds for every desk on the key; concurrent callers wait for the same fetch."""
-        box = _SHARED.setdefault(f"{self.key_id}|{what}", {"ts": -1e9, "val": None, "fut": None})
+    async def _shared(self, what: str, ttl: float, fetch, public: bool = False):
+        """One fetch per key (or, for public reads, per server) per ttl seconds; concurrent callers wait for the same fetch."""
+        box = _SHARED.setdefault(f"{'public' if public else self.key_id}|{what}", {"ts": -1e9, "val": None, "fut": None})
         now = time.monotonic()
         if box["val"] is not None and now - box["ts"] < ttl:
             return box["val"]

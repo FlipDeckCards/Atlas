@@ -234,7 +234,7 @@ def _from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Co
         horizon_night=(night if night in ("5m", "15m", "1h") else ""),
         asset=a,
         coin=coin_of(a),
-        tick_s=2.0 if a in PINNED_HORIZON else 1.0,     # v1.26: the 10 paper desks think every 2 s (less load on Polymarket's API)
+        tick_s=2.0 if a in PINNED_HORIZON else 1.0,     # v1.26: the newer desks think every 2 s (less load on Polymarket's API)
         limits=lim,
         quote_after_open_s=_f(e, "POLYBOT_QUOTE_AFTER_OPEN_S", 20.0, 5.0, 600.0),
         stop_before_end_s=_f(e, "POLYBOT_STOP_BEFORE_END_S", 25.0, 5.0, 600.0),
