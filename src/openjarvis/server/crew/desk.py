@@ -635,7 +635,9 @@ async def summary(pool, *, trade_limit: int = 50, asset: str = "btc", account: s
             "shadow": await shadow_stats(pool, live if mode == "live" else paper, STRATEGY_VERSION, rows), "shadow_detail": await shadow_detail(pool, asset, account),
             "asset": asset, "name": NAMES[asset], "account": account,
             "hours": {"paper": await by_hour(pool, paper, rows), "live": await by_hour(pool, live, live_rows)},
-            "analysis": await analysis(pool, live if mode == "live" else paper, asset=rows)}
+            "analysis": await analysis(pool, live if mode == "live" else paper, asset=rows),
+            # both ledgers, so the breakdown shows on whichever tab is open (paper desks too)
+            "analysis_by": {"paper": await analysis(pool, paper, asset=rows), "live": await analysis(pool, live, asset=live_rows)}}
 
 
 def deposits() -> Optional[float]:
