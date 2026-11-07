@@ -929,7 +929,7 @@ function factorySec(key) {
     const d = DESKS[a]; const wf = d && !d.error && (d.status || {}).mode === 'live' ? windowFlag(d.status || {}, DESK_LABEL(a) + ' Desk') : null; if (wf) s.append(wf);   // real-money desks only
   }); }
   if (key === 'polymarket' && !isOwner() && DESKS.btc && DESKS.btc.error && /Connect/.test(DESKS.btc.error)) s.append(polymarketConnectSec());
-  else if (key === 'polymarket') { DESK_ORDER.map(a => DESK_KEY[a]).forEach(k => s.append(deskSec(k))); s.append(deskLogSec()); }   // every desk, then one log
+  else if (key === 'polymarket') { s.append(deskViewTabs()); DESK_ORDER.map(a => DESK_KEY[a]).forEach(k => s.append(deskSec(k))); s.append(deskLogSec()); }   // one LIVE/PAPER switch, every desk, then one log
   if (/stock market/i.test(b.label || '')) s.append(robinhoodSec());                    // all Robinhood crypto work lives in the Stock Market factory
   if (b.platform) {
     const c = S.connections && S.connections[key];
@@ -1051,7 +1051,7 @@ function accountSec() {
     if (inc.account_value != null) s.append(mk('div', 'dim', 'Polymarket account value ' + money(inc.account_value) + (inc.buying_power != null ? ' · buying power ' + money(inc.buying_power) : '')));
     else s.append(mk('div', 'dim', 'The account value shows once a bot trades live.'));
   } else s.append(mk('div', 'dim', 'No Polymarket Desk on this account yet.'));
-  if (i.desk) { DESK_ORDER.map(a => DESK_KEY[a]).forEach(k => s.append(deskSec(k))); s.append(deskLogSec()); }
+  if (i.desk) { s.append(deskViewTabs()); DESK_ORDER.map(a => DESK_KEY[a]).forEach(k => s.append(deskSec(k))); s.append(deskLogSec()); }
   return s;
 }
 function polymarketConnectSec() {
@@ -1130,6 +1130,15 @@ function accountLines(DESK) {
   }
   return out;
 }
+function deskViewTabs() {
+  // one switch for every desk: LIVE shows each desk's real-money results, PAPER each desk's simulated ones
+  if (!DESK_VIEW) DESK_VIEW = 'live';
+  const w = mk('div', 'sec'), tabs = mk('div', 'desk-tabs');
+  ['live', 'paper'].forEach(m => { const b = mk('button', 'b' + (DESK_VIEW === m ? ' on' : ''), m === 'live' ? 'LIVE (real money)' : 'PAPER (simulated)');
+    b.onclick = () => { DESK_VIEW = m; renderSide(); }; tabs.append(b); });
+  w.append(tabs, mk('div', 'dim', DESK_VIEW === 'live' ? 'Every desk below shows its real-money results.' : 'Every desk below shows its simulated (paper) results.'));
+  return w;
+}
 function deskSec(key) {
   const A = DESK_ASSET[key] || 'btc', NAME = DESK_COIN(A);
   loadDesk(false, A);
@@ -1160,10 +1169,7 @@ function deskSec(key) {
   // scoreboard
   const sc = DESK.score || {};
   if (!DESK_VIEW) DESK_VIEW = (sc.live && sc.live.all && sc.live.all.trades) || st.mode === 'live' ? 'live' : 'paper';
-  const tabs = mk('div', 'desk-tabs');
-  ['live', 'paper'].forEach(m => { const b = mk('button', 'b' + (DESK_VIEW === m ? ' on' : ''), m === 'live' ? 'LIVE (real money)' : 'PAPER (simulated)');
-    b.onclick = () => { DESK_VIEW = m; renderSide(); }; tabs.append(b); });
-  s.append(tabs);
+  // the LIVE / PAPER switch is once, at the top of the Polymarket Desk (deskViewTabs): it flips every desk's scoreboard together
   const v = sc[DESK_VIEW] || {}, a = v.all || {}, t = v.today || {}, d7 = v.d7 || {};
   const box = mk('div', 'pnl'); box.append(mk('div', 'pnl-t', 'Strategy v' + (v.version || DESK.strategy || '') + ' scoreboard · ' + DESK_VIEW + (DESK_VIEW === 'paper' ? ' (not real money)' : '')));
   const grid = mk('div', 'pnl-g');
