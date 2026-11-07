@@ -565,9 +565,15 @@ class Desk:
         """v1.23: the ledger label for this desk's rows: live, or the desk's own paper label (btclate: paper-late)."""
         return self.cfg.live_ledger if self.cfg.mode == "live" else self.cfg.ledger
 
-    def _mid_price_last_minute(self, secs_left: float, price: float) -> bool:
-        """5-minute BTC only: no buy priced 30-70c in the final 60 seconds (the 1.21 review: those lost money on the account)."""
-        return self.cfg.asset == "btc" and secs_left <= 60.0 and 0.30 <= price <= 0.70
+    def _blocked_entry(self, secs_left: float, price: float) -> bool:
+        """Entries the current review rules out (both on 1.21):
+        5-minute BTC: no buy priced 30-70c in the final 60 seconds.
+        15-minute BTC: no buy priced 70-90c at any time (about 80c needs an 80% win rate; this bot won 75%)."""
+        if self.cfg.asset == "btc":
+            return secs_left <= 60.0 and 0.30 <= price <= 0.70
+        if self.cfg.asset == "btc15":
+            return 0.70 <= price < 0.90
+        return False
 
     def _taken(self, slug: str, method: str) -> bool:
         return method in self._bets.get(slug, {})
@@ -743,8 +749,8 @@ class Desk:
                                                     b.offers[0][1] if b.offers else 0.0, b.bids[0][1] if b.bids else 0.0,
                                                     budget_usd, sizing.window_cap(self.cfg.limits) * hf, w.min_qty, self.cfg.pair_margin) \
                         if (inv.spent <= 0 and "pairs" in self.cfg.methods and hf > 0) else ([], "Not trading this hour (hour size 0).") if hf <= 0 else ([], "Pairs are off for this desk." if "pairs" not in self.cfg.methods else "Already in this window; holding to settlement.")
-                    if want and any(self._mid_price_last_minute(w.end - now, q.price) for q in want):
-                        want, why = [], "Skipped: pair leg priced 30-70c in the last 60 seconds (5-minute rule)."
+                    if want and any(self._blocked_entry(w.end - now, q.price) for q in want):
+                        want, why = [], "Skipped by entry rule: pair leg at a blocked price."
                     can_up_m, can_down_m, mom_why = brain.side_filters(self.momentum, self.cfg.momentum_z, self.name)
                     if not want and not self._taken(w.slug, "directional") and self.cfg.directional and "directional" in self.cfg.methods \
                             and self.fair_model is not None and b.best_ask is not None and b.best_bid is not None \
@@ -753,8 +759,8 @@ class Desk:
                         pick = directional.decide(self.fair_model, b.best_ask, round(1.0 - b.best_bid, 6),
                                                   self.shadow.bucket_stats(self.fair_model), self.shadow.bucket_stats(1.0 - self.fair_model), z=z,
                                                   up_ok=can_up_m, down_ok=can_down_m, asset=self.cfg.asset, calib=self._calib_for(w))
-                        if pick is not None and self._mid_price_last_minute(w.end - now, pick[1]):
-                            why = f"Skipped: buy at {pick[1] * 100:.0f}c in the last 60 seconds (5-minute rule)."
+                        if pick is not None and self._blocked_entry(w.end - now, pick[1]):
+                            why = f"Skipped by entry rule: buy at {pick[1] * 100:.0f}c."
                             pick = None
                         if pick is not None:
                             side, cost, tier, edge, lot_pct = pick
@@ -780,8 +786,8 @@ class Desk:
                             if pick is None:
                                 continue
                             side, cost, _, gap, lot_pct = pick
-                            if self._mid_price_last_minute(w.end - now, cost):
-                                why = f"{method.title()}: skipped, buy at {cost * 100:.0f}c in the last 60 seconds (5-minute rule)."
+                            if self._blocked_entry(w.end - now, cost):
+                                why = f"{method.title()}: skipped by entry rule, buy at {cost * 100:.0f}c."
                                 continue
                             bets = self._bets.get(w.slug, {})
                             usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self._xacct()), directional.window_room(bets, equity))
