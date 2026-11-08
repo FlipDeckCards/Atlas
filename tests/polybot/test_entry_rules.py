@@ -37,3 +37,14 @@ def test_sol_5m_blocks_buys_when_price_is_already_moving_with_the_bet():
     assert not sol._blocked_entry(200, 0.85, 0.1)        # flat or against: allowed
     btc = Desk(from_env({}, asset="btc"), None, None)
     assert not btc._blocked_entry(200, 0.85, 0.5)        # BTC's "with" trades are profitable: unchanged
+
+
+def test_btc_15m_skips_down_bets_and_keeps_up_bets():
+    from openjarvis.polybot.config import from_env
+    from openjarvis.polybot.desk import Desk
+
+    b15 = Desk(from_env({}, asset="btc15"), None, None)
+    assert b15._blocked_entry(400, 0.40, 0.0, "down")
+    assert not b15._blocked_entry(400, 0.40, 0.0, "up")
+    b5 = Desk(from_env({}, asset="btc"), None, None)
+    assert not b5._blocked_entry(400, 0.40, None, "down")   # BTC 5m unchanged
