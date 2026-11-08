@@ -507,8 +507,8 @@ class Desk:
         self.external_at_risk = round(ext, 2)
 
     def _calibrated(self, p):
-        """v1.33: XRP's confidence is corrected toward its LIVE fills only (paper ran far better and hid the real losses); other desks as before."""
-        if self.cfg.asset == "xrp":
+        """v1.33: XRP's and SOL's confidence is corrected toward their LIVE fills only (paper ran far better and hid the real losses); other desks as before."""
+        if self.cfg.asset in ("xrp", "sol"):
             c = self.shadow.live_calibrated_conf(p)
         else:
             c = self.shadow.calibrated_conf(p)
@@ -599,6 +599,8 @@ class Desk:
         """Entries the current review rules out (both on 1.21):
         5-minute BTC: no buy priced 30-70c in the final 60 seconds, and none priced 30-70c while the price is flat (momentum between -0.3 and 0.3).
         15-minute BTC: no buy priced 70-90c at any time (about 80c needs an 80% win rate; this bot won 75%)."""
+        if self.cfg.asset == "sol" and momentum is not None and momentum > 0.3:
+            return True                                             # v1.35: SOL 5m, price already moving with the bet: 17 live fills, 12 won, -$4.40
         if self.cfg.asset == "btc" and momentum is not None and -0.3 <= momentum <= 0.3 and 0.30 <= price <= 0.70:
             return True                                             # v1.34: BTC 5m's flat-price buys at 30-70c (19 live fills, 47% won, -$24)
         if self.cfg.asset in ("btc", "eth", "sol", "xrp"):          # v1.28: BTC 5m's block, copied to the other 5-minute desks

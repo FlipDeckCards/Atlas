@@ -26,3 +26,14 @@ def test_btc_5m_blocks_flat_price_buys_between_30_and_70c():
     # the other 5-minute desks keep only the last-minute rule
     eth = Desk(from_env({}, asset="eth"), None, None)
     assert not eth._blocked_entry(200, 0.50, 0.0)
+
+
+def test_sol_5m_blocks_buys_when_price_is_already_moving_with_the_bet():
+    from openjarvis.polybot.config import from_env
+    from openjarvis.polybot.desk import Desk
+
+    sol = Desk(from_env({}, asset="sol"), None, None)
+    assert sol._blocked_entry(200, 0.85, 0.5)            # moving with the bet: blocked at any price
+    assert not sol._blocked_entry(200, 0.85, 0.1)        # flat or against: allowed
+    btc = Desk(from_env({}, asset="btc"), None, None)
+    assert not btc._blocked_entry(200, 0.85, 0.5)        # BTC's "with" trades are profitable: unchanged
