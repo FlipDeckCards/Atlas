@@ -507,16 +507,13 @@ class Desk:
         self.external_at_risk = round(ext, 2)
 
     def _calibrated(self, p):
-        """v1.33: XRP's and SOL's confidence is corrected toward their LIVE fills only (paper ran far better and hid the real losses); other desks as before."""
-        if self.cfg.asset in ("xrp", "sol", "btc15"):
-            c = self.shadow.live_calibrated_conf(p)
-        else:
-            c = self.shadow.calibrated_conf(p)
+        """v1.36: every desk's confidence is corrected toward its LIVE fills only (paper ran far better and hid the real losses)."""
+        c = self.shadow.live_calibrated_conf(p)
         return p if c is None else c
 
     def _calib_for(self, w):
-        """The confidence the bot trades on for this window: raw in the bot's green hours, calibrated in every other hour."""
-        return None if directional.raw_hour(self.cfg.asset, w.start) else self._calib
+        """The confidence the bot trades on for this window: the live-calibrated confidence in every hour (v1.36: no raw hours)."""
+        return self._calib
 
     def hour_factor(self, ts: float) -> float:
         """v1.25: the size factor for a window opening at ts (Los Angeles hour): 1 normally, 0.5 at 7 AM, 0 to skip the hour."""
@@ -1053,6 +1050,8 @@ class Desk:
             self.shadow.load((await self.store.get("shadow")) or {})
         except Exception:
             logger.warning("shadow record unreadable; starting empty")
+        if self.cfg.asset in shadow.LIVE_SEED:                     # v1.36: seed the live tally from the owner's settled live fills (once)
+            self.shadow.live_seed(shadow.LIVE_SEED[self.cfg.asset])
         await self.load_index(now, backfill=True)
         self.log("info", f"Desk started in {self.cfg.mode.upper()} mode on {self.base.coin.upper()} {self.horizon} Up/Down.")
         steps = 0

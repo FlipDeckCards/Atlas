@@ -129,6 +129,17 @@ def sigma_pct(sigma: Optional[float]) -> float:
     return 0.0
 
 
+# v1.36 (owner, 2026-11-08): settled LIVE fills, v1.21, from the owner's desk CSVs, by model confidence bucket: (trades, wins).
+# Seeds each desk's live tally once, so its confidence is corrected from the start. Desks without a CSV start empty.
+LIVE_SEED: Dict[str, Dict[str, Tuple[int, int]]] = {
+    "btc": {"under 50": (1, 0), "70-79": (2, 2), "80-89": (167, 126), "90+": (172, 136)},
+    "btc15": {"under 50": (1, 1), "70-79": (1, 0), "80-89": (32, 24), "90+": (47, 38)},
+    "sol": {"under 50": (1, 0), "80-89": (5, 3), "90+": (40, 33)},
+    "eth": {"80-89": (5, 3), "90+": (14, 10)},
+    "xrp": {"80-89": (11, 8), "90+": (36, 30)},
+}
+
+
 class Shadow:
     def __init__(self, window_secs: int = 300) -> None:
         self.names = names_for(window_secs)
@@ -238,6 +249,14 @@ class Shadow:
             cell = self.calib[kind][lab]
             cell["n"] += 1
             cell["wins"] += 1 if won else 0
+
+    def live_seed(self, counts: Dict[str, Tuple[int, int]]) -> None:
+        """v1.36: start a desk's live tally from its settled live fills (bucket -> (trades, wins)), once, when it has none yet."""
+        if any(c["n"] for c in self.live_calib.values()):
+            return
+        for lab, (n, w) in counts.items():
+            if lab in self.live_calib:
+                self.live_calib[lab] = {"n": int(n), "wins": int(w)}
 
     def live_add(self, model_conf: Optional[float], won: bool) -> None:
         """v1.33: one settled LIVE fill, by the model confidence of the side it bought."""

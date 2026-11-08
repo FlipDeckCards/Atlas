@@ -20,10 +20,8 @@ PROVEN_N = 50
 PROVEN_EDGE = 0.03
 # Hour switch (owner, 2026-11-05): in these Los Angeles hours (window open) the bot trades on the raw model; in every other hour
 # on the calibrated model. Green hours from each bot's hourly results. Reviewed every Friday; not changed in between.
-RAW_HOURS = {
-    "btc": frozenset({0, 1, 3, 4, 5, 10, 11, 12, 13, 15, 18, 19, 20, 21, 22}),        # BTC 5m
-    "btc15": frozenset({0, 1, 2, 3, 4, 5, 6, 9, 10, 12, 14, 16, 17, 18, 20, 22}),     # BTC 15m
-}
+# v1.36 (owner, 2026-11-08): every bot trades on its live-calibrated confidence in every hour; no raw-model hours.
+RAW_HOURS: dict = {}
 
 
 def _tiers(asset: str):
