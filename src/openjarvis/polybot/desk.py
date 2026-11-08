@@ -58,6 +58,10 @@ def is_series(m: Dict[str, Any], asset: str, horizon: str) -> bool:
     return apt.get("marketType") == "ASSET_PRICE_MARKET_TYPE_UP_DOWN" and sym == asset and same
 
 
+# v1.37: how much of the live correction is applied (1.0 = full, 0.5 = half).
+CORRECTION_STRENGTH = 0.5
+
+
 class Desk:
     def __init__(self, base: Config, client, store, *, notify: Optional[Callable[[str, str], Awaitable[None]]] = None,
                  clock: Callable[[], float] = time.time, sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> None:
@@ -507,9 +511,12 @@ class Desk:
         self.external_at_risk = round(ext, 2)
 
     def _calibrated(self, p):
-        """v1.36: every desk's confidence is corrected toward its LIVE fills only (paper ran far better and hid the real losses)."""
+        """v1.36: every desk's confidence is corrected toward its LIVE fills only (paper ran far better and hid the real losses).
+        v1.37 (owner, 2026-11-08): the correction is half strength: half of the gap between the raw model and the live rate is applied."""
         c = self.shadow.live_calibrated_conf(p)
-        return p if c is None else c
+        if c is None:
+            return p
+        return round(p + CORRECTION_STRENGTH * (c - p), 4)
 
     def _calib_for(self, w):
         """The confidence the bot trades on for this window: the live-calibrated confidence in every hour (v1.36: no raw hours)."""
