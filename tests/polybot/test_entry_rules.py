@@ -12,15 +12,16 @@ def test_entry_rules_by_desk():
     assert not btc15._blocked_entry(400, 0.90) and not btc15._blocked_entry(400, 0.60)
 
 
-def test_btc_5m_blocks_flat_price_buys_between_30_and_70c():
+def test_btc_5m_blocks_flat_price_buys_at_any_price():
     from openjarvis.polybot.config import from_env
     from openjarvis.polybot.desk import Desk
 
     btc = Desk(from_env({}, asset="btc"), None, None)
-    # flat price (momentum between -0.3 and 0.3), 30-70c, any time in the window: blocked
+    # flat price (momentum between -0.3 and 0.3), any price, any time in the window: blocked
     assert btc._blocked_entry(200, 0.50, 0.0) and btc._blocked_entry(200, 0.35, -0.2)
-    # price moving, or buy outside 30-70c: not blocked
-    assert not btc._blocked_entry(200, 0.50, 1.0) and not btc._blocked_entry(200, 0.80, 0.0)
+    assert btc._blocked_entry(200, 0.85, 0.0) and btc._blocked_entry(200, 0.20, 0.3)
+    # price moving: not blocked by this rule
+    assert not btc._blocked_entry(200, 0.50, 1.0) and not btc._blocked_entry(200, 0.80, -0.5)
     # without momentum the flat rule does not apply
     assert not btc._blocked_entry(200, 0.50)
     # the other 5-minute desks keep only the last-minute rule
