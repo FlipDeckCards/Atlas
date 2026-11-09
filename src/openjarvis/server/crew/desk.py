@@ -505,9 +505,17 @@ async def export_daily(pool, account: str = "") -> bytes:
 
     await _ensure(pool)
     async with pool.acquire() as c:
+        kv = await c.fetch("SELECT key, value FROM polybot_kv WHERE key LIKE $1", "day_start:%")
         rows = await c.fetch(f"SELECT settled_at, window_end, pnl, {VER} AS version, {ASSET_SQL} AS asset FROM polybot_windows "
                              f"WHERE mode = $1 AND settled_at IS NOT NULL AND {ASSET_SQL} = ANY($2::text[])",
                              label_for("live", account), list(TENANT_ASSETS if account else KEYS))
+    # the account's balance at midnight each day (written by the desk at the day's rollover)
+    suffix = f"@{account}" if account else ""
+    starts: Dict[str, float] = {}
+    for r in kv:
+        rest = r["key"][len("day_start:"):]
+        if (suffix and rest.endswith(suffix)) or (not suffix and "@" not in rest):
+            starts[rest[: len(rest) - len(suffix)] if suffix else rest] = float(_j(r["value"]).get("start") or 0)
     from openjarvis.polybot.config import ASSETS as _ORDER, desk_label
     names = {a: desk_label(a) for a in KEYS}
     # every bot that has ever traded live, in the Station's order (BTC 5m, BTC 15m, BTC 1h, ETH 5m, ...); BTC 5m and 15m always shown
@@ -572,21 +580,28 @@ async def export_daily(pool, account: str = "") -> bytes:
 
     # section 1: date and daily profit, newest on top
     header(1, 1, "Date")
-    header(1, 2, "Daily profit or loss")
+    header(1, 2, "Starting balance")
+    header(1, 3, "Daily profit or loss")
     row = 2
     for day in sorted(per_day, reverse=True):
         value(row, 1, day, label=True, fmt="m/d/yyyy").number_format = "m/d/yyyy"
-        value(row, 2, per_day[day])
+        if day.isoformat() in starts:
+            bal = ws.cell(row=row, column=2, value=round(starts[day.isoformat()], 2))   # a balance, not a profit: no green or red
+            bal.number_format, bal.alignment, bal.border = money, Alignment(horizontal="center"), border
+        else:
+            ws.cell(row=row, column=2).border = border           # no balance was recorded that day (before this was tracked)
+        value(row, 3, per_day[day])
         row += 1
     if old_days:
         value(row, 1, range_label(old_days), label=True)
-        value(row, 2, old_profit)
+        ws.cell(row=row, column=2).border = border
+        value(row, 3, old_profit)
         row += 1
     last_day_row = row - 1
 
     # the total box, to the right of the list
-    header(1, 4, "Total profit")
-    value(2, 4, total_profit)
+    header(1, 5, "Total profit")
+    value(2, 5, total_profit)
 
     # section 2: each bot by the same days
     row += 2

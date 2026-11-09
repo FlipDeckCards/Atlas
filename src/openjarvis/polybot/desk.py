@@ -636,6 +636,8 @@ class Desk:
             else:
                 start = self.rs.day_start if self.rs.day_start is not None else round(self.account_value(), 2)
                 await raw.put(key, {"day": self.rs.day, "start": start, "reset": reset, "by": self.cfg.asset})
+                # the day's starting balance, kept per day for the Daily P&L workbook (one key per day and account)
+                await raw.put(f"day_start:{self.rs.day}" + (f"@{self.base.account}" if self.base.account else ""), {"start": start})
                 self.rs.day_start = start
         except Exception:
             logger.exception("shared day start unavailable; this desk keeps its own")
