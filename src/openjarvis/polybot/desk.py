@@ -601,14 +601,15 @@ class Desk:
 
     def _blocked_entry(self, secs_left: float, price: float, momentum: Optional[float] = None, side: Optional[str] = None) -> bool:
         """Entries the current review rules out (both on 1.21):
-        5-minute BTC: no buy priced 30-70c in the final 60 seconds, and none priced 30-70c while the price is flat (momentum between -0.3 and 0.3).
+        5-minute BTC: no buy priced 30-70c in the final 60 seconds, and none at any price while the price is flat (momentum between -0.3 and 0.3).
         15-minute BTC: no buy priced 70-90c at any time (about 80c needs an 80% win rate; this bot won 75%)."""
         if self.cfg.asset == "btc15" and side == "down":
             return True                                             # v1.36: BTC 15m's Down bets: 49 live fills, 71% won, -$24.79 (Up: +$15.93)
         if self.cfg.asset == "sol" and momentum is not None and momentum > 0.3:
             return True                                             # v1.35: SOL 5m, price already moving with the bet: 17 live fills, 12 won, -$4.40
-        if self.cfg.asset == "btc" and momentum is not None and -0.3 <= momentum <= 0.3 and 0.30 <= price <= 0.70:
-            return True                                             # v1.34: BTC 5m's flat-price buys at 30-70c (19 live fills, 47% won, -$24)
+        if self.cfg.asset == "btc" and momentum is not None and -0.3 <= momentum <= 0.3:
+            return True                                             # v1.34, widened: BTC 5m's flat-price buys at any price. v1.34 blocked 30-70c only;
+                                                                    # Oct 29-Nov 8 live CSV: flat-price buys 57% won, -$50 on 190 fills (30-70c -$26, outside 30-70c -$24)
         if self.cfg.asset in ("btc", "eth", "sol", "xrp"):          # v1.28: BTC 5m's block, copied to the other 5-minute desks
             return secs_left <= 60.0 and 0.30 <= price <= 0.70
         if self.cfg.asset == "btc15":
