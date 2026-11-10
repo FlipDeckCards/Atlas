@@ -49,3 +49,17 @@ def test_btc_15m_skips_down_bets_and_keeps_up_bets():
     assert not b15._blocked_entry(400, 0.40, 0.0, "up")
     b5 = Desk(from_env({}, asset="btc"), None, None)
     assert not b5._blocked_entry(400, 0.40, None, "down")   # BTC 5m unchanged
+
+
+def test_btc_5m_blocks_down_buys_at_70_to_79c_and_up_buys_under_40c():
+    from openjarvis.polybot.config import from_env
+    from openjarvis.polybot.desk import Desk
+
+    btc = Desk(from_env({}, asset="btc"), None, None)
+    assert btc._blocked_entry(200, 0.75, 0.5, "down") and btc._blocked_entry(200, 0.70, 0.5, "down")
+    assert not btc._blocked_entry(200, 0.80, 0.5, "down") and not btc._blocked_entry(200, 0.69, 0.5, "down")
+    assert btc._blocked_entry(200, 0.35, 0.5, "up") and not btc._blocked_entry(200, 0.40, 0.5, "up")
+    # Up at 70-79c and Down under 40c stay allowed (both profitable in the sample)
+    assert not btc._blocked_entry(200, 0.75, 0.5, "up") and not btc._blocked_entry(200, 0.30, 0.5, "down")
+    eth = Desk(from_env({}, asset="eth"), None, None)
+    assert not eth._blocked_entry(200, 0.75, 0.5, "down")
