@@ -130,7 +130,9 @@ COINS = ("btc", "eth", "sol", "xrp")
 HORIZON_SUFFIX = {"5m": "", "15m": "15", "1h": "1h"}   # desk id = coin + suffix: btc, btc15, btc1h, eth, eth15, eth1h, ...
 # v1.26 (owner, 2026-11-06): 12 desks, 5-minute, 15-minute and 1-hour for each of BTC, ETH, SOL and XRP. BTC 5m and BTC 15m keep
 # trading as before; the 10 new desks start in PAPER (no control row yet) until the owner taps Go live on each.
-ASSETS = tuple(c + s for c in COINS for s in ("", "15", "1h"))
+# v1.40 (owner, 2026-11-10): four desks retired and removed from Station. Their past trades stay in the database.
+RETIRED = ("btc15", "sol1h", "xrp15", "xrp1h")
+ASSETS = tuple(a for a in (c + s for c in COINS for s in ("", "15", "1h")) if a not in RETIRED)
 COIN = {c + s: c for c in COINS for s in ("15", "1h")}  # desk id -> the coin it trades (default: the same name)
 FIXED_HORIZON = {"btc15": "15m", "btclate": "5m"}        # desks pinned to one window length (a shared POLYBOT_HORIZON never changes them)
 # the new desks are pinned hard to their window length: no environment setting (old POLYBOT_HORIZON_ETH and the like) can move them
