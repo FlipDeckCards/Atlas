@@ -12,7 +12,7 @@ def test_btc15_is_its_own_desk_on_btc_15m_markets():
     c = from_env({}, asset="btc15")
     assert (c.asset, c.coin, c.horizon, c.horizon_night) == ("btc15", "btc", "15m", "")
     assert ASSETS.index("btc15") == ASSETS.index("btc") + 1                      # listed right after BTC 5m
-    assert "btc15" in assets_from_env({})
+    assert "btc15" in assets_from_env({"POLYBOT_ASSETS": ",".join(ASSETS)})   # v1.39: off by default, on when listed
 
 
 def test_shared_horizon_settings_never_turn_btc15_into_a_5m_desk():

@@ -813,11 +813,12 @@ def test_v19_no_new_pair_on_a_long_shot_but_completing_is_fine():
 
 
 def test_three_desks_keep_apart():
-    from openjarvis.polybot.config import assets_from_env
+    from openjarvis.polybot.config import ASSETS, assets_from_env
     from openjarvis.polybot.runtime import lock_id
     from openjarvis.polybot.state import ScopedStore, asset_of, kv_key
 
-    assert assets_from_env({})[:2] == ["btc", "btc15"] and len(assets_from_env({})) == 12      # v1.26
+    assert assets_from_env({}) == ["btc"]                                                     # v1.39: BTC 5m only by default
+    assert len(assets_from_env({"POLYBOT_ASSETS": ",".join(ASSETS)})) == 12                  # v1.26: all desks when the setting asks for them
     assert kv_key("status", "btc") == "status" and kv_key("control", "sol") == "control:sol"
     assert len({lock_id("btc"), lock_id("eth"), lock_id("sol"), lock_id("xrp")}) == 4
     assert asset_of("cpc-eth-updown-5m-2026-10-30-0100z") == "eth"
