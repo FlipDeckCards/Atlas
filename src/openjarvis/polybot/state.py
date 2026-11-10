@@ -31,6 +31,10 @@ ALTER TABLE polybot_fills ADD COLUMN IF NOT EXISTS version TEXT;
 ALTER TABLE polybot_windows ADD COLUMN IF NOT EXISTS version TEXT;
 ALTER TABLE polybot_fills ADD COLUMN IF NOT EXISTS features JSONB;
 CREATE TABLE IF NOT EXISTS polybot_events (id BIGSERIAL PRIMARY KEY, ts TIMESTAMPTZ NOT NULL DEFAULT now(), level TEXT NOT NULL, text TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS polybot_candidates (id BIGSERIAL PRIMARY KEY, ts TIMESTAMPTZ NOT NULL, asset TEXT NOT NULL DEFAULT 'btc', slug TEXT NOT NULL,
+  side TEXT NOT NULL, price DOUBLE PRECISION NOT NULL, fair DOUBLE PRECISION, momentum_z DOUBLE PRECISION, sigma DOUBLE PRECISION,
+  vol_tag TEXT, secs_left DOUBLE PRECISION, blocked_by TEXT NOT NULL DEFAULT '');
+CREATE INDEX IF NOT EXISTS polybot_candidates_ts ON polybot_candidates (ts);
 ALTER TABLE polybot_events ADD COLUMN IF NOT EXISTS asset TEXT;
 """
 
@@ -100,6 +104,7 @@ class Ledger:
         self.fills: List[Dict[str, Any]] = []
         self.windows: Dict[str, Dict[str, Any]] = {}
         self.events: List[Dict[str, Any]] = []
+        self.candidates: List[Dict[str, Any]] = []           # v1.38: every distinct entry candidate and the rule that stopped it, if any
 
     def fill(self, mode: str, f, fair: Optional[float], features: Optional[Dict[str, Any]] = None) -> None:
         from openjarvis.polybot.brain import STRATEGY_VERSION
@@ -116,9 +121,16 @@ class Ledger:
     def event(self, level: str, text: str, ts: float) -> None:
         self.events.append({"ts": ts, "level": level, "text": text[:500], "asset": self.asset})
 
+    def candidate(self, row: Dict[str, Any]) -> None:
+        self.candidates.append({**row, "asset": self.asset})
+
     def take(self):
         out = (self.fills, list(self.windows.values()), self.events)
         self.fills, self.windows, self.events = [], {}, []
+        return out
+
+    def take_candidates(self) -> List[Dict[str, Any]]:
+        out, self.candidates = self.candidates, []
         return out
 
 
@@ -153,10 +165,16 @@ class PgStore:
 
     async def flush(self, ledger: Ledger) -> None:
         fills, windows, events = ledger.take()
-        if not (fills or windows or events):
+        cands = ledger.take_candidates()
+        if not (fills or windows or events or cands):
             return
         async with self.pool.acquire() as c:
             async with c.transaction():
+                if cands:
+                    await c.executemany("INSERT INTO polybot_candidates (ts, asset, slug, side, price, fair, momentum_z, sigma, vol_tag, secs_left, blocked_by) "
+                                        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+                                        [(_t(r["ts_unix"]), r["asset"], r["slug"], r["side"], r["price"], r["fair"], r["momentum_z"], r["sigma"],
+                                          r["vol_tag"], r["secs_left"], r["blocked_by"]) for r in cands])
                 if fills:
                     await c.executemany("INSERT INTO polybot_fills (ts, mode, slug, side, price, qty, cost, fair, order_id, version, features) "
                                         "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)",
@@ -223,7 +241,8 @@ class FileStore:
 
     async def flush(self, ledger: Ledger) -> None:
         fills, windows, events = ledger.take()
-        for name, rows in (("fills.jsonl", fills), ("windows.jsonl", windows), ("events.jsonl", events)):
+        cands = ledger.take_candidates()
+        for name, rows in (("fills.jsonl", fills), ("windows.jsonl", windows), ("events.jsonl", events), ("candidates.jsonl", cands)):
             if rows:
                 with open(self._path(name), "a") as fh:
                     for r in rows:

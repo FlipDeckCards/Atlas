@@ -13,7 +13,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from dataclasses import replace
 
-from openjarvis.polybot import brain, directional, exposure, model, risk, setups, shadow, strategy
+from openjarvis.polybot import brain, directional, exposure, model, research, risk, setups, shadow, strategy
 from openjarvis.polybot.config import SHARED_MARKET, is_live_label
 from openjarvis.polybot.brokers import BookView, Fill, LiveBroker, PaperBroker, parse_ts
 from openjarvis.polybot.client import PMError, money
@@ -101,6 +101,7 @@ class Desk:
         self._entry_sig: Dict[str, Tuple[Any, ...]] = {}   # per window: (sigma, model conf, calibrated conf, calibrated lot) at the first entry
         self.shadow = shadow.Shadow(window_secs=900 if str(self.cfg.asset).endswith("15") else 300)   # six hidden shadow strategies, three per timeframe (recorded, never traded or shown)
         self.setups = setups.SetupBook()                     # v1.14 learned pair sizing (shadow): record per pair setup
+        self._cand_seen: set = set()                              # v1.38: candidates already queued for the log (window, side, reason)
         self._pair_fills: Dict[str, List[Dict[str, Any]]] = {}   # non-sweep fills per open window, to file the pair under its setup
         self.sigma: Optional[float] = None
         self.reason: str = "Starting."
@@ -600,25 +601,52 @@ class Desk:
         return self.cfg.live_ledger if self.cfg.mode == "live" else self.cfg.ledger
 
     def _blocked_entry(self, secs_left: float, price: float, momentum: Optional[float] = None, side: Optional[str] = None) -> bool:
-        """Entries the current review rules out (both on 1.21):
+        return self._block_rule(secs_left, price, momentum, side) is not None
+
+    def _block_rule(self, secs_left: float, price: float, momentum: Optional[float] = None, side: Optional[str] = None) -> Optional[str]:
+        """The name of the entry rule that rules this buy out, or None when it is allowed. The rules themselves are the same as
+        before v1.38 (the name is the only addition).
+        Entries the current review rules out (both on 1.21):
         5-minute BTC: no buy priced 30-70c in the final 60 seconds, and none at any price while the price is flat (momentum between -0.3 and 0.3).
         15-minute BTC: no buy priced 70-90c at any time (about 80c needs an 80% win rate; this bot won 75%)."""
         if self.cfg.asset == "btc15" and side == "down":
-            return True                                             # v1.36: BTC 15m's Down bets: 49 live fills, 71% won, -$24.79 (Up: +$15.93)
+            return "btc15 down"                                     # v1.36: BTC 15m's Down bets: 49 live fills, 71% won, -$24.79 (Up: +$15.93)
         if self.cfg.asset == "sol" and momentum is not None and momentum > 0.3:
-            return True                                             # v1.35: SOL 5m, price already moving with the bet: 17 live fills, 12 won, -$4.40
+            return "sol momentum"                                   # v1.35: SOL 5m, price already moving with the bet: 17 live fills, 12 won, -$4.40
         if self.cfg.asset == "btc" and side == "down" and 0.70 <= price < 0.80:
-            return True                                             # BTC 5m Down buys at 70-79c: 75 live fills, 67% won, -$37 (break-even needs ~75%)
+            return "btc down 70-79c"                                # BTC 5m Down buys at 70-79c: 75 live fills, 67% won, -$37 (break-even needs ~75%)
         if self.cfg.asset == "btc" and side == "up" and price < 0.40:
-            return True                                             # BTC 5m Up buys under 40c: 44 live fills, 25% won, -$27 (break-even ~40%)
+            return "btc up under 40c"                               # BTC 5m Up buys under 40c: 44 live fills, 25% won, -$27 (break-even ~40%)
         if self.cfg.asset == "btc" and momentum is not None and -0.3 <= momentum <= 0.3:
-            return True                                             # v1.34, widened: BTC 5m's flat-price buys at any price. v1.34 blocked 30-70c only;
+            return "btc flat momentum"                              # v1.34, widened: BTC 5m's flat-price buys at any price. v1.34 blocked 30-70c only;
                                                                     # Oct 29-Nov 8 live CSV: flat-price buys 57% won, -$50 on 190 fills (30-70c -$26, outside 30-70c -$24)
         if self.cfg.asset in ("btc", "eth", "sol", "xrp"):          # v1.28: BTC 5m's block, copied to the other 5-minute desks
-            return secs_left <= 60.0 and 0.30 <= price <= 0.70
-        if self.cfg.asset == "btc15":
-            return 0.70 <= price < 0.90
-        return False
+            return "last 60s 30-70c" if (secs_left <= 60.0 and 0.30 <= price <= 0.70) else None
+        if self.cfg.asset == "btc15" and 0.70 <= price < 0.90:
+            return "btc15 70-90c"
+        return None
+
+    def _entry_check(self, now: float, w, price: float, momentum: Optional[float], side: str) -> Optional[str]:
+        """v1.38: the one place an entry is checked. Returns why it is stopped (the event blackout, when switched on, or a rule), or None.
+        Each distinct candidate (window, side, reason) is queued once for polybot_candidates, so the logs show what the bot passed up.
+        Logging never changes the decision."""
+        reason = None
+        if research.BLACKOUT_ON:
+            ev = research.in_blackout(now, research.shipped_events())
+            if ev:
+                reason = f"blackout: {ev}"
+        if reason is None:
+            reason = self._block_rule(w.end - now, price, momentum, side)
+        key = (w.slug, side, reason or "")
+        if key not in self._cand_seen:
+            if len(self._cand_seen) > 5000:
+                self._cand_seen.clear()
+            self._cand_seen.add(key)
+            sigma = self.sigma
+            vol = research.vol_bucket(sigma) if self.cfg.asset == "btc" else None
+            row = research.candidate_row(w.slug, now, w.end - now, side, price, self.fair, momentum, sigma, vol, reason)
+            self.ledger.candidate({**row, "ts_unix": now})
+        return reason
 
     async def _share_day_start(self, now: float) -> None:
         """v1.29: the daily stop is for the ACCOUNT. Every live desk measures today's loss from the same starting value: the account
@@ -826,7 +854,7 @@ class Desk:
                                                     b.offers[0][1] if b.offers else 0.0, b.bids[0][1] if b.bids else 0.0,
                                                     budget_usd, sizing.window_cap(self.cfg.limits) * hf, w.min_qty, self.cfg.pair_margin) \
                         if (inv.spent <= 0 and "pairs" in self.cfg.methods and hf > 0) else ([], "Not trading this hour (hour size 0).") if hf <= 0 else ([], "Pairs are off for this desk." if "pairs" not in self.cfg.methods else "Already in this window; holding to settlement.")
-                    if want and any(self._blocked_entry(w.end - now, q.price, self.momentum, q.side) for q in want):
+                    if want and any(self._entry_check(now, w, q.price, self.momentum, q.side) for q in want):
                         want, why = [], "Skipped by entry rule: pair leg at a blocked price."
                     can_up_m, can_down_m, mom_why = brain.side_filters(self.momentum, self.cfg.momentum_z, self.name)
                     if not want and not self._taken(w.slug, "directional") and self.cfg.directional and "directional" in self.cfg.methods \
@@ -836,8 +864,9 @@ class Desk:
                         pick = directional.decide(self.fair_model, b.best_ask, round(1.0 - b.best_bid, 6),
                                                   self.shadow.bucket_stats(self.fair_model), self.shadow.bucket_stats(1.0 - self.fair_model), z=z,
                                                   up_ok=can_up_m, down_ok=can_down_m, asset=self.cfg.asset, calib=self._calib_for(w))
-                        if pick is not None and self._blocked_entry(w.end - now, pick[1], self.momentum, pick[0]):
-                            why = f"Skipped by entry rule: buy at {pick[1] * 100:.0f}c."
+                        stopped = None if pick is None else self._entry_check(now, w, pick[1], self.momentum, pick[0])
+                        if stopped:
+                            why = f"Skipped by entry rule ({stopped}): buy at {pick[1] * 100:.0f}c."
                             pick = None
                         if pick is not None:
                             side, cost, tier, edge, lot_pct = pick
@@ -864,7 +893,7 @@ class Desk:
                             if pick is None:
                                 continue
                             side, cost, _, gap, lot_pct = pick
-                            if self._blocked_entry(w.end - now, cost, self.momentum, side):
+                            if self._entry_check(now, w, cost, self.momentum, side):
                                 why = f"{method.title()}: skipped by entry rule, buy at {cost * 100:.0f}c."
                                 continue
                             bets = self._bets.get(w.slug, {})
