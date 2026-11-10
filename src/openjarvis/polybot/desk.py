@@ -615,8 +615,8 @@ class Desk:
             return "sol momentum"                                   # v1.35: SOL 5m, price already moving with the bet: 17 live fills, 12 won, -$4.40
         if self.cfg.asset == "btc" and side == "down" and 0.70 <= price < 0.80:
             return "btc down 70-79c"                                # BTC 5m Down buys at 70-79c: 75 live fills, 67% won, -$37 (break-even needs ~75%)
-        if self.cfg.asset == "btc" and side == "up" and price < 0.40:
-            return "btc up under 40c"                               # BTC 5m Up buys under 40c: 44 live fills, 25% won, -$27 (break-even ~40%)
+        # v1.39: the BTC 5m Up-under-40c block is removed. Oct 29-Nov 9 live fills: 46 fills, 30% won, +$19.44 (the old block had
+        # cited 44 fills, 25% won, -$27 from an earlier sample that the current fills do not reproduce).
         if self.cfg.asset == "btc" and momentum is not None and -0.3 <= momentum <= 0.3:
             return "btc flat momentum"                              # v1.34, widened: BTC 5m's flat-price buys at any price. v1.34 blocked 30-70c only;
                                                                     # Oct 29-Nov 8 live CSV: flat-price buys 57% won, -$50 on 190 fills (30-70c -$26, outside 30-70c -$24)
