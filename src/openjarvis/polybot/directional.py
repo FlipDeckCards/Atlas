@@ -54,7 +54,7 @@ TIERS = {
 
 # Calibrated tiers (owner, 2026-11-05): when a bot trades on the calibrated confidence (every hour outside its green hours), the lot is
 # set by the win rate that confidence has actually shown, not by the raw number. Raw-confidence tiers (TIERS) are unchanged.
-CAL_TIERS = ((88, 10.0), (84, 8.0), (80, 7.0), (77, 5.0))
+CAL_TIERS = ((88, 10.0), (84, 8.0), (80, 7.0))   # v1.37: floor raised 77 -> 80 (BTC 5m/15m: raw model 70-79 had won too little; under 70 lost $9.83 on 167 fills)
 CAL_ASSETS = ("btc", "btc15", "btclate")
 
 
