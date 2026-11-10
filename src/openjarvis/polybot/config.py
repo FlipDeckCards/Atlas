@@ -178,9 +178,12 @@ HORIZON_S = {"5m": 300, "15m": 900, "1h": 3600}
 
 
 def assets_from_env(env: Optional[Mapping[str, str]] = None) -> list:
-    """POLYBOT_ASSETS: which desks run (default btc,btc15,eth,sol,xrp). Each desk is its own market, scoreboard and controls."""
+    """POLYBOT_ASSETS: which desks run. Each desk is its own market, scoreboard and controls.
+    v1.39 (owner, 2026-11-10): only the BTC 5-minute desk runs by default. The other desks were paused: on v1.21 BTC 5m made
+    +$71.75 at a 3-point edge per share; ETH 5m, SOL 5m and BTC 15m were slightly negative by shares; XRP 5m was flat;
+    the other 15-minute and 1-hour desks had under 12 fills each. Set POLYBOT_ASSETS to re-enable them."""
     e = os.environ if env is None else env
-    raw = (e.get("POLYBOT_ASSETS") or ",".join(ASSETS)).lower()
+    raw = (e.get("POLYBOT_ASSETS") or "btc").lower()
     out = [a.strip() for a in raw.split(",") if a.strip() in ASSETS]
     return list(dict.fromkeys(out)) or ["btc"]
 
