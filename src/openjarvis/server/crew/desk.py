@@ -55,7 +55,7 @@ def business(asset: str = "btc") -> Dict[str, str]:
 
 
 BUSINESS = business("btc")
-TENANT_ASSETS = ("btc", "btc15")                 # the two bots a subscriber's own Polymarket Desk runs (copies of the owner's)
+TENANT_ASSETS = ("btc",)                  # v1.39 (owner, 2026-11-10): subscribers run the BTC 5m bot only (their BTC 15m was paused); copies of the owner's
 TENANT_BUSINESS = {"key": "polymarket", "name": "Polymarket Desk", "url": "https://polymarket.us", "color": "#00e5ff",
                    "description": "Polymarket Desk runs two trading bots on your own Polymarket US account: BTC on 5-minute and on 15-minute Up/Down windows."}
 ASSET_SQL = desk_sql("slug")                     # cpc-eth-updown-5m-... -> eth; cpc-btc-updown-15m-... -> btc15

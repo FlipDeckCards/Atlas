@@ -55,11 +55,11 @@ def test_controls_are_per_account_and_a_copy_starts_in_paper_with_the_owners_lim
     run(desk.put_control(p, {"mode": "live", "limits": {"bankroll_usd": 103.68, "daily_loss_pct": 18}}, "btc"))
     run(tenant_desks.seed_control(p, "uabc"))
     mine, theirs = p.kv["control"], p.kv["control@uabc"]
-    assert theirs["mode"] == "paper" and theirs["limits"]["daily_loss_pct"] == 18 and "control:btc15@uabc" in p.kv
+    assert theirs["mode"] == "paper" and theirs["limits"]["daily_loss_pct"] == 18 and "control:btc15@uabc" not in p.kv   # v1.39: no BTC 15m copy is seeded
     run(desk.control(p, "pause", asset="btc", account="uabc"))
     assert p.kv["control@uabc"]["paused"] is True and not mine.get("paused")
     run(desk.control(p, "reset_day", asset="btc", account="uabc"))                   # only their own desks
-    assert "day_reset_at" in p.kv["control:btc15@uabc"] and "day_reset_at" not in p.kv["control"]
+    assert "day_reset_at" in p.kv["control@uabc"] and "day_reset_at" not in p.kv["control"]
     out = run(desk.control(p, "go_live", asset="btc15", account="uabc"))
     run(desk.apply_approved(p, out["action"]["set"], asset="btc15", account="uabc"))
     assert p.kv["control:btc15@uabc"]["mode"] == "live" and "control:btc15" not in p.kv
