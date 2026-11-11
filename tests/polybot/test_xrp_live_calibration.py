@@ -56,7 +56,7 @@ def test_every_5m_desk_with_live_history_is_seeded():
         assert sum(c["n"] for c in s.live_calib.values()) > 0
 
 
-def test_correction_is_half_strength():
+def test_correction_is_full_strength():
     from openjarvis.polybot import desk as desk_mod
     from openjarvis.polybot.config import from_env
     from openjarvis.polybot.desk import Desk
@@ -64,5 +64,5 @@ def test_correction_is_half_strength():
     d = Desk(from_env({}, asset="btc"), None, None)
     d.shadow.live_seed(shadow.LIVE_SEED["btc"])
     full = d.shadow.live_calibrated_conf(0.93)
-    assert desk_mod.CORRECTION_STRENGTH == 0.5
-    assert abs(d._calib(0.93) - (0.93 + 0.5 * (full - 0.93))) < 0.001
+    assert desk_mod.CORRECTION_STRENGTH == 1.0
+    assert abs(d._calib(0.93) - full) < 0.001
