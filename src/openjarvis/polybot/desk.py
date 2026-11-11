@@ -209,7 +209,7 @@ class Desk:
             if getattr(self, "_scan_sampled", None) != int(now // self.span):      # diagnostic: once per window, what the market list holds
                 self._scan_sampled = int(now // self.span)
                 names = [str(m.get("slug") or m.get("marketSlug") or "?") for m in ms[:12]]
-                self.log("info", f"Market list sample ({len(ms)} crypto markets): {names}; first record keys: {sorted(ms[0])[:25] if ms else []}")          # every 2 s got rate-limited)
+                self.log("warn", f"Market list sample ({len(ms)} crypto markets): {names}; first record keys: {sorted(ms[0])[:25] if ms else []}")          # every 2 s got rate-limited)
             live = [x for x in (window_from_market(m) for m in ms if is_series(m, self.base.coin, self.horizon)) if x and x.start <= now < x.end
                     and not x.slug.startswith("cpc")]          # the retired cpc- addresses are still listed but have no order book
             nxt = min(live, key=lambda x: x.end) if live else None
@@ -268,7 +268,8 @@ class Desk:
 
     @property
     def slug_prefix(self) -> str:
-        return self._prefixes.get(self.horizon, "")
+        # Polymarket's current address form (btc-updown-5m-...) until a live market teaches a different one
+        return self._prefixes.get(self.horizon) or f"{self.base.coin}-updown-{self.horizon}-"
 
     @slug_prefix.setter
     def slug_prefix(self, v: str) -> None:

@@ -901,7 +901,7 @@ def test_btc_15m_by_day_5m_at_night():
     t["now"] = dt.datetime(2026, 10, 30, 23, 0, tzinfo=LA).timestamp()
     assert d.horizon == "5m" and d.span == 300 and d.slug_for(0).startswith("btc-updown-5m-")
     d.learn_prefix("btc-updown-15m-2026-10-30-0530z")
-    assert d._prefixes["15m"] == "btc-updown-15m-" and d.slug_prefix == ""
+    assert d._prefixes["15m"] == "btc-updown-15m-" and d.slug_prefix == "btc-updown-5m-"
 
 
 def test_owner_reset_clears_the_daily_stop():
