@@ -479,7 +479,7 @@ async function refresh() {
   gate(null);
   S = r.data;
   document.getElementById('t-acct').hidden = !S.owner;
-  DESK_ORDER = (S.owner && !VIEW_AS) ? OWNER_DESK_ORDER : ['btc', 'btc15'];
+  DESK_ORDER = (S.owner && !VIEW_AS) ? OWNER_DESK_ORDER : ['btc'];
   spinOnMissionChange(S.missions || []);                  // a mission started or finished: spin the ring
   document.getElementById('c-run').textContent = S.running;
   document.getElementById('c-spend').textContent = money(S.spend.today_usd) + (S.spend.daily_cap_usd == null ? ' · no cap' : ' of ' + money(S.spend.daily_cap_usd) + ' cap');
@@ -987,8 +987,10 @@ const DESK_KEY = { btc: 'polymarket', btc15: 'polymarket-btc15', eth: 'polymarke
 DESK_COINS.forEach(c => ['15', '1h'].forEach(sfx => { if (!DESK_KEY[c + sfx]) DESK_KEY[c + sfx] = 'polymarket-' + c + sfx; }));   // v1.26: 12 desks
 const DESK_ASSET = Object.fromEntries(Object.entries(DESK_KEY).map(([a, k]) => [k, a]));
 // v1.26: BTC 5m, 15m, 1h, then ETH, SOL and XRP the same (the 10 new desks start in paper). Subscribers' Stations keep their own two.
-const OWNER_DESK_ORDER = DESK_COINS.flatMap(c => [c, c + '15', c + '1h']);
-let DESK_ORDER = ['btc', 'btc15'];
+// retired desks (owner, 2026-11-10: BTC 15m, BTC 1h, SOL 1h, XRP 15m, XRP 1h) are not shown; the server stops them
+const RETIRED_DESKS = ['btc15', 'btc1h', 'sol1h', 'xrp15', 'xrp1h'];
+const OWNER_DESK_ORDER = DESK_COINS.flatMap(c => [c, c + '15', c + '1h']).filter(a => !RETIRED_DESKS.includes(a));
+let DESK_ORDER = ['btc'];
 const DESK_LABEL = a => a === 'btclate' ? 'BTC 5m Late' : (DESK_COIN(a) + ' ' + (/15$/.test(a) ? '15m' : /1h$/.test(a) ? '1h' : '5m'));   // the desk's name
 const DESK_COIN = a => (a === 'btclate' ? 'btc' : a.replace(/(15|1h)$/, '')).toUpperCase();                 // the coin it trades
 let DESKS = {}, DESK_ATS = {}, DESK_LOADINGS = {}, DESK_VIEW = '', DESK_OPEN = {};
@@ -1020,7 +1022,7 @@ async function accountMenu() {
 }
 function enterAccount(a) {
   if (!VIEW_AS) OWN_DESKS = { d: DESKS, at: DESK_ATS, ld: DESK_LOADINGS, v: DESK_VIEW };
-  VIEW_AS = a.id; VIEW_INFO = { name: a.name, email: a.email, loading: true }; DESK_ORDER = ['btc', 'btc15'];
+  VIEW_AS = a.id; VIEW_INFO = { name: a.name, email: a.email, loading: true }; DESK_ORDER = ['btc'];
   DESKS = {}; DESK_ATS = {}; DESK_LOADINGS = {}; DESK_VIEW = '';
   document.getElementById('t-acct').textContent = String(a.name).toUpperCase().slice(0, 14) + ' ▾'; document.getElementById('t-acct').classList.add('on');
   selected = 'acct'; renderSide(true);
@@ -1030,7 +1032,7 @@ function enterAccount(a) {
 }
 function exitAccount() {
   if (VIEW_AS && OWN_DESKS) { DESKS = OWN_DESKS.d; DESK_ATS = OWN_DESKS.at; DESK_LOADINGS = OWN_DESKS.ld; DESK_VIEW = OWN_DESKS.v; }
-  VIEW_AS = ''; VIEW_INFO = null; OWN_DESKS = null; DESK_ORDER = (S && S.owner) ? OWNER_DESK_ORDER : ['btc', 'btc15'];
+  VIEW_AS = ''; VIEW_INFO = null; OWN_DESKS = null; DESK_ORDER = (S && S.owner) ? OWNER_DESK_ORDER : ['btc'];
   const b = document.getElementById('t-acct'); b.textContent = 'ACCOUNTS ▾'; b.classList.remove('on');
   if (selected === 'acct') selected = 'hub';
   renderSide(true);
