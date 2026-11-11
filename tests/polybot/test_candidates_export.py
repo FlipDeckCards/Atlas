@@ -1,17 +1,15 @@
 import asyncio
 import datetime as dt
-import json
 
 
 class _Conn:
-    def __init__(self, rows, kv):
-        self.rows, self.kv = rows, kv
+    def __init__(self, cands, results):
+        self.cands, self.results = cands, results
 
     async def fetch(self, sql, *args):
-        return self.rows
-
-    async def fetchval(self, sql, *args):
-        return self.kv.get(args[0])
+        if "polybot_candidates" in sql:
+            return self.cands
+        return [r for r in self.results if r["slug"] in args[0]]
 
 
 class _Acq:
@@ -26,30 +24,32 @@ class _Acq:
 
 
 class _Pool:
-    def __init__(self, rows, kv):
-        self.conn = _Conn(rows, kv)
+    def __init__(self, cands, results):
+        self.conn = _Conn(cands, results)
 
     def acquire(self):
         return _Acq(self.conn)
 
 
-def test_candidates_export_marks_blocked_buys_with_the_window_result():
-    from openjarvis.polybot import state
+def _cand(asset, slug, side, price, blocked):
+    ts = dt.datetime(2026, 11, 10, 17, 0, tzinfo=dt.timezone.utc)
+    return {"ts": ts, "asset": asset, "slug": slug, "side": side, "price": price, "fair": 0.9, "momentum_z": 0.1,
+            "sigma": 0.02, "vol_tag": None, "secs_left": 120.0, "blocked_by": blocked}
+
+
+def test_candidates_export_checks_blocked_buys_against_the_window_result_and_leaves_out_subscribers():
     from openjarvis.server.crew import desk
 
-    ts = dt.datetime(2026, 11, 10, 17, 0, tzinfo=dt.timezone.utc)
-    rows = [
-        {"ts": ts, "asset": "eth", "slug": "cpc-eth-updown-5m-x", "side": "down", "price": 0.80, "fair": 0.9,
-         "momentum_z": 0.1, "sigma": 0.02, "vol_tag": None, "secs_left": 120.0, "blocked_by": "eth 5m under 85c"},
-        {"ts": ts, "asset": "btc", "slug": "cpc-btc-updown-5m-y", "side": "up", "price": 0.60, "fair": 0.7,
-         "momentum_z": 0.5, "sigma": 0.02, "vol_tag": "mid", "secs_left": 100.0, "blocked_by": ""},
+    cands = [
+        _cand("eth", "cpc-eth-updown-5m-x", "down", 0.80, "eth 5m under 85c"),   # blocked; window settled DOWN -> Down would have won
+        _cand("btc", "cpc-btc-updown-5m-y", "up", 0.60, ""),                     # allowed; window settled UP -> won
+        _cand("btc@ucc70a6f6b1be", "cpc-btc-updown-5m-z", "up", 0.60, ""),       # a subscriber's copy: left out
     ]
-    kv = {state.kv_key("shadow", "eth", ""): json.dumps({"log": [{"slug": "cpc-eth-updown-5m-x", "up": False}]}),
-          state.kv_key("shadow", "btc", ""): json.dumps({"log": [{"slug": "cpc-btc-updown-5m-y", "up": True}]})}
-    body = asyncio.run(desk.export_candidates(_Pool(rows, kv)))
-    lines = body.strip().splitlines()
+    results = [{"slug": "cpc-eth-updown-5m-x", "asset": "eth", "up": False},
+               {"slug": "cpc-btc-updown-5m-y", "asset": "btc", "up": True}]
+    lines = asyncio.run(desk.export_candidates(_Pool(cands, results))).strip().splitlines()
     assert lines[0].startswith("time_utc,desk,slug,side,buy_price")
-    assert "eth 5m under 85c" in lines[1] and lines[1].endswith(",DOWN,1") or lines[1].endswith("DOWN,1")
+    assert len(lines) == 3                                                       # header + two owner rows
+    assert "eth 5m under 85c" in lines[1] and lines[1].endswith("DOWN,1")
     assert lines[2].endswith("UP,1") and "BTC 5m" in lines[2]
-    # subscribers get the header only
-    assert asyncio.run(desk.export_candidates(_Pool(rows, kv), account="x@y")).strip() == lines[0]
+    assert asyncio.run(desk.export_candidates(_Pool(cands, results), account="x@y")).strip() == lines[0]
