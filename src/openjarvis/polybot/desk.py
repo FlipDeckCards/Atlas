@@ -238,7 +238,12 @@ class Desk:
             if w and w.start <= now < w.end:
                 return w
             why = "no market data" if not m else f"market data without a usable window (keys: {', '.join(sorted(m)[:8])})"
+            if not m:
+                return None          # the address does not exist: the prefix is stale, so scan for the real one (below)
         except PMError as exc:
+            if exc.status == 404:    # "not found" at this address: the prefix is stale, so scan for the real one (below)
+                self.log("warn", f"No Polymarket market at {slug} ({str(exc)[:160]}); scanning for the current address.")
+                return None
             why = str(exc)[:160]
         # the market lookup failed, but every 5-minute window has a known address and time: trade it from its order book; the
         # price to beat comes from the market when it answers, or from the index itself 30 s in (the same 60-second average).
