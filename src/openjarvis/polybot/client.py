@@ -19,6 +19,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from openjarvis.polybot.config import API, GATEWAY
 
 logger = logging.getLogger("polybot.client")
+_SIGNED_BOOK_SEEN: dict = {}
 
 
 class PMError(Exception):
@@ -184,7 +185,17 @@ class PolymarketUS:
 
     async def book(self, slug: str) -> Dict[str, Any]:
         # v1.30: public reads are shared by every desk and account on this server (one read per market per 0.8 s)
-        d = await self._shared(f"book|{slug}", 0.8, lambda: self._req("GET", f"/v1/markets/{slug}/book"), public=True)
+        try:
+            d = await self._shared(f"book|{slug}", 0.8, lambda: self._req("GET", f"/v1/markets/{slug}/book"), public=True)
+        except PMError as exc:
+            # 2026-11-11: the public gateway answers "market not found" for live crypto Up/Down markets its own events list.
+            # The same read, signed, on the trading host still serves the book.
+            if exc.status != 404 or not (self.key_id and self.secret_key):
+                raise
+            d = await self._shared(f"book-signed|{slug}", 0.8, lambda: self._req("GET", f"/v1/markets/{slug}/book", auth=True), public=False)
+            if _SIGNED_BOOK_SEEN.get(slug) is None:
+                _SIGNED_BOOK_SEEN[slug] = True
+                logger.warning("Order book for %s served by the trading host (the public gateway said not found).", slug)
         return (d or {}).get("marketData") or {}
 
     async def bbo(self, slug: str) -> Dict[str, Any]:
