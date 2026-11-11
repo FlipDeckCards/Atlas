@@ -533,6 +533,19 @@ async def crew_desk(request: Request, limit: int = 50, asset: str = "btc", view:
     return out
 
 
+@router.get("/api/crew/desk/candidates.csv")
+async def crew_desk_candidates_export(request: Request, view: str = ""):
+    """Every entry the bots considered (v1.42), with the rule that blocked it and how the window settled, as one CSV, for the owner."""
+    g = await _desk_gate(request, view)
+    if isinstance(g, JSONResponse):
+        return g
+    from openjarvis.server.crew import desk
+
+    body = await desk.export_candidates(g[2], account=g[3])
+    return Response(content=body, media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="desk-candidates.csv"'})
+
+
 @router.get("/api/crew/desk/shadow.csv")
 async def crew_desk_shadow_export(request: Request, asset: str = "btc", view: str = ""):
     """The shadow log for one bot as CSV: the model at 1.0x, 0.7x and 1.4x volatility per settled window, for the owner."""

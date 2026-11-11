@@ -185,6 +185,38 @@ SHADOW_RULES = {
 }
 
 
+async def export_candidates(pool, account: str = "") -> str:
+    """v1.42: every entry the bots considered, with the rule that stopped it (blank when allowed), the price, the model's view,
+    and how the window settled (from the shadow log), so each blocked buy can be checked against what it would have made.
+    The candidates table has no account column, so this is the owner's export only; subscribers get the header alone."""
+    import csv
+    import io
+
+    cols = ["time_utc", "desk", "slug", "side", "buy_price", "fair", "momentum_z", "sigma", "vol_tag", "secs_left",
+            "blocked_by", "window_result", "would_have_won"]
+    buf = io.StringIO()
+    wr = csv.writer(buf)
+    wr.writerow(cols)
+    if account:
+        return buf.getvalue()
+    async with pool.acquire() as c:
+        rows = await c.fetch("SELECT ts, asset, slug, side, price, fair, momentum_z, sigma, vol_tag, secs_left, blocked_by "
+                             "FROM polybot_candidates ORDER BY ts")
+        results = {}
+        for a in {r["asset"] for r in rows}:
+            raw = await c.fetchval("SELECT value FROM polybot_kv WHERE key = $1", kv_key("shadow", a, ""))
+            d = {} if raw is None else (json.loads(raw) if isinstance(raw, str) else raw)
+            for w in (d or {}).get("log") or []:
+                results[(a, w.get("slug"))] = "UP" if w.get("up") else "DOWN"
+    from openjarvis.polybot.config import desk_label
+    for r in rows:
+        res = results.get((r["asset"], r["slug"]), "")
+        won = "" if not res else (1 if res == str(r["side"]).upper() else 0)
+        wr.writerow([r["ts"], desk_label(r["asset"]), r["slug"], r["side"], r["price"], r["fair"], r["momentum_z"], r["sigma"],
+                     r["vol_tag"], r["secs_left"], r["blocked_by"] or "", res or "unknown", won])
+    return buf.getvalue()
+
+
 async def export_shadow(pool, asset: str = "btc", account: str = "") -> str:
     """The shadow log for this desk as CSV: one row per settled window, with the model's probability that Up wins at its
     standard view (1.0x volatility), tighter (0.7x) and wider (1.4x), the book's view, the seconds left at the last tick, and the result."""
