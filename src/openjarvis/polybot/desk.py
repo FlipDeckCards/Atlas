@@ -96,6 +96,7 @@ class Desk:
         self.learner = brain.Learner()
         self._dir_pending: set = set()                       # v1.18: windows where a directional trade was placed
         self._bets: Dict[str, Dict[str, Tuple[str, float, float]]] = {}   # v1.22: window -> {method: (side, usd, qty)}, one bet per method
+        self._decision: Dict[Tuple[str, str], Dict[str, Any]] = {}       # (window, side) -> the confidence the bet was decided on
         self._fill_conf: Dict[str, List[Tuple[str, Optional[float], Optional[float]]]] = {}   # per window: (side, model conf, book conf)
         # live calibration: a side's raw model confidence -> the win rate its bucket has actually shown (shrunk toward the raw value)
         self._calib = lambda p: self._calibrated(p)
@@ -385,6 +386,7 @@ class Desk:
             "sigma": None if self.sigma is None else round(self.sigma, 3),
             "sweep": (f.slug, f.side) in self._sweeps,                                      # v1.13: bought by a closing sweep
         }
+        feats.update(self._decision.get((f.slug, f.side)) or {})        # the raw and calibrated confidence at the moment of the decision
         bu = shadow.book_up(getattr(self.book, "bids", None), getattr(self.book, "offers", None))
         bconf = None if bu is None else (bu if f.side == "up" else round(1.0 - bu, 4))
         mconf = None if self.fair_model is None else (self.fair_model if f.side == "up" else 1.0 - self.fair_model)
@@ -540,6 +542,7 @@ class Desk:
         c = self.shadow.live_calibrated_conf(p)
         if c is None:
             return p
+        c = min(c, p)       # 2026-11-11 (owner): calibration only lowers confidence; a few lucky live wins never raise it over the floor
         return round(p + CORRECTION_STRENGTH * (c - p), 4)
 
     def _calib_for(self, w):
@@ -709,6 +712,11 @@ class Desk:
     def _place(self, slug: str, method: str, side: str, usd: float, qty: float) -> None:
         """v1.22: record a bet the method just placed in this window (one per method), and count it against the windows' cap."""
         self._bets.setdefault(slug, {})[method] = (side, round(usd, 4), qty)
+        raw = None if self.fair_model is None else (self.fair_model if side == "up" else 1.0 - self.fair_model)
+        self._decision[(slug, side)] = {"decision_method": method, "decision_raw": None if raw is None else round(raw, 4),
+                                        "decision_conf": None if raw is None else round(self._calib(raw), 4)}
+        if len(self._decision) > 200:
+            self._decision = dict(list(self._decision.items())[-100:])
         self._dir_pending.add(slug)
         exposure.reserve(self.name, usd, self._xacct())
 
