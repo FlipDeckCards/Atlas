@@ -832,7 +832,7 @@ def test_market_address_pattern_is_learned():
     from openjarvis.polybot.desk import Desk
 
     d = Desk(from_env({}, asset="eth"), None, MemStore())
-    assert d.slug_for(1761791100).startswith("cpc-eth-updown-5m-")
+    assert d.slug_for(1761791100).startswith("eth-updown-5m-")
     d.learn_prefix("cpceth-eth-updown-5m-2026-10-30-0225z")
     assert d.slug_for(1761791100) == "cpceth-eth-updown-5m-" + __import__("time").strftime("%Y-%m-%d-%H%M", __import__("time").gmtime(1761791100)) + "z"
     assert d.status(0.0)["slug_prefix"] == "cpceth-eth-updown-5m-"
@@ -845,7 +845,7 @@ def test_each_desk_can_have_its_own_window_and_size():
     assert e.window_pct == 5.0 and s.window_pct == 5.0          # owner, 2026-11-07: ETH, SOL and XRP capped at 1% whatever the env says
     from openjarvis.polybot.desk import Desk
     d = Desk(b, None, MemStore())
-    assert d.span == 900 and d.slug_for(1761791400).startswith("cpc-btc-updown-15m-")
+    assert d.span == 900 and d.slug_for(1761791400).startswith("btc-updown-15m-")
 
 
 
@@ -897,7 +897,7 @@ def test_btc_15m_by_day_5m_at_night():
     d = Desk(cfg, None, MemStore(), clock=lambda: t["now"])
     assert d.horizon == "15m" and d.span == 900
     t["now"] = dt.datetime(2026, 10, 30, 23, 0, tzinfo=LA).timestamp()
-    assert d.horizon == "5m" and d.span == 300 and d.slug_for(0).startswith("cpc-btc-updown-5m-")
+    assert d.horizon == "5m" and d.span == 300 and d.slug_for(0).startswith("btc-updown-5m-")
     d.learn_prefix("cpc-btc-updown-15m-2026-10-30-0530z")
     assert d._prefixes["15m"] == "cpc-btc-updown-15m-" and d.slug_prefix == ""
 
