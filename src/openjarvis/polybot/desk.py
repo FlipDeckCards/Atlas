@@ -58,8 +58,10 @@ def is_series(m: Dict[str, Any], asset: str, horizon: str) -> bool:
     return apt.get("marketType") == "ASSET_PRICE_MARKET_TYPE_UP_DOWN" and sym == asset and same
 
 
-# v1.37: how much of the live correction is applied (1.0 = full, 0.5 = half).
-CORRECTION_STRENGTH = 0.5
+# How much of the live correction is applied (1.0 = full, 0.5 = half).
+# 2026-11-11: set to full strength. Live BTC 5m fills show the raw model overstates
+# confidence by ~10-12 points above 80% (84% said / 74% won; 94% said / 83% won).
+CORRECTION_STRENGTH = 1.0
 
 
 class Desk:
