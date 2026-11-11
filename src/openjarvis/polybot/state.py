@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS polybot_candidates (id BIGSERIAL PRIMARY KEY, ts TIME
   side TEXT NOT NULL, price DOUBLE PRECISION NOT NULL, fair DOUBLE PRECISION, momentum_z DOUBLE PRECISION, sigma DOUBLE PRECISION,
   vol_tag TEXT, secs_left DOUBLE PRECISION, blocked_by TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS polybot_candidates_ts ON polybot_candidates (ts);
+CREATE TABLE IF NOT EXISTS polybot_window_results (slug TEXT NOT NULL, asset TEXT NOT NULL, up BOOLEAN NOT NULL,
+  close_price DOUBLE PRECISION, settled_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (asset, slug));
 ALTER TABLE polybot_events ADD COLUMN IF NOT EXISTS asset TEXT;
 """
 
@@ -105,6 +107,7 @@ class Ledger:
         self.windows: Dict[str, Dict[str, Any]] = {}
         self.events: List[Dict[str, Any]] = []
         self.candidates: List[Dict[str, Any]] = []           # v1.38: every distinct entry candidate and the rule that stopped it, if any
+        self.results: List[Dict[str, Any]] = []              # v1.42: every settled window's result, traded or not (for the blocked-trade check)
 
     def fill(self, mode: str, f, fair: Optional[float], features: Optional[Dict[str, Any]] = None) -> None:
         from openjarvis.polybot.brain import STRATEGY_VERSION
@@ -131,6 +134,13 @@ class Ledger:
 
     def take_candidates(self) -> List[Dict[str, Any]]:
         out, self.candidates = self.candidates, []
+        return out
+
+    def result(self, slug: str, up: bool, close: Optional[float]) -> None:
+        self.results.append({"slug": slug, "asset": self.asset, "up": bool(up), "close": close})
+
+    def take_results(self) -> List[Dict[str, Any]]:
+        out, self.results = self.results, []
         return out
 
 
@@ -166,10 +176,15 @@ class PgStore:
     async def flush(self, ledger: Ledger) -> None:
         fills, windows, events = ledger.take()
         cands = ledger.take_candidates()
-        if not (fills or windows or events or cands):
+        results = ledger.take_results()
+        if not (fills or windows or events or cands or results):
             return
         async with self.pool.acquire() as c:
             async with c.transaction():
+                if results:
+                    await c.executemany("INSERT INTO polybot_window_results (slug, asset, up, close_price) VALUES ($1,$2,$3,$4) "
+                                        "ON CONFLICT (asset, slug) DO NOTHING",
+                                        [(r["slug"], r["asset"], r["up"], r["close"]) for r in results])
                 if cands:
                     await c.executemany("INSERT INTO polybot_candidates (ts, asset, slug, side, price, fair, momentum_z, sigma, vol_tag, secs_left, blocked_by) "
                                         "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
@@ -242,7 +257,9 @@ class FileStore:
     async def flush(self, ledger: Ledger) -> None:
         fills, windows, events = ledger.take()
         cands = ledger.take_candidates()
-        for name, rows in (("fills.jsonl", fills), ("windows.jsonl", windows), ("events.jsonl", events), ("candidates.jsonl", cands)):
+        results = ledger.take_results()
+        for name, rows in (("fills.jsonl", fills), ("windows.jsonl", windows), ("events.jsonl", events), ("candidates.jsonl", cands),
+                           ("window_results.jsonl", results)):
             if rows:
                 with open(self._path(name), "a") as fh:
                     for r in rows:

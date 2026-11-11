@@ -433,6 +433,7 @@ class Desk:
             if res is None:
                 continue
             close, up = res
+            self.ledger.result(slug, bool(up), close)               # v1.42: every settled window, traded or not
             self.shadow.settle(slug, up)
             for method, (side, usd, qty) in self._bets.pop(slug, {}).items():
                 if method != "directional":

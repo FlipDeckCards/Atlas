@@ -187,8 +187,9 @@ SHADOW_RULES = {
 
 async def export_candidates(pool, account: str = "") -> str:
     """v1.42: every entry the bots considered, with the rule that stopped it (blank when allowed), the price, the model's view,
-    and how the window settled (from the shadow log), so each blocked buy can be checked against what it would have made.
-    The candidates table has no account column, so this is the owner's export only; subscribers get the header alone."""
+    and how the window settled (polybot_window_results, which records every settled window, traded or not), so each blocked buy
+    can be checked against what it would have made. Subscriber copies (asset tagged with an account) are left out: the owner's
+    export only. Subscribers get the header alone."""
     import csv
     import io
 
@@ -200,14 +201,13 @@ async def export_candidates(pool, account: str = "") -> str:
     if account:
         return buf.getvalue()
     async with pool.acquire() as c:
-        rows = await c.fetch("SELECT ts, asset, slug, side, price, fair, momentum_z, sigma, vol_tag, secs_left, blocked_by "
-                             "FROM polybot_candidates ORDER BY ts")
+        rows = [r for r in await c.fetch("SELECT ts, asset, slug, side, price, fair, momentum_z, sigma, vol_tag, secs_left, blocked_by "
+                                         "FROM polybot_candidates ORDER BY ts") if "@" not in str(r["asset"])]
+        slugs = sorted({r["slug"] for r in rows})
         results = {}
-        for a in {r["asset"] for r in rows}:
-            raw = await c.fetchval("SELECT value FROM polybot_kv WHERE key = $1", kv_key("shadow", a, ""))
-            d = {} if raw is None else (json.loads(raw) if isinstance(raw, str) else raw)
-            for w in (d or {}).get("log") or []:
-                results[(a, w.get("slug"))] = "UP" if w.get("up") else "DOWN"
+        if slugs:
+            for r in await c.fetch("SELECT slug, asset, up FROM polybot_window_results WHERE slug = ANY($1::text[])", slugs):
+                results[(r["asset"], r["slug"])] = "UP" if r["up"] else "DOWN"
     from openjarvis.polybot.config import desk_label
     for r in rows:
         res = results.get((r["asset"], r["slug"]), "")
