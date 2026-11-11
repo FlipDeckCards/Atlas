@@ -1142,7 +1142,7 @@ function deskViewTabs() {
   w.append(tabs, mk('div', 'dim', DESK_VIEW === 'live' ? 'Every desk below shows its real-money results.' : 'Every desk below shows its simulated (paper) results.'));
   // every desk's trade log and shadow log, combined into one file each (a "desk" column says which bot)
   const all = mk('div', 'desk-tabs');
-  [['⬇ All trades CSV', 'export.csv', 'desk-all-fills.csv'], ['⬇ All shadow CSV', 'shadow.csv', 'desk-all-shadow.csv']].forEach(([label, path, name]) => {
+  [['⬇ All trades CSV', 'export.csv', 'desk-all-fills.csv'], ['⬇ All shadow CSV', 'shadow.csv', 'desk-all-shadow.csv'], ['⬇ Blocked-trade log CSV', 'candidates.csv', 'desk-candidates.csv']].forEach(([label, path, name]) => {
     const b = mk('button', 'b', label);
     b.onclick = async () => {
       b.textContent = '…';
