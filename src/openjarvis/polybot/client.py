@@ -172,6 +172,12 @@ class PolymarketUS:
                 return out
             offset += limit
 
+    async def event_markets(self, event_slug: str) -> List[Dict[str, Any]]:
+        """The markets inside an event (GET /v1/events/slug/{slug}): the event address (btc-updown-5m-...) is not the market's own
+        address, and the market and book endpoints take the market's address."""
+        d = await self._shared(f"event|{event_slug}", 3.0, lambda: self._req("GET", f"/v1/events/slug/{event_slug}"), public=True)
+        return list(((d or {}).get("event") or {}).get("markets") or [])
+
     async def market(self, slug: str) -> Dict[str, Any]:
         d = await self._shared(f"market|{slug}", 3.0, lambda: self._req("GET", f"/v1/market/slug/{slug}"), public=True)
         return (d or {}).get("market") or {}
