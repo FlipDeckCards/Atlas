@@ -172,9 +172,9 @@ async def scoreboard(pool, mode: str, now: Optional[dt.datetime] = None, version
 
 
 SHADOW_RULES = {
-    "s5_late": "5-minute: the model is 85%+ sure of a side, the book leans the same way, and the side costs 90c or less, in the last 10-60 s",
-    "s5_cheap": "5-minute: buys a cheap side (20c or less) that the model prices at least 8c higher, 90-240 s before the close",
-    "s5_book": "5-minute: the book leans 65%+ one way, the model agrees at 60%+, and the ask is 45-65c with a 5c edge, 60-180 s before the close",
+    "s5_shrink": "5-minute: the model shrunk 25% toward 50% (it overstates its confidence); buys the side at least 5c under that view, 30-240 s before the close",
+    "s5_floor85": "5-minute: the model's side at an ask of 85c or more, 3c under fair, 10-240 s before the close (ETH 5m's floor)",
+    "s5_floor75": "5-minute: the model's side at an ask of 75c or more, 3c under fair, 10-240 s before the close (SOL 5m's floor)",
     "s15_trend": "15-minute: buys the side recent spot movement favours, when its ask is 5c under fair and at most 80c, 180-600 s before the close",
     "s15_distance": "15-minute: the model is 80%+ sure and the side is at least 7c under fair, 120-300 s before the close",
     "s15_vol": "15-minute: the model is 70%+ sure under both the tighter and wider volatility, and the ask is 5c under both, 120-600 s before the close",
@@ -224,7 +224,7 @@ async def export_shadow(pool, asset: str = "btc", account: str = "") -> str:
     import io
 
     async with pool.acquire() as c:
-        raw = await c.fetchval("SELECT value FROM polybot_kv WHERE key = $1", kv_key("shadow", asset, account))
+        raw = await c.fetchval("SELECT value FROM polybot_kv WHERE key = $1", kv_key("shadow2", asset, account))
     d = {} if raw is None else (json.loads(raw) if isinstance(raw, str) else raw)
     buf = io.StringIO()
     wr = csv.writer(buf)
@@ -250,7 +250,7 @@ async def shadow_detail(pool, asset: str, account: str = "") -> Optional[Dict[st
     from openjarvis.polybot import shadow as shadow_mod
 
     async with pool.acquire() as c:
-        raw = await c.fetchval("SELECT value FROM polybot_kv WHERE key = $1", kv_key("shadow", asset, account))
+        raw = await c.fetchval("SELECT value FROM polybot_kv WHERE key = $1", kv_key("shadow2", asset, account))
     if raw is None:
         return None
     d = json.loads(raw) if isinstance(raw, str) else (raw or {})

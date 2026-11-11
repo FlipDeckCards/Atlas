@@ -3,10 +3,11 @@
 They never place orders and are not shown on the Station. Each buys 1 contract per leg at the ask (plus the taker fee) and settles
 like any window. Results are kept in the desk's key/value row 'shadow' (or 'shadow:<asset>'), readable in the database.
 
-5-minute windows (desk btc):
-  s5_late    10-60 s before the close: the model is 85%+ sure of a side, the book leans the same way, and the side costs 90c or less.
-  s5_cheap   90-240 s before the close: buy a cheap side (20c or less) when the model prices it at least 8c above its ask.
-  s5_book    60-180 s before the close: the book leans 65%+ one way, the model agrees at 60%+, and the ask is 45-65c with a 5c edge.
+5-minute windows (every 5-minute desk; v1.42, rebuilt from the v1.21 fills; read per desk on the Station):
+  s5_shrink   30-240 s before the close: the model shrunk 25% toward 50% (it overstates its confidence), buying the side that is
+              at least 5c under that shrunk view, when it is at least 50%.
+  s5_floor85  10-240 s before the close: the model's side, only at an ask of 85c or more and 3c under fair (ETH 5m's floor).
+  s5_floor75  10-240 s before the close: the same at 75c or more (SOL 5m's floor).
 
 15-minute windows (desk btc15):
   s15_trend     180-600 s before the close: buy the side the last few seconds of spot movement favours, when its ask is 5c under fair.
@@ -29,7 +30,7 @@ GATE_5M = "s5_gate"         # gate shadow, 5-minute: buy only when the ask is 5c
 GATE_15M = "s15_gate"       # gate shadow, 15-minute: the same rule on 15-minute windows
 GATE_MIN_TRADES = 30        # the bucket needs this many settled trades before the gate trusts it
 GATE_MARGIN = 0.05
-NAMES_5M = ("s5_late", "s5_cheap", "s5_book", MAKER_5M, GATE_5M)
+NAMES_5M = ("s5_shrink", "s5_floor85", "s5_floor75", MAKER_5M, GATE_5M)
 NAMES_15M = ("s15_trend", "s15_distance", "s15_vol", MAKER_15M, GATE_15M)
 NAMES = tuple(dict.fromkeys(NAMES_5M + NAMES_15M))
 
@@ -50,28 +51,22 @@ def decide(name: str, secs_left: float, fair_up: Optional[float], ask_up: Option
     if fair_up is None:
         return []
     fd = 1.0 - fair_up
-    if name == "s5_late":
-        if not (10 <= secs_left <= 60) or bu is None:
+    if name == "s5_shrink":
+        if not (30 <= secs_left <= 240):
             return []
-        if fair_up >= 0.85 and bu >= 0.60 and ask_up is not None and ask_up <= 0.90:
+        f = 0.5 + (fair_up - 0.5) * 0.75
+        if f >= 0.5 and ask_up is not None and ask_up <= f - 0.05:
             return [("up", ask_up)]
-        if fd >= 0.85 and bu <= 0.40 and ask_down is not None and ask_down <= 0.90:
+        if 1.0 - f >= 0.5 and ask_down is not None and ask_down <= (1.0 - f) - 0.05:
             return [("down", ask_down)]
         return []
-    if name == "s5_cheap":
-        if not (90 <= secs_left <= 240):
+    if name in ("s5_floor85", "s5_floor75"):
+        floor = 0.85 if name == "s5_floor85" else 0.75
+        if not (10 <= secs_left <= 240):
             return []
-        if ask_up is not None and ask_up <= 0.20 and fair_up - ask_up >= 0.08:
+        if fair_up >= 0.5 and ask_up is not None and floor <= ask_up and fair_up - ask_up >= 0.03:
             return [("up", ask_up)]
-        if ask_down is not None and ask_down <= 0.20 and fd - ask_down >= 0.08:
-            return [("down", ask_down)]
-        return []
-    if name == "s5_book":
-        if not (60 <= secs_left <= 180) or bu is None:
-            return []
-        if bu >= 0.65 and fair_up >= 0.60 and ask_up is not None and 0.45 <= ask_up <= 0.65 and fair_up - ask_up >= 0.05:
-            return [("up", ask_up)]
-        if bu <= 0.35 and fd >= 0.60 and ask_down is not None and 0.45 <= ask_down <= 0.65 and fd - ask_down >= 0.05:
+        if fd >= 0.5 and ask_down is not None and floor <= ask_down and fd - ask_down >= 0.03:
             return [("down", ask_down)]
         return []
     if name == "s15_trend":

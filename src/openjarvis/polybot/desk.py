@@ -447,7 +447,7 @@ class Desk:
                 if is_live_label(w.mode):                              # v1.33: live fills feed the live-only tally (XRP's calibration)
                     self.shadow.live_add(mc, (side == "up") == bool(up))
             try:
-                await self.store.put("shadow", self.shadow.to_dict())
+                await self.store.put("shadow2", self.shadow.to_dict())
             except Exception:
                 logger.warning("shadow record not saved")
             po = setups.pair_outcome(self._pair_fills.pop(slug, []), up)
@@ -460,7 +460,7 @@ class Desk:
                 self.shadow.add_sizing(slug, ent[0], ent[1], directional.size_pct(ent[1] or 0.0, self.cfg.asset), ent[2], ent[3],
                                        pnl / w.inv.spent)
                 try:
-                    await self.store.put("shadow", self.shadow.to_dict())
+                    await self.store.put("shadow2", self.shadow.to_dict())
                 except Exception:
                     logger.warning("shadow sizing not saved")
             w.settled = True
@@ -1097,7 +1097,7 @@ class Desk:
         self._ready = True
         await self.load_setups()
         try:
-            self.shadow.load((await self.store.get("shadow")) or {})
+            self.shadow.load((await self.store.get("shadow2")) or {})
         except Exception:
             logger.warning("shadow record unreadable; starting empty")
         if self.cfg.asset in shadow.LIVE_SEED:                     # v1.36: seed the live tally from the owner's settled live fills (once)
