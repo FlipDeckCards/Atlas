@@ -59,9 +59,9 @@ def is_series(m: Dict[str, Any], asset: str, horizon: str) -> bool:
 
 
 # How much of the live correction is applied (1.0 = full, 0.5 = half).
-# 2026-11-11: set to full strength. Live BTC 5m fills show the raw model overstates
+# 2026-11-11: raised to 0.75. Live BTC 5m fills show the raw model overstates
 # confidence by ~10-12 points above 80% (84% said / 74% won; 94% said / 83% won).
-CORRECTION_STRENGTH = 1.0
+CORRECTION_STRENGTH = 0.75
 
 
 class Desk:
