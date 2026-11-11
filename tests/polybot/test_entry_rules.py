@@ -26,7 +26,7 @@ def test_btc_5m_blocks_flat_price_buys_at_any_price():
     assert not btc._blocked_entry(200, 0.50)
     # the other 5-minute desks keep only the last-minute rule
     eth = Desk(from_env({}, asset="eth"), None, None)
-    assert not eth._blocked_entry(200, 0.50, 0.0)
+    assert eth._block_rule(200, 0.50, 0.0) == "eth 5m under 85c"
 
 
 def test_sol_5m_blocks_buys_when_price_is_already_moving_with_the_bet():
@@ -62,4 +62,21 @@ def test_btc_5m_blocks_down_buys_at_70_to_79c_only():
     assert not btc._blocked_entry(200, 0.35, 0.5, "up") and not btc._blocked_entry(200, 0.40, 0.5, "up")
     assert not btc._blocked_entry(200, 0.75, 0.5, "up") and not btc._blocked_entry(200, 0.30, 0.5, "down")
     eth = Desk(from_env({}, asset="eth"), None, None)
-    assert not eth._blocked_entry(200, 0.75, 0.5, "down")
+    assert eth._block_rule(200, 0.75, 0.5, "down") == "eth 5m under 85c"   # v1.41: ETH 5m's floor is 85c, so 75c is blocked
+
+
+def test_eth_5m_and_sol_5m_entry_price_floors():
+    from openjarvis.polybot.config import from_env
+    from openjarvis.polybot.desk import Desk
+
+    eth = Desk(from_env({}, asset="eth"), None, None)
+    sol = Desk(from_env({}, asset="sol"), None, None)
+    btc = Desk(from_env({}, asset="btc"), None, None)
+    xrp = Desk(from_env({}, asset="xrp"), None, None)
+    # ETH 5m: buys under 85c are blocked; 85c and up allowed
+    assert eth._block_rule(200, 0.84, 0.0) == "eth 5m under 85c" and eth._blocked_entry(200, 0.60)
+    assert eth._block_rule(200, 0.85, 0.0) is None and eth._block_rule(200, 0.95, 0.0) is None
+    # SOL 5m: buys under 75c are blocked; 75c and up allowed (momentum rule still applies separately)
+    assert sol._block_rule(200, 0.74, 0.0) == "sol 5m under 75c" and sol._block_rule(200, 0.75, 0.0) is None
+    # BTC 5m and XRP 5m are not floored
+    assert btc._block_rule(200, 0.40, 1.0) is None and xrp._block_rule(200, 0.50, 1.0) is None
