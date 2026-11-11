@@ -205,7 +205,11 @@ class Desk:
             return
         nxt = await self.window_by_slug(now)
         if nxt is None and self._due("markets_scan", 10.0, now):       # the slow full scan: at most every 10 s (three desks hammering it
-            ms = await self.c.markets(categories=["crypto"], active=True, closed=False)          # every 2 s got rate-limited)
+            ms = await self.c.markets(categories=["crypto"], active=True, closed=False)
+            if getattr(self, "_scan_sampled", None) != int(now // self.span):      # diagnostic: once per window, what the market list holds
+                self._scan_sampled = int(now // self.span)
+                names = [str(m.get("slug") or m.get("marketSlug") or "?") for m in ms[:12]]
+                self.log("info", f"Market list sample ({len(ms)} crypto markets): {names}; first record keys: {sorted(ms[0])[:25] if ms else []}")          # every 2 s got rate-limited)
             live = [x for x in (window_from_market(m) for m in ms if is_series(m, self.base.coin, self.horizon)) if x and x.start <= now < x.end
                     and not x.slug.startswith("cpc")]          # the retired cpc- addresses are still listed but have no order book
             nxt = min(live, key=lambda x: x.end) if live else None
