@@ -88,6 +88,7 @@ class Desk:
         self.trend: float = 0.0
         self._missing = ""
         self._lookup_fail = ""
+        self._event_seen = ""
         self._book404 = ""
         self._day_reset_seen: Optional[str] = None          # the owner's last "reset daily stop" this desk has applied
         self._ready = False
@@ -214,7 +215,8 @@ class Desk:
                     and not x.slug.startswith("cpc")]          # the retired cpc- addresses are still listed but have no order book
             nxt = min(live, key=lambda x: x.end) if live else None
         if nxt is not None:
-            self.learn_prefix(nxt.slug)
+            if nxt.slug == self.slug_for(int(nxt.start)):   # only learn from a window found at its own address, not an event's market
+                self.learn_prefix(nxt.slug)
         if nxt and nxt.slug in self.recent:
             nxt = self.recent[nxt.slug]
         self.window = nxt
@@ -243,6 +245,18 @@ class Desk:
             why = "no market data" if not m else f"market data without a usable window (keys: {', '.join(sorted(m)[:8])})"
         except PMError as exc:
             why = str(exc)[:160]
+        # the window's address is an EVENT address: look the event up and trade its market at the market's own address
+        try:
+            for em in await self.c.event_markets(slug):
+                w = window_from_market(em)
+                if w and w.start <= now < w.end:
+                    if self._event_seen != slug:
+                        self._event_seen = slug
+                        self.log("warn", f"{self.name}: event {slug} trades as market {w.slug}.")
+                    return w
+            why += "; event lookup had no market for this window"
+        except PMError as exc:
+            why += f"; event lookup failed ({str(exc)[:120]})"
         # the market lookup failed, but every 5-minute window has a known address and time: trade it from its order book; the
         # price to beat comes from the market when it answers, or from the index itself 30 s in (the same 60-second average).
         # Only once the address pattern is known from a real market (ETH's is cpceth-eth-..., not cpc-eth-...): otherwise scan.
