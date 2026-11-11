@@ -988,7 +988,7 @@ DESK_COINS.forEach(c => ['15', '1h'].forEach(sfx => { if (!DESK_KEY[c + sfx]) DE
 const DESK_ASSET = Object.fromEntries(Object.entries(DESK_KEY).map(([a, k]) => [k, a]));
 // v1.26: BTC 5m, 15m, 1h, then ETH, SOL and XRP the same (the 10 new desks start in paper). Subscribers' Stations keep their own two.
 // retired desks (owner, 2026-11-10: BTC 15m, BTC 1h, SOL 1h, XRP 15m, XRP 1h) are not shown; the server stops them
-const RETIRED_DESKS = ['btc15', 'btc1h', 'sol1h', 'xrp15', 'xrp1h'];
+const RETIRED_DESKS = ['btc15', 'btc1h', 'sol1h', 'xrp15', 'xrp1h', 'eth15'];
 const OWNER_DESK_ORDER = DESK_COINS.flatMap(c => [c, c + '15', c + '1h']).filter(a => !RETIRED_DESKS.includes(a));
 let DESK_ORDER = ['btc'];
 const DESK_LABEL = a => a === 'btclate' ? 'BTC 5m Late' : (DESK_COIN(a) + ' ' + (/15$/.test(a) ? '15m' : /1h$/.test(a) ? '1h' : '5m'));   // the desk's name
