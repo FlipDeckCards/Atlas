@@ -270,7 +270,7 @@ class Desk:
         self._prefixes[self.horizon] = v
 
     def slug_for(self, start: int) -> str:
-        prefix = self.slug_prefix or f"cpc-{self.base.coin}-updown-{self.horizon}-"
+        prefix = self.slug_prefix or f"{self.base.coin}-updown-{self.horizon}-"     # Polymarket's current form (no cpc- prefix)
         return f"{prefix}{time.strftime('%Y-%m-%d-%H%M', time.gmtime(start))}z"
 
     def learn_prefix(self, slug: str) -> None:
@@ -1089,9 +1089,9 @@ class Desk:
             self.deposits_start = float(prev["deposits_start"])
         self.restore_windows(prev.get("open_windows"), now)
         for p in (prev.get("slug_prefixes") or {}).values() if isinstance(prev.get("slug_prefixes"), dict) else []:
-            if isinstance(p, str) and "-updown-" in p:
+            if isinstance(p, str) and "-updown-" in p and not p.startswith("cpc"):     # saved cpc- addresses are retired: re-learn
                 self._prefixes[p.rsplit("-updown-", 1)[1].rstrip("-")] = p
-        if isinstance(prev.get("slug_prefix"), str) and prev["slug_prefix"].endswith(f"-updown-{self.horizon}-"):
+        if isinstance(prev.get("slug_prefix"), str) and prev["slug_prefix"].endswith(f"-updown-{self.horizon}-") and not prev["slug_prefix"].startswith("cpc"):
             self.slug_prefix = prev["slug_prefix"]
         self._day_reset_seen = prev.get("day_reset_seen")
         self._ready = True

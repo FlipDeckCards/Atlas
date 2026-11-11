@@ -57,16 +57,18 @@ def event_asset(asset: str, account: str = "") -> str:
 
 def asset_of(slug: str) -> str:
     """The desk a market belongs to: cpc-eth-updown-5m-... -> eth; cpc-btc-updown-15m-... -> btc15 (BTC's 15-minute desk)."""
-    parts = (slug or "").split("-")
-    a = parts[1] if len(parts) > 1 else ""
     s = slug or ""
+    head = s.split("-updown-")[0]                       # cpc-btc, cpceth-eth, btc (the old and the new address forms)
+    a = head.split("-")[-1] if head else ""
     return a + "15" if "-updown-15m-" in s else a + "1h" if "-updown-1h-" in s else a     # v1.26: every coin has 5m, 15m and 1h desks
 
 
 def desk_sql(col: str = "slug") -> str:
     """SQL for asset_of(): which desk a row belongs to, from its market slug."""
-    return (f"(CASE WHEN {col} LIKE '%-updown-15m-%' THEN split_part({col}, '-', 2) || '15' "
-            f"WHEN {col} LIKE '%-updown-1h-%' THEN split_part({col}, '-', 2) || '1h' ELSE split_part({col}, '-', 2) END)")
+    head = f"split_part({col}, '-updown-', 1)"
+    asset = f"split_part({head}, '-', -1)"
+    return (f"(CASE WHEN {col} LIKE '%-updown-15m-%' THEN {asset} || '15' "
+            f"WHEN {col} LIKE '%-updown-1h-%' THEN {asset} || '1h' ELSE {asset} END)")
 
 
 class ScopedStore:
