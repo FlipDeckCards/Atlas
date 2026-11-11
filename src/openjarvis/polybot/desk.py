@@ -620,6 +620,12 @@ class Desk:
         if self.cfg.asset == "btc" and momentum is not None and -0.3 <= momentum <= 0.3:
             return "btc flat momentum"                              # v1.34, widened: BTC 5m's flat-price buys at any price. v1.34 blocked 30-70c only;
                                                                     # Oct 29-Nov 8 live CSV: flat-price buys 57% won, -$50 on 190 fills (30-70c -$26, outside 30-70c -$24)
+        # v1.41 (owner, 2026-11-10): entry price floors on v1.21 fills. ETH 5m's 75-84c buys lost money (58 fills, 79% won, -$2.34);
+        # its 85c+ buys made +$1.19. SOL 5m's 60-74c buys lost money (15 fills, 60% won, -$2.15); its 75c+ buys made +$9.64 (a test).
+        if self.cfg.asset == "eth" and price < 0.85:
+            return "eth 5m under 85c"
+        if self.cfg.asset == "sol" and price < 0.75:
+            return "sol 5m under 75c"
         if self.cfg.asset in ("btc", "eth", "sol", "xrp"):          # v1.28: BTC 5m's block, copied to the other 5-minute desks
             return "last 60s 30-70c" if (secs_left <= 60.0 and 0.30 <= price <= 0.70) else None
         if self.cfg.asset == "btc15" and 0.70 <= price < 0.90:
