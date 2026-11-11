@@ -66,3 +66,13 @@ def test_correction_is_three_quarter_strength():
     full = d.shadow.live_calibrated_conf(0.93)
     assert desk_mod.CORRECTION_STRENGTH == 0.75
     assert abs(d._calib(0.93) - (0.93 + 0.75 * (full - 0.93))) < 0.001
+
+
+def test_calibration_never_raises_confidence():
+    from openjarvis.polybot.config import from_env
+    from openjarvis.polybot.desk import Desk
+
+    d = Desk(from_env({}, asset="btc"), None, None)
+    d.shadow.live_seed({"70-79": (4, 4), "80-89": (170, 128), "90+": (174, 138)})
+    assert d._calib(0.784) == 0.784              # 4 of 4 live wins would have pulled 78.4% up over the 80% floor
+    assert d._calib(0.847) < 0.80                # a range that wins less than the model says is still pulled down
