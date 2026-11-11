@@ -249,7 +249,7 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         f"Account: {_money(bal)} on the BTC 5m desk's latest reading." if bal is not None else "Account: balance not reported yet.",
         f"Risk ceiling: never more than {exposure.CROSS_DESK_PCT:.0f}% of the account at risk at once across every desk, a daily stop "
         "for the whole account, and per-window limits on each desk.",
-        f"Family accounts: {len(family)} brother account(s) run their own isolated copies of BTC 5m and BTC 15m on their own "
+        f"Family accounts: {len(family)} brother account(s) run their own isolated copy of BTC 5m on their own "
         "Polymarket keys; you can view them read-only from ACCOUNTS.",
     ])
 
@@ -363,11 +363,10 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
     roles = {
         "btc": "The flagship. Live since the start and the source of most of the data behind the rules. Full method set, the widest sizing "
                "(5-10%) and its own calibrated steps. It sets the shared daily starting balance for the whole account.",
-        "btc15": "BTC on 15-minute windows with BTC's sizing steps and its own green hours. It has run live before; the owner moves it "
-                 "between live and paper on its recent record.",
-        "btc1h": "BTC on 1-hour windows with 1-hour timing. Paper, collecting a record.",
-        "eth": "ETH 5m: calibrated confidence only, 85% floor, 1-5% steps, its own hour table (9 AM skipped).",
-        "sol": "SOL 5m: calibrated confidence only, 85% floor, 1-5% steps, its own hour table (10 AM and 10 PM halved).",
+        "eth": "ETH 5m: calibrated confidence only, 85% confidence floor, 1-5% steps, its own hour table (9 AM skipped). Since "
+               "2026-11-10 it also skips any buy priced under 85c (on v1.21 its 75-84c buys lost money). Paused until the owner turns it on.",
+        "sol": "SOL 5m: calibrated confidence only, 85% confidence floor, 1-5% steps, its own hour table (10 AM and 10 PM halved). Since "
+               "2026-11-10 it also skips any buy priced under 75c (on v1.21 its 60-74c buys lost money). Paused until the owner turns it on.",
         "xrp": "XRP 5m: calibrated confidence only, 85% floor, 1-5% steps; its losses cluster overnight, so 3-5 AM is halved.",
     }
     for f in facts:
@@ -392,7 +391,7 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
     # ---- 6. family accounts
     d.add_heading("6. Family accounts", level=1)
     _para(d, "Each brother has his own free Aibussol account with a blank Station, the Polymarket Desk business, and his own copies of "
-             "only two bots: BTC 5m and BTC 15m. They trade on his own Polymarket keys, with his own ledger, his own daily stop and "
+             "one bot: BTC 5m. They trade on his own Polymarket keys, with his own ledger, his own daily stop and "
              f"his own {exposure.CROSS_DESK_PCT:.0f}% all-desk cap, so nothing he does touches your account and his downloads show only "
              "his trades. The bot logic, sizing steps and hours are the same as yours. You can open any of them read-only from the "
              "ACCOUNTS menu.")
@@ -400,9 +399,9 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         rows, colors = [], {}
         for i, a in enumerate(family):
             tot = sum(v.get("all", 0.0) for v in a["pnl"].values()) if a["pnl"] else 0.0
-            rows.append([a["name"], a["modes"].get("btc", "paper").upper(), a["modes"].get("btc15", "paper").upper(), _signed(tot)])
+            rows.append([a["name"], a["modes"].get("btc", "paper").upper(), _signed(tot)])
             colors[(i, 3)] = _pnl_color(tot)
-        _table(d, ["Account", "BTC 5m", "BTC 15m", "Live P&L (current version)"], rows, {k: v for k, v in colors.items() if v})
+        _table(d, ["Account", "BTC 5m", "Live P&L (current version)"], rows, {k: v for k, v in colors.items() if v})
     else:
         _para(d, "No family accounts are connected right now.")
 
