@@ -206,7 +206,8 @@ class Desk:
         nxt = await self.window_by_slug(now)
         if nxt is None and self._due("markets_scan", 10.0, now):       # the slow full scan: at most every 10 s (three desks hammering it
             ms = await self.c.markets(categories=["crypto"], active=True, closed=False)          # every 2 s got rate-limited)
-            live = [x for x in (window_from_market(m) for m in ms if is_series(m, self.base.coin, self.horizon)) if x and x.start <= now < x.end]
+            live = [x for x in (window_from_market(m) for m in ms if is_series(m, self.base.coin, self.horizon)) if x and x.start <= now < x.end
+                    and not x.slug.startswith("cpc")]          # the retired cpc- addresses are still listed but have no order book
             nxt = min(live, key=lambda x: x.end) if live else None
         if nxt is not None:
             self.learn_prefix(nxt.slug)
@@ -275,6 +276,8 @@ class Desk:
 
     def learn_prefix(self, slug: str) -> None:
         """cpceth-eth-updown-5m-2026-10-30-0225z -> cpceth-eth-updown-5m- (the part before the date)."""
+        if slug.startswith("cpc"):                  # retired address form: never learn from it
+            return
         parts = slug.split("-")
         if len(parts) > 4 and parts[-1].endswith("z"):
             p = "-".join(parts[:-4]) + "-"
