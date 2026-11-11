@@ -306,7 +306,8 @@ class Desk:
                         return
                 if self.window.start <= now < self.window.end - 5 and self._book404 != self.window.slug:
                     self._book404 = self.window.slug     # the market is listed but has no order book: say so once (that is the cause)
-                    self.log("warn", f"{self.window.slug} is listed but Polymarket has no order book for it yet ({str(exc)[:120]}).")
+                    self.log("warn", f"{self.window.slug} is listed but Polymarket has no order book for it yet ({str(exc)[:120]}). "
+                                     f"Full response: {str(exc.body)[:600]}")
                 self.window, self.book = None, None
                 return
             raise
