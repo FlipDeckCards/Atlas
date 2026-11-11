@@ -58,10 +58,8 @@ def is_series(m: Dict[str, Any], asset: str, horizon: str) -> bool:
     return apt.get("marketType") == "ASSET_PRICE_MARKET_TYPE_UP_DOWN" and sym == asset and same
 
 
-# How much of the live correction is applied (1.0 = full, 0.5 = half).
-# 2026-11-11: raised to 0.75. Live BTC 5m fills show the raw model overstates
-# confidence by ~10-12 points above 80% (84% said / 74% won; 94% said / 83% won).
-CORRECTION_STRENGTH = 0.75
+# v1.37: how much of the live correction is applied (1.0 = full, 0.5 = half).
+CORRECTION_STRENGTH = 0.5
 
 
 class Desk:
@@ -238,12 +236,7 @@ class Desk:
             if w and w.start <= now < w.end:
                 return w
             why = "no market data" if not m else f"market data without a usable window (keys: {', '.join(sorted(m)[:8])})"
-            if not m:
-                return None          # the address does not exist: the prefix is stale, so scan for the real one (below)
         except PMError as exc:
-            if exc.status == 404:    # "not found" at this address: the prefix is stale, so scan for the real one (below)
-                self.log("warn", f"No Polymarket market at {slug} ({str(exc)[:160]}); scanning for the current address.")
-                return None
             why = str(exc)[:160]
         # the market lookup failed, but every 5-minute window has a known address and time: trade it from its order book; the
         # price to beat comes from the market when it answers, or from the index itself 30 s in (the same 60-second average).
@@ -311,8 +304,7 @@ class Desk:
                         return
                 if self.window.start <= now < self.window.end - 5 and self._book404 != self.window.slug:
                     self._book404 = self.window.slug     # the market is listed but has no order book: say so once (that is the cause)
-                    self.log("warn", f"{self.window.slug} is listed but Polymarket has no order book for it yet ({str(exc)[:120]}). "
-                                     f"Full response: {str(exc.body)[:600]}")
+                    self.log("warn", f"{self.window.slug} is listed but Polymarket has no order book for it yet ({str(exc)[:120]}).")
                 self.window, self.book = None, None
                 return
             raise
