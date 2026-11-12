@@ -256,6 +256,75 @@ class TestPictureRequestsSetUpByTheServer:
         assert await helix_tools.picture_request(ctx, "remove the sword from this character", True) is None
 
 
+class TestNanoBananaPro:
+    def test_reference_work_uses_pro_unless_flash_is_asked_for(self, monkeypatch):
+        monkeypatch.delenv("GEMINI_REFERENCE_MODEL", raising=False)
+        assert image_mod.get_reference_provider().id == "google_gemini_pro_image"
+        monkeypatch.setenv("GEMINI_REFERENCE_MODEL", "flash")
+        assert image_mod.get_reference_provider().id == "google_gemini_image"
+
+    def test_model_and_price_come_from_settings_with_defaults(self, monkeypatch):
+        from openjarvis.server.media.image_backups import GeminiProImage
+
+        monkeypatch.delenv("GEMINI_PRO_IMAGE_MODEL", raising=False)
+        monkeypatch.delenv("GEMINI_PRO_IMAGE_USD", raising=False)
+        assert GeminiProImage().model_name() == "gemini-3-pro-image" and GeminiProImage().estimate_cost_usd() == pytest.approx(0.134)
+        monkeypatch.setenv("GEMINI_PRO_IMAGE_MODEL", "gemini-3-pro-image-preview")
+        monkeypatch.setenv("GEMINI_PRO_IMAGE_USD", "0.2")
+        assert GeminiProImage().model_name() == "gemini-3-pro-image-preview" and GeminiProImage().estimate_cost_usd() == pytest.approx(0.2)
+
+    @pytest.mark.asyncio
+    async def test_the_request_names_the_pro_model_and_skips_draft_pictures(self, monkeypatch):
+        from openjarvis.server.media.image_backups import GeminiProImage
+
+        monkeypatch.setenv("GEMINI_API_KEY", "k")
+        monkeypatch.delenv("GEMINI_PRO_IMAGE_MODEL", raising=False)
+        seen = {}
+        draft, final = base64.b64encode(b"DRAFT").decode(), base64.b64encode(tiny_jpeg()).decode()
+
+        def handler(request: httpx.Request):
+            seen["url"], seen["cfg"] = str(request.url), json.loads(request.content)["generationConfig"]
+            parts = [{"thought": True, "inlineData": {"mimeType": "image/png", "data": draft}}, {"inlineData": {"mimeType": "image/png", "data": final}}]
+            return httpx.Response(200, json={"candidates": [{"content": {"parts": parts}}]})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+            res = await GeminiProImage().generate("x", client=c, reference=(b"R", "image/png"))
+        assert "models/gemini-3-pro-image:generateContent" in seen["url"] and seen["cfg"]["responseModalities"] == ["TEXT", "IMAGE"]
+        assert res.data == tiny_jpeg() and res.cost_usd is None
+
+    @pytest.mark.asyncio
+    async def test_a_refused_pro_model_falls_back_to_flash_and_is_charged_at_flash_price(self, monkeypatch):
+        from openjarvis.server.media.image_backups import GeminiProImage
+
+        monkeypatch.setenv("GEMINI_API_KEY", "k")
+        urls = []
+
+        def handler(request: httpx.Request):
+            urls.append(str(request.url))
+            if "gemini-3-pro-image" in str(request.url):
+                return httpx.Response(404, json={"error": "model not found"})
+            out = base64.b64encode(tiny_jpeg()).decode()
+            return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": out}}]}}]})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+            res = await GeminiProImage().generate("x", client=c)
+        assert "gemini-2.5-flash-image" in urls[-1] and res.cost_usd == pytest.approx(0.04)
+
+    @pytest.mark.asyncio
+    async def test_the_ledger_uses_the_price_that_was_really_paid(self, setup):
+        prov, (store, _c, _s), ctx = setup
+
+        async def cheap(**request):
+            prov.calls.append(request)
+            return MediaResult("image", "image/jpeg", tiny_jpeg(), prov.id, cost_usd=0.04)
+
+        prov.estimate_cost_usd = lambda **_: 0.134
+        prov.generate = cheap
+        item_id = await attach(ctx)
+        await service.vary_and_save(ctx, item_id, "x", 2)
+        assert store.spent("media:alice") == pytest.approx(0.08)                       # two fallbacks at Flash price, not 2 x $0.134
+
+
 class TestSpriteSheet:
     def test_the_prompt_asks_for_a_flat_background_strip_of_the_reference_character(self):
         from openjarvis.server.media import spritesheet

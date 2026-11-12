@@ -7,7 +7,7 @@ from typing import Dict, Optional
 
 from openjarvis.server.media.base import MediaProvider
 from openjarvis.server.media.cloudflare import CloudflareFluxSchnell
-from openjarvis.server.media.image_backups import GeminiImage, OpenAIImage
+from openjarvis.server.media.image_backups import GeminiImage, GeminiProImage, OpenAIImage
 
 MAX_PROMPT_CHARS = (
     500  # Cloudflare allows 2048; shorter keeps prompts (and abuse) small
@@ -17,6 +17,7 @@ MIN_STEPS, MAX_STEPS, DEFAULT_STEPS = 1, 8, 4
 PROVIDERS: Dict[str, MediaProvider] = {
     CloudflareFluxSchnell.id: CloudflareFluxSchnell(),
     GeminiImage.id: GeminiImage(),
+    GeminiProImage.id: GeminiProImage(),
     OpenAIImage.id: OpenAIImage(),
 }
 DEFAULT_PROVIDER = CloudflareFluxSchnell.id
@@ -25,8 +26,11 @@ FALLBACK_ORDER = (CloudflareFluxSchnell.id, GeminiImage.id, OpenAIImage.id)
 
 
 def get_reference_provider() -> MediaProvider:
-    """The provider for variations of a picture the user attached: Gemini's image model in reference-image mode."""
-    return PROVIDERS[GeminiImage.id]
+    """The provider for work on a picture the user attached (variations, edits, sprite sheets): Gemini's image model in reference-image mode.
+    Nano Banana Pro (Gemini 3 Pro Image) unless GEMINI_REFERENCE_MODEL=flash asks for the cheaper Flash image model."""
+    if (os.environ.get("GEMINI_REFERENCE_MODEL") or "").strip().lower() == "flash":
+        return PROVIDERS[GeminiImage.id]
+    return PROVIDERS[GeminiProImage.id]
 
 
 def get_provider(env: Optional[dict] = None) -> MediaProvider:

@@ -7,7 +7,7 @@ configuration (see ``image.py`` and ``sound.py``), so providers can be swapped w
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Optional, Protocol
 
 
 class MediaError(Exception):
@@ -30,6 +30,7 @@ class MediaResult:
     mime: str  # "image/jpeg" | "audio/mpeg"
     data: bytes
     provider: str
+    cost_usd: Optional[float] = None  # what this picture really cost when it differs from the provider's estimate (a fallback to a cheaper model)
 
 
 class MediaProvider(Protocol):

@@ -304,9 +304,10 @@ async def vary_and_save(ctx: Ctx, item_id: str, prompt: str, count: Any = None, 
                 logger.exception("variation %s of %s failed", i + 1, n)
                 return None
         day = hardening.utc_day()                               # the provider call happened: the cost counts even if saving fails
-        await ctx.store.add_spend("media:" + ctx.user_id, day, each)
-        await ctx.store.add_spend(GLOBAL_KEY, day, each)
-        spent += each
+        cost = each if result.cost_usd is None else result.cost_usd
+        await ctx.store.add_spend("media:" + ctx.user_id, day, cost)
+        await ctx.store.add_spend(GLOBAL_KEY, day, cost)
+        spent += cost
         return result
 
     results = [r for r in await asyncio.gather(*(one(i) for i in range(n))) if r is not None]
@@ -366,9 +367,10 @@ async def sprite_sheet_and_save(ctx: Ctx, item_id: str, animations: Any = None, 
                 logger.exception("sprite strip %s failed", name)
                 return
         day = hardening.utc_day()                               # the provider call happened: the cost counts even if the sheet cannot be built
-        await ctx.store.add_spend("media:" + ctx.user_id, day, each)
-        await ctx.store.add_spend(GLOBAL_KEY, day, each)
-        spent += each
+        cost = each if result.cost_usd is None else result.cost_usd
+        await ctx.store.add_spend("media:" + ctx.user_id, day, cost)
+        await ctx.store.add_spend(GLOBAL_KEY, day, cost)
+        spent += cost
         strips[name] = result.data
 
     await asyncio.gather(*(one(nm) for nm in names))
