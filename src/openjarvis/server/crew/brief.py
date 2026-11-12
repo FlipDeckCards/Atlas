@@ -327,7 +327,8 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
     _table(d, ["Limit", "Setting", "What it means"], [
         ["All-desk cap", f"{exposure.CROSS_DESK_PCT:.0f}% of the account", "Everything open at once, across every live desk and every method including sweeps. Bets that would go over wait until earlier ones settle. Paper desks keep their own tally."],
         ["Per-window total, BTC", f"{btc['window_total']:.0f}%", "All directional, edge and late bets in one BTC window together."],
-        ["Per-window total, ETH/SOL/XRP", f"{small['window_total']:.0f}%", "All directional, edge and late bets in one window on these coins together."],
+        ["Per-window total, XRP", f"{directional.window_total_pct('xrp'):.0f}%", "All directional, edge and late bets in one XRP window together (owner, 2026-11-11: was 5%)."],
+        ["Per-window total, ETH/SOL", f"{directional.window_total_pct('eth'):.0f}%", "All directional, edge and late bets in one window on these coins together."],
         ["Sweeps, ETH/SOL/XRP", f"{small['sweep_pct'] or 1:.0f}% of the balance", "The closing sweep's own limit on these coins."],
         ["Daily stop", f"{btc['daily_loss_pct']:.0f}% of the day's starting balance", "When the account has lost this much since midnight Pacific, every desk stops for the rest of the day. The starting balance is shared by all desks (BTC 5m sets it)."],
         ["Live switch", "One LIVE/PAPER switch per desk", "Real money only on desks you take live; new desks always start in paper."],
@@ -373,15 +374,18 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
              "Station count only the current version, so they can show smaller numbers.")
 
     roles = {
-        "btc": "The flagship. Live since the start and the source of most of the data behind the rules. Full method set, the widest sizing "
-               "(5-10%) and its own calibrated steps. It sets the shared daily starting balance for the whole account.",
+        "btc": "The flagship. Live since the start and the source of most of the data behind the rules. Full method set and its own "
+               "calibrated steps. Sizes cut on 2026-11-11 (owner) to 1% / 4% / 8% (were 7 / 8 / 10%) until it proves itself again after "
+               "losing $42.56 that day. It sets the shared daily starting balance for the whole account.",
         "eth": "ETH 5m: calibrated confidence only, 85% confidence floor, 1-5% steps, its own hour table (9 AM is a caution hour). Since "
                "2026-11-10 it also skips any buy priced under 85c (on v1.21 its 75-84c buys lost money). Moved to paper by the owner on "
                "2026-11-10: even at 85c+ its floored record was about break-even, and its first two 1.22 fills (93-95c) both lost.",
         "sol": "SOL 5m: calibrated confidence only, 85% confidence floor, 1-5% steps, its own hour table (10 AM and 10 PM halved). Since "
                "2026-11-10 it also skips any buy priced under 75c (on v1.21 its 60-74c buys lost money). Moved to paper by the owner on "
                "2026-11-10 after a losing lifetime record (-6.9% on 258 live fills).",
-        "xrp": "XRP 5m: calibrated confidence only, 85% floor, 1-5% steps; its losses cluster overnight, so 3-5 AM is halved.",
+        "xrp": "XRP 5m: calibrated confidence only. Sized up on 2026-11-11 (owner) after its v1.22 start (22 trades, 82% won, +11.1% per "
+               "dollar staked): no trade under 84%, then 3% / 5% / 7% / 10%, with a 10% per-window limit. Its losses cluster overnight, "
+               "so 3-5 AM is halved. Its lifetime live record before 1.22 was about break-even, so its v1.22 results are watched closely.",
     }
     for f in facts:
         d.add_heading(f"5.{facts.index(f) + 1} {f['label']}", level=2)
@@ -461,6 +465,7 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         ["Nov 11", "Polymarket market-data change handled: event lookup to find each window's market; order books read from the trading host."],
         ["Nov 11", "Skipped hours become half-size caution hours with an 85% calibrated floor and a 70¢ entry floor."],
         ["Nov 11", "BTC 5m entry floor of 75¢ after five losses that day, all bought at 64-73¢ against a much less confident market."],
+        ["Nov 11", "BTC 5m sizes cut to 1% / 4% / 8% until it proves itself. XRP 5m sized up to 3-10% from 84% confidence, window limit 10%."],
     ])
 
     # ---- 9. watch list

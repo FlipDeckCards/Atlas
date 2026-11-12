@@ -294,13 +294,16 @@ def test_every_live_desk_shares_one_day_start_for_the_account():
     assert raw.kv["account_day"]["start"] == 107.22 and eth.rs.day_start == 107.22 and btc.rs.day_start == 107.22
 
 
-def test_xrp_desks_risk_at_most_one_percent():
+def test_xrp_desks_sizes_and_window_limit():
     from openjarvis.polybot import directional
 
     for a in ("xrp", "xrp15", "xrp1h"):
-        c = from_env({"POLYBOT_WINDOW_PCT": "10", "POLYBOT_SWEEP_PCT": "10"}, asset=a)
-        assert c.window_pct == 5.0 and c.sweep_pct == 1.0, a
-    assert directional.size_pct(0.95, "xrp") == 5.0 and directional.size_pct(0.85, "xrp") == 1.0 and directional.size_pct(0.84, "xrp") == 0
+        c = from_env({"POLYBOT_WINDOW_PCT": "20", "POLYBOT_SWEEP_PCT": "10"}, asset=a)
+        assert c.window_pct == 10.0 and c.sweep_pct == 1.0, a          # owner, 2026-11-11: XRP window limit 10% (was 5%)
+    assert directional.window_total_pct("xrp") == 10.0 and directional.window_total_pct("eth") == 5.0
+    # owner, 2026-11-11: no trade under 84%, then 3 / 5 / 7 / 10 / 10%
+    assert [directional.size_pct(p, "xrp") for p in (0.83, 0.84, 0.86, 0.90, 0.93, 0.96)] == [0.0, 3.0, 5.0, 7.0, 10.0, 10.0]
+    assert directional.min_conf("xrp") == 0.84
     assert from_env({"POLYBOT_WINDOW_PCT": "10"}, asset="btc").window_pct == 10.0
 
 

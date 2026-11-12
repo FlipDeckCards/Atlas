@@ -1033,7 +1033,7 @@ def test_v120_direction_tiers_btc():
     from openjarvis.polybot import directional
     assert directional.decide(0.55, 0.30, 0.60, (0, 0), (0, 0)) is None          # under 80% for BTC: never
     assert directional.decide(0.79, 0.60, 0.40, (0, 0), (0, 0)) is None          # 79%: still no trade
-    assert directional.decide(0.82, 0.60, 0.40, (0, 0), (0, 0))[0] == "up"        # 82% with an edge: yes, at 5%
-    assert directional.size_pct(0.65) == 0.0 and directional.size_pct(0.80) == 5.0 and directional.size_pct(0.92) == 8.0
+    assert directional.decide(0.82, 0.60, 0.40, (0, 0), (0, 0))[0] == "up"        # 82% with an edge: yes, at 1% (owner, 2026-11-11: was 5%)
+    assert directional.size_pct(0.65) == 0.0 and directional.size_pct(0.80) == 1.0 and directional.size_pct(0.86) == 4.0 and directional.size_pct(0.92) == 8.0
     # momentum rule: the Up side is blocked, so the Down side is the only one left
     assert directional.decide(0.20, 0.60, 0.40, (0, 0), (0, 0), up_ok=False, down_ok=True) is None or directional.decide(0.20, 0.60, 0.40, (0, 0), (0, 0), up_ok=False, down_ok=True)[0] == "down"

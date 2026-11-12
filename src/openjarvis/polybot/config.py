@@ -318,7 +318,7 @@ ONE_HOUR_TIMING = {"directional_secs_left": 900.0, "directional_min_secs": 120.0
 
 
 # owner, 2026-11-07 (v1.32): XRP, SOL and ETH bets run 1-5% by confidence, so a window holds at most 5%; sweeps stay at 1%.
-SMALL_COINS = {"xrp": (5.0, 1.0), "sol": (5.0, 1.0), "eth": (5.0, 1.0)}   # coin -> (window %, sweep %)
+SMALL_COINS = {"xrp": (10.0, 1.0), "sol": (5.0, 1.0), "eth": (5.0, 1.0)}   # coin -> (window %, sweep %); XRP 10% since 2026-11-11 (owner)
 
 
 def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Config:
