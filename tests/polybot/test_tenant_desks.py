@@ -260,7 +260,7 @@ def test_all_desk_cap_is_20_percent_and_the_5m_block_covers_every_coin():
     exposure.reset()
     for a in ("btc", "eth", "sol", "xrp"):
         d = Desk(from_env({}, asset=a), None, None)
-        floored = a in ("eth", "sol")       # v1.41: ETH 5m and SOL 5m also have entry price floors (85c and 75c)
+        floored = a in ("eth", "sol", "btc")   # entry price floors: ETH 85c, SOL 75c (v1.41), BTC 75c (2026-11-11)
         assert d._blocked_entry(45.0, 0.5) and not d._blocked_entry(45.0, 0.9), a
         assert d._blocked_entry(90.0, 0.5) == floored, a
     assert not Desk(from_env({}, asset="eth15"), None, None)._blocked_entry(45.0, 0.5)

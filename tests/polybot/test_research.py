@@ -63,10 +63,10 @@ def test_entry_check_names_the_rule_queues_each_candidate_once_and_blackout_bloc
     assert btc._entry_check(now + 1, W, 0.75, 0.5, "down") == "btc down 70-79c"   # same candidate: not queued twice
     assert len(btc.ledger.candidates) == 1
     assert btc.ledger.candidates[0]["blocked_by"] == "btc down 70-79c" and btc.ledger.candidates[0]["asset"] == "btc"
-    assert btc._entry_check(now, W, 0.50, 0.5, "up") is None                       # allowed: queued with no rule
+    assert btc._entry_check(now, W, 0.80, 0.5, "up") is None                       # allowed: queued with no rule
     assert len(btc.ledger.candidates) == 2 and btc.ledger.candidates[1]["blocked_by"] == ""
     # the blackout is off by default; when switched on it stops every entry inside the window
     monkeypatch.setattr(research, "shipped_events", lambda: [(now, "CPI")])
-    assert btc._entry_check(now, W, 0.50, 0.5, "up") is None
+    assert btc._entry_check(now, W, 0.80, 0.5, "up") is None
     monkeypatch.setattr(research, "BLACKOUT_ON", True)
     assert btc._entry_check(now, W, 0.50, 0.5, "up") == "blackout: CPI"

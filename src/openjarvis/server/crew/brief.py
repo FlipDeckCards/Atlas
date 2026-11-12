@@ -300,7 +300,8 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         "Last-minute block: on every 5-minute desk, no bet in the final 60 seconds when the side costs between 30¢ and 70¢ "
         "(a coin-flip price that late has historically lost).",
         "Price limits: the desks never buy a side under 15¢ or over 80¢ outside sweeps. ETH 5m skips buys under 85¢ and SOL 5m "
-        "skips buys under 75¢ (owner, 2026-11-10).",
+        "skips buys under 75¢ (owner, 2026-11-10); BTC 5m skips buys under 75¢ (owner, 2026-11-11: under 75¢ it won 55.8% of 389 "
+        "live fills, at 75¢ and up 87.4% of 278, with more profit per dollar staked).",
         f"Caution hours (owner, 2026-11-11): the hours that used to be skipped trade at half size, and a bet in one needs at least "
         f"{CAUTION_MIN_CONF:.0%} calibrated confidence and a buy price of at least {CAUTION_MIN_PRICE * 100:.0f}¢ (section 4.3).",
         "Cushion and momentum: a directional bet also needs the index to be far enough on its side of the line for the time left, "
@@ -459,6 +460,7 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         ["Nov 11", "Calibration made lower-only (a lucky streak can no longer lift a bet over the floor) and set to 60% strength; 75% left BTC 5m almost no trades."],
         ["Nov 11", "Polymarket market-data change handled: event lookup to find each window's market; order books read from the trading host."],
         ["Nov 11", "Skipped hours become half-size caution hours with an 85% calibrated floor and a 70¢ entry floor."],
+        ["Nov 11", "BTC 5m entry floor of 75¢ after five losses that day, all bought at 64-73¢ against a much less confident market."],
     ])
 
     # ---- 9. watch list

@@ -665,6 +665,10 @@ class Desk:
             return "eth 5m under 85c"
         if self.cfg.asset == "sol" and price < 0.75:
             return "sol 5m under 75c"
+        # Owner, 2026-11-11: BTC 5m under 75c won 55.8% over 389 live fills (+1.1% per $ staked); 75c+ won 87.4% over 278 (+2.9%).
+        # All five BTC 5m losses on 2026-11-11 were bought at 64-73c with the model 78-99% sure.
+        if self.cfg.asset == "btc" and price < 0.75:
+            return "btc 5m under 75c"
         if self.cfg.asset in ("btc", "eth", "sol", "xrp"):          # v1.28: BTC 5m's block, copied to the other 5-minute desks
             return "last 60s 30-70c" if (secs_left <= 60.0 and 0.30 <= price <= 0.70) else None
         if self.cfg.asset == "btc15" and 0.70 <= price < 0.90:
