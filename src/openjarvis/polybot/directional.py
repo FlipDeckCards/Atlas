@@ -42,11 +42,14 @@ EXPLORE_EDGE = 0.05
 # The four methods (directional, edge, late, sweep) use the same floor and lot sizes for XRP as for BTC.
 # XRP, SOL and ETH (owner, 2026-11-07): 85-87 = 1%, 88-91 = 2%, 92-94 = 3%, 95%+ = 5%; under 85 = no trade.
 TIERS = {
-    "btc": ((95, 10.0), (90, 8.0), (85, 7.0), (80, 5.0)),
-    "btc15": ((95, 10.0), (90, 8.0), (85, 7.0), (80, 5.0)),
-    "btclate": ((95, 10.0), (90, 8.0), (85, 7.0), (80, 5.0)),      # v1.23: the late-only paper desk on BTC 5m: the same tiers      # BTC's 15-minute desk: the same tiers as BTC 5m
+    # Owner, 2026-11-11: BTC sizes cut (were 5 / 7 / 8 / 10%) until BTC 5m proves itself; same steps. Used by the pair method's legs.
+    "btc": ((95, 8.0), (90, 8.0), (85, 4.0), (80, 1.0)),
+    "btc15": ((95, 8.0), (90, 8.0), (85, 4.0), (80, 1.0)),
+    "btclate": ((95, 8.0), (90, 8.0), (85, 4.0), (80, 1.0)),      # v1.23: the late-only paper desk on BTC 5m: the same tiers      # BTC's 15-minute desk: the same tiers as BTC 5m
     # v1.32 (owner, 2026-11-07): XRP, SOL and ETH trade from 85%, 1-5% of the balance in 4 steps
-    "xrp": ((95, 5.0), (92, 3.0), (88, 2.0), (85, 1.0)),
+    # Owner, 2026-11-11: XRP 5m sized up after its v1.22 start (22 trades, 82% won, +11.1% per $ staked): no trade under 84%,
+    # 84% = 3%, 85-87 = 5%, 88-91 = 7%, 92%+ = 10%; its window limit rises to 10% (config.SMALL_COINS).
+    "xrp": ((92, 10.0), (88, 7.0), (85, 5.0), (84, 3.0)),
     "eth": ((95, 5.0), (92, 3.0), (88, 2.0), (85, 1.0)),
     "sol": ((95, 5.0), (92, 3.0), (88, 2.0), (85, 1.0)),
 }
@@ -54,7 +57,8 @@ TIERS = {
 
 # Calibrated tiers (owner, 2026-11-05): when a bot trades on the calibrated confidence (every hour outside its green hours), the lot is
 # set by the win rate that confidence has actually shown, not by the raw number. Raw-confidence tiers (TIERS) are unchanged.
-CAL_TIERS = ((88, 10.0), (84, 8.0), (80, 7.0))   # v1.37: floor raised 77 -> 80 (BTC 5m/15m: raw model 70-79 had won too little; under 70 lost $9.83 on 167 fills)
+CAL_TIERS = ((88, 8.0), (84, 4.0), (80, 1.0))    # v1.37: floor raised 77 -> 80 (BTC 5m/15m: raw model 70-79 had won too little; under 70 lost $9.83 on 167 fills)
+# Owner, 2026-11-11: BTC sizes cut (were 7 / 8 / 10%) until BTC 5m proves itself again after losing $42.56 that day; same steps.
 CAL_ASSETS = ("btc", "btc15", "btclate")
 
 
