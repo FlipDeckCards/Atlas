@@ -58,8 +58,8 @@ def is_series(m: Dict[str, Any], asset: str, horizon: str) -> bool:
     return apt.get("marketType") == "ASSET_PRICE_MARKET_TYPE_UP_DOWN" and sym == asset and same
 
 
-# How much of the live correction is applied (1.0 = full, 0.5 = half). 2026-11-11: 0.75 (owner).
-CORRECTION_STRENGTH = 0.75
+# How much of the live correction is applied (1.0 = full, 0.5 = half). 2026-11-11: 0.6 (0.75 left BTC 5m almost no trades).
+CORRECTION_STRENGTH = 0.6
 
 
 class Desk:

@@ -277,10 +277,10 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
     _para(d, "The model's number (raw confidence) is not trusted blindly. Each desk keeps a tally of how often each confidence level "
              "has actually won in live trading. Calibrated confidence moves the raw number toward that record (a level with few trades "
              f"counts for little). Every desk trades on calibrated confidence at every hour. The correction is applied at "
-             f"{CORRECTION_STRENGTH:.0%} strength (owner, 2026-11-11; it was 50%), and it only ever lowers confidence: a level that has "
+             f"{CORRECTION_STRENGTH:.0%} strength (owner, 2026-11-11; it was 50%, briefly 100% and 75%), and it only ever lowers confidence: a level that has "
              "won more than the model said is left at the model's number, so a short lucky streak can never lift a bet over the floor. "
              "On BTC 5m the live record shows the model overstating by about 10-12 points above 80% (84% said, 74% won; 94% said, "
-             "83% won), so the 80% calibrated floor now needs a raw reading of roughly 90% or more.")
+             "83% won), so the 80% calibrated floor needs a raw reading of roughly 88-90% or more.")
 
     # ---- 3. the methods
     d.add_heading("3. How a desk bets: the methods", level=1)
@@ -456,7 +456,7 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         ["Nov 8 (v1.36-1.37)", "Every desk trades on live-calibrated confidence at every hour; the correction set to half strength; BTC calibrated floor 80%."],
         ["Nov 10", "Retired BTC 15m, BTC 1h, SOL 1h, XRP 15m, XRP 1h and ETH 15m; family accounts run BTC 5m only. ETH 5m 85¢ and SOL 5m 75¢ entry floors. Shadow strategies rebuilt. Strategy version 1.22 (clean scoreboards)."],
         ["Nov 10", "ETH 5m, SOL 5m and SOL 15m moved to paper; BTC 5m, XRP 5m and ETH 1h stay live."],
-        ["Nov 11", "Calibration correction raised to 75% strength and made lower-only (a lucky streak can no longer lift a bet over the floor)."],
+        ["Nov 11", "Calibration made lower-only (a lucky streak can no longer lift a bet over the floor) and set to 60% strength; 75% left BTC 5m almost no trades."],
         ["Nov 11", "Polymarket market-data change handled: event lookup to find each window's market; order books read from the trading host."],
         ["Nov 11", "Skipped hours become half-size caution hours with an 85% calibrated floor and a 70¢ entry floor."],
     ])
@@ -472,8 +472,8 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         "Rate limits: any new \"HTTP 429\" in the desk log means the server is near Polymarket's limit and should be looked at.",
         "Caution hours: after two weeks, check each one's live record on the current version; keep, halve or skip it on that, not on "
         "the older versions' tables.",
-        "Calibration at 75%: BTC 5m now trades mostly when the raw model reads about 90%+. Watch trade count and profit per dollar "
-        "staked; if volume drops too far, 60% strength is the fallback.",
+        "Calibration at 60%: watch BTC 5m trade count and profit per dollar staked. 75% cut trades by about half on past fills "
+        "without a clear gain; 50% (still lower-only) is the fallback if volume stays too thin.",
         "Decision-time confidence: compare decision_conf with the fill-time reading on any bet that looks like it should not have "
         "passed the floor.",
         "Market data: if Polymarket fixes its public order-book gateway, the trading-host fallback simply stops being used; if the "
