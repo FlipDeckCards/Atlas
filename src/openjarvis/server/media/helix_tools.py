@@ -320,6 +320,24 @@ def _msg_dict(msg: Any) -> Dict[str, Any]:
     return {"role": "assistant", "content": getattr(msg, "content", None) or "", "tool_calls": calls}
 
 
+_SPRITE_SHEET = re.compile(r"\bsprite[\s-]*sheets?\b", re.I)
+
+
+async def sprite_sheet_request(ctx: Ctx, message: str, pending: Optional[PendingActions] = None) -> Optional[Dict[str, Any]]:
+    """A request for a sprite sheet when a picture was attached recently is set up by the server, not left to the model's choice of tool
+    (some chat models answer 'I can't do that' instead of calling it). The usual rules still apply: the cost is read back and nothing runs
+    until the person's next message is an explicit yes. -> {'reply', 'ui'} or None (not a sprite-sheet request, or no picture to work from)."""
+    if not _SPRITE_SHEET.search(str(message or "")) or str(message).lstrip().startswith("/") or not latest_attached(ctx.user_id, ATTACHED_RECENT_S):
+        return None
+    pending = pending or PENDING
+    out = await execute_tool(ctx, "make_sprite_sheet", {"notes": _clip(message, 300)}, user_message=message, pending=pending)
+    p = pending.get(ctx.user_id)
+    if p is None or p.tool != "make_sprite_sheet":
+        return {"reply": out["text"].removeprefix("Could not do that: ") if out["text"].startswith("Could not do that") else "I couldn't set that up right now.", "ui": []}
+    pending.arm(ctx.user_id)
+    return {"reply": f"Ready to {p.description} (estimated cost about ${p.estimate_usd:.2f}). Say 'yes' to go ahead, or tell me which animations you want instead.", "ui": []}
+
+
 async def pre_turn(ctx: Ctx, message: str, pending: Optional[PendingActions] = None) -> Optional[Dict[str, Any]]:
     """Handle the cases that never need the model: a yes to a read-back action, a cancel, a sound-effect request.
     -> a finished answer {'reply', 'ui'} or None to carry on to the model."""
@@ -338,7 +356,7 @@ async def pre_turn(ctx: Ctx, message: str, pending: Optional[PendingActions] = N
         # not a yes: the action is cancelled and the message is handled normally
     if looks_like_sound_effect(message) and not message.lstrip().startswith("/"):
         return {"reply": SFX_REPLY, "ui": []}
-    return None
+    return await sprite_sheet_request(ctx, message, pending)
 
 
 async def run_model_with_tools(ctx: Optional[Ctx], messages: List[Dict[str, Any]], model_id: str, user_message: str, *, acompletion: Callable[..., Awaitable[Any]],

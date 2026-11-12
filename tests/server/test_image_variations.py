@@ -274,6 +274,18 @@ class TestSpriteSheet:
         assert titles[0].endswith("(sprite sheet)") and titles[1].endswith("(sprite sheet, transparent)")
 
     @pytest.mark.asyncio
+    async def test_a_sprite_sheet_request_is_set_up_by_the_server_without_any_model(self, setup):
+        prov, (store, _c, _s), ctx = setup
+        assert await helix_tools.sprite_sheet_request(ctx, "make me a sprite sheet") is None                    # nothing attached yet
+        item_id = await attach(ctx)
+        early = await helix_tools.sprite_sheet_request(ctx, "make me a sprite sheet of the attached image")
+        p = helix_tools.PENDING.get("alice")
+        assert "Ready to make a sprite sheet" in early["reply"] and "$0.28" in early["reply"] and p.armed and p.args["item_id"] == item_id
+        assert prov.calls == [] and store.spend == {}                                                          # nothing is spent before the yes
+        assert await helix_tools.sprite_sheet_request(ctx, "what is a sprite sheet?") is not None                # a mention with a picture still gets the read-back
+        assert await helix_tools.sprite_sheet_request(ctx, "/image a fox") is None and await helix_tools.sprite_sheet_request(ctx, "make a fox") is None
+
+    @pytest.mark.asyncio
     async def test_a_row_that_fails_is_left_out_and_not_charged(self, monkeypatch):
         prov = StripProvider(fail_on={3})
         monkeypatch.setattr(image_mod, "get_reference_provider", lambda: prov)
