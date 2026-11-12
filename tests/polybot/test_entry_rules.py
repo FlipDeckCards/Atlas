@@ -5,8 +5,10 @@ def test_entry_rules_by_desk():
     btc = Desk(from_env({}, asset="btc"), None, None)
     btc15 = Desk(from_env({}, asset="btc15"), None, None)
     # 5-minute: 30-70c blocked only in the final 60 seconds
-    assert btc._blocked_entry(45, 0.50) and not btc._blocked_entry(120, 0.50)
+    xrp = Desk(from_env({}, asset="xrp"), None, None)
+    assert xrp._blocked_entry(45, 0.50) and not xrp._blocked_entry(120, 0.50)
     assert not btc._blocked_entry(45, 0.80)
+    assert btc._block_rule(120, 0.50) == "btc 5m under 75c"            # 2026-11-11: BTC 5m's 75c floor
     # 15-minute: 70-90c blocked at any time
     assert btc15._blocked_entry(400, 0.75) and btc15._blocked_entry(600, 0.70)
     assert not btc15._blocked_entry(400, 0.90) and not btc15._blocked_entry(400, 0.60)
@@ -21,9 +23,9 @@ def test_btc_5m_blocks_flat_price_buys_at_any_price():
     assert btc._blocked_entry(200, 0.50, 0.0) and btc._blocked_entry(200, 0.35, -0.2)
     assert btc._blocked_entry(200, 0.85, 0.0) and btc._blocked_entry(200, 0.20, 0.3)
     # price moving: not blocked by this rule
-    assert not btc._blocked_entry(200, 0.50, 1.0) and not btc._blocked_entry(200, 0.80, -0.5)
+    assert not btc._blocked_entry(200, 0.80, 1.0) and not btc._blocked_entry(200, 0.80, -0.5)
     # without momentum the flat rule does not apply
-    assert not btc._blocked_entry(200, 0.50)
+    assert not btc._blocked_entry(200, 0.80)
     # the other 5-minute desks keep only the last-minute rule
     eth = Desk(from_env({}, asset="eth"), None, None)
     assert eth._block_rule(200, 0.50, 0.0) == "eth 5m under 85c"
@@ -48,7 +50,7 @@ def test_btc_15m_skips_down_bets_and_keeps_up_bets():
     assert b15._blocked_entry(400, 0.40, 0.0, "down")
     assert not b15._blocked_entry(400, 0.40, 0.0, "up")
     b5 = Desk(from_env({}, asset="btc"), None, None)
-    assert not b5._blocked_entry(400, 0.40, None, "down")   # BTC 5m unchanged
+    assert not b5._blocked_entry(400, 0.85, None, "down")   # BTC 5m: no Down rule at 85c (its 75c floor blocks under 75c)
 
 
 def test_btc_5m_blocks_down_buys_at_70_to_79c_only():
@@ -57,10 +59,11 @@ def test_btc_5m_blocks_down_buys_at_70_to_79c_only():
 
     btc = Desk(from_env({}, asset="btc"), None, None)
     assert btc._blocked_entry(200, 0.75, 0.5, "down") and btc._blocked_entry(200, 0.70, 0.5, "down")
-    assert not btc._blocked_entry(200, 0.80, 0.5, "down") and not btc._blocked_entry(200, 0.69, 0.5, "down")
-    # v1.39: the Up-under-40c block is gone; Up at 70-79c and Down under 40c stay allowed
-    assert not btc._blocked_entry(200, 0.35, 0.5, "up") and not btc._blocked_entry(200, 0.40, 0.5, "up")
-    assert not btc._blocked_entry(200, 0.75, 0.5, "up") and not btc._blocked_entry(200, 0.30, 0.5, "down")
+    assert not btc._blocked_entry(200, 0.80, 0.5, "down")
+    assert btc._block_rule(200, 0.69, 0.5, "down") == "btc 5m under 75c"    # 2026-11-11: under 75c the floor applies
+    # Up at 75-79c stays allowed; anything under 75c is now stopped by the floor, not an Up/Down rule
+    assert not btc._blocked_entry(200, 0.75, 0.5, "up")
+    assert btc._block_rule(200, 0.35, 0.5, "up") == "btc 5m under 75c" and btc._block_rule(200, 0.30, 0.5, "down") == "btc 5m under 75c"
     eth = Desk(from_env({}, asset="eth"), None, None)
     assert eth._block_rule(200, 0.75, 0.5, "down") == "eth 5m under 85c"   # v1.41: ETH 5m's floor is 85c, so 75c is blocked
 
@@ -78,5 +81,6 @@ def test_eth_5m_and_sol_5m_entry_price_floors():
     assert eth._block_rule(200, 0.85, 0.0) is None and eth._block_rule(200, 0.95, 0.0) is None
     # SOL 5m: buys under 75c are blocked; 75c and up allowed (momentum rule still applies separately)
     assert sol._block_rule(200, 0.74, 0.0) == "sol 5m under 75c" and sol._block_rule(200, 0.75, 0.0) is None
-    # BTC 5m and XRP 5m are not floored
-    assert btc._block_rule(200, 0.40, 1.0) is None and xrp._block_rule(200, 0.50, 1.0) is None
+    # BTC 5m is floored at 75c (2026-11-11); XRP 5m is not floored
+    assert btc._block_rule(200, 0.40, 1.0) == "btc 5m under 75c" and btc._block_rule(200, 0.75, 1.0) is None
+    assert xrp._block_rule(200, 0.50, 1.0) is None

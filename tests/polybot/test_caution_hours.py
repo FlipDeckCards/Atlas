@@ -24,4 +24,4 @@ def test_caution_hour_needs_85_calibrated_and_70c():
     assert d._calib_for(w7)(0.99) >= 0.85                    # ~85.7% calibrated: allowed
     assert d._calib_for(w10)(0.90) == d._calib(0.90)        # a normal hour keeps the normal confidence
     assert d._entry_check(w7.start + 60, w7, 0.65, 1.0, "up") == "caution hour under 70c"
-    assert d._entry_check(w10.start + 60, w10, 0.65, 1.0, "up") is None
+    assert d._entry_check(w10.start + 60, w10, 0.76, 1.0, "up") is None    # a normal hour: only the normal rules
