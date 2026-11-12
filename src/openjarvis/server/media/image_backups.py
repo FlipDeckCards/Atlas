@@ -122,6 +122,38 @@ class GeminiImage:
         raise _unusable("Gemini")
 
 
+DESCRIBE_PROMPT = ("Look at the attached character image(s). In ONE sentence of at most 60 words, list the permanent design features that must never change in any "
+                   "animation frame of this character: headwear such as a hood, hat or helmet, hair colour and style, face, outfit layers, cape or coat, "
+                   "accessories, weapon, colour scheme and glowing elements. Output only that sentence.")
+
+
+async def describe_character(reference, client: Optional[httpx.AsyncClient] = None) -> str:
+    """One sentence naming the features of the reference character that every frame must keep (a cheap text-model call, a fraction of a cent).
+    Returns "" on any problem: the sheet is then made with the generic identity lock only."""
+    key = _key(("GEMINI_API_KEY", "GOOGLE_API_KEY"))
+    refs = [] if reference is None else (list(reference) if isinstance(reference, list) else [reference])
+    if not key or not refs:
+        return ""
+    model = _key(("GEMINI_TEXT_MODEL",)) or "gemini-2.5-flash"
+    parts = [{"inlineData": {"mimeType": m or "image/png", "data": base64.b64encode(d).decode("ascii")}} for d, m in refs[:4]] + [{"text": DESCRIBE_PROMPT}]
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    headers = {"x-goog-api-key": key, "Content-Type": "application/json"}
+    try:
+        if client is not None:
+            r = await client.post(url, json={"contents": [{"parts": parts}]}, headers=headers, timeout=30.0)
+        else:
+            async with httpx.AsyncClient(timeout=30.0) as c:
+                r = await c.post(url, json={"contents": [{"parts": parts}]}, headers=headers)
+        if r.status_code != 200:
+            logger.warning("character description answered HTTP %s", r.status_code)
+            return ""
+        text = "".join(p.get("text", "") for p in r.json()["candidates"][0]["content"]["parts"] if not p.get("thought"))
+        return " ".join(text.split())[:400]
+    except Exception as exc:
+        logger.warning("character description failed (%s)", type(exc).__name__)
+        return ""
+
+
 class GeminiProImage(GeminiImage):
     """Nano Banana Pro (Gemini 3 Pro Image): much better at keeping a character's design and art style from a reference picture.
     Used for work on an attached picture (variations, edits, sprite sheets). If Google refuses the model for this key (404, 403 or 400), the

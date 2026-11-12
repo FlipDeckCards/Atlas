@@ -83,7 +83,19 @@ def clean_sections(value, unlimited: bool = False) -> List[Tuple[str, str]]:
     return out
 
 
-def template_prompt(sections: Sequence[Tuple[str, str]], notes: str = "") -> str:
+IDENTITY_LOCK = (
+    "IDENTITY LOCK: the character must look exactly like the reference in EVERY frame of EVERY panel, including walking, running, dashing, jumping, "
+    "being hurt and dying. Never remove, lower, hide or redesign any signature element: headwear (hood, hat, helmet), hair, face, clothing layers, "
+    "cape or coat, accessories, weapon, colours or glowing details. Motion, speed lines and effects must never change the design."
+)
+
+
+def _features(features: str) -> str:
+    f = " ".join(str(features or "").split())[:400]
+    return f" The permanent features to keep in every single frame: {f}" if f else ""
+
+
+def template_prompt(sections: Sequence[Tuple[str, str]], notes: str = "", features: str = "") -> str:
     panels = "\n".join(f"{i}. {label}: {hint}." for i, (label, hint) in enumerate(sections, 1))
     return (
         "Use the attached character as the exact reference: the same design, face, hair, outfit, colours, proportions and art style. "
@@ -92,14 +104,15 @@ def template_prompt(sections: Sequence[Tuple[str, str]], notes: str = "") -> str
         "capital letters, spelled exactly as given. Panels, in order, left to right then top to bottom:\n"
         f"{panels}\n"
         "In every character panel show the frames left to right in order, evenly spaced, each frame the same size, the character facing the same "
-        "direction, the feet on the same ground line, with a smooth progression of the motion. Keep the character identical in every frame. "
+        "direction, the feet on the same ground line, with a smooth progression of the motion. "
+        + IDENTITY_LOCK + _features(features) + " "
         "Skill and attack panels use glowing effects drawn from the character's own colours and powers. Crisp clean line work, no blur, "
         "no watermark, no extra text besides the panel names."
         + (f" Extra notes from the person: {notes}" if notes else "")
     )
 
 
-def strip_prompt(animation: str, frames: int, notes: str = "") -> str:
+def strip_prompt(animation: str, frames: int, notes: str = "", features: str = "") -> str:
     hint = ANIMATION_HINTS.get(animation.strip().lower(), f"the '{animation}' animation")
     return (
         f"Use the attached character as the exact reference: the same design, colours, proportions, outfit and art style. "
@@ -108,7 +121,8 @@ def strip_prompt(animation: str, frames: int, notes: str = "") -> str:
         f"Every frame is the same size, evenly spaced, with the whole character visible and the feet on the same ground line, "
         f"and the character faces the same direction as in the reference. "
         f"Plain solid flat magenta (#FF00FF) background everywhere. No text, no labels, no numbers, no grid lines, no borders, "
-        f"no ground shadow, no frame boxes, nothing overlapping between frames."
+        f"no ground shadow, no frame boxes, nothing overlapping between frames. "
+        + IDENTITY_LOCK + _features(features)
         + (f" Extra notes from the person: {notes}" if notes else "")
     )
 

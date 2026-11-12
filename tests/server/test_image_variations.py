@@ -325,6 +325,49 @@ class TestNanoBananaPro:
         assert store.spent("media:alice") == pytest.approx(0.08)                       # two fallbacks at Flash price, not 2 x $0.134
 
 
+class TestIdentityLock:
+    def test_both_prompts_carry_the_lock_and_the_features(self):
+        from openjarvis.server.media import spritesheet as sp
+
+        for p in (sp.template_prompt(sp.clean_sections(None), "", "a dark hood worn up, blue glowing trim"), sp.strip_prompt("Walk", 7, "", "a dark hood worn up, blue glowing trim")):
+            assert "IDENTITY LOCK" in p and "hood" in p and "Never remove" in p and "a dark hood worn up, blue glowing trim" in p
+        assert "permanent features" not in sp.template_prompt(sp.clean_sections(None))            # nothing to add when the description is unavailable
+
+    @pytest.mark.asyncio
+    async def test_the_features_are_read_from_the_reference_and_put_in_the_sheet_prompt(self, setup, monkeypatch):
+        prov, _shared, ctx = setup
+        seen = {}
+
+        async def fake(reference):
+            seen["ref"] = reference
+            return "a dark hooded cloak with the hood up"
+
+        monkeypatch.setattr(image_mod, "describe_character", fake)
+        item_id = await attach(ctx)
+        await service.sprite_sheet_and_save(ctx, item_id)
+        assert seen["ref"][1] == "image/jpeg" and "a dark hooded cloak with the hood up" in prov.calls[0]["prompt"]
+
+    @pytest.mark.asyncio
+    async def test_the_description_call_parses_the_answer_and_fails_quietly(self, monkeypatch):
+        from openjarvis.server.media.image_backups import describe_character
+
+        monkeypatch.setenv("GEMINI_API_KEY", "k")
+        sent = {}
+
+        def ok(request: httpx.Request):
+            sent["url"], sent["parts"] = str(request.url), json.loads(request.content)["contents"][0]["parts"]
+            return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "A hooded cloak,  blue glow."}]}}]})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(ok)) as c:
+            assert await describe_character((b"IMG", "image/png"), client=c) == "A hooded cloak, blue glow."
+        assert "gemini-2.5-flash" in sent["url"] and sent["parts"][0]["inlineData"]["mimeType"] == "image/png" and "permanent design features" in sent["parts"][-1]["text"]
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(500))) as c:
+            assert await describe_character((b"IMG", "image/png"), client=c) == ""
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+        assert await describe_character((b"IMG", "image/png")) == ""
+
+
 class TestTemplateSheet:
     def test_the_standard_panels_and_the_prompt(self):
         from openjarvis.server.media import spritesheet as sp

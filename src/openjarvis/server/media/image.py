@@ -33,6 +33,13 @@ def get_reference_provider() -> MediaProvider:
     return PROVIDERS[GeminiProImage.id]
 
 
+async def describe_character(reference) -> str:
+    """The reference character's permanent features in one sentence ('' when it cannot be had)."""
+    from openjarvis.server.media.image_backups import describe_character as _describe
+
+    return await _describe(reference)
+
+
 def get_provider(env: Optional[dict] = None) -> MediaProvider:
     name = (
         (os.environ if env is None else env).get("MEDIA_IMAGE_PROVIDER")

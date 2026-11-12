@@ -362,8 +362,9 @@ async def _template_sheet(ctx: Ctx, item_id: str, animations: Any, notes: str) -
     except StorageError as exc:
         raise MediaServiceError(exc.status_code, "storage_failed", exc.public_message) from None
     notes = " ".join(str(notes or "").split())[:300]
+    features = await image_mod.describe_character((original, source.mime_type))      # what every frame must keep (the hood, the coat, the glow...)
     try:
-        result = await _generate_retrying(provider, prompt=spritesheet.template_prompt(sections, notes), reference=(original, source.mime_type),
+        result = await _generate_retrying(provider, prompt=spritesheet.template_prompt(sections, notes, features), reference=(original, source.mime_type),
                                           aspect_ratio=TEMPLATE_ASPECT, image_size=TEMPLATE_SIZE)
     except MediaError as exc:
         raise MediaServiceError(exc.status_code, "media_failed", exc.public_message) from None
@@ -403,6 +404,7 @@ async def sprite_sheet_and_save(ctx: Ctx, item_id: str, animations: Any = None, 
     except StorageError as exc:
         raise MediaServiceError(exc.status_code, "storage_failed", exc.public_message) from None
     notes = " ".join(str(notes or "").split())[:300]
+    features = await image_mod.describe_character((original, source.mime_type))
     sem = asyncio.Semaphore(VARIATION_PARALLEL)
     spent = 0.0
     strips: Dict[str, bytes] = {}
@@ -411,7 +413,7 @@ async def sprite_sheet_and_save(ctx: Ctx, item_id: str, animations: Any = None, 
         nonlocal spent
         async with sem:
             try:
-                result = await _generate_retrying(provider, prompt=spritesheet.strip_prompt(name, n, notes), reference=(original, source.mime_type),
+                result = await _generate_retrying(provider, prompt=spritesheet.strip_prompt(name, n, notes, features), reference=(original, source.mime_type),
                                                   aspect_ratio="21:9")
             except MediaError as exc:
                 logger.warning("sprite strip %s failed (HTTP %s)", name, exc.status_code)
