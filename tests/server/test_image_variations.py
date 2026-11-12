@@ -153,6 +153,54 @@ async def test_the_tool_without_any_picture_makes_nothing(setup):
     assert "no picture" in out["text"] and helix_tools.PENDING.get("alice") is None and prov.calls == []
 
 
+class TestUnlimitedAccounts:
+    """UNLIMITED_EMAILS (default: the owner and verident0115@gmail.com) have no variation, media-spend, storage or attachment caps."""
+
+    def test_who_is_unlimited(self, monkeypatch):
+        monkeypatch.delenv("UNLIMITED_EMAILS", raising=False)
+        assert hardening.unlimited("verident0115@gmail.com") and hardening.unlimited("Michael.Dano1523@gmail.com")
+        assert not hardening.unlimited("someone@else.com") and not hardening.unlimited("")
+        assert hardening.unlimited("a@b.io", {"UNLIMITED_EMAILS": "a@b.io"}) and not hardening.unlimited("verident0115@gmail.com", {"UNLIMITED_EMAILS": "a@b.io"})
+
+    def test_the_count_cap_lifts_to_a_ceiling_of_100(self):
+        assert service.clamp_variations(40, True) == 40 and service.clamp_variations(5000, True) == 100
+        assert service.clamp_variations(40, False) == 10
+
+    @pytest.mark.asyncio
+    async def test_no_daily_media_cap_and_no_storage_quota(self, setup, monkeypatch):
+        prov, shared, _ctx = setup
+        monkeypatch.setenv("DAILY_MEDIA_SPEND_CAP_USD", "0.10")
+        monkeypatch.setenv("MEDIA_USER_QUOTA_BYTES", "1")
+        ctx = make_ctx("verident", *shared)
+        ctx.unlimited = True
+        item_id = await attach(ctx)
+        res = await service.vary_and_save(ctx, item_id, "x", 25)                       # $1.00 against a $0.10 cap, library over its quota
+        assert len(res["items"]) == 25 and shared[0].spent("media:verident") == pytest.approx(1.0)   # still logged, so it shows in Out
+        capped = make_ctx("someone", *shared)
+        with pytest.raises(MediaServiceError):
+            await service.vary_and_save(capped, item_id, "x", 3)                       # everyone else keeps the caps (and cannot use another's picture)
+
+    def test_a_big_request_is_refused_unless_the_token_belongs_to_an_unlimited_account(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from openjarvis.server import auth_routes
+        from openjarvis.server.auth_middleware import AuthMiddleware
+
+        monkeypatch.setenv("JWT_SECRET_KEY", "a-long-random-test-secret-0123456789abcdef")
+        big = str(hardening.MAX_BODY_BYTES + 1)
+        assert hardening.too_large_for_path("/api/chat", big) and not hardening.too_large_for_path("/api/chat", big, big=True)
+        assert hardening.too_large_for_path("/api/chat", str(hardening.UNLIMITED_BODY_BYTES + 1), big=True)
+
+        def caller(email):
+            tok = auth_routes.create_token("u1", email) if hasattr(auth_routes, "create_token") else None
+            return AuthMiddleware._unlimited_caller(SimpleNamespace(headers={"Authorization": f"Bearer {tok}"}))
+
+        if hasattr(auth_routes, "create_token"):
+            assert caller("verident0115@gmail.com") and not caller("someone@else.com")
+        assert not AuthMiddleware._unlimited_caller(SimpleNamespace(headers={}))
+        assert not AuthMiddleware._unlimited_caller(SimpleNamespace(headers={"Authorization": "Bearer nonsense"}))
+
+
 @pytest.mark.asyncio
 async def test_the_gemini_request_carries_the_picture_as_inline_data(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "k")

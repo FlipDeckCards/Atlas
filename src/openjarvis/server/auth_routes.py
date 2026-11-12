@@ -127,4 +127,4 @@ async def me(request: Request):
     payload = decode_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
-    return JSONResponse({"user_id": payload["sub"], "email": payload.get("email", "")})
+    return JSONResponse({"user_id": payload["sub"], "email": payload.get("email", ""), "unlimited": hardening.unlimited(payload.get("email", ""))})

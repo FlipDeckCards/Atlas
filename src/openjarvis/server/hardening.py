@@ -234,7 +234,7 @@ CREW_TOOL_ROUNDS = 10  # how many tool calls in a row Helix may make to work som
 CREW_HISTORY_MESSAGES = 24  # how much of the conversation she remembers (ordinary chat keeps 10)
 
 
-def too_large_for_path(path: str, content_length: Optional[str]) -> bool:
+def too_large_for_path(path: str, content_length: Optional[str], big: bool = False) -> bool:
     """True when the declared body size is over the cap for this path. Only /api/* is checked."""
     if not path.startswith("/api/") or not content_length:
         return False
@@ -242,7 +242,7 @@ def too_large_for_path(path: str, content_length: Optional[str]) -> bool:
         n = int(content_length)
     except ValueError:
         return False
-    cap = MAX_UPLOAD_BODY_BYTES if path == "/api/voice/transcribe" else MAX_BODY_BYTES
+    cap = MAX_UPLOAD_BODY_BYTES if path == "/api/voice/transcribe" else (UNLIMITED_BODY_BYTES if big else MAX_BODY_BYTES)
     return n > cap
 
 
@@ -305,6 +305,23 @@ def spend_exempt(email: str, env: Optional[Mapping[str, str]] = None) -> bool:
     They skip the daily spend cap and the daily briefing-Listen limit. Everyone else is unchanged."""
     e = os.environ if env is None else env
     raw = (e.get("SPEND_CAP_EXEMPT_EMAILS") or "").strip() or OWNER_EMAIL
+    allowed = {x.strip().lower() for x in raw.split(",") if x.strip()}
+    return bool(email) and email.strip().lower() in allowed
+
+
+UNLIMITED_DEFAULT = "michael.dano1523@gmail.com,verident0115@gmail.com"
+UNLIMITED_ATTACHMENTS = 50                                   # a technical ceiling, not a limit anyone is expected to reach
+UNLIMITED_ATTACH_TOTAL_BYTES = 100 * 1024 * 1024              # all of one message's attachments together, decoded: keeps the server from running out of memory
+UNLIMITED_IMAGE_B64_CHARS = (UNLIMITED_ATTACH_TOTAL_BYTES * 4) // 3 + 8
+UNLIMITED_BODY_BYTES = UNLIMITED_IMAGE_B64_CHARS + MAX_MESSAGE_CHARS + 16 * 1024
+
+
+def unlimited(email: str, env: Optional[Mapping[str, str]] = None) -> bool:
+    """True for the accounts in UNLIMITED_EMAILS (comma-separated; default: the owner and verident0115@gmail.com).
+    They have no cap on image variations (count, daily media spend, library storage) and no attachment size or count limits on chat images.
+    Chat's own daily spend cap and the rate limits are not changed by this."""
+    e = os.environ if env is None else env
+    raw = (e.get("UNLIMITED_EMAILS") or "").strip() or UNLIMITED_DEFAULT
     allowed = {x.strip().lower() for x in raw.split(",") if x.strip()}
     return bool(email) and email.strip().lower() in allowed
 

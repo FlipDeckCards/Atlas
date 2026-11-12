@@ -29,11 +29,27 @@ class AuthMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self._api_key = api_key or os.environ.get("OPENJARVIS_API_KEY", "")
 
+    @staticmethod
+    def _unlimited_caller(request: Request) -> bool:
+        scheme, _, token = request.headers.get("Authorization", "").partition(" ")
+        if scheme.lower() != "bearer":
+            return False
+        try:
+            from openjarvis.server import hardening
+            from openjarvis.server.auth_routes import decode_token
+
+            payload = decode_token(token)
+            return bool(payload and payload.get("sub") and hardening.unlimited(payload.get("email", "")))
+        except Exception:
+            return False
+
     async def dispatch(self, request: Request, call_next):  # noqa: ANN001
         from openjarvis.server.hardening import too_large_for_path
 
         if too_large_for_path(request.url.path, request.headers.get("content-length")):
-            return JSONResponse({"detail": "Request too large"}, status_code=413)
+            # only a verified unlimited account (UNLIMITED_EMAILS) may send a bigger body; everyone else is refused before anything is read
+            if too_large_for_path(request.url.path, request.headers.get("content-length"), big=True) or not self._unlimited_caller(request):
+                return JSONResponse({"detail": "Request too large"}, status_code=413)
         # POST /api/briefs (ingest token, see briefs.py) and POST /api/stripe/webhook (Stripe signature, see billing.py) are the ONLY routes outside the login. No other path or method is exempt.
         ingest = request.method == "POST" and request.url.path in ("/api/briefs", "/api/stripe/webhook")
         if self._api_key and not ingest and self._requires_auth(request.url.path):

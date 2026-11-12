@@ -143,7 +143,7 @@ async def keep_images(ctx: "CrewCtx", media_ctx: Any, items: List[Any]) -> List[
     from openjarvis.server.media import service as media
 
     saved = []
-    for name, b64, mime in items[:5]:
+    for name, b64, mime in items[:50]:
         try:
             item = await media.save_item(media_ctx, kind="image", data=base64.b64decode(b64), mime=mime or "image/jpeg", title=f"Attached: {name}", prompt=None, provider="upload")
         except Exception:

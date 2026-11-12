@@ -24,6 +24,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
+from openjarvis.server import hardening
 from openjarvis.server.media import service
 from openjarvis.server.media.service import Ctx, MediaServiceError
 
@@ -49,7 +50,7 @@ TOOLS: List[Dict[str, Any]] = [
                        "Use it when the user attaches an image and asks for versions, variations or edits. Costs money per picture, so the system asks the user to confirm first.",
         "parameters": {"type": "object", "properties": {
             "prompt": {"type": "string", "description": "What to change or how to vary the picture (500 characters at most)."},
-            "count": {"type": "integer", "description": "How many pictures to make: 4 if not stated, at most 10."},
+            "count": {"type": "integer", "description": "How many pictures to make: the number the person asks for, 4 if not stated."},
             "item_id": {"type": "string", "description": "The library id of the picture. Leave out to use the most recently attached picture."}}, "required": ["prompt"]}}},
     {"type": "function", "function": {
         "name": "list_library",
@@ -173,7 +174,7 @@ async def keep_attached(ctx: Ctx, items: List[Any]) -> List[Dict[str, Any]]:
     import base64
 
     saved: List[Dict[str, Any]] = []
-    for name, b64, mime in items[:5]:
+    for name, b64, mime in items[:hardening.UNLIMITED_ATTACHMENTS]:
         try:
             item = await service.save_item(ctx, kind="image", data=base64.b64decode(b64), mime=mime or "image/jpeg", title=f"Attached: {name}", prompt=None, provider="upload")
         except Exception:
@@ -187,7 +188,7 @@ async def keep_attached(ctx: Ctx, items: List[Any]) -> List[Dict[str, Any]]:
 
 def describe(tool: str, args: Dict[str, Any]) -> str:
     if tool == "vary_image":
-        n = service.clamp_variations(args.get("count"))
+        n = service.clamp_variations(args.get("count"), True)         # args hold the already-clamped count (see execute_tool)
         return f'make {n} {"variation" if n == 1 else "variations"} of your picture: "{_clip(args.get("prompt"), 120)}"'
     if tool == "generate_image":
         return f'make an image: "{_clip(args.get("prompt"), 120)}"'
@@ -208,9 +209,9 @@ async def run_paid(ctx: Ctx, tool: str, args: Dict[str, Any]) -> Dict[str, Any]:
     return {"saved": True, "title": item.title, "item": service.with_url(ctx, item)}
 
 
-def _estimate(tool: str, args: Dict[str, Any]) -> float:
+def _estimate(tool: str, args: Dict[str, Any], ctx: Optional[Ctx] = None) -> float:
     if tool == "vary_image":
-        return service.estimate_variations(args.get("count"))
+        return service.estimate_variations(args.get("count"), bool(ctx and ctx.unlimited))
     if tool == "generate_image":
         return service.estimate_cost("image", steps=4)
     return service.estimate_cost("sound", text=_clip(args.get("text"), 1000))
@@ -240,8 +241,8 @@ async def execute_tool(ctx: Ctx, name: str, args: Dict[str, Any], *, user_messag
                 item = await service.get_owned(ctx, item_id)
                 if item.kind != "image":
                     return {"text": "Error: that item is not a picture.", "ui": ui}
-                args = dict(args, item_id=item.id, count=service.clamp_variations(args.get("count")))
-            est = _estimate(name, args)
+                args = dict(args, item_id=item.id, count=service.clamp_variations(args.get("count"), ctx.unlimited))
+            est = _estimate(name, args, ctx)
             p = pending.create(ctx.user_id, name, args, est, describe(name, args))
             # nothing has been spent and nothing runs until the person's next message is an explicit yes
             return {"text": f"NOT RUN YET. Waiting for the user's confirmation. Tell them you will {p.description}, estimated cost about ${est:.4f}, and ask them to reply 'yes'.", "ui": ui}

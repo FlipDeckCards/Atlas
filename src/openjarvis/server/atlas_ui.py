@@ -145,13 +145,13 @@ def _get_user_id(request: Request) -> str:
 # CHANGE 2: add client_date field
 class Attachment(BaseModel):
     name: str = Field("", max_length=200)
-    data: str = Field(..., max_length=hardening.MAX_IMAGE_B64_CHARS)        # base64
+    data: str = Field(..., max_length=hardening.UNLIMITED_IMAGE_B64_CHARS)        # base64 (the normal per-file limit is applied in chat())
     mime: Optional[str] = Field(None, max_length=100)
 
 
 class ChatRequest(BaseModel):
     message: str = Field(..., max_length=hardening.MAX_MESSAGE_CHARS)
-    image: Optional[str] = Field(None, max_length=hardening.MAX_IMAGE_B64_CHARS)
+    image: Optional[str] = Field(None, max_length=hardening.UNLIMITED_IMAGE_B64_CHARS)
     document: Optional[str] = Field(None, max_length=documents.MAX_DOC_B64_CHARS)        # a Word or text file, base64
     document_name: Optional[str] = Field(None, max_length=200)
     attachments: List[Attachment] = Field(default_factory=list)                          # up to MAX_ATTACHMENTS images and documents
@@ -521,6 +521,7 @@ async def index():
     .voice-note { color:#ff3344; margin-top:6px; font-size:11px; line-height:1.5; white-space:normal; overflow-wrap:anywhere; }
     .msg { max-width:92%; padding:10px 12px; font-size:12px; line-height:1.6; border-radius:2px; }
     .msg-tag { font-size:9px; letter-spacing:2px; margin-bottom:4px; opacity:0.5; }
+    body.drop-active::after { content:"Drop to attach"; position:fixed; inset:0; z-index:9999; display:flex; align-items:center; justify-content:center; font-size:22px; letter-spacing:3px; color:#00e5ff; background:rgba(0,10,20,0.72); border:2px dashed #00e5ff; pointer-events:none; }
     .msg-thumb { margin-top:6px; border-radius:2px; overflow:hidden; border:1px solid rgba(0,229,255,0.2); display:inline-block; }
     .msg-thumb img { display:block; max-width:160px; max-height:100px; object-fit:cover; }
     .var-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:8px; margin-top:8px; }
@@ -914,7 +915,18 @@ async def index():
     // up to 5 images and documents on one message
     let pending = [];
     const DOC_EXT = /\.(docx|txt|md|markdown|csv|tsv|json|log|rtf)$/i;
-    const MAX_ATTACH = 5, MAX_DOC_BYTES = 3 * 1024 * 1024, MAX_IMG_BYTES = 5 * 1024 * 1024, MAX_ALL_BYTES = 12 * 1024 * 1024;
+    let MAX_ATTACH = 5, MAX_DOC_BYTES = 3 * 1024 * 1024, MAX_IMG_BYTES = 5 * 1024 * 1024, MAX_ALL_BYTES = 12 * 1024 * 1024;
+    let limitsFor = null;                                           // the token the limits were set for
+    async function loadAttachLimits() {                             // accounts in UNLIMITED_EMAILS have no attachment limits (the server keeps only a memory ceiling)
+      const t = getToken();
+      if (!t || limitsFor === t) return;
+      limitsFor = t;
+      try {
+        const r = await fetch('/api/auth/me', { headers: authHeader() });
+        const d = r.ok ? await r.json() : {};
+        if (d.unlimited) { MAX_ATTACH = 50; MAX_IMG_BYTES = 100 * 1024 * 1024; MAX_ALL_BYTES = 100 * 1024 * 1024; }
+      } catch (e) { /* the normal limits stay */ }
+    }
 
     function paintAttach() {
       imgPreviewBar.textContent = '';
@@ -933,19 +945,39 @@ async def index():
     }
     function clearPendingImage() { pending = []; paintAttach(); imgInput.value = ''; }
 
-    imgInput.addEventListener('change', async () => {
-      const files = Array.from(imgInput.files || []); imgInput.value = '';
+    imgInput.addEventListener('change', () => { const files = Array.from(imgInput.files || []); imgInput.value = ''; attachFiles(files); });
+
+    // Paste (Ctrl+V / Cmd+V) or drag and drop files anywhere on the page: same checks and limits as the paperclip.
+    document.addEventListener('paste', e => {
+      const files = Array.from((e.clipboardData && e.clipboardData.files) || []);
+      if (!files.length) return;                              // plain text pastes as usual
+      e.preventDefault();
+      attachFiles(files.map((f, i) => (f.name && f.name !== 'image.png') ? f : new File([f], 'pasted-' + Date.now() + '-' + (i + 1) + '.' + ((f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')), { type: f.type })));
+    });
+    const hasFiles = e => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+    let dragDepth = 0;
+    document.addEventListener('dragenter', e => { if (hasFiles(e)) { dragDepth++; document.body.classList.add('drop-active'); } });
+    document.addEventListener('dragleave', e => { if (hasFiles(e) && --dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('drop-active'); } });
+    document.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });      // required to allow a drop
+    document.addEventListener('drop', e => {
+      if (!hasFiles(e)) return;
+      e.preventDefault(); dragDepth = 0; document.body.classList.remove('drop-active');   // also stops the browser opening the file
+      attachFiles(Array.from(e.dataTransfer.files));
+    });
+
+    async function attachFiles(files) {
+      await loadAttachLimits();
       for (const file of files) {
         const img = file.type.startsWith('image/'), doc = !img && DOC_EXT.test(file.name);
         if (pending.length >= MAX_ATTACH) { addMsg('atlas', 'Up to ' + MAX_ATTACH + ' files at a time. Send this message first, then attach more.', null); break; }
         if (!img && !doc) { addMsg('atlas', /\.doc$/i.test(file.name) ? file.name + ': old .doc files cannot be read. Save it as .docx or .txt and attach that.' : file.name + ': attach images, Word (.docx) or text documents (.txt, .md, .csv, .json).', null); continue; }
-        if (file.size > (doc ? MAX_DOC_BYTES : MAX_IMG_BYTES)) { addMsg('atlas', file.name + ' is too large (limit ' + (doc ? 3 : 5) + ' MB).', null); continue; }
-        if (pending.reduce((n, p) => n + p.size, 0) + file.size > MAX_ALL_BYTES) { addMsg('atlas', 'Those files are too large together (limit 12 MB).', null); continue; }
+        if (file.size > (doc ? MAX_DOC_BYTES : MAX_IMG_BYTES)) { addMsg('atlas', file.name + ' is too large (limit ' + Math.round((doc ? MAX_DOC_BYTES : MAX_IMG_BYTES) / 1048576) + ' MB).', null); continue; }
+        if (pending.reduce((n, p) => n + p.size, 0) + file.size > MAX_ALL_BYTES) { addMsg('atlas', 'Those files are too large together (limit ' + Math.round(MAX_ALL_BYTES / 1048576) + ' MB).', null); continue; }
         const url = await new Promise(res => { const rd = new FileReader(); rd.onload = e => res(String(e.target.result)); rd.onerror = () => res(''); rd.readAsDataURL(file); });
         if (url) pending.push({ url, b64: url.split(',')[1], name: file.name, size: file.size, doc, mime: img ? file.type : '' });
       }
       paintAttach();
-    });
+    }
 
     function setTalking(on) {
       window._helixTalking = on;
@@ -1774,7 +1806,10 @@ async def chat(req: ChatRequest, request: Request):
     limited = _limited(request, {"chat_user": user_id, "chat_ip": hardening.client_ip(request)})
     if limited:
         return limited
-    if req.image and len(req.image) > hardening.MAX_IMAGE_B64_CHARS:
+    owner_unlimited = hardening.unlimited(getattr(request.state, "user_email", "") or "")      # UNLIMITED_EMAILS: no attachment size or count limits
+    max_files = hardening.UNLIMITED_ATTACHMENTS if owner_unlimited else hardening.MAX_ATTACHMENTS
+    max_total = hardening.UNLIMITED_ATTACH_TOTAL_BYTES if owner_unlimited else hardening.MAX_ATTACH_TOTAL_BYTES
+    if not owner_unlimited and (len(req.image or "") > hardening.MAX_IMAGE_B64_CHARS or any(len(a.data) > hardening.MAX_IMAGE_B64_CHARS for a in req.attachments)):
         return JSONResponse({"detail": "Image too large (limit %d MB)" % (hardening.MAX_IMAGE_BYTES // (1024 * 1024)), "reply": "Image too large."}, status_code=413)
     store = request.app.state.session_store
 
@@ -1784,10 +1819,10 @@ async def chat(req: ChatRequest, request: Request):
     if req.image:
         images.append((req.image, "image/jpeg", "image"))
     items = ([(req.document_name or "document.txt", req.document, None)] if req.document else []) + [(a.name, a.data, a.mime) for a in req.attachments]
-    if len(items) + len(images) > hardening.MAX_ATTACHMENTS:
-        return JSONResponse({"detail": "Attach up to %d files at a time." % hardening.MAX_ATTACHMENTS, "reply": "Attach up to %d files at a time." % hardening.MAX_ATTACHMENTS}, status_code=400)
-    if (sum(len(d) for _, d, _ in items) + sum(len(i) for i, _ in images)) * 3 // 4 > hardening.MAX_ATTACH_TOTAL_BYTES:
-        return JSONResponse({"detail": "Those files are too large together (limit %d MB)." % (hardening.MAX_ATTACH_TOTAL_BYTES // (1024 * 1024)), "reply": "Those files are too large together."}, status_code=413)
+    if len(items) + len(images) > max_files:
+        return JSONResponse({"detail": "Attach up to %d files at a time." % max_files, "reply": "Attach up to %d files at a time." % max_files}, status_code=400)
+    if (sum(len(d) for _, d, _ in items) + sum(len(i) for i, _ in images)) * 3 // 4 > max_total:
+        return JSONResponse({"detail": "Those files are too large together (limit %d MB)." % (max_total // (1024 * 1024)), "reply": "Those files are too large together."}, status_code=413)
     for raw_name, data, mime in items:
         name = documents.clean_name(raw_name or "document.txt")
         if (mime or "").startswith("image/") or (not mime and re.search(r"\.(png|jpe?g|gif|webp)$", name, re.I)):

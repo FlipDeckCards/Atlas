@@ -68,6 +68,7 @@ class Ctx:
     store: Any            # the session store (spend ledger)
     catalog: Any
     storage: Any
+    unlimited: bool = False   # an UNLIMITED_EMAILS account: no daily media spend cap, no storage quota, no variation count cap
 
 
 def ctx_from_request(request, paid: bool = False) -> Ctx:
@@ -84,7 +85,8 @@ def ctx_from_request(request, paid: bool = False) -> Ctx:
     catalog = getattr(app.state, "media_catalog", None)
     if catalog is None:
         catalog = MediaCatalog(store._pool)
-    return Ctx(getattr(request.state, "user_id", "system"), hardening.client_ip(request), store, catalog, storage)
+    return Ctx(getattr(request.state, "user_id", "system"), hardening.client_ip(request), store, catalog, storage,
+               unlimited=hardening.unlimited(getattr(request.state, "user_email", "") or ""))
 
 
 # ── gates ───────────────────────────────────────────────────────────────────────────────────────
@@ -102,6 +104,8 @@ def rate_limit(ctx: Ctx, group: str = "media") -> None:
 
 
 async def check_quota(ctx: Ctx, extra: int = 0) -> None:
+    if ctx.unlimited:
+        return
     used = await ctx.catalog.total_bytes(ctx.user_id)
     cap = quota_bytes()
     if used + extra > cap or (extra == 0 and used >= cap):          # extra=0 asks 'is there any room at all?' (before a paid call)
@@ -122,7 +126,7 @@ async def gate_generation(ctx: Ctx, provider, estimate: float) -> None:
     if not provider.configured():
         raise MediaServiceError(503, "media_not_configured", "This media provider is not configured.")
     day = hardening.utc_day()
-    blocked = await over_cap(ctx.store, "media:" + ctx.user_id, estimate, cap, day) or await over_cap(ctx.store, GLOBAL_KEY, estimate, media_global_cap_usd(), day)
+    blocked = None if ctx.unlimited else (await over_cap(ctx.store, "media:" + ctx.user_id, estimate, cap, day) or await over_cap(ctx.store, GLOBAL_KEY, estimate, media_global_cap_usd(), day))
     if blocked:
         raise MediaServiceError(429, blocked["error"], blocked["detail"], cap_usd=blocked["cap_usd"], spent_usd=blocked["spent_usd"])
     await check_quota(ctx)                    # no point paying for something that cannot be saved
@@ -226,18 +230,19 @@ async def generate_and_save(ctx: Ctx, kind: str, *, prompt: str = "", steps: Opt
 
 
 VARIATION_DEFAULT, VARIATION_MAX, VARIATION_PARALLEL = 4, 10, 3
+VARIATION_MAX_UNLIMITED = 100          # a technical ceiling for UNLIMITED_EMAILS accounts, so one request cannot run for hours
 
 
-def clamp_variations(n: Any) -> int:
+def clamp_variations(n: Any, unlimited: bool = False) -> int:
     try:
         v = int(n) if n is not None else VARIATION_DEFAULT
     except (TypeError, ValueError):
         v = VARIATION_DEFAULT
-    return max(1, min(VARIATION_MAX, v))
+    return max(1, min(VARIATION_MAX_UNLIMITED if unlimited else VARIATION_MAX, v))
 
 
-def estimate_variations(count: Any) -> float:
-    return image_mod.get_reference_provider().estimate_cost_usd() * clamp_variations(count)
+def estimate_variations(count: Any, unlimited: bool = False) -> float:
+    return image_mod.get_reference_provider().estimate_cost_usd() * clamp_variations(count, unlimited)
 
 
 async def vary_and_save(ctx: Ctx, item_id: str, prompt: str, count: Any = None) -> Dict[str, Any]:
@@ -247,7 +252,7 @@ async def vary_and_save(ctx: Ctx, item_id: str, prompt: str, count: Any = None) 
     -> {'items': [public dicts with url], 'asked': N, 'failed': M, 'cost_usd': float}"""
     import asyncio
 
-    n = clamp_variations(count)
+    n = clamp_variations(count, ctx.unlimited)
     p = image_mod.clean_prompt(prompt)
     if not p:
         raise MediaServiceError(422, "bad_request", "Say what you want changed or varied.")
