@@ -696,7 +696,7 @@ function librarySec() {
       if (rep.kind === 'image') { const im = mk('img', 'lib-thumb'); im.alt = ''; im.loading = 'lazy'; mediaBlob(rep).then(u => { im.src = u; }).catch(() => { im.style.opacity = '0.3'; }); r.append(im); }
       else r.append(mk('span', 'lib-ico', rep.kind === 'sound' ? '♪' : '▶'));
       const box = mk('div'); box.style.minWidth = '0'; box.append(mk('div', 'lib-t', label), mk('div', 'lib-k', sub)); r.append(box);
-      r.onclick = () => openMedia(rep.id);
+      r.onclick = () => openMedia(rep.id, rep.kind);
       grid.append(r);
     });
   });
@@ -711,7 +711,11 @@ function mediaBlob(it) {
   BLOBS.set(it.id, p); p.catch(() => BLOBS.delete(it.id));
   return p;
 }
-async function openMedia(id) {
+// a picture opens in the image studio, a tab of its own (view the whole picture, crop, erase, remove the background, change it with the image model)
+function openStudioTab(id) { window.open('/studio?id=' + encodeURIComponent(id), '_blank'); }
+window.addEventListener('message', e => { if (e.origin === location.origin && e.data && e.data.type === 'media-changed') loadLibrary(); });
+async function openMedia(id, kind) {
+  if (kind === 'image') { openStudioTab(id); return; }                  // from a click; Helix's own open_item action (no click) still shows the picture in the panel
   selected = 'm:' + id; LIB.open = null; renderSide(true);
   const r = await api('/api/media/items/' + encodeURIComponent(id)).catch(() => null);
   LIB.open = r && r.ok ? r.data.item : { error: (r && r.data && r.data.detail) || 'That item could not be opened.' };
@@ -723,6 +727,7 @@ function mediaSec() {
   if (!it) { s.append(mk('div', 'dim', 'Opening…')); return s; }
   if (it.error) { s.append(mk('div', 'dim', it.error)); return s; }
   s.append(mk('div', 'h', it.title));
+  if (it.kind === 'image') { const o = mk('button', 'b', 'Open in the image studio'); o.style.margin = '4px 0 8px'; o.onclick = () => openStudioTab(it.id); s.append(o); }
   const kb = it.size_bytes > 1048576 ? (it.size_bytes / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(it.size_bytes / 1024)) + ' KB';
   s.append(mk('div', 'dim', it.kind + ' · ' + kb + (it.duration_seconds ? ' · ' + it.duration_seconds + 's' : '')));
   const media = document.createElement(it.kind === 'image' ? 'img' : 'audio');
@@ -2610,7 +2615,7 @@ function chatMsg(role, text) {
   d.append(mk('div', 'tg', role === 'user' ? 'YOU' : (String(text).startsWith('CREW ·') ? 'CREW' : 'HELIX')), mk('div', null, text));
   const extra = LIVE.get(role + '|' + text);
   if (extra && extra.imgs) extra.imgs.forEach(u => { const im = mk('img', 'th'); im.src = u; im.alt = 'attached image'; d.append(im); });
-  if (extra && extra.openId) { const b = mk('button', 'lib-f', 'Open'); b.style.marginTop = '6px'; b.onclick = () => openMedia(extra.openId); d.append(b); }
+  if (extra && extra.openId) { const b = mk('button', 'lib-f', 'Open'); b.style.marginTop = '6px'; b.onclick = () => openMedia(extra.openId, extra.kind); d.append(b); }
   if (role !== 'user' && String(text).length > 2 && text !== '…') d.append(listenButton(text));       // every reply of hers can be read aloud again
   return d;
 }
@@ -2876,7 +2881,7 @@ async function sendChat() {
   if (media) {
     log.append(chatMsg('user', text)); const wait = chatMsg('assistant', media[1].toLowerCase() === 'image' ? 'Making the image…' : 'Making the sound…'); log.append(wait); log.scrollTop = log.scrollHeight;
     const kind = media[1].toLowerCase(), r = await api('/api/media/' + kind, 'POST', kind === 'image' ? { prompt: media[2].trim() } : { text: media[2].trim() }).catch(() => null);
-    if (r && r.ok && r.data.item) { wait.lastChild.textContent = 'Saved: ' + r.data.item.title; const b = mk('button', 'lib-f', 'Open'); b.style.marginTop = '6px'; b.onclick = () => openMedia(r.data.item.id); wait.append(b); loadLibrary(); }
+    if (r && r.ok && r.data.item) { wait.lastChild.textContent = 'Saved: ' + r.data.item.title; const b = mk('button', 'lib-f', 'Open'); b.style.marginTop = '6px'; b.onclick = () => openMedia(r.data.item.id, r.data.item.kind); wait.append(b); loadLibrary(); }
     else wait.lastChild.textContent = (r && typeof r.data.detail === 'string') ? r.data.detail : 'That could not be made right now.';
     chatBusy = false; return;
   }
@@ -2893,7 +2898,7 @@ async function sendChat() {
   chatBusy = false;
   const acts = (r && r.data.ui_actions) || [];
   acts.forEach(a => {
-    if (a.type === 'saved' && a.item) { LIVE.set('assistant|' + reply, { openId: a.item.id }); loadLibrary(); }
+    if (a.type === 'saved' && a.item) { LIVE.set('assistant|' + reply, { openId: a.item.id, kind: a.item.kind }); loadLibrary(); }
     else if (a.type === 'open_item' && a.id) openMedia(a.id);
   });
   if (acts.some(a => a.type === 'crew_refresh')) setTimeout(refresh, 1200);

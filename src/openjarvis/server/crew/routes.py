@@ -39,6 +39,7 @@ from openjarvis.server import hardening
 from openjarvis.server.crew import connections as conns
 from openjarvis.server.crew import crew_access, crew_enabled
 from openjarvis.server.crew.station import STATION_PAGE
+from openjarvis.server.crew.studio import STUDIO_PAGE
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -99,6 +100,13 @@ async def public_terms():
 async def station_page():
     """The Station is Aibussol's home page (sign-in, Helix chat with voice, the crew, the library). The old page lives at /classic."""
     return HTMLResponse(STATION_PAGE, headers={"Cache-Control": "no-cache"})
+
+
+@router.get("/studio")
+async def studio_page():
+    """The image studio: view and edit one picture in a tab of its own (opened from the Station's library). The page signs in with the Station's
+    token and calls the media API, which checks the login; the page itself holds no data."""
+    return HTMLResponse(STUDIO_PAGE, headers={"Cache-Control": "no-cache"})
 
 
 _HELIX_PORTRAIT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "helix.jpg")

@@ -211,7 +211,7 @@ class TestRequestsThatBuildOnAPicture:
         monkeypatch.setattr(helix_tools, "ATTACHED_RECENT_S", 0.0001)
         import asyncio
 
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.06)
         await helix_tools.execute_tool(ctx, "generate_image", {"prompt": "x"}, user_message="make one similar to that image")
         assert helix_tools.PENDING.get("alice").tool == "generate_image"
 

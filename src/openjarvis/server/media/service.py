@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 GLOBAL_KEY = "media:__all__"
 DEFAULT_QUOTA_BYTES = 1024 ** 3                    # 1 GB per user
-MAX_PREVIEW_BYTES = 8 * 1024 * 1024
+MAX_PREVIEW_BYTES = 32 * 1024 * 1024
 LIST_DEFAULT, LIST_MAX = 30, 100
 
 
@@ -446,6 +446,13 @@ async def sprite_sheet_and_save(ctx: Ctx, item_id: str, animations: Any = None, 
         logger.warning("the transparent sheet could not be saved: %s", exc.error)
     return {"items": [with_url(ctx, i) for i in saved], "rows": list(ordered), "missing": [nm for nm in names if nm not in ordered],
             "cost_usd": round(spent, 4)}
+
+
+async def ai_edit_and_save(ctx: Ctx, item_id: str, prompt: str) -> Dict[str, Any]:
+    """The studio's 'change this' box: one edit of a saved picture by the image model (everything else stays the same), saved as a NEW item.
+    The same gates, caps and spend logging as every paid picture (the Station's Out column)."""
+    res = await vary_and_save(ctx, item_id, prompt, 1, edit=True)
+    return {"item": res["items"][0], "cost_usd": res["cost_usd"]}
 
 
 async def _duration(data: bytes) -> Optional[float]:

@@ -5,6 +5,7 @@
   GET    /api/media/library?kind=&limit=&cursor= the caller's own items, newest first
   GET    /api/media/items/{id}[?download=1]      metadata and a presigned URL (15 minutes)
   POST   /api/media/items/{id}/edit              preview or save an edit as a NEW item
+  POST   /api/media/items/{id}/ai-edit           edit a picture with the image model from a typed instruction (asks for a cost confirmation; saved as a NEW item)
   POST   /api/media/items/{id}/regenerate        make a new item from an edited prompt (counts against the daily media cap)
   DELETE /api/media/items/{id}                   remove the file and the row
 
@@ -44,6 +45,11 @@ class EditRequest(BaseModel):
     preview: bool = False
 
 
+class AiEditRequest(BaseModel):
+    prompt: str = Field(..., min_length=3, max_length=image_mod.MAX_PROMPT_CHARS)
+    confirmed: bool = False                  # the page shows the cost and asks first; a call without that is refused
+
+
 class RegenerateRequest(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=max(image_mod.MAX_PROMPT_CHARS, sound_mod.MAX_TEXT_CHARS))
 
@@ -74,7 +80,8 @@ async def media_status(request: Request):
         "video": False,
         "video_note": "Video generation is not available.",
         # what one paid action is estimated to cost (the Re-generate button shows it before asking)
-        "estimates": {"image": img.estimate_cost_usd(steps=image_mod.DEFAULT_STEPS), "sound_per_1000_chars": snd.estimate_cost_usd(text="x" * 1000)},
+        "estimates": {"image": img.estimate_cost_usd(steps=image_mod.DEFAULT_STEPS), "sound_per_1000_chars": snd.estimate_cost_usd(text="x" * 1000),
+                      "ai_edit": service.estimate_variations(1)},
     })
 
 
@@ -138,6 +145,17 @@ async def edit_item(item_id: str, req: EditRequest, request: Request):
     async def go():
         ctx = service.ctx_from_request(request)
         return JSONResponse({"success": True, **await service.edit_item(ctx, item_id, req.operation, req.params, req.preview)})
+    return await _guard(go)
+
+
+@router.post("/api/media/items/{item_id}/ai-edit")
+async def ai_edit_item(item_id: str, req: AiEditRequest, request: Request):
+    async def go():
+        if not req.confirmed:
+            return JSONResponse({"error": "confirmation_required", "detail": "Confirm the cost before an AI edit."}, status_code=400)
+        ctx = service.ctx_from_request(request, paid=True)
+        out = await service.ai_edit_and_save(ctx, item_id, req.prompt)
+        return JSONResponse({"success": True, "item": out["item"], "cost_usd": out["cost_usd"]})
     return await _guard(go)
 
 
