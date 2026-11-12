@@ -113,6 +113,7 @@ class Config:
     database_url: str = ""
     data_dir: str = "polybot_data"      # used when there is no database (local paper runs)
     hour_size: tuple = ((7, 0.5),)      # v1.25: size by Los Angeles hour the window opens in: (hour, factor); 0.5 = half size, 0 = skip
+    caution_hours: tuple = ()           # 2026-11-11: hours (Los Angeles, window open) that need CAUTION_MIN_CONF and CAUTION_MIN_PRICE
                                         # (7 AM, right after the US stock open, was the worst hour on both BTC desks)
     notify_url: str = ""                # ntfy topic (CREW_NOTIFY_URL): a push for every live entry and settlement
 
@@ -193,11 +194,17 @@ def assets_from_env(env: Optional[Mapping[str, str]] = None) -> list:
 # v1.31 (owner, 2026-11-07): each 5-minute desk sized by Los Angeles hour from its own profit-by-hour table.
 # Rules: 15+ trades and clearly losing -> skip; losing on 8+ trades -> half; too few trades -> BTC's setting; winning -> full.
 HOUR_SIZE_5M = {
-    "btc": ((4, 0.5), (6, 0.5), (7, 0.0), (8, 0.5), (9, 0.5), (12, 0.5), (14, 0.0), (16, 0.0)),
-    "eth": ((4, 0.5), (6, 0.5), (7, 0.0), (8, 0.5), (9, 0.0), (12, 0.5), (14, 0.0), (16, 0.0)),
-    "sol": ((4, 0.5), (6, 0.5), (7, 0.0), (8, 0.5), (9, 0.5), (10, 0.5), (12, 0.5), (14, 0.0), (16, 0.0), (22, 0.5)),
-    "xrp": ((3, 0.5), (4, 0.5), (5, 0.5), (6, 0.5), (7, 0.0), (8, 0.5), (9, 0.5), (12, 0.5), (14, 0.0), (16, 0.0)),
+    # 2026-11-11 (owner): the formerly skipped hours trade at half size as "caution hours" (see CAUTION_HOURS_5M)
+    "btc": ((4, 0.5), (6, 0.5), (7, 0.5), (8, 0.5), (9, 0.5), (12, 0.5), (14, 0.5), (16, 0.5)),
+    "eth": ((4, 0.5), (6, 0.5), (7, 0.5), (8, 0.5), (9, 0.5), (12, 0.5), (14, 0.5), (16, 0.5)),
+    "sol": ((4, 0.5), (6, 0.5), (7, 0.5), (8, 0.5), (9, 0.5), (10, 0.5), (12, 0.5), (14, 0.5), (16, 0.5), (22, 0.5)),
+    "xrp": ((3, 0.5), (4, 0.5), (5, 0.5), (6, 0.5), (7, 0.5), (8, 0.5), (9, 0.5), (12, 0.5), (14, 0.5), (16, 0.5)),
 }
+# Caution hours (owner, 2026-11-11): the hours that used to be skipped. A bet in one needs at least CAUTION_MIN_CONF calibrated
+# confidence and a buy price of at least CAUTION_MIN_PRICE, on top of every normal rule.
+CAUTION_HOURS_5M = {"btc": (7, 14, 16), "eth": (7, 9, 14, 16), "sol": (7, 14, 16), "xrp": (7, 14, 16)}
+CAUTION_MIN_CONF = 0.85
+CAUTION_MIN_PRICE = 0.70
 BTC_5M_HOUR_SIZE = HOUR_SIZE_5M["btc"]
 DEFAULT_HOUR_SIZE = ((7, 0.5),)      # the 15-minute and 1-hour desks
 
@@ -298,6 +305,7 @@ def _from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Co
         database_url=(e.get("DATABASE_URL") or "").strip(),
         data_dir=(e.get("POLYBOT_DATA_DIR") or "polybot_data").strip(),
         hour_size=parse_hour_size(e.get("POLYBOT_HOUR_SIZE")) if e.get("POLYBOT_HOUR_SIZE") is not None else default_hour_size(a),
+        caution_hours=CAUTION_HOURS_5M.get(a, ()),
         notify_url=(e.get("POLYBOT_NOTIFY_URL") or e.get("CREW_NOTIFY_URL") or "").strip(),
     )
 

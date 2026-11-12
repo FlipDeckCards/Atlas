@@ -13,7 +13,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from dataclasses import replace
 
-from openjarvis.polybot import brain, directional, exposure, model, research, risk, setups, shadow, strategy
+from openjarvis.polybot import brain, config, directional, exposure, model, research, risk, setups, shadow, strategy
 from openjarvis.polybot.config import SHARED_MARKET, is_live_label
 from openjarvis.polybot.brokers import BookView, Fill, LiveBroker, PaperBroker, parse_ts
 from openjarvis.polybot.client import PMError, money
@@ -545,9 +545,22 @@ class Desk:
         c = min(c, p)       # 2026-11-11 (owner): calibration only lowers confidence; a few lucky live wins never raise it over the floor
         return round(p + CORRECTION_STRENGTH * (c - p), 4)
 
+    def _caution(self, w) -> bool:
+        """2026-11-11: is this window in one of the desk's caution hours (the formerly skipped hours)?"""
+        start = getattr(w, "start", None)
+        return start is not None and dt.datetime.fromtimestamp(start, risk.LA).hour in self.cfg.caution_hours
+
     def _calib_for(self, w):
-        """The confidence the bot trades on for this window: the live-calibrated confidence in every hour (v1.36: no raw hours)."""
-        return self._calib
+        """The confidence the bot trades on for this window: the live-calibrated confidence in every hour (v1.36: no raw hours).
+        In a caution hour a side under the caution floor counts as 0, so no method can bet it."""
+        if not self._caution(w):
+            return self._calib
+        floor = config.CAUTION_MIN_CONF
+
+        def calib(p):
+            c = self._calib(p)
+            return c if c >= floor else 0.0
+        return calib
 
     def hour_factor(self, ts: float) -> float:
         """v1.25: the size factor for a window opening at ts (Los Angeles hour): 1 normally, 0.5 at 7 AM, 0 to skip the hour."""
@@ -667,6 +680,8 @@ class Desk:
             ev = research.in_blackout(now, research.shipped_events())
             if ev:
                 reason = f"blackout: {ev}"
+        if reason is None and self._caution(w) and price < config.CAUTION_MIN_PRICE:
+            reason = f"caution hour under {config.CAUTION_MIN_PRICE * 100:.0f}c"
         if reason is None:
             reason = self._block_rule(w.end - now, price, momentum, side)
         key = (w.slug, side, reason or "")
