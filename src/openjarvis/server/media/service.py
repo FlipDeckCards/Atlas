@@ -326,17 +326,58 @@ async def vary_and_save(ctx: Ctx, item_id: str, prompt: str, count: Any = None, 
     return {"items": [with_url(ctx, i) for i in items], "asked": n, "failed": n - len(items), "cost_usd": round(spent, 4)}
 
 
-def estimate_sprite_sheet(animations: Any, unlimited: bool = False) -> float:
-    return image_mod.get_reference_provider().estimate_cost_usd() * len(spritesheet.clean_animations(animations, unlimited))
+TEMPLATE_SIZE, TEMPLATE_ASPECT = "4K", "3:2"
 
 
-async def sprite_sheet_and_save(ctx: Ctx, item_id: str, animations: Any = None, frames: Any = None, notes: str = "") -> Dict[str, Any]:
-    """A sprite sheet of an attached character in the standard layout (see spritesheet.py): one strip per animation from the image model
+def estimate_sprite_sheet(animations: Any, unlimited: bool = False, layout: str = "template") -> float:
+    provider = image_mod.get_reference_provider()
+    if layout != "rows":
+        return provider.estimate_cost_usd(image_size=TEMPLATE_SIZE)                  # the whole sheet is one picture
+    return provider.estimate_cost_usd() * len(spritesheet.clean_animations(animations, unlimited))
+
+
+async def _template_sheet(ctx: Ctx, item_id: str, animations: Any, notes: str) -> Dict[str, Any]:
+    """The standard sheet (labelled panels in a two-column grid) drawn in ONE image-model call and saved as one library item."""
+    sections = spritesheet.clean_sections(animations, ctx.unlimited)
+    provider = image_mod.get_reference_provider()
+    estimate = provider.estimate_cost_usd(image_size=TEMPLATE_SIZE)
+    await gate_generation(ctx, provider, estimate)
+    source = await get_owned(ctx, item_id)
+    if source.kind != "image":
+        raise MediaServiceError(400, "unsupported", "That item is not a picture.")
+    try:
+        original = await ctx.storage.get(source.storage_key)
+    except StorageError as exc:
+        raise MediaServiceError(exc.status_code, "storage_failed", exc.public_message) from None
+    notes = " ".join(str(notes or "").split())[:300]
+    try:
+        result = await _generate_retrying(provider, prompt=spritesheet.template_prompt(sections, notes), reference=(original, source.mime_type),
+                                          aspect_ratio=TEMPLATE_ASPECT, image_size=TEMPLATE_SIZE)
+    except MediaError as exc:
+        raise MediaServiceError(exc.status_code, "media_failed", exc.public_message) from None
+    except Exception:
+        logger.exception("sprite sheet failed")
+        raise MediaServiceError(502, "media_failed", "The sprite sheet could not be made right now. Please try again.") from None
+    day = hardening.utc_day()                                   # the provider call happened: the cost counts even if saving fails
+    cost = estimate if result.cost_usd is None else result.cost_usd
+    await ctx.store.add_spend("media:" + ctx.user_id, day, cost)
+    await ctx.store.add_spend(GLOBAL_KEY, day, cost)
+    item = await save_item(ctx, kind="image", data=result.data, mime=result.mime, title=f"{source.title} (sprite sheet)", prompt=notes or None,
+                           provider=result.provider, edited_from_id=source.id)
+    return {"items": [with_url(ctx, item)], "rows": [label for label, _ in sections], "missing": [], "cost_usd": round(cost, 4)}
+
+
+async def sprite_sheet_and_save(ctx: Ctx, item_id: str, animations: Any = None, frames: Any = None, notes: str = "", layout: str = "template") -> Dict[str, Any]:
+    """layout "template" (the default): the standard labelled-panel sheet in one picture. layout "rows": the row-per-animation version below.
+
+    The rows version: a sprite sheet of an attached character in the standard layout (see spritesheet.py): one strip per animation from the image model
     (reference-image mode), then built into a labelled sheet and a clean transparent sheet, both saved to the library. Each strip that
     comes back is charged; an animation that fails twice is left out of the sheet.
     -> {'items': [labelled, clean], 'rows': [names made], 'missing': [names], 'cost_usd': float}"""
     import asyncio
 
+    if layout != "rows":
+        return await _template_sheet(ctx, item_id, animations, notes)
     names = spritesheet.clean_animations(animations, ctx.unlimited)
     n = spritesheet.clean_frames(frames, ctx.unlimited)
     provider = image_mod.get_reference_provider()

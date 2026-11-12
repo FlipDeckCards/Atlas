@@ -54,12 +54,13 @@ TOOLS: List[Dict[str, Any]] = [
             "item_id": {"type": "string", "description": "The library id of the picture. Leave out to use the most recently attached picture."}}, "required": ["prompt"]}}},
     {"type": "function", "function": {
         "name": "make_sprite_sheet",
-        "description": "Make a game SPRITE SHEET from a character picture the person attached (or a saved library picture): one row per animation (default Idle, Walk, Run, Jump, Attack, Hurt, Death), "
-                       "7 frames per row, with the animation name as a label on the left, plus a clean transparent version for a game engine. "
-                       "ALWAYS use this, not vary_image, when the person asks for a sprite sheet. Costs money (one picture per animation), so the system asks the person to confirm first.",
+        "description": "Make a game SPRITE SHEET from a character picture the person attached (or a saved library picture), in the standard layout: ONE picture of labelled panels in a two-column grid "
+                       "(IDLE, WALK, RUN, JUMP, ATTACK - SLASH, ATTACK - COMBO, SKILL - ENERGY BLAST, SKILL - DASH, SKILL - TELEPORT, HURT / DAMAGE, DEATH, EXTRA EFFECTS, ICONS) with several frames in each. "
+                       "ALWAYS use this, not vary_image, when the person asks for a sprite sheet. Costs money, so the system asks the person to confirm first.",
         "parameters": {"type": "object", "properties": {
-            "animations": {"type": "array", "items": {"type": "string"}, "description": "The rows, in order. Leave out for the standard seven: Idle, Walk, Run, Jump, Attack, Hurt, Death."},
-            "frames": {"type": "integer", "description": "Frames per row: 7 if not stated."},
+            "animations": {"type": "array", "items": {"type": "string"}, "description": "Only if the person names the panels they want, in order. Leave out for the standard thirteen."},
+            "layout": {"type": "string", "enum": ["template", "rows"], "description": "template (default). Use rows only if the person asks for transparent, separate or engine-ready frames."},
+            "frames": {"type": "integer", "description": "Frames per row, rows layout only: 7 if not stated."},
             "notes": {"type": "string", "description": "Anything said about the style or the character's moves (300 characters at most)."},
             "item_id": {"type": "string", "description": "The library id of the character picture. Leave out to use the most recently attached picture."}}}}},
     {"type": "function", "function": {
@@ -215,6 +216,9 @@ async def keep_attached(ctx: Ctx, items: List[Any]) -> List[Dict[str, Any]]:
 
 
 def describe(tool: str, args: Dict[str, Any]) -> str:
+    if tool == "make_sprite_sheet" and args.get("layout") != "rows":
+        labels = [label for label, _ in spritesheet.clean_sections(args.get("animations"), True)]
+        return f'make a sprite sheet from your picture in the standard layout, one 4K picture with {len(labels)} labelled panels ({", ".join(l.title() for l in labels)})'
     if tool == "make_sprite_sheet":
         names = spritesheet.clean_animations(args.get("animations"), True)
         return f'make a sprite sheet from your picture: {len(names)} rows ({", ".join(names)}), {spritesheet.clean_frames(args.get("frames"), True)} frames each'
@@ -233,9 +237,11 @@ async def run_paid(ctx: Ctx, tool: str, args: Dict[str, Any]) -> Dict[str, Any]:
     if tool == "generate_image":
         item = await service.generate_and_save(ctx, "image", prompt=_clip(args.get("prompt"), 500))
     elif tool == "make_sprite_sheet":
-        res = await service.sprite_sheet_and_save(ctx, str(args.get("item_id") or ""), args.get("animations"), args.get("frames"), _clip(args.get("notes"), 300))
+        res = await service.sprite_sheet_and_save(ctx, str(args.get("item_id") or ""), args.get("animations"), args.get("frames"), _clip(args.get("notes"), 300),
+                                                  layout=args.get("layout") or "template")
         miss = f"; could not draw: {', '.join(res['missing'])}" if res["missing"] else ""
-        return {"saved": True, "title": f"sprite sheet with {len(res['rows'])} rows (about ${res['cost_usd']:.2f}){miss}", "items": res["items"], "item": res["items"][0]}
+        return {"saved": True, "title": f"sprite sheet with {len(res['rows'])} {'rows' if args.get('layout') == 'rows' else 'panels'} (about ${res['cost_usd']:.2f}){miss}",
+                "items": res["items"], "item": res["items"][0]}
     elif tool == "vary_image":
         res = await service.vary_and_save(ctx, str(args.get("item_id") or ""), _clip(args.get("prompt"), 500), args.get("count"), edit=bool(args.get("edit")))
         n, bad = len(res["items"]), res["failed"]
@@ -248,7 +254,7 @@ async def run_paid(ctx: Ctx, tool: str, args: Dict[str, Any]) -> Dict[str, Any]:
 
 def _estimate(tool: str, args: Dict[str, Any], ctx: Optional[Ctx] = None) -> float:
     if tool == "make_sprite_sheet":
-        return service.estimate_sprite_sheet(args.get("animations"), bool(ctx and ctx.unlimited))
+        return service.estimate_sprite_sheet(args.get("animations"), bool(ctx and ctx.unlimited), args.get("layout") or "template")
     if tool == "vary_image":
         return service.estimate_variations(args.get("count"), bool(ctx and ctx.unlimited))
     if tool == "generate_image":
@@ -285,9 +291,13 @@ async def execute_tool(ctx: Ctx, name: str, args: Dict[str, Any], *, user_messag
                 args = dict(args, item_id=item.id)
                 if name == "vary_image":
                     args["count"] = service.clamp_variations(args.get("count"), ctx.unlimited)
-                else:
+                elif args.get("layout") == "rows":
                     args["animations"] = spritesheet.clean_animations(args.get("animations"), ctx.unlimited)
                     args["frames"] = spritesheet.clean_frames(args.get("frames"), ctx.unlimited)
+                else:
+                    args["layout"] = "template"
+                    named = args.get("animations") if isinstance(args.get("animations"), list) and args.get("animations") else None
+                    args["animations"] = [label for label, _ in spritesheet.clean_sections(named, ctx.unlimited)] if named else None
             est = _estimate(name, args, ctx)
             p = pending.create(ctx.user_id, name, args, est, describe(name, args))
             # nothing has been spent and nothing runs until the person's next message is an explicit yes
@@ -322,6 +332,7 @@ def _msg_dict(msg: Any) -> Dict[str, Any]:
     return {"role": "assistant", "content": getattr(msg, "content", None) or "", "tool_calls": calls}
 
 
+_ENGINE_READY = re.compile(r"\b(transparent|separate frames|individual frames|game[- ]engine|unity|godot|unreal|engine[- ]ready)\b", re.I)
 _SPRITE_SHEET = re.compile(r"\bsprite[\s-]*sheets?\b", re.I)
 
 
@@ -332,12 +343,15 @@ async def sprite_sheet_request(ctx: Ctx, message: str, pending: Optional[Pending
     if not _SPRITE_SHEET.search(str(message or "")) or str(message).lstrip().startswith("/") or not latest_attached(ctx.user_id, ATTACHED_RECENT_S):
         return None
     pending = pending or PENDING
-    out = await execute_tool(ctx, "make_sprite_sheet", {"notes": _clip(message, 300)}, user_message=message, pending=pending)
+    args: Dict[str, Any] = {"notes": _clip(message, 300)}
+    if _ENGINE_READY.search(message):
+        args["layout"] = "rows"                                        # transparent, separate frames for a game engine
+    out = await execute_tool(ctx, "make_sprite_sheet", args, user_message=message, pending=pending)
     p = pending.get(ctx.user_id)
     if p is None or p.tool != "make_sprite_sheet":
         return {"reply": out["text"].removeprefix("Could not do that: ") if out["text"].startswith("Could not do that") else "I couldn't set that up right now.", "ui": []}
     pending.arm(ctx.user_id)
-    return {"reply": f"Ready to {p.description} (estimated cost about ${p.estimate_usd:.2f}). Say 'yes' to go ahead, or tell me which animations you want instead.", "ui": []}
+    return {"reply": f"Ready to {p.description} (estimated cost about ${p.estimate_usd:.2f}). Say 'yes' to go ahead, or tell me which panels you want instead.", "ui": []}
 
 
 _NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "a few": 3, "several": 5}

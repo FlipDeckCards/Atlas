@@ -18,9 +18,10 @@ from openjarvis.server.media.base import MediaError, MediaResult
 
 logger = logging.getLogger(__name__)
 
-TIMEOUT_S = 90.0
+TIMEOUT_S = 150.0      # a 4K Nano Banana Pro picture can take a minute or two
 # Rough per-image prices on paid plans (checked when written; the spend cap uses these before each call)
 GEMINI_USD_PER_IMAGE = 0.04
+GEMINI_PRO_4K_USD_PER_IMAGE = 0.24    # a 4K picture; GEMINI_PRO_IMAGE_4K_USD overrides it (same source as the price below)
 GEMINI_PRO_USD_PER_IMAGE = 0.134      # Nano Banana Pro, 1K/2K picture: from a developer guide, not confirmed on Google's pricing page. GEMINI_PRO_IMAGE_USD overrides it.
 OPENAI_USD_PER_IMAGE = 0.05
 
@@ -54,6 +55,7 @@ class GeminiImage:
     model = "gemini-2.5-flash-image"
 
     modalities = ["IMAGE"]
+    supports_image_size = False
 
     def configured(self) -> bool:
         return bool(_key(("GEMINI_API_KEY", "GOOGLE_API_KEY")))
@@ -64,9 +66,10 @@ class GeminiImage:
     def estimate_cost_usd(self, **_: Any) -> float:
         return GEMINI_USD_PER_IMAGE
 
-    async def generate(self, prompt: str, client: Optional[httpx.AsyncClient] = None, reference: Optional[tuple] = None, aspect_ratio: Optional[str] = None, **_: Any) -> MediaResult:
+    async def generate(self, prompt: str, client: Optional[httpx.AsyncClient] = None, reference: Optional[tuple] = None, aspect_ratio: Optional[str] = None, image_size: Optional[str] = None, **_: Any) -> MediaResult:
         """reference: (bytes, mime) of a picture to build on (reference-image mode). The picture goes in the same request as the prompt.
-        aspect_ratio: for example "21:9" for a wide strip; if the API refuses it the request is repeated without it."""
+        aspect_ratio: for example "21:9" for a wide strip. image_size: "1K", "2K" or "4K" (Pro only). If the API refuses either, the request
+        is repeated without the size, then without both."""
         key = _key(("GEMINI_API_KEY", "GOOGLE_API_KEY"))
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name()}:generateContent"
         parts: list = []
@@ -76,10 +79,13 @@ class GeminiImage:
         parts.append({"text": prompt})
         headers = {"x-goog-api-key": key, "Content-Type": "application/json"}
 
-        async def post(ratio: Optional[str]) -> httpx.Response:
+        size = image_size if self.supports_image_size else None
+
+        async def post(ratio: Optional[str], px: Optional[str]) -> httpx.Response:
             cfg: dict = {"responseModalities": list(self.modalities)}
-            if ratio:
-                cfg["imageConfig"] = {"aspectRatio": ratio}
+            conf = {k: v for k, v in (("aspectRatio", ratio), ("imageSize", px)) if v}
+            if conf:
+                cfg["imageConfig"] = conf
             body = {"contents": [{"parts": parts}], "generationConfig": cfg}
             if client is not None:
                 return await client.post(url, json=body, headers=headers, timeout=TIMEOUT_S)
@@ -87,10 +93,12 @@ class GeminiImage:
                 return await c.post(url, json=body, headers=headers)
 
         try:
-            r = await post(aspect_ratio)
-            if r.status_code == 400 and aspect_ratio:
-                logger.warning("Gemini refused aspect ratio %s; repeating without it", aspect_ratio)
-                r = await post(None)
+            tries = list(dict.fromkeys([(aspect_ratio, size), (aspect_ratio, None), (None, None)]))
+            for i, (ratio, px) in enumerate(tries):
+                r = await post(ratio, px)
+                if r.status_code != 400 or i == len(tries) - 1:
+                    break
+                logger.warning("Gemini refused the image settings (%s, %s); repeating with fewer", ratio, px)
         except httpx.HTTPError as exc:
             logger.error("Gemini image request failed (%s)", type(exc).__name__)
             raise MediaError("The media provider could not be reached. Please try again.", 502) from None
@@ -122,19 +130,22 @@ class GeminiProImage(GeminiImage):
     id = "google_gemini_pro_image"
     model = "gemini-3-pro-image"
     modalities = ["TEXT", "IMAGE"]
+    supports_image_size = True
 
     def model_name(self) -> str:
         return _key(("GEMINI_PRO_IMAGE_MODEL",)) or self.model
 
-    def estimate_cost_usd(self, **_: Any) -> float:
+    def estimate_cost_usd(self, image_size: Optional[str] = None, **_: Any) -> float:
+        big = str(image_size or "").upper() == "4K"
+        name, default = ("GEMINI_PRO_IMAGE_4K_USD", GEMINI_PRO_4K_USD_PER_IMAGE) if big else ("GEMINI_PRO_IMAGE_USD", GEMINI_PRO_USD_PER_IMAGE)
         try:
-            return max(0.0, float(_key(("GEMINI_PRO_IMAGE_USD",)) or GEMINI_PRO_USD_PER_IMAGE))
+            return max(0.0, float(_key((name,)) or default))
         except ValueError:
-            return GEMINI_PRO_USD_PER_IMAGE
+            return default
 
-    async def generate(self, prompt: str, client: Optional[httpx.AsyncClient] = None, reference: Optional[tuple] = None, aspect_ratio: Optional[str] = None, **_: Any) -> MediaResult:
+    async def generate(self, prompt: str, client: Optional[httpx.AsyncClient] = None, reference: Optional[tuple] = None, aspect_ratio: Optional[str] = None, image_size: Optional[str] = None, **_: Any) -> MediaResult:
         try:
-            return await super().generate(prompt, client=client, reference=reference, aspect_ratio=aspect_ratio)
+            return await super().generate(prompt, client=client, reference=reference, aspect_ratio=aspect_ratio, image_size=image_size)
         except MediaError as exc:
             if getattr(exc, "http_status", None) not in (400, 403, 404):
                 raise

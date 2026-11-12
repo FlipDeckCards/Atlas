@@ -51,6 +51,54 @@ def clean_frames(value, unlimited: bool = False) -> int:
     return max(MIN_FRAMES, min(MAX_FRAMES_UNLIMITED if unlimited else MAX_FRAMES, n))
 
 
+# The standard sheet: ONE picture with labelled panels in a two-column grid (the layout the owner chose), drawn in a single image-model call.
+TEMPLATE_SECTIONS = (
+    ("IDLE", "6 to 7 frames of a gentle idle loop (breathing, a slight sway), standing"),
+    ("WALK", "8 frames of a side-view walk cycle"),
+    ("RUN", "7 frames of a side-view run cycle, leaning forward"),
+    ("JUMP", "6 frames: crouch, take off, rise, peak, fall, land"),
+    ("ATTACK - SLASH", "6 frames of a slash: wind-up, strike with a glowing slash arc, follow-through"),
+    ("ATTACK - COMBO", "7 frames of a fast multi-hit combo with trailing streaks of the character's own energy"),
+    ("SKILL - ENERGY BLAST", "6 frames of charging and firing an energy blast, ending with the blast projectile itself"),
+    ("SKILL - DASH", "5 frames of a dash with speed trails"),
+    ("SKILL - TELEPORT", "6 frames: vanishing in an effect, a portal, reappearing"),
+    ("HURT / DAMAGE", "6 frames of being hit: flinch, recoil, recover"),
+    ("DEATH", "6 frames: stagger, fall, lie on the ground, fade away"),
+    ("EXTRA EFFECTS", "a row of 8 stand-alone effect sprites (slash arcs, swirls, rings, sparks) in the character's own colour theme, with no character in it"),
+    ("ICONS", "a square portrait icon (a close-up of the face) and a smaller head icon"),
+)
+MAX_SECTIONS, MAX_SECTIONS_UNLIMITED = 16, 30
+
+
+def clean_sections(value, unlimited: bool = False) -> List[Tuple[str, str]]:
+    """[(LABEL, what the panel shows)]: the standard thirteen, or the panels the person named (in their order)."""
+    known = {label.lower(): hint for label, hint in TEMPLATE_SECTIONS}
+    names = [" ".join(str(v).split())[:28] for v in (value if isinstance(value, list) else []) if str(v).strip()]
+    if not names:
+        return list(TEMPLATE_SECTIONS)
+    out = []
+    for n in names[: MAX_SECTIONS_UNLIMITED if unlimited else MAX_SECTIONS]:
+        hint = known.get(n.lower()) or ANIMATION_HINTS.get(n.lower()) or f"6 to 8 frames of the '{n}' animation"
+        out.append((n.upper(), hint))
+    return out
+
+
+def template_prompt(sections: Sequence[Tuple[str, str]], notes: str = "") -> str:
+    panels = "\n".join(f"{i}. {label}: {hint}." for i, (label, hint) in enumerate(sections, 1))
+    return (
+        "Use the attached character as the exact reference: the same design, face, hair, outfit, colours, proportions and art style. "
+        "Create ONE professional 2D game sprite sheet of this character on a clean plain white background, laid out as labelled panels in a "
+        "two-column grid. Each panel is a thin-bordered rectangle with a dark-blue tab in its top-left corner holding the panel name in bold white "
+        "capital letters, spelled exactly as given. Panels, in order, left to right then top to bottom:\n"
+        f"{panels}\n"
+        "In every character panel show the frames left to right in order, evenly spaced, each frame the same size, the character facing the same "
+        "direction, the feet on the same ground line, with a smooth progression of the motion. Keep the character identical in every frame. "
+        "Skill and attack panels use glowing effects drawn from the character's own colours and powers. Crisp clean line work, no blur, "
+        "no watermark, no extra text besides the panel names."
+        + (f" Extra notes from the person: {notes}" if notes else "")
+    )
+
+
 def strip_prompt(animation: str, frames: int, notes: str = "") -> str:
     hint = ANIMATION_HINTS.get(animation.strip().lower(), f"the '{animation}' animation")
     return (

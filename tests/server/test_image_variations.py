@@ -325,6 +325,80 @@ class TestNanoBananaPro:
         assert store.spent("media:alice") == pytest.approx(0.08)                       # two fallbacks at Flash price, not 2 x $0.134
 
 
+class TestTemplateSheet:
+    def test_the_standard_panels_and_the_prompt(self):
+        from openjarvis.server.media import spritesheet as sp
+
+        secs = sp.clean_sections(None)
+        assert [s[0] for s in secs][:3] == ["IDLE", "WALK", "RUN"] and len(secs) == 13 and secs[-1][0] == "ICONS"
+        assert [s[0] for s in sp.clean_sections(["idle", "Backflip"])] == ["IDLE", "BACKFLIP"] and len(sp.clean_sections(["x"] * 40)) == 16
+        p = sp.template_prompt(secs, "keep the glow")
+        assert "plain white background" in p and "two-column grid" in p and "SKILL - TELEPORT" in p and "keep the glow" in p and "attached character" in p
+
+    @pytest.mark.asyncio
+    async def test_the_default_sheet_is_one_call_at_4k_and_one_saved_picture(self, setup):
+        prov, (store, catalog, _s), ctx = setup
+        item_id = await attach(ctx)
+        res = await service.sprite_sheet_and_save(ctx, item_id, notes="keep the glow")
+        assert len(prov.calls) == 1 and prov.calls[0]["aspect_ratio"] == "3:2" and prov.calls[0]["image_size"] == "4K" and prov.calls[0]["reference"][1] == "image/jpeg"
+        assert len(res["items"]) == 1 and res["items"][0]["title"].endswith("(sprite sheet)") and len(res["rows"]) == 13
+        assert store.spent("media:alice") == pytest.approx(0.04) and res["cost_usd"] == pytest.approx(0.04)
+
+    @pytest.mark.asyncio
+    async def test_the_tool_describes_the_standard_layout_and_asks_for_a_yes(self, setup):
+        prov, (store, _c, _s), ctx = setup
+        await attach(ctx)
+        out = await helix_tools.execute_tool(ctx, "make_sprite_sheet", {}, user_message="make me a sprite sheet")
+        p = helix_tools.PENDING.get("alice")
+        assert "NOT RUN YET" in out["text"] and prov.calls == [] and "standard layout" in p.description and "Skill - Teleport" in p.description
+        p.armed = True
+        done = await helix_tools.pre_turn(ctx, "yes")
+        assert done["ui"][0]["type"] == "saved_many" and len(done["ui"][0]["items"]) == 1 and len(prov.calls) == 1
+
+    def test_pro_costs_more_at_4k_and_both_prices_can_be_set(self, monkeypatch):
+        from openjarvis.server.media.image_backups import GeminiProImage
+
+        for n in ("GEMINI_PRO_IMAGE_USD", "GEMINI_PRO_IMAGE_4K_USD"):
+            monkeypatch.delenv(n, raising=False)
+        g = GeminiProImage()
+        assert g.estimate_cost_usd() == pytest.approx(0.134) and g.estimate_cost_usd(image_size="4K") == pytest.approx(0.24)
+        monkeypatch.setenv("GEMINI_PRO_IMAGE_4K_USD", "0.3")
+        assert g.estimate_cost_usd(image_size="4k") == pytest.approx(0.3)
+
+    @pytest.mark.asyncio
+    async def test_the_size_goes_to_pro_and_is_dropped_when_google_refuses_it(self, monkeypatch):
+        from openjarvis.server.media.image_backups import GeminiProImage
+
+        monkeypatch.setenv("GEMINI_API_KEY", "k")
+        seen = []
+
+        def handler(request: httpx.Request):
+            conf = json.loads(request.content)["generationConfig"].get("imageConfig")
+            seen.append(conf)
+            if conf and "imageSize" in conf:
+                return httpx.Response(400, json={"error": "bad size"})
+            out = base64.b64encode(tiny_jpeg()).decode()
+            return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": out}}]}}]})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+            res = await GeminiProImage().generate("x", client=c, aspect_ratio="3:2", image_size="4K")
+        assert seen == [{"aspectRatio": "3:2", "imageSize": "4K"}, {"aspectRatio": "3:2"}] and res.data
+
+    @pytest.mark.asyncio
+    async def test_flash_never_gets_a_size(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "k")
+        seen = []
+
+        def handler(request: httpx.Request):
+            seen.append(json.loads(request.content)["generationConfig"].get("imageConfig"))
+            out = base64.b64encode(tiny_jpeg()).decode()
+            return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": out}}]}}]})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+            await GeminiImage().generate("x", client=c, aspect_ratio="3:2", image_size="4K")
+        assert seen == [{"aspectRatio": "3:2"}]
+
+
 class TestSpriteSheet:
     def test_the_prompt_asks_for_a_flat_background_strip_of_the_reference_character(self):
         from openjarvis.server.media import spritesheet
@@ -366,7 +440,7 @@ class TestSpriteSheet:
         shared = (FakeStore(), MemoryCatalog(), MemoryStorage())
         ctx = make_ctx("alice", *shared)
         item_id = await attach(ctx)
-        out = await helix_tools.execute_tool(ctx, "make_sprite_sheet", {}, user_message="make me a sprite sheet")
+        out = await helix_tools.execute_tool(ctx, "make_sprite_sheet", {"layout": "rows"}, user_message="make me a sprite sheet")
         assert "NOT RUN YET" in out["text"] and prov.calls == []
         p = helix_tools.PENDING.get("alice")
         assert p.estimate_usd == pytest.approx(0.28) and "Idle, Walk, Run, Jump, Attack, Hurt, Death" in p.description
@@ -385,7 +459,9 @@ class TestSpriteSheet:
         item_id = await attach(ctx)
         early = await helix_tools.sprite_sheet_request(ctx, "make me a sprite sheet of the attached image")
         p = helix_tools.PENDING.get("alice")
-        assert "Ready to make a sprite sheet" in early["reply"] and "$0.28" in early["reply"] and p.armed and p.args["item_id"] == item_id
+        assert "Ready to make a sprite sheet" in early["reply"] and "$0.04" in early["reply"] and p.armed and p.args["item_id"] == item_id and p.args["layout"] == "template"
+        again = await helix_tools.sprite_sheet_request(ctx, "make a sprite sheet with transparent frames for unity")
+        assert helix_tools.PENDING.get("alice").args["layout"] == "rows" and "$0.28" in again["reply"]
         assert prov.calls == [] and store.spend == {}                                                          # nothing is spent before the yes
         assert await helix_tools.sprite_sheet_request(ctx, "what is a sprite sheet?") is not None                # a mention with a picture still gets the read-back
         assert await helix_tools.sprite_sheet_request(ctx, "/image a fox") is None and await helix_tools.sprite_sheet_request(ctx, "make a fox") is None
@@ -397,7 +473,7 @@ class TestSpriteSheet:
         shared = (FakeStore(), MemoryCatalog(), MemoryStorage())
         ctx = make_ctx("alice", *shared)
         item_id = await attach(ctx)
-        res = await service.sprite_sheet_and_save(ctx, item_id, ["Idle", "Walk", "Run"], 7)
+        res = await service.sprite_sheet_and_save(ctx, item_id, ["Idle", "Walk", "Run"], 7, layout="rows")
         assert len(res["rows"]) == 2 and len(res["missing"]) == 1 and shared[0].spent("media:alice") == pytest.approx(0.08)
 
     @pytest.mark.asyncio
