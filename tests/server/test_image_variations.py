@@ -33,6 +33,8 @@ def _env(monkeypatch):
     monkeypatch.setattr(hardening, "LIMITER", hardening.RateLimiter())
     monkeypatch.setattr(helix_tools, "PENDING", helix_tools.PendingActions())
     monkeypatch.setattr(helix_tools, "ATTACHED", {})
+    monkeypatch.setattr(service, "GEN_RETRIES", 0)                      # the tests below count calls; retries have their own test
+    monkeypatch.setattr(service, "GEN_RETRY_DELAY_S", 0)
 
 
 class FlakyProvider(FakeProvider):
@@ -151,6 +153,123 @@ async def test_the_tool_without_any_picture_makes_nothing(setup):
     prov, (store, _c, _s), ctx = setup
     out = await helix_tools.execute_tool(ctx, "vary_image", {"prompt": "versions"}, user_message="make versions")
     assert "no picture" in out["text"] and helix_tools.PENDING.get("alice") is None and prov.calls == []
+
+
+def strip_png(n=7, w=1568, h=672):
+    """A strip like the image model's: n figures on flat magenta."""
+    import io
+
+    from PIL import Image, ImageDraw
+
+    im = Image.new("RGB", (w, h), (255, 0, 255))
+    d = ImageDraw.Draw(im)
+    for i in range(n):
+        cx = w / n * i + w / n / 2
+        d.rectangle([cx - 40, 300, cx + 40, 560], fill=(40, 120, 60))
+        d.ellipse([cx - 45, 200, cx + 45, 295], fill=(240, 200, 160))
+    out = io.BytesIO()
+    im.save(out, "PNG")
+    return out.getvalue()
+
+
+class StripProvider(FlakyProvider):
+    async def generate(self, **request):
+        self.calls.append(request)
+        if len(self.calls) in self.fail_on:
+            raise MediaError("busy", 503)
+        return MediaResult("image", "image/png", strip_png(), self.id)
+
+
+class TestSpriteSheet:
+    def test_the_prompt_asks_for_a_flat_background_strip_of_the_reference_character(self):
+        from openjarvis.server.media import spritesheet
+
+        p = spritesheet.strip_prompt("Attack", 7, "pixel art")
+        assert "exactly 7 frames" in p and "magenta" in p and "attack" in p.lower() and "pixel art" in p and "attached character" in p
+
+    def test_rows_and_frames_are_cleaned_and_capped(self):
+        from openjarvis.server.media import spritesheet as sp
+
+        assert sp.clean_animations(None) == list(sp.DEFAULT_ANIMATIONS) and len(sp.clean_animations(["x"] * 40)) == 10 and len(sp.clean_animations(["x"] * 40, True)) == 30
+        assert sp.clean_frames(None) == 7 and sp.clean_frames(99) == 12 and sp.clean_frames(99, True) == 16 and sp.clean_frames(0) == 2
+
+    def test_a_strip_becomes_seven_frames_and_the_background_goes_transparent(self):
+        from openjarvis.server.media import spritesheet as sp
+
+        keyed = sp.key_out_background(strip_png())
+        assert keyed.getpixel((2, 2))[3] == 0
+        frames = sp.split_strip(keyed, 7)
+        assert len(frames) == 7 and all(f.width < 200 for f in frames)
+        assert len(sp.split_strip(sp.key_out_background(strip_png(5)), 7)) == 7          # wrong figure count: cut into equal cells instead
+
+    def test_the_sheets_have_the_template_layout(self):
+        import io
+
+        from PIL import Image
+
+        from openjarvis.server.media import spritesheet as sp
+
+        labelled, clean = sp.build({"Idle": strip_png(), "Walk": strip_png()}, 7)
+        a, c = Image.open(io.BytesIO(labelled)), Image.open(io.BytesIO(clean))
+        assert a.size == (sp.LABEL_W + 7 * sp.CELL + sp.PAD, 2 * sp.CELL + 2 * sp.PAD)       # label column, 7 cells, one row each
+        assert c.size == (7 * sp.CELL, 2 * sp.CELL) and c.mode == "RGBA" and c.getpixel((2, 2))[3] == 0
+
+    @pytest.mark.asyncio
+    async def test_the_tool_confirms_then_saves_a_labelled_and_a_transparent_sheet(self, monkeypatch):
+        prov = StripProvider()
+        monkeypatch.setattr(image_mod, "get_reference_provider", lambda: prov)
+        shared = (FakeStore(), MemoryCatalog(), MemoryStorage())
+        ctx = make_ctx("alice", *shared)
+        item_id = await attach(ctx)
+        out = await helix_tools.execute_tool(ctx, "make_sprite_sheet", {}, user_message="make me a sprite sheet")
+        assert "NOT RUN YET" in out["text"] and prov.calls == []
+        p = helix_tools.PENDING.get("alice")
+        assert p.estimate_usd == pytest.approx(0.28) and "Idle, Walk, Run, Jump, Attack, Hurt, Death" in p.description
+        p.armed = True
+        done = await helix_tools.pre_turn(ctx, "yes")
+        assert done["ui"][0]["type"] == "saved_many" and len(done["ui"][0]["items"]) == 2
+        assert len(prov.calls) == 7 and all(c["aspect_ratio"] == "21:9" and c["reference"][1] == "image/jpeg" for c in prov.calls)
+        assert shared[0].spent("media:alice") == pytest.approx(0.28)
+        titles = sorted(i["title"] for i in done["ui"][0]["items"])
+        assert titles[0].endswith("(sprite sheet)") and titles[1].endswith("(sprite sheet, transparent)")
+
+    @pytest.mark.asyncio
+    async def test_a_row_that_fails_is_left_out_and_not_charged(self, monkeypatch):
+        prov = StripProvider(fail_on={3})
+        monkeypatch.setattr(image_mod, "get_reference_provider", lambda: prov)
+        shared = (FakeStore(), MemoryCatalog(), MemoryStorage())
+        ctx = make_ctx("alice", *shared)
+        item_id = await attach(ctx)
+        res = await service.sprite_sheet_and_save(ctx, item_id, ["Idle", "Walk", "Run"], 7)
+        assert len(res["rows"]) == 2 and len(res["missing"]) == 1 and shared[0].spent("media:alice") == pytest.approx(0.08)
+
+    @pytest.mark.asyncio
+    async def test_a_busy_provider_is_retried_once(self, monkeypatch):
+        monkeypatch.setattr(service, "GEN_RETRIES", 1)
+        prov = FlakyProvider(fail_on={1})
+        monkeypatch.setattr(image_mod, "get_reference_provider", lambda: prov)
+        shared = (FakeStore(), MemoryCatalog(), MemoryStorage())
+        ctx = make_ctx("alice", *shared)
+        item_id = await attach(ctx)
+        res = await service.vary_and_save(ctx, item_id, "x", 1)
+        assert len(res["items"]) == 1 and len(prov.calls) == 2 and shared[0].spent("media:alice") == pytest.approx(0.04)
+
+    @pytest.mark.asyncio
+    async def test_gemini_gets_the_aspect_ratio_and_repeats_without_it_when_refused(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "k")
+        seen = []
+
+        def handler(request: httpx.Request):
+            cfg = json.loads(request.content)["generationConfig"]
+            seen.append(cfg)
+            if "imageConfig" in cfg:
+                return httpx.Response(400, json={"error": "bad"})
+            out = base64.b64encode(tiny_jpeg()).decode()
+            return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": out}}]}}]})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+            res = await GeminiImage().generate("x", client=c, aspect_ratio="21:9")
+        assert seen[0]["imageConfig"] == {"aspectRatio": "21:9"} and "imageConfig" not in seen[1] and res.data
 
 
 class TestUnlimitedAccounts:

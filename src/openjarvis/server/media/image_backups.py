@@ -56,8 +56,9 @@ class GeminiImage:
     def estimate_cost_usd(self, **_: Any) -> float:
         return GEMINI_USD_PER_IMAGE
 
-    async def generate(self, prompt: str, client: Optional[httpx.AsyncClient] = None, reference: Optional[tuple] = None, **_: Any) -> MediaResult:
-        """reference: (bytes, mime) of a picture to build on (reference-image mode). The picture goes in the same request as the prompt."""
+    async def generate(self, prompt: str, client: Optional[httpx.AsyncClient] = None, reference: Optional[tuple] = None, aspect_ratio: Optional[str] = None, **_: Any) -> MediaResult:
+        """reference: (bytes, mime) of a picture to build on (reference-image mode). The picture goes in the same request as the prompt.
+        aspect_ratio: for example "21:9" for a wide strip; if the API refuses it the request is repeated without it."""
         key = _key(("GEMINI_API_KEY", "GOOGLE_API_KEY"))
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
         parts: list = []
@@ -65,14 +66,23 @@ class GeminiImage:
             ref_data, ref_mime = reference
             parts.append({"inlineData": {"mimeType": ref_mime or "image/png", "data": base64.b64encode(ref_data).decode("ascii")}})
         parts.append({"text": prompt})
-        body = {"contents": [{"parts": parts}], "generationConfig": {"responseModalities": ["IMAGE"]}}
         headers = {"x-goog-api-key": key, "Content-Type": "application/json"}
-        try:
+
+        async def post(ratio: Optional[str]) -> httpx.Response:
+            cfg: dict = {"responseModalities": ["IMAGE"]}
+            if ratio:
+                cfg["imageConfig"] = {"aspectRatio": ratio}
+            body = {"contents": [{"parts": parts}], "generationConfig": cfg}
             if client is not None:
-                r = await client.post(url, json=body, headers=headers, timeout=TIMEOUT_S)
-            else:
-                async with httpx.AsyncClient(timeout=TIMEOUT_S) as c:
-                    r = await c.post(url, json=body, headers=headers)
+                return await client.post(url, json=body, headers=headers, timeout=TIMEOUT_S)
+            async with httpx.AsyncClient(timeout=TIMEOUT_S) as c:
+                return await c.post(url, json=body, headers=headers)
+
+        try:
+            r = await post(aspect_ratio)
+            if r.status_code == 400 and aspect_ratio:
+                logger.warning("Gemini refused aspect ratio %s; repeating without it", aspect_ratio)
+                r = await post(None)
         except httpx.HTTPError as exc:
             logger.error("Gemini image request failed (%s)", type(exc).__name__)
             raise MediaError("The media provider could not be reached. Please try again.", 502) from None

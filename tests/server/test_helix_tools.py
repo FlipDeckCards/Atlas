@@ -68,9 +68,9 @@ async def costs(_resp):
 
 
 class TestToolDefinitions:
-    def test_the_six_tools_exist_and_nothing_else(self):
-        assert [t["function"]["name"] for t in helix_tools.TOOLS] == ["generate_image", "generate_speech", "vary_image", "list_library", "open_item", "edit_item"]
-        assert helix_tools.PAID_TOOLS == {"generate_image", "generate_speech", "vary_image"}
+    def test_the_seven_tools_exist_and_nothing_else(self):
+        assert [t["function"]["name"] for t in helix_tools.TOOLS] == ["generate_image", "generate_speech", "vary_image", "make_sprite_sheet", "list_library", "open_item", "edit_item"]
+        assert helix_tools.PAID_TOOLS == {"generate_image", "generate_speech", "vary_image", "make_sprite_sheet"}
         for t in helix_tools.TOOLS:                                              # the model is never given a user id to fill in
             assert "user" not in str(t["function"]["parameters"]).lower()
 

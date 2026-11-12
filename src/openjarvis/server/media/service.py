@@ -23,6 +23,7 @@ from openjarvis.server.media import (
 from openjarvis.server.media import (
     image as image_mod,
 )
+from openjarvis.server.media import spritesheet
 from openjarvis.server.media import (
     sound as sound_mod,
 )
@@ -229,6 +230,22 @@ async def generate_and_save(ctx: Ctx, kind: str, *, prompt: str = "", steps: Opt
     return item
 
 
+GEN_RETRIES, GEN_RETRY_DELAY_S = 1, 2.0       # a picture the provider refused because it was busy is tried once more
+RETRY_STATUS = (429, 500, 502, 503)
+
+
+async def _generate_retrying(provider, **request):
+    import asyncio
+
+    for attempt in range(GEN_RETRIES + 1):
+        try:
+            return await provider.generate(**request)
+        except MediaError as exc:
+            if attempt >= GEN_RETRIES or exc.status_code not in RETRY_STATUS:
+                raise
+            await asyncio.sleep(GEN_RETRY_DELAY_S * (attempt + 1))
+
+
 VARIATION_DEFAULT, VARIATION_MAX, VARIATION_PARALLEL = 4, 10, 3
 VARIATION_MAX_UNLIMITED = 100          # a technical ceiling for UNLIMITED_EMAILS accounts, so one request cannot run for hours
 
@@ -274,7 +291,7 @@ async def vary_and_save(ctx: Ctx, item_id: str, prompt: str, count: Any = None) 
         nonlocal spent
         async with sem:
             try:
-                result = await provider.generate(prompt=p, reference=(original, source.mime_type))
+                result = await _generate_retrying(provider, prompt=p, reference=(original, source.mime_type))
             except MediaError as exc:
                 logger.warning("variation %s of %s failed (HTTP %s)", i + 1, n, exc.status_code)
                 return None
@@ -301,6 +318,72 @@ async def vary_and_save(ctx: Ctx, item_id: str, prompt: str, count: Any = None) 
     if not items:
         raise MediaServiceError(502, "media_failed", "The image model could not make variations right now. Please try again.")
     return {"items": [with_url(ctx, i) for i in items], "asked": n, "failed": n - len(items), "cost_usd": round(spent, 4)}
+
+
+def estimate_sprite_sheet(animations: Any, unlimited: bool = False) -> float:
+    return image_mod.get_reference_provider().estimate_cost_usd() * len(spritesheet.clean_animations(animations, unlimited))
+
+
+async def sprite_sheet_and_save(ctx: Ctx, item_id: str, animations: Any = None, frames: Any = None, notes: str = "") -> Dict[str, Any]:
+    """A sprite sheet of an attached character in the standard layout (see spritesheet.py): one strip per animation from the image model
+    (reference-image mode), then built into a labelled sheet and a clean transparent sheet, both saved to the library. Each strip that
+    comes back is charged; an animation that fails twice is left out of the sheet.
+    -> {'items': [labelled, clean], 'rows': [names made], 'missing': [names], 'cost_usd': float}"""
+    import asyncio
+
+    names = spritesheet.clean_animations(animations, ctx.unlimited)
+    n = spritesheet.clean_frames(frames, ctx.unlimited)
+    provider = image_mod.get_reference_provider()
+    each = provider.estimate_cost_usd()
+    await gate_generation(ctx, provider, each * len(names))
+    source = await get_owned(ctx, item_id)
+    if source.kind != "image":
+        raise MediaServiceError(400, "unsupported", "That item is not a picture.")
+    try:
+        original = await ctx.storage.get(source.storage_key)
+    except StorageError as exc:
+        raise MediaServiceError(exc.status_code, "storage_failed", exc.public_message) from None
+    notes = " ".join(str(notes or "").split())[:300]
+    sem = asyncio.Semaphore(VARIATION_PARALLEL)
+    spent = 0.0
+    strips: Dict[str, bytes] = {}
+
+    async def one(name: str):
+        nonlocal spent
+        async with sem:
+            try:
+                result = await _generate_retrying(provider, prompt=spritesheet.strip_prompt(name, n, notes), reference=(original, source.mime_type),
+                                                  aspect_ratio="21:9")
+            except MediaError as exc:
+                logger.warning("sprite strip %s failed (HTTP %s)", name, exc.status_code)
+                return
+            except Exception:
+                logger.exception("sprite strip %s failed", name)
+                return
+        day = hardening.utc_day()                               # the provider call happened: the cost counts even if the sheet cannot be built
+        await ctx.store.add_spend("media:" + ctx.user_id, day, each)
+        await ctx.store.add_spend(GLOBAL_KEY, day, each)
+        spent += each
+        strips[name] = result.data
+
+    await asyncio.gather(*(one(nm) for nm in names))
+    ordered = {nm: strips[nm] for nm in names if nm in strips}          # rows keep the order that was asked for
+    if not ordered:
+        raise MediaServiceError(502, "media_failed", "The image model could not draw the animations right now. Please try again.")
+    try:
+        labelled, clean = await asyncio.to_thread(spritesheet.build, ordered, n)
+    except Exception:
+        logger.exception("sprite sheet could not be built")
+        raise MediaServiceError(502, "media_failed", "The animations came back in a form I could not turn into a sheet. Please try again.") from None
+    saved = [await save_item(ctx, kind="image", data=labelled, mime="image/png", title=f"{source.title} (sprite sheet)", prompt=notes or None,
+                             provider=provider.id, edited_from_id=source.id)]
+    try:
+        saved.append(await save_item(ctx, kind="image", data=clean, mime="image/png", title=f"{source.title} (sprite sheet, transparent)",
+                                     prompt=notes or None, provider=provider.id, edited_from_id=source.id))
+    except MediaServiceError as exc:
+        logger.warning("the transparent sheet could not be saved: %s", exc.error)
+    return {"items": [with_url(ctx, i) for i in saved], "rows": list(ordered), "missing": [nm for nm in names if nm not in ordered],
+            "cost_usd": round(spent, 4)}
 
 
 async def _duration(data: bytes) -> Optional[float]:

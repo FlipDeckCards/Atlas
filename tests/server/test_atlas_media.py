@@ -358,10 +358,10 @@ class TestProtection:
         paths = {getattr(r, "path", "") for r in client.app.routes}
         assert not any("video" in p for p in paths)
         pkg = Path(cf.__file__).parent
-        src = "\n".join(p.read_text(encoding="utf-8") for p in pkg.glob("*.py") if p.name != "edits.py")
+        src = "\n".join(p.read_text(encoding="utf-8") for p in pkg.glob("*.py") if p.name not in ("edits.py", "spritesheet.py"))
         for needle in ("open(", "write_bytes", "write_text", "tempfile", "os.makedirs", "shutil"):
             assert needle not in src, needle
-        edit_src = (pkg / "edits.py").read_text(encoding="utf-8")        # Image.open reads from memory; nothing is written to disk
+        edit_src = "\n".join((pkg / n).read_text(encoding="utf-8") for n in ("edits.py", "spritesheet.py"))        # Image.open reads from memory; nothing is written to disk
         for needle in ("write_bytes", "write_text", "tempfile", "os.makedirs", "NamedTemporaryFile", "open(\"w"):
             assert needle not in edit_src, needle
 

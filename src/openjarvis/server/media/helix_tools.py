@@ -25,12 +25,12 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from openjarvis.server import hardening
-from openjarvis.server.media import service
+from openjarvis.server.media import service, spritesheet
 from openjarvis.server.media.service import Ctx, MediaServiceError
 
 logger = logging.getLogger(__name__)
 
-PAID_TOOLS = {"generate_image", "generate_speech", "vary_image"}
+PAID_TOOLS = {"generate_image", "generate_speech", "vary_image", "make_sprite_sheet"}
 FREE_TOOLS = {"list_library", "open_item", "edit_item"}
 PENDING_TTL_S = 10 * 60
 MAX_TOOL_ROUNDS = 3
@@ -53,6 +53,16 @@ TOOLS: List[Dict[str, Any]] = [
             "count": {"type": "integer", "description": "How many pictures to make: the number the person asks for, 4 if not stated."},
             "item_id": {"type": "string", "description": "The library id of the picture. Leave out to use the most recently attached picture."}}, "required": ["prompt"]}}},
     {"type": "function", "function": {
+        "name": "make_sprite_sheet",
+        "description": "Make a game SPRITE SHEET from a character picture the person attached (or a saved library picture): one row per animation (default Idle, Walk, Run, Jump, Attack, Hurt, Death), "
+                       "7 frames per row, with the animation name as a label on the left, plus a clean transparent version for a game engine. "
+                       "ALWAYS use this, not vary_image, when the person asks for a sprite sheet. Costs money (one picture per animation), so the system asks the person to confirm first.",
+        "parameters": {"type": "object", "properties": {
+            "animations": {"type": "array", "items": {"type": "string"}, "description": "The rows, in order. Leave out for the standard seven: Idle, Walk, Run, Jump, Attack, Hurt, Death."},
+            "frames": {"type": "integer", "description": "Frames per row: 7 if not stated."},
+            "notes": {"type": "string", "description": "Anything said about the style or the character's moves (300 characters at most)."},
+            "item_id": {"type": "string", "description": "The library id of the character picture. Leave out to use the most recently attached picture."}}}}},
+    {"type": "function", "function": {
         "name": "list_library",
         "description": "List the user's saved media (titles and ids).",
         "parameters": {"type": "object", "properties": {"kind": {"type": "string", "enum": ["all", "image", "sound"]}}}}},
@@ -69,6 +79,7 @@ TOOLS: List[Dict[str, Any]] = [
 SYSTEM_ADDENDUM = (
     " You can create and manage the user's media with tools. When the user attaches a picture and asks for versions, variations or edits of it, call vary_image "
     "(the attached picture is saved and its library id is in the message; never describe it and call generate_image instead). "
+    "If they ask for a sprite sheet, call make_sprite_sheet instead: it builds the standard sheet with a labelled row per animation. "
     "For generate_image, generate_speech and vary_image the system will ask the user to confirm: after "
     "calling one, say in one sentence exactly what you will make and that it needs their yes; never say something was created unless a tool result says "
     "'Saved'. You can only do speech, not sound effects or music. Use list_library, open_item and edit_item for the user's own library only."
@@ -187,6 +198,9 @@ async def keep_attached(ctx: Ctx, items: List[Any]) -> List[Dict[str, Any]]:
 
 
 def describe(tool: str, args: Dict[str, Any]) -> str:
+    if tool == "make_sprite_sheet":
+        names = spritesheet.clean_animations(args.get("animations"), True)
+        return f'make a sprite sheet from your picture: {len(names)} rows ({", ".join(names)}), {spritesheet.clean_frames(args.get("frames"), True)} frames each'
     if tool == "vary_image":
         n = service.clamp_variations(args.get("count"), True)         # args hold the already-clamped count (see execute_tool)
         return f'make {n} {"variation" if n == 1 else "variations"} of your picture: "{_clip(args.get("prompt"), 120)}"'
@@ -199,6 +213,10 @@ async def run_paid(ctx: Ctx, tool: str, args: Dict[str, Any]) -> Dict[str, Any]:
     """Run a confirmed paid action through the normal gates (media cap, rate limit, quota) and save it."""
     if tool == "generate_image":
         item = await service.generate_and_save(ctx, "image", prompt=_clip(args.get("prompt"), 500))
+    elif tool == "make_sprite_sheet":
+        res = await service.sprite_sheet_and_save(ctx, str(args.get("item_id") or ""), args.get("animations"), args.get("frames"), _clip(args.get("notes"), 300))
+        miss = f"; could not draw: {', '.join(res['missing'])}" if res["missing"] else ""
+        return {"saved": True, "title": f"sprite sheet with {len(res['rows'])} rows (about ${res['cost_usd']:.2f}){miss}", "items": res["items"], "item": res["items"][0]}
     elif tool == "vary_image":
         res = await service.vary_and_save(ctx, str(args.get("item_id") or ""), _clip(args.get("prompt"), 500), args.get("count"))
         n, bad = len(res["items"]), res["failed"]
@@ -210,6 +228,8 @@ async def run_paid(ctx: Ctx, tool: str, args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _estimate(tool: str, args: Dict[str, Any], ctx: Optional[Ctx] = None) -> float:
+    if tool == "make_sprite_sheet":
+        return service.estimate_sprite_sheet(args.get("animations"), bool(ctx and ctx.unlimited))
     if tool == "vary_image":
         return service.estimate_variations(args.get("count"), bool(ctx and ctx.unlimited))
     if tool == "generate_image":
@@ -230,10 +250,10 @@ async def execute_tool(ctx: Ctx, name: str, args: Dict[str, Any], *, user_messag
         if name in PAID_TOOLS:
             if name == "generate_speech" and looks_like_sound_effect(user_message):
                 return {"text": "Refused: generate_speech is speech only and cannot make sound effects or music. " + SFX_REPLY, "ui": ui}
-            if not _clip(args.get("text" if name == "generate_speech" else "prompt"), 5):
+            if name != "make_sprite_sheet" and not _clip(args.get("text" if name == "generate_speech" else "prompt"), 5):
                 return {"text": "Error: nothing to make. Ask the user what they want.", "ui": ui}
             service.require_flag()
-            if name == "vary_image":
+            if name in ("vary_image", "make_sprite_sheet"):
                 # the picture is fixed now (not at the yes), and must be the caller's own picture
                 item_id = str(args.get("item_id") or "") or latest_attached(ctx.user_id) or ""
                 if not item_id:
@@ -241,7 +261,12 @@ async def execute_tool(ctx: Ctx, name: str, args: Dict[str, Any], *, user_messag
                 item = await service.get_owned(ctx, item_id)
                 if item.kind != "image":
                     return {"text": "Error: that item is not a picture.", "ui": ui}
-                args = dict(args, item_id=item.id, count=service.clamp_variations(args.get("count"), ctx.unlimited))
+                args = dict(args, item_id=item.id)
+                if name == "vary_image":
+                    args["count"] = service.clamp_variations(args.get("count"), ctx.unlimited)
+                else:
+                    args["animations"] = spritesheet.clean_animations(args.get("animations"), ctx.unlimited)
+                    args["frames"] = spritesheet.clean_frames(args.get("frames"), ctx.unlimited)
             est = _estimate(name, args, ctx)
             p = pending.create(ctx.user_id, name, args, est, describe(name, args))
             # nothing has been spent and nothing runs until the person's next message is an explicit yes
