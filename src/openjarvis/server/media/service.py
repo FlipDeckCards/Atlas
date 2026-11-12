@@ -225,6 +225,79 @@ async def generate_and_save(ctx: Ctx, kind: str, *, prompt: str = "", steps: Opt
     return item
 
 
+VARIATION_DEFAULT, VARIATION_MAX, VARIATION_PARALLEL = 4, 10, 3
+
+
+def clamp_variations(n: Any) -> int:
+    try:
+        v = int(n) if n is not None else VARIATION_DEFAULT
+    except (TypeError, ValueError):
+        v = VARIATION_DEFAULT
+    return max(1, min(VARIATION_MAX, v))
+
+
+def estimate_variations(count: Any) -> float:
+    return image_mod.get_reference_provider().estimate_cost_usd() * clamp_variations(count)
+
+
+async def vary_and_save(ctx: Ctx, item_id: str, prompt: str, count: Any = None) -> Dict[str, Any]:
+    """N new pictures made from one saved picture and a prompt (Gemini's image model, reference-image mode).
+    The whole batch is checked against the spend caps first; every picture that comes back is charged (to the person's own spend row and
+    the global one, so it shows in the Station's Out column) and saved as a new item with edited_from_id set. A picture that fails is skipped.
+    -> {'items': [public dicts with url], 'asked': N, 'failed': M, 'cost_usd': float}"""
+    import asyncio
+
+    n = clamp_variations(count)
+    p = image_mod.clean_prompt(prompt)
+    if not p:
+        raise MediaServiceError(422, "bad_request", "Say what you want changed or varied.")
+    p = p[:image_mod.MAX_PROMPT_CHARS]
+    provider = image_mod.get_reference_provider()
+    each = provider.estimate_cost_usd()
+    await gate_generation(ctx, provider, each * n)
+    source = await get_owned(ctx, item_id)
+    if source.kind != "image":
+        raise MediaServiceError(400, "unsupported", "That item is not a picture.")
+    try:
+        original = await ctx.storage.get(source.storage_key)
+    except StorageError as exc:
+        raise MediaServiceError(exc.status_code, "storage_failed", exc.public_message) from None
+    sem = asyncio.Semaphore(VARIATION_PARALLEL)
+    spent = 0.0
+
+    async def one(i: int):
+        nonlocal spent
+        async with sem:
+            try:
+                result = await provider.generate(prompt=p, reference=(original, source.mime_type))
+            except MediaError as exc:
+                logger.warning("variation %s of %s failed (HTTP %s)", i + 1, n, exc.status_code)
+                return None
+            except Exception:
+                logger.exception("variation %s of %s failed", i + 1, n)
+                return None
+        day = hardening.utc_day()                               # the provider call happened: the cost counts even if saving fails
+        await ctx.store.add_spend("media:" + ctx.user_id, day, each)
+        await ctx.store.add_spend(GLOBAL_KEY, day, each)
+        spent += each
+        return result
+
+    results = [r for r in await asyncio.gather(*(one(i) for i in range(n))) if r is not None]
+    items = []
+    for r in results:
+        try:
+            items.append(await save_item(ctx, kind="image", data=r.data, mime=r.mime, title=f"{source.title} (variation {len(items) + 1})",
+                                         prompt=p, provider=r.provider, edited_from_id=source.id))
+        except MediaServiceError as exc:
+            logger.warning("a variation could not be saved: %s", exc.error)
+            if not items:
+                raise
+            break                                               # storage full: keep what was saved
+    if not items:
+        raise MediaServiceError(502, "media_failed", "The image model could not make variations right now. Please try again.")
+    return {"items": [with_url(ctx, i) for i in items], "asked": n, "failed": n - len(items), "cost_usd": round(spent, 4)}
+
+
 async def _duration(data: bytes) -> Optional[float]:
     import asyncio
 

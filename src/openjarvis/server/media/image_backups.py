@@ -56,10 +56,16 @@ class GeminiImage:
     def estimate_cost_usd(self, **_: Any) -> float:
         return GEMINI_USD_PER_IMAGE
 
-    async def generate(self, prompt: str, client: Optional[httpx.AsyncClient] = None, **_: Any) -> MediaResult:
+    async def generate(self, prompt: str, client: Optional[httpx.AsyncClient] = None, reference: Optional[tuple] = None, **_: Any) -> MediaResult:
+        """reference: (bytes, mime) of a picture to build on (reference-image mode). The picture goes in the same request as the prompt."""
         key = _key(("GEMINI_API_KEY", "GOOGLE_API_KEY"))
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
-        body = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"responseModalities": ["IMAGE"]}}
+        parts: list = []
+        if reference is not None:
+            ref_data, ref_mime = reference
+            parts.append({"inlineData": {"mimeType": ref_mime or "image/png", "data": base64.b64encode(ref_data).decode("ascii")}})
+        parts.append({"text": prompt})
+        body = {"contents": [{"parts": parts}], "generationConfig": {"responseModalities": ["IMAGE"]}}
         headers = {"x-goog-api-key": key, "Content-Type": "application/json"}
         try:
             if client is not None:

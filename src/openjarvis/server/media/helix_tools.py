@@ -1,6 +1,10 @@
 """Helix's tools: lets the chat model create and manage media, with the server (not the model) enforcing every rule.
 
-Tools: generate_image, generate_speech (paid), list_library, open_item, edit_item (free).
+Tools: generate_image, generate_speech, vary_image (paid), list_library, open_item, edit_item (free).
+
+vary_image takes a picture the person attached (saved to their library when the message arrives) and a prompt, and makes N new pictures
+from it with Gemini's image model in reference-image mode (default 4, at most 10). Each picture that comes back is charged to the spend ledger
+(the Station's Out column) and saved as a new library item.
 
 Rules enforced here, whatever the model does:
   * A paid tool call NEVER runs on the model's say-so. It is recorded as a pending action with an estimated cost; the model reads it back
@@ -25,7 +29,7 @@ from openjarvis.server.media.service import Ctx, MediaServiceError
 
 logger = logging.getLogger(__name__)
 
-PAID_TOOLS = {"generate_image", "generate_speech"}
+PAID_TOOLS = {"generate_image", "generate_speech", "vary_image"}
 FREE_TOOLS = {"list_library", "open_item", "edit_item"}
 PENDING_TTL_S = 10 * 60
 MAX_TOOL_ROUNDS = 3
@@ -39,6 +43,14 @@ TOOLS: List[Dict[str, Any]] = [
         "name": "generate_speech",
         "description": "Turn text into spoken audio (speech only, NOT sound effects or music) and save it to the library. Costs money, so the system asks the user to confirm first.",
         "parameters": {"type": "object", "properties": {"text": {"type": "string", "description": "The words to speak (1000 characters at most)."}}, "required": ["text"]}}},
+    {"type": "function", "function": {
+        "name": "vary_image",
+        "description": "Make several versions, variations or edits of a picture the user attached (or of a saved library picture), from the picture plus a prompt, and save them to the library. "
+                       "Use it when the user attaches an image and asks for versions, variations or edits. Costs money per picture, so the system asks the user to confirm first.",
+        "parameters": {"type": "object", "properties": {
+            "prompt": {"type": "string", "description": "What to change or how to vary the picture (500 characters at most)."},
+            "count": {"type": "integer", "description": "How many pictures to make: 4 if not stated, at most 10."},
+            "item_id": {"type": "string", "description": "The library id of the picture. Leave out to use the most recently attached picture."}}, "required": ["prompt"]}}},
     {"type": "function", "function": {
         "name": "list_library",
         "description": "List the user's saved media (titles and ids).",
@@ -54,7 +66,9 @@ TOOLS: List[Dict[str, Any]] = [
 ]
 
 SYSTEM_ADDENDUM = (
-    " You can create and manage the user's media with tools. For generate_image and generate_speech the system will ask the user to confirm: after "
+    " You can create and manage the user's media with tools. When the user attaches a picture and asks for versions, variations or edits of it, call vary_image "
+    "(the attached picture is saved and its library id is in the message; never describe it and call generate_image instead). "
+    "For generate_image, generate_speech and vary_image the system will ask the user to confirm: after "
     "calling one, say in one sentence exactly what you will make and that it needs their yes; never say something was created unless a tool result says "
     "'Saved'. You can only do speech, not sound effects or music. Use list_library, open_item and edit_item for the user's own library only."
 )
@@ -136,7 +150,45 @@ def _clip(v: Any, n: int) -> str:
     return " ".join(str(v or "").split())[:n]
 
 
+ATTACHED: Dict[str, List[Dict[str, Any]]] = {}       # user id -> pictures attached in chat and saved to the library: [{'name', 'item_id', 'at'}]
+ATTACHED_TTL_S = 2 * 60 * 60
+MAX_ATTACHED_KEPT = 8
+
+
+def remember_attached(user_id: str, saved: List[Dict[str, Any]]) -> None:
+    now = time.monotonic()
+    kept = [a for a in ATTACHED.get(user_id, []) if now - a["at"] < ATTACHED_TTL_S] + [dict(a, at=now) for a in saved]
+    ATTACHED[user_id] = kept[-MAX_ATTACHED_KEPT:]
+
+
+def latest_attached(user_id: str) -> Optional[str]:
+    now = time.monotonic()
+    live = [a for a in ATTACHED.get(user_id, []) if now - a["at"] < ATTACHED_TTL_S]
+    return live[-1]["item_id"] if live else None
+
+
+async def keep_attached(ctx: Ctx, items: List[Any]) -> List[Dict[str, Any]]:
+    """Save the pictures attached to a chat message to the user's library, as the real files (not a description), and remember their ids so
+    vary_image and later turns can use them. items: [(name, base64, mime)]. A picture that cannot be saved is skipped."""
+    import base64
+
+    saved: List[Dict[str, Any]] = []
+    for name, b64, mime in items[:5]:
+        try:
+            item = await service.save_item(ctx, kind="image", data=base64.b64decode(b64), mime=mime or "image/jpeg", title=f"Attached: {name}", prompt=None, provider="upload")
+        except Exception:
+            logger.warning("could not keep the attached image %s", _clip(name, 60))
+            continue
+        saved.append({"name": name, "item_id": item.id})
+    if saved:
+        remember_attached(ctx.user_id, saved)
+    return saved
+
+
 def describe(tool: str, args: Dict[str, Any]) -> str:
+    if tool == "vary_image":
+        n = service.clamp_variations(args.get("count"))
+        return f'make {n} {"variation" if n == 1 else "variations"} of your picture: "{_clip(args.get("prompt"), 120)}"'
     if tool == "generate_image":
         return f'make an image: "{_clip(args.get("prompt"), 120)}"'
     return f'make a speech clip saying: "{_clip(args.get("text"), 120)}"'
@@ -146,12 +198,19 @@ async def run_paid(ctx: Ctx, tool: str, args: Dict[str, Any]) -> Dict[str, Any]:
     """Run a confirmed paid action through the normal gates (media cap, rate limit, quota) and save it."""
     if tool == "generate_image":
         item = await service.generate_and_save(ctx, "image", prompt=_clip(args.get("prompt"), 500))
+    elif tool == "vary_image":
+        res = await service.vary_and_save(ctx, str(args.get("item_id") or ""), _clip(args.get("prompt"), 500), args.get("count"))
+        n, bad = len(res["items"]), res["failed"]
+        title = f"{n} {'variation' if n == 1 else 'variations'} (about ${res['cost_usd']:.2f})" + (f"; {bad} could not be made" if bad else "")
+        return {"saved": True, "title": title, "items": res["items"], "item": res["items"][0]}
     else:
         item = await service.generate_and_save(ctx, "sound", text=_clip(args.get("text"), 1000))
     return {"saved": True, "title": item.title, "item": service.with_url(ctx, item)}
 
 
 def _estimate(tool: str, args: Dict[str, Any]) -> float:
+    if tool == "vary_image":
+        return service.estimate_variations(args.get("count"))
     if tool == "generate_image":
         return service.estimate_cost("image", steps=4)
     return service.estimate_cost("sound", text=_clip(args.get("text"), 1000))
@@ -170,9 +229,18 @@ async def execute_tool(ctx: Ctx, name: str, args: Dict[str, Any], *, user_messag
         if name in PAID_TOOLS:
             if name == "generate_speech" and looks_like_sound_effect(user_message):
                 return {"text": "Refused: generate_speech is speech only and cannot make sound effects or music. " + SFX_REPLY, "ui": ui}
-            if not _clip(args.get("prompt" if name == "generate_image" else "text"), 5):
+            if not _clip(args.get("text" if name == "generate_speech" else "prompt"), 5):
                 return {"text": "Error: nothing to make. Ask the user what they want.", "ui": ui}
             service.require_flag()
+            if name == "vary_image":
+                # the picture is fixed now (not at the yes), and must be the caller's own picture
+                item_id = str(args.get("item_id") or "") or latest_attached(ctx.user_id) or ""
+                if not item_id:
+                    return {"text": "Error: there is no picture to work from. Ask the user to attach one.", "ui": ui}
+                item = await service.get_owned(ctx, item_id)
+                if item.kind != "image":
+                    return {"text": "Error: that item is not a picture.", "ui": ui}
+                args = dict(args, item_id=item.id, count=service.clamp_variations(args.get("count")))
             est = _estimate(name, args)
             p = pending.create(ctx.user_id, name, args, est, describe(name, args))
             # nothing has been spent and nothing runs until the person's next message is an explicit yes
@@ -219,6 +287,8 @@ async def pre_turn(ctx: Ctx, message: str, pending: Optional[PendingActions] = N
                 res = await run_paid(ctx, p.tool, p.args)
             except MediaServiceError as exc:
                 return {"reply": f"I couldn't do that: {exc.detail}", "ui": []}
+            if res.get("items"):
+                return {"reply": f'Saved: {res["title"]}', "ui": [{"type": "saved_many", "items": res["items"]}]}
             return {"reply": f'Saved: {res["title"]}', "ui": [{"type": "saved", "item": res["item"]}]}
         # not a yes: the action is cancelled and the message is handled normally
     if looks_like_sound_effect(message) and not message.lstrip().startswith("/"):

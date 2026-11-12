@@ -24,6 +24,11 @@ DEFAULT_PROVIDER = CloudflareFluxSchnell.id
 FALLBACK_ORDER = (CloudflareFluxSchnell.id, GeminiImage.id, OpenAIImage.id)
 
 
+def get_reference_provider() -> MediaProvider:
+    """The provider for variations of a picture the user attached: Gemini's image model in reference-image mode."""
+    return PROVIDERS[GeminiImage.id]
+
+
 def get_provider(env: Optional[dict] = None) -> MediaProvider:
     name = (
         (os.environ if env is None else env).get("MEDIA_IMAGE_PROVIDER")

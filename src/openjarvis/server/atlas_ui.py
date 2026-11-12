@@ -523,6 +523,10 @@ async def index():
     .msg-tag { font-size:9px; letter-spacing:2px; margin-bottom:4px; opacity:0.5; }
     .msg-thumb { margin-top:6px; border-radius:2px; overflow:hidden; border:1px solid rgba(0,229,255,0.2); display:inline-block; }
     .msg-thumb img { display:block; max-width:160px; max-height:100px; object-fit:cover; }
+    .var-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:8px; margin-top:8px; }
+    .var-cell { border:1px solid rgba(0,229,255,0.2); border-radius:2px; padding:4px; }
+    .var-thumb { display:block; width:100%; aspect-ratio:1; object-fit:cover; cursor:pointer; }
+    .var-row { display:flex; gap:4px; margin-top:4px; }
     .user  { align-self:flex-end; background:rgba(255,109,0,0.08); border:1px solid rgba(255,109,0,0.25); color:#ffa040; }
     .user .msg-tag { color:var(--orange); }
     .atlas { align-self:flex-start; background:rgba(0,229,255,0.04); border:1px solid rgba(0,229,255,0.14); color:var(--text); }
@@ -1193,9 +1197,33 @@ async def index():
     function addOpenButton(wrap, itemId) {
       const b = mk('button', 'v-btn saved-open', 'Open'); b.addEventListener('click', () => openItem(itemId)); wrap.appendChild(b);
     }
+    // Variations of an attached picture: a thumbnail per result with Open and Download. The download link is asked for when clicked
+    // (the link in the thumbnail expires after 15 minutes; the pictures stay in the library).
+    function addVariationGrid(wrap, items) {
+      const grid = mk('div', 'var-grid');
+      items.forEach((it, i) => {
+        const cell = mk('div', 'var-cell');
+        const img = mk('img', 'var-thumb'); img.src = it.url; img.alt = 'Variation ' + (i + 1); img.loading = 'lazy';
+        img.addEventListener('click', () => openItem(it.id));
+        const row = mk('div', 'var-row');
+        const open = mk('button', 'v-btn', 'Open'); open.addEventListener('click', () => openItem(it.id));
+        const dl = mk('button', 'v-btn', 'Download');
+        dl.addEventListener('click', async () => {
+          dl.disabled = true;
+          const r = await libApi('/api/media/items/' + encodeURIComponent(it.id) + '?download=true');
+          if (r.ok && r.data.item) { const a = document.createElement('a'); a.href = r.data.item.url; a.rel = 'noopener'; a.download = ''; document.body.appendChild(a); a.click(); a.remove(); }
+          else { dl.textContent = 'Retry'; }
+          dl.disabled = false;
+        });
+        row.append(open, dl); cell.append(img, row); grid.appendChild(cell);
+      });
+      wrap.appendChild(grid);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
     function handleUiActions(actions, wrap) {
       (actions || []).forEach(a => {
         if (a.type === 'saved' && a.item) { addOpenButton(wrap, a.item.id); loadLibrary(); }
+        else if (a.type === 'saved_many' && a.items) { addVariationGrid(wrap, a.items); loadLibrary(); }
         else if (a.type === 'open_item' && a.id) openItem(a.id);
         else if (a.type === 'crew_refresh') setTimeout(checkCrew, 1500);
       });
@@ -1825,6 +1853,7 @@ async def chat(req: ChatRequest, request: Request):
     # CHANGE 4: pass client_date to get_system_prompt
     # Helix's media tools are offered only when media is fully on (flag, budget above zero, storage configured); otherwise chat is exactly as before
     media_ctx = None
+    kept_images: list = []
     if helix_tools.tools_available(request.app.state):
         try:
             media_ctx = media_service.ctx_from_request(request, paid=True)
@@ -1838,7 +1867,11 @@ async def chat(req: ChatRequest, request: Request):
         for doc_name, doc_text in docs:
             crew_helix.remember_document(crew_ctx.user_id, doc_name, doc_text)
         if images:                                                  # keep the pictures (a book cover) in his media library so the crew can use them
-            await crew_helix.keep_images(crew_ctx, media_ctx, [(n, b, m) for b, m, n in images])
+            kept_images = await crew_helix.keep_images(crew_ctx, media_ctx, [(n, b, m) for b, m, n in images])
+            if kept_images:
+                helix_tools.remember_attached(crew_ctx.user_id, kept_images)
+    elif images and media_ctx is not None:                         # the real files are saved to the library so a later turn (or vary_image) can use them
+        kept_images = await helix_tools.keep_attached(media_ctx, [(n, b, m) for b, m, n in images])
     if crew_ctx is not None and not has_files:
         early = await crew_helix.pre_turn(crew_ctx, req.message)
         if early is not None:
@@ -1874,7 +1907,10 @@ async def chat(req: ChatRequest, request: Request):
             (f'\n[The document continues; {len(doc_text):,} characters in all. Agents can read all of it.]' if len(doc_text) > per_doc else "")
         saved_text += f"\n[Attached document: {doc_name}]"
     if images:
-        saved_text += "".join("\n[Attached image]" for _ in images)
+        # the model gets the picture itself (below); the note gives its library id so a follow-up turn ("make 6 versions of that") can name it
+        notes = "".join(f"\n[Attached image saved to the library as item {k['item_id']}]" for k in kept_images) or "".join("\n[Attached image]" for _ in images)
+        model_text += notes
+        saved_text += notes
         user_content = [{"type": "text", "text": model_text}] + [
             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}} for b64, mime, _n in images]
     else:
