@@ -218,6 +218,8 @@ def describe(tool: str, args: Dict[str, Any]) -> str:
     if tool == "make_sprite_sheet":
         names = spritesheet.clean_animations(args.get("animations"), True)
         return f'make a sprite sheet from your picture: {len(names)} rows ({", ".join(names)}), {spritesheet.clean_frames(args.get("frames"), True)} frames each'
+    if tool == "vary_image" and args.get("edit"):
+        return f'edit your picture: "{_short(args.get("prompt"), 200)}"'
     if tool == "vary_image":
         n = service.clamp_variations(args.get("count"), True)         # args hold the already-clamped count (see execute_tool)
         return f'make {n} {"variation" if n == 1 else "variations"} based on your picture: "{_short(args.get("prompt"), 200)}"'
@@ -235,7 +237,7 @@ async def run_paid(ctx: Ctx, tool: str, args: Dict[str, Any]) -> Dict[str, Any]:
         miss = f"; could not draw: {', '.join(res['missing'])}" if res["missing"] else ""
         return {"saved": True, "title": f"sprite sheet with {len(res['rows'])} rows (about ${res['cost_usd']:.2f}){miss}", "items": res["items"], "item": res["items"][0]}
     elif tool == "vary_image":
-        res = await service.vary_and_save(ctx, str(args.get("item_id") or ""), _clip(args.get("prompt"), 500), args.get("count"))
+        res = await service.vary_and_save(ctx, str(args.get("item_id") or ""), _clip(args.get("prompt"), 500), args.get("count"), edit=bool(args.get("edit")))
         n, bad = len(res["items"]), res["failed"]
         title = f"{n} {'variation' if n == 1 else 'variations'} (about ${res['cost_usd']:.2f})" + (f"; {bad} could not be made" if bad else "")
         return {"saved": True, "title": title, "items": res["items"], "item": res["items"][0]}
@@ -338,6 +340,46 @@ async def sprite_sheet_request(ctx: Ctx, message: str, pending: Optional[Pending
     return {"reply": f"Ready to {p.description} (estimated cost about ${p.estimate_usd:.2f}). Say 'yes' to go ahead, or tell me which animations you want instead.", "ui": []}
 
 
+_NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "a few": 3, "several": 5}
+_VARIATIONS = re.compile(r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|a few|several)?\s*(?:more |new |different |other )?"
+                         r"(?:versions?|variations?|variants?|alternatives?|options)\b", re.I)
+_EDIT = re.compile(r"\b(remove|delete|erase|get rid of|take (?:out|off|away)|replace|swap|change|re-?colou?r|edit|redraw|retouch|clean up|add|"
+                   r"give (?:him|her|it|them)|turn (?:him|her|it|this|the)|make (?:it|him|her|them|this|the)|without)\b", re.I)
+
+
+def _wanted_count(message: str) -> Optional[int]:
+    m = _VARIATIONS.search(message)
+    if not m:
+        return None
+    word = (m.group(1) or "").lower()
+    return int(word) if word.isdigit() else _NUMBER_WORDS.get(word)
+
+
+async def picture_request(ctx: Ctx, message: str, new_image: bool, pending: Optional[PendingActions] = None) -> Optional[Dict[str, Any]]:
+    """'make 10 versions of this' or 'remove the sword from this character', about a picture attached in this message (new_image) or one the
+    message points at ('this character', 'the image'): set up by the server as a Gemini request on the picture, with the cost read back and
+    a yes needed. (A chat model asked to do this sometimes just says it did, with nothing made.) -> {'reply', 'ui'} or None."""
+    text = str(message or "")
+    if text.lstrip().startswith("/") or not latest_attached(ctx.user_id, ATTACHED_RECENT_S):
+        return None
+    if not (new_image or builds_on_attached(ctx.user_id, text)):
+        return None
+    count = _wanted_count(text)
+    if count is not None or _VARIATIONS.search(text):
+        args: Dict[str, Any] = {"prompt": _clip(text, 500), "count": count or service.VARIATION_DEFAULT}
+    elif _EDIT.search(text):
+        args = {"prompt": _clip(text, 500), "count": 1, "edit": True}
+    else:
+        return None
+    pending = pending or PENDING
+    out = await execute_tool(ctx, "vary_image", args, user_message=text, pending=pending)
+    p = pending.get(ctx.user_id)
+    if p is None or p.tool != "vary_image":
+        return {"reply": out["text"].replace("Could not do that: ", "", 1) if out["text"].startswith("Could not do that") else "I couldn't set that up right now.", "ui": []}
+    pending.arm(ctx.user_id)
+    return {"reply": f"Ready to {p.description} (estimated cost about ${p.estimate_usd:.2f}). Say 'yes' to go ahead.", "ui": []}
+
+
 async def pre_turn(ctx: Ctx, message: str, pending: Optional[PendingActions] = None) -> Optional[Dict[str, Any]]:
     """Handle the cases that never need the model: a yes to a read-back action, a cancel, a sound-effect request.
     -> a finished answer {'reply', 'ui'} or None to carry on to the model."""
@@ -356,7 +398,7 @@ async def pre_turn(ctx: Ctx, message: str, pending: Optional[PendingActions] = N
         # not a yes: the action is cancelled and the message is handled normally
     if looks_like_sound_effect(message) and not message.lstrip().startswith("/"):
         return {"reply": SFX_REPLY, "ui": []}
-    return await sprite_sheet_request(ctx, message, pending)
+    return await sprite_sheet_request(ctx, message, pending) or await picture_request(ctx, message, False, pending)
 
 
 async def run_model_with_tools(ctx: Optional[Ctx], messages: List[Dict[str, Any]], model_id: str, user_message: str, *, acompletion: Callable[..., Awaitable[Any]],

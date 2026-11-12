@@ -248,6 +248,8 @@ async def _generate_retrying(provider, **request):
 
 REFERENCE_PREFIX = ("Use the attached image as the reference for art style, rendering quality, level of detail and overall design language. "
                     "Make a new, finished, high-quality picture that follows this request: ")
+EDIT_PREFIX = ("Edit the attached image. Keep the same character, pose, proportions, colours, art style, lighting and background exactly as they are, "
+               "and change ONLY what this request says: ")
 VARIATION_DEFAULT, VARIATION_MAX, VARIATION_PARALLEL = 4, 10, 3
 VARIATION_MAX_UNLIMITED = 100          # a technical ceiling for UNLIMITED_EMAILS accounts, so one request cannot run for hours
 
@@ -264,7 +266,7 @@ def estimate_variations(count: Any, unlimited: bool = False) -> float:
     return image_mod.get_reference_provider().estimate_cost_usd() * clamp_variations(count, unlimited)
 
 
-async def vary_and_save(ctx: Ctx, item_id: str, prompt: str, count: Any = None) -> Dict[str, Any]:
+async def vary_and_save(ctx: Ctx, item_id: str, prompt: str, count: Any = None, edit: bool = False) -> Dict[str, Any]:
     """N new pictures made from one saved picture and a prompt (Gemini's image model, reference-image mode).
     The whole batch is checked against the spend caps first; every picture that comes back is charged (to the person's own spend row and
     the global one, so it shows in the Station's Out column) and saved as a new item with edited_from_id set. A picture that fails is skipped.
@@ -276,7 +278,7 @@ async def vary_and_save(ctx: Ctx, item_id: str, prompt: str, count: Any = None) 
     if not p:
         raise MediaServiceError(422, "bad_request", "Say what you want changed or varied.")
     p = p[:image_mod.MAX_PROMPT_CHARS]
-    sent = REFERENCE_PREFIX + p
+    sent = (EDIT_PREFIX if edit else REFERENCE_PREFIX) + p
     provider = image_mod.get_reference_provider()
     each = provider.estimate_cost_usd()
     await gate_generation(ctx, provider, each * n)
@@ -311,7 +313,7 @@ async def vary_and_save(ctx: Ctx, item_id: str, prompt: str, count: Any = None) 
     items = []
     for r in results:
         try:
-            items.append(await save_item(ctx, kind="image", data=r.data, mime=r.mime, title=f"{source.title} (variation {len(items) + 1})",
+            items.append(await save_item(ctx, kind="image", data=r.data, mime=r.mime, title=f"{source.title} (edited)" if edit else f"{source.title} (variation {len(items) + 1})",
                                          prompt=p, provider=r.provider, edited_from_id=source.id))
         except MediaServiceError as exc:
             logger.warning("a variation could not be saved: %s", exc.error)

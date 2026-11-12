@@ -1908,7 +1908,7 @@ async def chat(req: ChatRequest, request: Request):
     elif images and media_ctx is not None:                         # the real files are saved to the library so a later turn (or vary_image) can use them
         kept_images = await helix_tools.keep_attached(media_ctx, [(n, b, m) for b, m, n in images])
     if media_ctx is not None and images:                            # "make a sprite sheet of this": set up here, whatever chat model answers
-        early = await helix_tools.sprite_sheet_request(media_ctx, req.message)
+        early = await helix_tools.sprite_sheet_request(media_ctx, req.message) or await helix_tools.picture_request(media_ctx, req.message, True)
         if early is not None:
             note = "".join(f"\n[Attached image saved to the library as item {k['item_id']}]" for k in kept_images)
             await store.append_message(user_id, CHANNEL, "user", req.message + note)

@@ -220,6 +220,42 @@ class TestRequestsThatBuildOnAPicture:
         assert text.endswith('\u2026"') and len(text) < 320
 
 
+class TestPictureRequestsSetUpByTheServer:
+    @pytest.mark.asyncio
+    async def test_an_edit_is_a_single_edit_request_on_the_picture(self, setup):
+        prov, (store, catalog, _s), ctx = setup
+        item_id = await attach(ctx)
+        early = await helix_tools.picture_request(ctx, "remove the sword from this character", True)
+        p = helix_tools.PENDING.get("alice")
+        assert "edit your picture" in early["reply"] and "$0.04" in early["reply"] and p.armed and p.args["edit"] and p.args["count"] == 1
+        assert prov.calls == [] and store.spend == {}
+        done = await helix_tools.pre_turn(ctx, "yes")
+        assert len(prov.calls) == 1 and prov.calls[0]["prompt"].startswith(service.EDIT_PREFIX) and "remove the sword" in prov.calls[0]["prompt"]
+        assert done["ui"][0]["items"][0]["title"].endswith("(edited)") and prov.calls[0]["reference"][1] == "image/jpeg"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("message,count", [("make 10 versions of this", 10), ("give me six variations", 6), ("show me some different options", 4), ("make a few more versions", 3)])
+    async def test_versions_use_the_number_asked_for(self, setup, message, count):
+        _prov, _shared, ctx = setup
+        await attach(ctx)
+        early = await helix_tools.picture_request(ctx, message, True)
+        assert early and helix_tools.PENDING.get("alice").args["count"] == count
+
+    @pytest.mark.asyncio
+    async def test_text_about_something_else_is_left_to_the_model(self, setup):
+        _prov, _shared, ctx = setup
+        await attach(ctx)
+        assert await helix_tools.picture_request(ctx, "what do you think of it?", True) is None
+        assert await helix_tools.picture_request(ctx, "/image add a paragraph", True) is None
+        assert await helix_tools.picture_request(ctx, "add a paragraph to my essay", False) is None        # no picture mentioned, none attached just now
+        assert await helix_tools.picture_request(ctx, "remove the sword from this character", False) is not None   # the picture is pointed at
+
+    @pytest.mark.asyncio
+    async def test_no_picture_means_no_request(self, setup):
+        _prov, _shared, ctx = setup
+        assert await helix_tools.picture_request(ctx, "remove the sword from this character", True) is None
+
+
 class TestSpriteSheet:
     def test_the_prompt_asks_for_a_flat_background_strip_of_the_reference_character(self):
         from openjarvis.server.media import spritesheet
