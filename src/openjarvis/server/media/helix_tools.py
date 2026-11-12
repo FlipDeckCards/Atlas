@@ -38,7 +38,7 @@ MAX_TOOL_ROUNDS = 3
 TOOLS: List[Dict[str, Any]] = [
     {"type": "function", "function": {
         "name": "generate_image",
-        "description": "Make an image from a text description and save it to the user's library. This costs money, so the system asks the user to confirm first.",
+        "description": "Make an image from a TEXT description only and save it to the user's library. It cannot see any picture. If the user attached an image or refers to one (similar to, based on, a version of, 'this image'), use vary_image instead. This costs money, so the system asks the user to confirm first.",
         "parameters": {"type": "object", "properties": {"prompt": {"type": "string", "description": "What the image shows (500 characters at most)."}}, "required": ["prompt"]}}},
     {"type": "function", "function": {
         "name": "generate_speech",
@@ -46,8 +46,8 @@ TOOLS: List[Dict[str, Any]] = [
         "parameters": {"type": "object", "properties": {"text": {"type": "string", "description": "The words to speak (1000 characters at most)."}}, "required": ["text"]}}},
     {"type": "function", "function": {
         "name": "vary_image",
-        "description": "Make several versions, variations or edits of a picture the user attached (or of a saved library picture), from the picture plus a prompt, and save them to the library. "
-                       "Use it when the user attaches an image and asks for versions, variations or edits. Costs money per picture, so the system asks the user to confirm first.",
+        "description": "Make new pictures from a picture the user attached (or a saved library picture) plus a prompt: versions, variations, edits, a new character in the same style, a female or male version, different clothing or weapon. "
+                       "Use it whenever the new picture should be based on, similar to or in the style of an attached or earlier image (count 1 for a single new picture). Costs money per picture, so the system asks the user to confirm first.",
         "parameters": {"type": "object", "properties": {
             "prompt": {"type": "string", "description": "What to change or how to vary the picture (500 characters at most)."},
             "count": {"type": "integer", "description": "How many pictures to make: the number the person asks for, 4 if not stated."},
@@ -173,10 +173,27 @@ def remember_attached(user_id: str, saved: List[Dict[str, Any]]) -> None:
     ATTACHED[user_id] = kept[-MAX_ATTACHED_KEPT:]
 
 
-def latest_attached(user_id: str) -> Optional[str]:
+def latest_attached(user_id: str, within: Optional[float] = None) -> Optional[str]:
     now = time.monotonic()
-    live = [a for a in ATTACHED.get(user_id, []) if now - a["at"] < ATTACHED_TTL_S]
+    live = [a for a in ATTACHED.get(user_id, []) if now - a["at"] < (within or ATTACHED_TTL_S)]
     return live[-1]["item_id"] if live else None
+
+
+# "make a new character similar to the image I just gave you", "a female version of this", "based on the attached picture": a request that
+# builds on a picture the person attached. generate_image cannot see any picture, so such a request is run as vary_image (one picture).
+ATTACHED_RECENT_S = 20 * 60
+_BUILDS_ON_PICTURE = re.compile(
+    r"\b(similar to|based on|inspired by|in the style of|same style as|like (?:this|that|the|my)|closer to|version of|variation of|redo|remake|"
+    r"(?:this|that|the|attached|previous|other|above|last|same|given|latest) (?:image|picture|photo|pic|character|sprite|art|artwork|drawing|one))\b", re.I)
+
+
+def builds_on_attached(user_id: str, message: str) -> bool:
+    return bool(latest_attached(user_id, ATTACHED_RECENT_S) and _BUILDS_ON_PICTURE.search(str(message or "")))
+
+
+def _short(v: Any, n: int) -> str:
+    t = " ".join(str(v or "").split())
+    return t if len(t) <= n else t[: n - 1].rstrip() + "\u2026"
 
 
 async def keep_attached(ctx: Ctx, items: List[Any]) -> List[Dict[str, Any]]:
@@ -203,9 +220,9 @@ def describe(tool: str, args: Dict[str, Any]) -> str:
         return f'make a sprite sheet from your picture: {len(names)} rows ({", ".join(names)}), {spritesheet.clean_frames(args.get("frames"), True)} frames each'
     if tool == "vary_image":
         n = service.clamp_variations(args.get("count"), True)         # args hold the already-clamped count (see execute_tool)
-        return f'make {n} {"variation" if n == 1 else "variations"} of your picture: "{_clip(args.get("prompt"), 120)}"'
+        return f'make {n} {"variation" if n == 1 else "variations"} based on your picture: "{_short(args.get("prompt"), 200)}"'
     if tool == "generate_image":
-        return f'make an image: "{_clip(args.get("prompt"), 120)}"'
+        return f'make an image: "{_short(args.get("prompt"), 200)}"'
     return f'make a speech clip saying: "{_clip(args.get("text"), 120)}"'
 
 
@@ -247,6 +264,8 @@ async def execute_tool(ctx: Ctx, name: str, args: Dict[str, Any], *, user_messag
             return {"text": f"Error: there is no tool named '{_clip(name, 40)}'.", "ui": ui}
         if not isinstance(args, dict):
             return {"text": "Error: the tool arguments were not valid.", "ui": ui}
+        if name == "generate_image" and builds_on_attached(ctx.user_id, user_message):
+            name, args = "vary_image", {"prompt": args.get("prompt"), "count": 1}          # the picture goes to the image model as a reference
         if name in PAID_TOOLS:
             if name == "generate_speech" and looks_like_sound_effect(user_message):
                 return {"text": "Refused: generate_speech is speech only and cannot make sound effects or music. " + SFX_REPLY, "ui": ui}

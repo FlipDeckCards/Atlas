@@ -71,7 +71,7 @@ async def test_the_attached_file_itself_is_saved_and_sent_to_the_provider(setup)
     item_id = await attach(ctx)
     res = await service.vary_and_save(ctx, item_id, "make it neon", 3)
     assert len(prov.calls) == 3 and len(res["items"]) == 3
-    assert all(c["reference"] == (original, "image/jpeg") and c["prompt"] == "make it neon" for c in prov.calls)   # bytes, not a description
+    assert all(c["reference"] == (original, "image/jpeg") and c["prompt"].endswith("make it neon") for c in prov.calls)   # bytes, not a description
     assert helix_tools.latest_attached("alice") == item_id
     kids = [i for i in catalog.items.values() if i.edited_from_id == item_id]
     assert len(kids) == 3 and all(i.kind == "image" for i in kids)
@@ -178,6 +178,46 @@ class StripProvider(FlakyProvider):
         if len(self.calls) in self.fail_on:
             raise MediaError("busy", 503)
         return MediaResult("image", "image/png", strip_png(), self.id)
+
+
+class TestRequestsThatBuildOnAPicture:
+    """'create a new character similar to the image I just gave you' must use the picture, not the text-only image tool."""
+
+    @pytest.mark.asyncio
+    async def test_generate_image_after_an_attachment_becomes_a_reference_variation(self, setup):
+        prov, (store, catalog, _s), ctx = setup
+        item_id = await attach(ctx)
+        msg = "create me a new character but similar to the other image i just gave you. make it the female version"
+        out = await helix_tools.execute_tool(ctx, "generate_image", {"prompt": "a female archer"}, user_message=msg)
+        p = helix_tools.PENDING.get("alice")
+        assert "NOT RUN YET" in out["text"] and p.tool == "vary_image" and p.args["item_id"] == item_id and p.args["count"] == 1
+        p.armed = True
+        done = await helix_tools.pre_turn(ctx, "yes")
+        assert len(prov.calls) == 1 and prov.calls[0]["reference"][1] == "image/jpeg" and done["ui"][0]["type"] == "saved_many"
+
+    @pytest.mark.asyncio
+    async def test_an_unrelated_request_still_uses_plain_generation(self, setup, monkeypatch):
+        prov, shared, ctx = setup
+        await attach(ctx)
+        plain = FakeProvider("image")
+        monkeypatch.setitem(image_mod.PROVIDERS, image_mod.DEFAULT_PROVIDER, plain)
+        await helix_tools.execute_tool(ctx, "generate_image", {"prompt": "a red fox"}, user_message="make me a red fox picture")
+        assert helix_tools.PENDING.get("alice").tool == "generate_image"
+
+    @pytest.mark.asyncio
+    async def test_an_old_attachment_is_not_used(self, setup, monkeypatch):
+        prov, shared, ctx = setup
+        await attach(ctx)
+        monkeypatch.setattr(helix_tools, "ATTACHED_RECENT_S", 0.0001)
+        import asyncio
+
+        await asyncio.sleep(0.01)
+        await helix_tools.execute_tool(ctx, "generate_image", {"prompt": "x"}, user_message="make one similar to that image")
+        assert helix_tools.PENDING.get("alice").tool == "generate_image"
+
+    def test_the_read_back_is_not_cut_off_mid_sentence(self):
+        text = helix_tools.describe("vary_image", {"prompt": "word " * 100, "count": 1})
+        assert text.endswith('\u2026"') and len(text) < 320
 
 
 class TestSpriteSheet:

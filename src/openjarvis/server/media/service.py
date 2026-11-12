@@ -246,6 +246,8 @@ async def _generate_retrying(provider, **request):
             await asyncio.sleep(GEN_RETRY_DELAY_S * (attempt + 1))
 
 
+REFERENCE_PREFIX = ("Use the attached image as the reference for art style, rendering quality, level of detail and overall design language. "
+                    "Make a new, finished, high-quality picture that follows this request: ")
 VARIATION_DEFAULT, VARIATION_MAX, VARIATION_PARALLEL = 4, 10, 3
 VARIATION_MAX_UNLIMITED = 100          # a technical ceiling for UNLIMITED_EMAILS accounts, so one request cannot run for hours
 
@@ -274,6 +276,7 @@ async def vary_and_save(ctx: Ctx, item_id: str, prompt: str, count: Any = None) 
     if not p:
         raise MediaServiceError(422, "bad_request", "Say what you want changed or varied.")
     p = p[:image_mod.MAX_PROMPT_CHARS]
+    sent = REFERENCE_PREFIX + p
     provider = image_mod.get_reference_provider()
     each = provider.estimate_cost_usd()
     await gate_generation(ctx, provider, each * n)
@@ -291,7 +294,7 @@ async def vary_and_save(ctx: Ctx, item_id: str, prompt: str, count: Any = None) 
         nonlocal spent
         async with sem:
             try:
-                result = await _generate_retrying(provider, prompt=p, reference=(original, source.mime_type))
+                result = await _generate_retrying(provider, prompt=sent, reference=(original, source.mime_type))
             except MediaError as exc:
                 logger.warning("variation %s of %s failed (HTTP %s)", i + 1, n, exc.status_code)
                 return None
