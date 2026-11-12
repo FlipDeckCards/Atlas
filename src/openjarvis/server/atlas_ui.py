@@ -588,6 +588,26 @@ async def index():
     .v-meta { color: var(--text-dim); white-space: nowrap; }
     .v-stage { display: flex; justify-content: center; margin-bottom: 8px; }
     .v-stage img { max-width: 100%; max-height: 150px; border: 1px solid var(--border); }
+    /* image studio: the full-screen picture viewer */
+    .studio { position: fixed; inset: 0; z-index: 10000; display: flex; flex-direction: column; background: rgba(3,8,14,0.97); font-family: 'Share Tech Mono', monospace; }
+    .studio[hidden] { display: none; }
+    .st-bar, .st-foot { display: flex; align-items: center; gap: 8px; padding: 8px 12px; flex: 0 0 auto; }
+    .st-bar { border-bottom: 1px solid var(--border); }
+    .st-foot { border-top: 1px solid var(--border); flex-wrap: wrap; }
+    .st-title { flex: 1; min-width: 0; color: var(--cyan); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .st-hint { margin-left: auto; white-space: normal; }
+    .st-body { flex: 1; min-height: 0; display: flex; }
+    .st-stage { position: relative; flex: 1; min-width: 0; overflow: hidden; cursor: grab; touch-action: none; }
+    .st-stage.grab { cursor: grabbing; }
+    .st-img { position: absolute; left: 0; top: 0; transform-origin: 0 0; max-width: none; user-select: none; -webkit-user-drag: none; }
+    .st-stage.bg-dark { background: #050b12; }
+    .st-stage.bg-white { background: #ffffff; }
+    .st-stage.bg-check { background-color: #d4d4d4; background-image: linear-gradient(45deg, #9c9c9c 25%, transparent 25%, transparent 75%, #9c9c9c 75%), linear-gradient(45deg, #9c9c9c 25%, transparent 25%, transparent 75%, #9c9c9c 75%); background-size: 20px 20px; background-position: 0 0, 10px 10px; }
+    .st-panel { flex: 0 0 320px; overflow-y: auto; border-left: 1px solid var(--border); padding: 10px 12px; font-size: 11px; }
+    .st-panel.collapsed { display: none; }
+    .v-btn:disabled { opacity: 0.35; cursor: default; }
+    body.studio-open { overflow: hidden; }
+    @media (max-width: 800px) { .st-body { flex-direction: column; } .st-panel { flex: 0 0 38%; border-left: none; border-top: 1px solid var(--border); } .st-hint { display: none; } }
     .v-stage audio { width: 100%; }
     .v-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
     .v-row label { color: var(--text-dim); font-size: 10px; }
@@ -1125,11 +1145,148 @@ async def index():
       lib.kind = b.dataset.kind; loadLibrary();
     }));
 
+    // ── Image studio: a full-screen viewer. The whole picture is fitted to the screen (no scrolling); wheel or pinch to zoom, drag to pan,
+    //    double-click to zoom in and out, arrow keys for the other pictures, and the edit tools in a panel beside it. ──
+    const studio = { el: null, stage: null, img: null, panel: null, title: null, meta: null, pct: null, prev: null, next: null,
+                     open: false, item: null, nw: 0, nh: 0, scale: 1, fit: 1, x: 0, y: 0, fitted: true, bg: 0 };
+    const STUDIO_BGS = ['bg-dark', 'bg-check', 'bg-white'];
+    function studioIsOpen() { return studio.open; }
+    function studioSize() { return { w: studio.stage.clientWidth, h: studio.stage.clientHeight }; }
+    function studioClamp() {
+      const { w, h } = studioSize(), iw = studio.nw * studio.scale, ih = studio.nh * studio.scale;
+      studio.x = iw <= w ? (w - iw) / 2 : Math.min(0, Math.max(w - iw, studio.x));      // a picture smaller than the view stays centred; a bigger one cannot leave it
+      studio.y = ih <= h ? (h - ih) / 2 : Math.min(0, Math.max(h - ih, studio.y));
+    }
+    function studioApply() {
+      studioClamp();
+      studio.img.style.transform = 'translate(' + studio.x + 'px,' + studio.y + 'px) scale(' + studio.scale + ')';
+      studio.img.style.imageRendering = studio.scale >= 3 ? 'pixelated' : 'auto';           // pixel art stays crisp when zoomed in
+      studio.pct.textContent = Math.round(studio.scale * 100) + '%';
+    }
+    function studioFit() {
+      if (!studio.nw) return;
+      const { w, h } = studioSize();
+      studio.fit = Math.max(0.01, Math.min((w - 24) / studio.nw, (h - 24) / studio.nh, 2));
+      studio.scale = studio.fit; studio.fitted = true; studio.x = studio.y = 0; studioApply();
+    }
+    function studioZoomAt(factor, cx, cy) {
+      const ns = Math.min(16, Math.max(studio.fit, studio.scale * factor));
+      if (ns === studio.scale) return;
+      studio.x = cx - (cx - studio.x) * (ns / studio.scale);
+      studio.y = cy - (cy - studio.y) * (ns / studio.scale);
+      studio.scale = ns; studio.fitted = ns <= studio.fit * 1.001; studioApply();
+    }
+    function studioZoomCentre(factor) { const { w, h } = studioSize(); studioZoomAt(factor, w / 2, h / 2); }
+    function studioActual() { const { w, h } = studioSize(); studioZoomAt(1 / studio.scale, w / 2, h / 2); }      // 100%: one picture pixel per screen pixel
+    function studioImages() { return lib.items.filter(i => i.kind === 'image'); }
+    function studioStep(d) {
+      const imgs = studioImages(), i = imgs.findIndex(x => studio.item && x.id === studio.item.id), n = imgs[i + d];
+      if (i >= 0 && n) openItem(n.id);
+    }
+    function studioBuild() {
+      if (studio.el) return;
+      const el = mk('div', 'studio'); el.id = 'studio'; el.hidden = true;
+      const bar = mk('div', 'st-bar');
+      studio.title = mk('span', 'st-title'); studio.meta = mk('span', 'v-meta');
+      studio.prev = mk('button', 'v-btn', '‹ Prev'); studio.next = mk('button', 'v-btn', 'Next ›');
+      const bTools = mk('button', 'v-btn', 'Tools'), bDown = mk('button', 'v-btn', 'Download'), bClose = mk('button', 'v-btn', '✕ Close');
+      bar.append(studio.title, studio.meta, studio.prev, studio.next, bTools, bDown, bClose);
+
+      const stage = mk('div', 'st-stage bg-dark'); studio.stage = stage;
+      const img = document.createElement('img'); img.className = 'st-img'; img.draggable = false; img.alt = ''; studio.img = img; stage.appendChild(img);
+      studio.panel = mk('div', 'st-panel');
+      const body = mk('div', 'st-body'); body.append(stage, studio.panel);
+
+      const foot = mk('div', 'st-foot');
+      const bOut = mk('button', 'v-btn', '−'), bIn = mk('button', 'v-btn', '+'), bFit = mk('button', 'v-btn', 'Fit'), b100 = mk('button', 'v-btn', '100%'), bBg = mk('button', 'v-btn', 'Background');
+      studio.pct = mk('span', 'v-meta', '100%');
+      foot.append(bOut, studio.pct, bIn, bFit, b100, bBg,
+                  mk('span', 'v-meta st-hint', 'Scroll or pinch to zoom · drag to pan · double-click to zoom · ← → other pictures · Esc closes'));
+      el.append(bar, body, foot); document.body.appendChild(el); studio.el = el;
+
+      bClose.addEventListener('click', closeStudio);
+      studio.prev.addEventListener('click', () => studioStep(-1)); studio.next.addEventListener('click', () => studioStep(1));
+      bTools.addEventListener('click', () => { studio.panel.classList.toggle('collapsed'); });
+      bDown.addEventListener('click', async () => {
+        if (!studio.item) return;
+        const r = await libApi('/api/media/items/' + encodeURIComponent(studio.item.id) + '?download=true');
+        if (r.ok && r.data.item) { const a = document.createElement('a'); a.href = r.data.item.url; a.rel = 'noopener'; a.download = ''; document.body.appendChild(a); a.click(); a.remove(); }
+        else setViewerStatus((r.data && r.data.detail) || 'Could not download.', true);
+      });
+      bOut.addEventListener('click', () => studioZoomCentre(1 / 1.5)); bIn.addEventListener('click', () => studioZoomCentre(1.5));
+      bFit.addEventListener('click', studioFit); b100.addEventListener('click', studioActual);
+      bBg.addEventListener('click', () => { stage.classList.remove(STUDIO_BGS[studio.bg]); studio.bg = (studio.bg + 1) % STUDIO_BGS.length; stage.classList.add(STUDIO_BGS[studio.bg]); });
+
+      img.addEventListener('load', () => {
+        if (img.naturalWidth !== studio.nw || img.naturalHeight !== studio.nh) { studio.nw = img.naturalWidth; studio.nh = img.naturalHeight; img.style.width = studio.nw + 'px'; studioFit(); }
+        else studioApply();                                                  // the same size (a brightness preview): the zoom and position stay
+      });
+      new ResizeObserver(() => { if (!studio.open || !studio.nw) return; if (studio.fitted) studioFit(); else studioApply(); }).observe(stage);
+
+      stage.addEventListener('wheel', e => {
+        e.preventDefault(); const r = stage.getBoundingClientRect();
+        studioZoomAt(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), e.clientX - r.left, e.clientY - r.top);
+      }, { passive: false });
+      stage.addEventListener('dblclick', e => {
+        const r = stage.getBoundingClientRect(), cx = e.clientX - r.left, cy = e.clientY - r.top;
+        if (studio.scale > studio.fit * 1.05) studioFit(); else studioZoomAt(Math.max(1, studio.fit * 2.5) / studio.scale, cx, cy);
+      });
+      const pts = new Map(); let pinch = 0;
+      const dist = () => { const v = Array.from(pts.values()); return Math.hypot(v[0].x - v[1].x, v[0].y - v[1].y); };
+      stage.addEventListener('pointerdown', e => {
+        stage.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pts.size === 2) pinch = dist(); stage.classList.add('grab');
+      });
+      stage.addEventListener('pointermove', e => {
+        const p = pts.get(e.pointerId); if (!p) return;
+        if (pts.size === 1) { studio.x += e.clientX - p.x; studio.y += e.clientY - p.y; studio.fitted = false; p.x = e.clientX; p.y = e.clientY; studioApply(); }
+        else if (pts.size === 2) {
+          p.x = e.clientX; p.y = e.clientY;
+          const v = Array.from(pts.values()), d = dist(), r = stage.getBoundingClientRect();
+          if (pinch > 0) studioZoomAt(d / pinch, (v[0].x + v[1].x) / 2 - r.left, (v[0].y + v[1].y) / 2 - r.top);
+          pinch = d;
+        }
+      });
+      const lift = e => { pts.delete(e.pointerId); pinch = 0; if (!pts.size) stage.classList.remove('grab'); };
+      stage.addEventListener('pointerup', lift); stage.addEventListener('pointercancel', lift);
+
+      document.addEventListener('keydown', e => {
+        if (!studio.open) return;
+        const typing = /^(INPUT|SELECT|TEXTAREA)$/.test((e.target && e.target.tagName) || '');
+        if (e.key === 'Escape') { closeStudio(); return; }
+        if (typing) return;
+        if (e.key === 'ArrowLeft') studioStep(-1);
+        else if (e.key === 'ArrowRight') studioStep(1);
+        else if (e.key === '+' || e.key === '=') studioZoomCentre(1.5);
+        else if (e.key === '-' || e.key === '_') studioZoomCentre(1 / 1.5);
+        else if (e.key === '0') studioFit();
+        else if (e.key === '1') studioActual();
+        else return;
+        e.preventDefault();
+      });
+    }
+    function openStudio(item) {
+      studioBuild(); viewerEl.textContent = '';                              // one tools panel at a time (the page's status line is found by its id)
+      studio.item = item; studio.open = true; studio.el.hidden = false; document.body.classList.add('studio-open');
+      studio.title.textContent = item.title;
+      const imgs = studioImages(), i = imgs.findIndex(x => x.id === item.id);
+      studio.meta.textContent = fmtBytes(item.size_bytes) + (i >= 0 ? ' · ' + (i + 1) + ' of ' + imgs.length : '');
+      studio.prev.disabled = i <= 0; studio.next.disabled = i < 0 || i >= imgs.length - 1;
+      studio.nw = 0; studio.img.src = item.url;                              // the load handler fits the whole picture to the screen
+      renderViewer(studio.panel, { item: item, media: studio.img });
+    }
+    function closeStudio() {
+      if (!studio.open) return;
+      studio.open = false; studio.el.hidden = true; document.body.classList.remove('studio-open');
+      studio.img.removeAttribute('src'); lib.preview = null;
+    }
+
     async function openItem(id) {
       const r = await libApi('/api/media/items/' + encodeURIComponent(id));
       if (!r.ok) { setViewerStatus(r.data.detail || 'That item could not be opened.', true); return; }
       lib.selected = r.data.item; lib.preview = null;
-      renderViewer(); renderLibrary('');
+      if (r.data.item.kind === 'image') { openStudio(r.data.item); renderLibrary(''); return; }       // pictures open in the full-screen studio
+      closeStudio(); renderViewer(); renderLibrary('');
     }
     function setViewerStatus(msg, bad) { const s = document.getElementById('v-status'); if (s) { s.textContent = msg; s.className = 'v-status' + (bad ? ' err' : ''); } }
 
@@ -1137,18 +1294,23 @@ async def index():
       image: { crop: ['left', 'top', 'right', 'bottom'], resize: ['width', 'height'], brightness: ['factor'], contrast: ['factor'] },
       sound: { trim: ['start', 'end'], fade_in: ['seconds'], fade_out: ['seconds'], volume: ['factor'] },
     };
-    function renderViewer() {
-      const v = viewerEl; v.textContent = '';
-      const it = lib.selected;
-      if (!it) { v.appendChild(mk('div', 'lib-note', 'Select an item in the Library, or ask Helix to make one.')); return; }
-      const head = mk('div', 'v-head');
-      head.appendChild(mk('span', 'v-title', it.title));
-      head.appendChild(mk('span', 'v-meta', it.kind + ' \u00b7 ' + fmtBytes(it.size_bytes) + (it.duration_seconds ? ' \u00b7 ' + it.duration_seconds + 's' : '')));
-      v.appendChild(head);
-      const stage = mk('div', 'v-stage');
-      const media = document.createElement(it.kind === 'image' ? 'img' : 'audio');
-      media.id = 'v-media'; if (it.kind === 'sound') media.controls = true;
-      media.src = it.url; stage.appendChild(media); v.appendChild(stage);
+    // target and ext: the studio draws the same edit tools in its own panel and shows the picture itself (ext.media), so no head or stage here
+    function renderViewer(target, ext) {
+      const v = target || viewerEl; v.textContent = '';
+      const it = (ext && ext.item) || lib.selected;
+      if (!it) { closeStudio(); v.appendChild(mk('div', 'lib-note', 'Select an item in the Library, or ask Helix to make one.')); return; }
+      let media;
+      if (ext) media = ext.media;
+      else {
+        const head = mk('div', 'v-head');
+        head.appendChild(mk('span', 'v-title', it.title));
+        head.appendChild(mk('span', 'v-meta', it.kind + ' \u00b7 ' + fmtBytes(it.size_bytes) + (it.duration_seconds ? ' \u00b7 ' + it.duration_seconds + 's' : '')));
+        v.appendChild(head);
+        const stage = mk('div', 'v-stage');
+        media = document.createElement(it.kind === 'image' ? 'img' : 'audio');
+        media.id = 'v-media'; if (it.kind === 'sound') media.controls = true;
+        media.src = it.url; stage.appendChild(media); v.appendChild(stage);
+      }
       if (it.kind !== 'image' && it.kind !== 'sound') return;
 
       const ops = OPS[it.kind];
@@ -1222,7 +1384,7 @@ async def index():
         if (!confirm('Delete "' + it.title + '"? This removes the file for good.')) return;
         const r = await libApi('/api/media/items/' + it.id, 'DELETE');
         if (!r.ok) { setViewerStatus(r.data.detail || 'Could not delete.', true); return; }
-        lib.selected = null; await loadLibrary(); renderViewer();
+        lib.selected = null; await loadLibrary(); closeStudio(); renderViewer();
       });
     }
     // chat: one line "Saved: <title>" with a button that opens the item in the panel (the file itself is never put in the chat)
