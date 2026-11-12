@@ -207,7 +207,8 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
 
     from openjarvis.polybot import directional, exposure
     from openjarvis.polybot.brain import STRATEGY_VERSION
-    from openjarvis.polybot.config import HOUR_SIZE_5M
+    from openjarvis.polybot.config import CAUTION_HOURS_5M, CAUTION_MIN_CONF, CAUTION_MIN_PRICE, HOUR_SIZE_5M
+    from openjarvis.polybot.desk import CORRECTION_STRENGTH
     from openjarvis.server.crew.finance import LA
 
     la = now.astimezone(LA)
@@ -273,11 +274,13 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         "Hours, prices and methods that lose over enough trades are cut back or switched off.",
     ])
     d.add_heading("2.3 Raw and calibrated confidence", level=2)
-    _para(d, "The model's number (raw confidence) is not trusted blindly. The desks keep a tally of how often each confidence level has "
-             "actually won. Calibrated confidence blends the raw number with that record (a level with few trades counts for little), "
-             "so if \"90% sure\" has really only won 84% of the time, the desk treats it as about 84%. The BTC desks trade on raw "
-             "confidence in their proven \"green\" hours and on calibrated confidence the rest of the day, with their own calibrated "
-             "steps. ETH, SOL and XRP have no green hours, so they always trade on calibrated confidence.")
+    _para(d, "The model's number (raw confidence) is not trusted blindly. Each desk keeps a tally of how often each confidence level "
+             "has actually won in live trading. Calibrated confidence moves the raw number toward that record (a level with few trades "
+             f"counts for little). Every desk trades on calibrated confidence at every hour. The correction is applied at "
+             f"{CORRECTION_STRENGTH:.0%} strength (owner, 2026-11-11; it was 50%), and it only ever lowers confidence: a level that has "
+             "won more than the model said is left at the model's number, so a short lucky streak can never lift a bet over the floor. "
+             "On BTC 5m the live record shows the model overstating by about 10-12 points above 80% (84% said, 74% won; 94% said, "
+             "83% won), so the 80% calibrated floor now needs a raw reading of roughly 90% or more.")
 
     # ---- 3. the methods
     d.add_heading("3. How a desk bets: the methods", level=1)
@@ -296,7 +299,10 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
     _bullets(d, [
         "Last-minute block: on every 5-minute desk, no bet in the final 60 seconds when the side costs between 30¢ and 70¢ "
         "(a coin-flip price that late has historically lost).",
-        "Price limits: the desks never buy a side under 15¢ or over 80¢ outside sweeps.",
+        "Price limits: the desks never buy a side under 15¢ or over 80¢ outside sweeps. ETH 5m skips buys under 85¢ and SOL 5m "
+        "skips buys under 75¢ (owner, 2026-11-10).",
+        f"Caution hours (owner, 2026-11-11): the hours that used to be skipped trade at half size, and a bet in one needs at least "
+        f"{CAUTION_MIN_CONF:.0%} calibrated confidence and a buy price of at least {CAUTION_MIN_PRICE * 100:.0f}¢ (section 4.3).",
         "Cushion and momentum: a directional bet also needs the index to be far enough on its side of the line for the time left, "
         "and recent movement not running hard against it.",
     ])
@@ -312,7 +318,8 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
                      _steps(cal) if coin == "btc" else "— (uses the steps at left on calibrated confidence)"])
     _table(d, ["Coin", "Lowest confidence traded", "Bet size (% of balance) by confidence", "Calibrated-hour steps"], rows)
     _para(d, "Confidence is rounded down (84.6% counts as 84%). The 15-minute and 1-hour desks use their coin's steps. In a half-size "
-             "hour every bet is halved; in a skipped hour the desk does not trade.")
+             "hour every bet is halved; in a caution hour bets are halved and must also clear the caution floors; in a skipped hour "
+             "(only if the daily review switches one off) the desk does not trade.")
     d.add_heading("4.2 Limits on how much is at risk", level=2)
     btc = next((f for f in facts if f["asset"] == "btc"), facts[0])
     small = next((f for f in facts if f["asset"] == "xrp"), btc)
@@ -325,18 +332,22 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         ["Live switch", "One LIVE/PAPER switch per desk", "Real money only on desks you take live; new desks always start in paper."],
     ])
     d.add_heading("4.3 Trading hours by desk", level=2)
-    _para(d, "Each 5-minute desk is sized by the Pacific hour its window opens in, set from its own profit-by-hour table: an hour with "
-             "15+ trades that is clearly losing is skipped, an hour losing over 8+ trades is halved, an hour with too few trades follows "
-             "BTC's setting, and a winning hour trades at full size. The 15-minute and 1-hour desks trade 7 AM at half size.")
+    _para(d, "Each 5-minute desk is sized by the Pacific hour its window opens in, set from its own profit-by-hour table (built on "
+             "older strategy versions): an hour losing over 8+ trades is halved and a winning hour trades at full size. The hours that "
+             "used to be skipped (7 AM, 2 PM and 4 PM, plus 9 AM on ETH) are caution hours since 2026-11-11: half size, and a bet needs "
+             f"at least {CAUTION_MIN_CONF:.0%} calibrated confidence and a {CAUTION_MIN_PRICE * 100:.0f}¢ or higher buy price. They are "
+             "traded so the current version builds its own record in them. The 15-minute and 1-hour desks trade 7 AM at half size.")
     hours = sorted({h for hs in HOUR_SIZE_5M.values() for h, _ in hs})
     look = {c: dict(hs) for c, hs in HOUR_SIZE_5M.items()}
     for f in facts:                                        # approved overrides on the live desks win over the defaults
         if f["asset"] in look:
             look[f["asset"]] = dict(f["hour_size"])
             hours = sorted(set(hours) | set(look[f["asset"]]))
-    rows = [[_hour(h)] + [("skip" if look[c].get(h, 1.0) <= 0 else "half" if look[c].get(h, 1.0) < 1 else "full") for c in ("btc", "eth", "sol", "xrp")]
+    rows = [[_hour(h)] + [("skip" if look[c].get(h, 1.0) <= 0 else "caution" if h in CAUTION_HOURS_5M.get(c, ())
+                           else "half" if look[c].get(h, 1.0) < 1 else "full") for c in ("btc", "eth", "sol", "xrp")]
             for h in hours]
-    colors = {(ri, ci): (RED if v == "skip" else "9A6700" if v == "half" else None) for ri, row in enumerate(rows) for ci, v in enumerate(row)}
+    colors = {(ri, ci): (RED if v == "skip" else "B35C00" if v == "caution" else "9A6700" if v == "half" else None)
+              for ri, row in enumerate(rows) for ci, v in enumerate(row)}
     _table(d, ["Hour (PT)", "BTC 5m", "ETH 5m", "SOL 5m", "XRP 5m"], rows, {k: v for k, v in colors.items() if v})
     _para(d, "Every hour not listed trades at full size on all four. The daily 8:15 AM review checks the 7 AM hour on BTC 5m and 15m "
              "(and your brothers' copies) and sends an Approve card when the numbers say it should change.")
@@ -363,10 +374,12 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
     roles = {
         "btc": "The flagship. Live since the start and the source of most of the data behind the rules. Full method set, the widest sizing "
                "(5-10%) and its own calibrated steps. It sets the shared daily starting balance for the whole account.",
-        "eth": "ETH 5m: calibrated confidence only, 85% confidence floor, 1-5% steps, its own hour table (9 AM skipped). Since "
-               "2026-11-10 it also skips any buy priced under 85c (on v1.21 its 75-84c buys lost money). Paused until the owner turns it on.",
+        "eth": "ETH 5m: calibrated confidence only, 85% confidence floor, 1-5% steps, its own hour table (9 AM is a caution hour). Since "
+               "2026-11-10 it also skips any buy priced under 85c (on v1.21 its 75-84c buys lost money). Moved to paper by the owner on "
+               "2026-11-10: even at 85c+ its floored record was about break-even, and its first two 1.22 fills (93-95c) both lost.",
         "sol": "SOL 5m: calibrated confidence only, 85% confidence floor, 1-5% steps, its own hour table (10 AM and 10 PM halved). Since "
-               "2026-11-10 it also skips any buy priced under 75c (on v1.21 its 60-74c buys lost money). Paused until the owner turns it on.",
+               "2026-11-10 it also skips any buy priced under 75c (on v1.21 its 60-74c buys lost money). Moved to paper by the owner on "
+               "2026-11-10 after a losing lifetime record (-6.9% on 258 live fills).",
         "xrp": "XRP 5m: calibrated confidence only, 85% floor, 1-5% steps; its losses cluster overnight, so 3-5 AM is halved.",
     }
     for f in facts:
@@ -415,8 +428,17 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         "Untracked trades: if Polymarket shows a position the desk did not record, it raises an \"Unrecorded trade\" alert.",
         "Station tools: one LIVE/PAPER switch at the top; profit by hour on every desk; what works and what doesn't per method; "
         "combined all-desk trade and shadow CSVs; the daily P&L Excel with every bot; this brief.",
-        "Shadow strategies: six fixed rulebooks on BTC 5m and 15m record what they would have done without trading, so new ideas are "
-        "tested on real markets before they risk money.",
+        "Shadow strategies: fixed rulebooks on each 5-minute desk (shrunk model, 85¢ floor, 75¢ floor, maker pair and gate; rebuilt "
+        "2026-11-10 with a fresh log) record what they would have done without trading, so new ideas are tested on real markets "
+        "before they risk money.",
+        "Market data (2026-11-11): Polymarket now publishes each window as an event (btc-updown-5m-...) with the tradable market "
+        "inside it (cpc-btc-updown-5m-...). The desks look the event up to find the market. Since about 7:30 AM Pacific that day the "
+        "public data gateway answers \"market not found\" for live Up/Down order books, so the desks read the book from the trading "
+        "host with the account's keys. Trading was down from about 7:30 AM to 3 PM that day while this was found and fixed.",
+        "Decision records: every bet now stores its method and the raw and calibrated confidence at the moment it was decided "
+        "(decision_method, decision_raw, decision_conf in the trades CSV), next to the reading at fill time.",
+        "Blocked-trade log: every candidate a rule stopped is recorded with the window's result, so each rule can be checked against "
+        "the trades it passed up (Station download).",
         "Daily review: at 8:15 AM Pacific the 7 AM hour is reviewed on each BTC desk and an Approve card arrives when a change is due.",
     ])
 
@@ -431,6 +453,12 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         ["Nov 7 (v1.31)", "Every 5-minute desk gets its own hour table from its profit-by-hour results."],
         ["Nov 7 (v1.32)", "ETH, SOL and XRP trade from 85% at 1-5% of the balance in four steps (were 1% flat at 90-95%)."],
         ["Nov 7 (v1.33-1.34)", "All-desk cap lowered to 20%; ETH/SOL/XRP keep every bet in one window under 5%."],
+        ["Nov 8 (v1.36-1.37)", "Every desk trades on live-calibrated confidence at every hour; the correction set to half strength; BTC calibrated floor 80%."],
+        ["Nov 10", "Retired BTC 15m, BTC 1h, SOL 1h, XRP 15m, XRP 1h and ETH 15m; family accounts run BTC 5m only. ETH 5m 85¢ and SOL 5m 75¢ entry floors. Shadow strategies rebuilt. Strategy version 1.22 (clean scoreboards)."],
+        ["Nov 10", "ETH 5m, SOL 5m and SOL 15m moved to paper; BTC 5m, XRP 5m and ETH 1h stay live."],
+        ["Nov 11", "Calibration correction raised to 75% strength and made lower-only (a lucky streak can no longer lift a bet over the floor)."],
+        ["Nov 11", "Polymarket market-data change handled: event lookup to find each window's market; order books read from the trading host."],
+        ["Nov 11", "Skipped hours become half-size caution hours with an 85% calibrated floor and a 70¢ entry floor."],
     ])
 
     # ---- 9. watch list
@@ -442,6 +470,16 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         "Methods per coin: once a method has 15-20 trades on one coin, switch off any that keep losing (what works and what doesn't).",
         "Paper desks: a desk earns a live trial when its paper record is clearly profitable over a meaningful sample; start it small.",
         "Rate limits: any new \"HTTP 429\" in the desk log means the server is near Polymarket's limit and should be looked at.",
+        "Caution hours: after two weeks, check each one's live record on the current version; keep, halve or skip it on that, not on "
+        "the older versions' tables.",
+        "Calibration at 75%: BTC 5m now trades mostly when the raw model reads about 90%+. Watch trade count and profit per dollar "
+        "staked; if volume drops too far, 60% strength is the fallback.",
+        "Decision-time confidence: compare decision_conf with the fill-time reading on any bet that looks like it should not have "
+        "passed the floor.",
+        "Market data: if Polymarket fixes its public order-book gateway, the trading-host fallback simply stops being used; if the "
+        "trading host also starts refusing, the desks stop trading and the log says so.",
+        "Scaling: raise position size or the balance only after the current version shows a high win rate and positive profit per "
+        "dollar staked over a meaningful sample.",
     ])
 
     foot = d.add_paragraph()
