@@ -399,6 +399,78 @@ class TestTemplateSheet:
         assert seen == [{"aspectRatio": "3:2"}]
 
 
+class TestSeveralReferencePictures:
+    async def attach_many(self, ctx, n=3):
+        saved = await helix_tools.keep_attached(ctx, [(f"p{i}.jpg", base64.b64encode(tiny_jpeg(color=(30 * i, 90, 160))).decode(), "image/jpeg") for i in range(1, n + 1)])
+        return [s["item_id"] for s in saved]
+
+    @pytest.mark.asyncio
+    async def test_all_the_pictures_attached_to_one_message_go_to_the_image_model(self, setup):
+        prov, (store, _c, _s), ctx = setup
+        ids = await self.attach_many(ctx, 3)
+        early = await helix_tools.picture_request(ctx, "create me a character similar but completely different using the attached images as a sample", True)
+        p = helix_tools.PENDING.get("alice")
+        assert "based on your 3 pictures" in early["reply"] and p.args["item_ids"] == ids and p.args["count"] == 1 and p.armed
+        done = await helix_tools.pre_turn(ctx, "yes")
+        assert len(prov.calls) == 1 and isinstance(prov.calls[0]["reference"], list) and len(prov.calls[0]["reference"]) == 3
+        assert prov.calls[0]["prompt"].startswith(service.REFERENCE_PREFIX_MANY) and done["ui"][0]["type"] == "saved_many"
+
+    @pytest.mark.asyncio
+    async def test_one_picture_is_still_sent_as_a_single_reference(self, setup):
+        prov, _shared, ctx = setup
+        item_id = await attach(ctx)
+        await service.vary_and_save(ctx, item_id, "x", 1)
+        assert isinstance(prov.calls[0]["reference"], tuple)
+
+    @pytest.mark.asyncio
+    async def test_another_users_picture_in_the_list_is_refused(self, setup):
+        prov, shared, ctx = setup
+        mine = await attach(ctx)
+        bob = make_ctx("bob", *shared)
+        theirs = await attach(bob, (5, 5, 5))
+        with pytest.raises(MediaServiceError) as e:
+            await service.vary_and_save(ctx, mine, "x", 1, extra_item_ids=[theirs])
+        assert e.value.status == 404 and prov.calls == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("message,count", [("make 3 characters like these", 3), ("create a new character", 1), ("generate two different heroes using these as a sample", 2)])
+    async def test_creation_requests_with_attachments_are_picture_requests(self, setup, message, count):
+        _prov, _shared, ctx = setup
+        await self.attach_many(ctx, 2)
+        assert await helix_tools.picture_request(ctx, message, True)
+        assert helix_tools.PENDING.get("alice").args["count"] == count
+
+    @pytest.mark.asyncio
+    async def test_a_creation_request_without_a_picture_noun_is_left_to_the_model(self, setup):
+        _prov, _shared, ctx = setup
+        await self.attach_many(ctx, 2)
+        assert await helix_tools.picture_request(ctx, "write me a poem about this", True) is None
+
+    def test_the_provider_sends_every_reference(self):
+        import asyncio
+
+        monkey_seen = {}
+
+        def handler(request: httpx.Request):
+            monkey_seen["parts"] = json.loads(request.content)["contents"][0]["parts"]
+            out = base64.b64encode(tiny_jpeg()).decode()
+            return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": out}}]}}]})
+
+        async def run():
+            async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+                await GeminiImage().generate("x", client=c, reference=[(b"A", "image/png"), (b"B", "image/jpeg")])
+
+        import os
+
+        os.environ["GEMINI_API_KEY"] = "k"
+        try:
+            asyncio.run(run())
+        finally:
+            os.environ.pop("GEMINI_API_KEY", None)
+        parts = monkey_seen["parts"]
+        assert len(parts) == 3 and parts[0]["inlineData"]["mimeType"] == "image/png" and parts[1]["inlineData"]["mimeType"] == "image/jpeg" and parts[2] == {"text": "x"}
+
+
 class TestSpriteSheet:
     def test_the_prompt_asks_for_a_flat_background_strip_of_the_reference_character(self):
         from openjarvis.server.media import spritesheet

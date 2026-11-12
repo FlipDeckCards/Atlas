@@ -168,10 +168,25 @@ ATTACHED_TTL_S = 2 * 60 * 60
 MAX_ATTACHED_KEPT = 8
 
 
+_BATCHES = [0]
+
+
 def remember_attached(user_id: str, saved: List[Dict[str, Any]]) -> None:
+    """The pictures attached to one message are one batch (so 'make a character like these' can use all of them)."""
     now = time.monotonic()
-    kept = [a for a in ATTACHED.get(user_id, []) if now - a["at"] < ATTACHED_TTL_S] + [dict(a, at=now) for a in saved]
+    _BATCHES[0] += 1
+    kept = [a for a in ATTACHED.get(user_id, []) if now - a["at"] < ATTACHED_TTL_S] + [dict(a, at=now, batch=_BATCHES[0]) for a in saved]
     ATTACHED[user_id] = kept[-MAX_ATTACHED_KEPT:]
+
+
+def latest_batch(user_id: str, within: Optional[float] = None) -> List[str]:
+    """Library ids of the pictures attached together in the most recent message that had any (oldest first)."""
+    now = time.monotonic()
+    live = [a for a in ATTACHED.get(user_id, []) if now - a["at"] < (within or ATTACHED_TTL_S)]
+    if not live:
+        return []
+    last = live[-1].get("batch")
+    return [a["item_id"] for a in live if a.get("batch") == last][: service.MAX_REFERENCES]
 
 
 def latest_attached(user_id: str, within: Optional[float] = None) -> Optional[str]:
@@ -184,8 +199,9 @@ def latest_attached(user_id: str, within: Optional[float] = None) -> Optional[st
 # builds on a picture the person attached. generate_image cannot see any picture, so such a request is run as vary_image (one picture).
 ATTACHED_RECENT_S = 20 * 60
 _BUILDS_ON_PICTURE = re.compile(
-    r"\b(similar to|based on|inspired by|in the style of|same style as|like (?:this|that|the|my)|closer to|version of|variation of|redo|remake|"
-    r"(?:this|that|the|attached|previous|other|above|last|same|given|latest) (?:image|picture|photo|pic|character|sprite|art|artwork|drawing|one))\b", re.I)
+    r"\b(similar|based on|inspired by|in the style of|same style as|like (?:this|that|the|these|those|my)|closer to|version of|variation of|redo|remake|"
+    r"as (?:a |an )?(?:sample|reference|example|inspiration)|"
+    r"(?:this|that|these|those|the|attached|previous|other|above|last|same|given|latest) (?:images?|pictures?|photos?|pics?|characters?|sprites?|art|artwork|drawings?|ones?))\b", re.I)
 
 
 def builds_on_attached(user_id: str, message: str) -> bool:
@@ -226,7 +242,8 @@ def describe(tool: str, args: Dict[str, Any]) -> str:
         return f'edit your picture: "{_short(args.get("prompt"), 200)}"'
     if tool == "vary_image":
         n = service.clamp_variations(args.get("count"), True)         # args hold the already-clamped count (see execute_tool)
-        return f'make {n} {"variation" if n == 1 else "variations"} based on your picture: "{_short(args.get("prompt"), 200)}"'
+        many = len(args.get("item_ids") or []) > 1
+        return f'make {n} {"variation" if n == 1 else "variations"} based on {"your %d pictures" % len(args["item_ids"]) if many else "your picture"}: "{_short(args.get("prompt"), 200)}"'
     if tool == "generate_image":
         return f'make an image: "{_short(args.get("prompt"), 200)}"'
     return f'make a speech clip saying: "{_clip(args.get("text"), 120)}"'
@@ -243,7 +260,8 @@ async def run_paid(ctx: Ctx, tool: str, args: Dict[str, Any]) -> Dict[str, Any]:
         return {"saved": True, "title": f"sprite sheet with {len(res['rows'])} {'rows' if args.get('layout') == 'rows' else 'panels'} (about ${res['cost_usd']:.2f}){miss}",
                 "items": res["items"], "item": res["items"][0]}
     elif tool == "vary_image":
-        res = await service.vary_and_save(ctx, str(args.get("item_id") or ""), _clip(args.get("prompt"), 500), args.get("count"), edit=bool(args.get("edit")))
+        res = await service.vary_and_save(ctx, str(args.get("item_id") or ""), _clip(args.get("prompt"), 500), args.get("count"), edit=bool(args.get("edit")),
+                                          extra_item_ids=(args.get("item_ids") or [])[1:])
         n, bad = len(res["items"]), res["failed"]
         title = f"{n} {'variation' if n == 1 else 'variations'} (about ${res['cost_usd']:.2f})" + (f"; {bad} could not be made" if bad else "")
         return {"saved": True, "title": title, "items": res["items"], "item": res["items"][0]}
@@ -282,13 +300,17 @@ async def execute_tool(ctx: Ctx, name: str, args: Dict[str, Any], *, user_messag
             service.require_flag()
             if name in ("vary_image", "make_sprite_sheet"):
                 # the picture is fixed now (not at the yes), and must be the caller's own picture
-                item_id = str(args.get("item_id") or "") or latest_attached(ctx.user_id) or ""
-                if not item_id:
+                ids = [str(args.get("item_id"))] if args.get("item_id") else (args.get("item_ids") if isinstance(args.get("item_ids"), list) else [])
+                if not ids and name == "vary_image":
+                    ids = latest_batch(ctx.user_id)                          # all the pictures attached together
+                ids = [str(i) for i in ids if str(i)] or ([latest_attached(ctx.user_id)] if latest_attached(ctx.user_id) else [])
+                if not ids:
                     return {"text": "Error: there is no picture to work from. Ask the user to attach one.", "ui": ui}
-                item = await service.get_owned(ctx, item_id)
-                if item.kind != "image":
+                owned = [await service.get_owned(ctx, i) for i in ids[: service.MAX_REFERENCES]]
+                if any(o.kind != "image" for o in owned):
                     return {"text": "Error: that item is not a picture.", "ui": ui}
-                args = dict(args, item_id=item.id)
+                item = owned[0]
+                args = dict(args, item_id=item.id, item_ids=[o.id for o in owned])
                 if name == "vary_image":
                     args["count"] = service.clamp_variations(args.get("count"), ctx.unlimited)
                 elif args.get("layout") == "rows":
@@ -357,6 +379,10 @@ async def sprite_sheet_request(ctx: Ctx, message: str, pending: Optional[Pending
 _NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "a few": 3, "several": 5}
 _VARIATIONS = re.compile(r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|a few|several)?\s*(?:more |new |different |other )?"
                          r"(?:versions?|variations?|variants?|alternatives?|options)\b", re.I)
+_CREATE = re.compile(r"\b(create|make|generate|draw|design|come up with|give me|produce|invent|build)\b", re.I)
+_PICTURE_NOUN = re.compile(r"\b(characters?|images?|pictures?|art(?:work)?|designs?|sprites?|portraits?|illustrations?|drawings?|versions?|ones?|heroes|hero|villains?|monsters?|outfits?)\b", re.I)
+_CREATE_COUNT = re.compile(r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|a few|several)\s+(?:more |new |different |other |original )?"
+                          r"(?:characters?|images?|pictures?|designs?|sprites?|portraits?|illustrations?|ones|heroes|villains?|monsters?)\b", re.I)
 _EDIT = re.compile(r"\b(remove|delete|erase|get rid of|take (?:out|off|away)|replace|swap|change|re-?colou?r|edit|redraw|retouch|clean up|add|"
                    r"give (?:him|her|it|them)|turn (?:him|her|it|this|the)|make (?:it|him|her|them|this|the)|without)\b", re.I)
 
@@ -379,12 +405,19 @@ async def picture_request(ctx: Ctx, message: str, new_image: bool, pending: Opti
     if not (new_image or builds_on_attached(ctx.user_id, text)):
         return None
     count = _wanted_count(text)
+    made = _CREATE_COUNT.search(text)
     if count is not None or _VARIATIONS.search(text):
         args: Dict[str, Any] = {"prompt": _clip(text, 500), "count": count or service.VARIATION_DEFAULT}
+    elif new_image and _CREATE.search(text) and _PICTURE_NOUN.search(text):
+        # "create a character similar to these", "make 3 characters using the attached images as a sample": a new picture built on what was attached
+        word = made.group(1).lower() if made else ""
+        args = {"prompt": _clip(text, 500), "count": int(word) if word.isdigit() else _NUMBER_WORDS.get(word, 1)}
     elif _EDIT.search(text):
         args = {"prompt": _clip(text, 500), "count": 1, "edit": True}
     else:
         return None
+    if new_image:
+        args["item_ids"] = latest_batch(ctx.user_id, ATTACHED_RECENT_S)             # all the pictures attached with this message
     pending = pending or PENDING
     out = await execute_tool(ctx, "vary_image", args, user_message=text, pending=pending)
     p = pending.get(ctx.user_id)

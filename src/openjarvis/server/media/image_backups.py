@@ -67,14 +67,14 @@ class GeminiImage:
         return GEMINI_USD_PER_IMAGE
 
     async def generate(self, prompt: str, client: Optional[httpx.AsyncClient] = None, reference: Optional[tuple] = None, aspect_ratio: Optional[str] = None, image_size: Optional[str] = None, **_: Any) -> MediaResult:
-        """reference: (bytes, mime) of a picture to build on (reference-image mode). The picture goes in the same request as the prompt.
+        """reference: (bytes, mime) of a picture to build on, or a list of them (reference-image mode). They go in the same request as the prompt.
         aspect_ratio: for example "21:9" for a wide strip. image_size: "1K", "2K" or "4K" (Pro only). If the API refuses either, the request
         is repeated without the size, then without both."""
         key = _key(("GEMINI_API_KEY", "GOOGLE_API_KEY"))
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name()}:generateContent"
         parts: list = []
-        if reference is not None:
-            ref_data, ref_mime = reference
+        refs = [] if reference is None else (list(reference) if isinstance(reference, list) else [reference])
+        for ref_data, ref_mime in refs:
             parts.append({"inlineData": {"mimeType": ref_mime or "image/png", "data": base64.b64encode(ref_data).decode("ascii")}})
         parts.append({"text": prompt})
         headers = {"x-goog-api-key": key, "Content-Type": "application/json"}

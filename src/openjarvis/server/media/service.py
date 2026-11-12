@@ -266,7 +266,12 @@ def estimate_variations(count: Any, unlimited: bool = False) -> float:
     return image_mod.get_reference_provider().estimate_cost_usd() * clamp_variations(count, unlimited)
 
 
-async def vary_and_save(ctx: Ctx, item_id: str, prompt: str, count: Any = None, edit: bool = False) -> Dict[str, Any]:
+REFERENCE_PREFIX_MANY = ("Use the attached images as style samples: match their art style, rendering quality, level of detail and overall design language, "
+                         "but do not copy any one of them. Make a new, finished, high-quality picture that follows this request: ")
+MAX_REFERENCES = 8
+
+
+async def vary_and_save(ctx: Ctx, item_id: str, prompt: str, count: Any = None, edit: bool = False, extra_item_ids: Any = ()) -> Dict[str, Any]:
     """N new pictures made from one saved picture and a prompt (Gemini's image model, reference-image mode).
     The whole batch is checked against the spend caps first; every picture that comes back is charged (to the person's own spend row and
     the global one, so it shows in the Station's Out column) and saved as a new item with edited_from_id set. A picture that fails is skipped.
@@ -278,17 +283,24 @@ async def vary_and_save(ctx: Ctx, item_id: str, prompt: str, count: Any = None, 
     if not p:
         raise MediaServiceError(422, "bad_request", "Say what you want changed or varied.")
     p = p[:image_mod.MAX_PROMPT_CHARS]
-    sent = (EDIT_PREFIX if edit else REFERENCE_PREFIX) + p
+    extra_ids = [str(i) for i in (extra_item_ids or []) if str(i) and str(i) != str(item_id)][: MAX_REFERENCES - 1]
+    sent = (EDIT_PREFIX if edit else (REFERENCE_PREFIX_MANY if extra_ids else REFERENCE_PREFIX)) + p
     provider = image_mod.get_reference_provider()
     each = provider.estimate_cost_usd()
     await gate_generation(ctx, provider, each * n)
     source = await get_owned(ctx, item_id)
     if source.kind != "image":
         raise MediaServiceError(400, "unsupported", "That item is not a picture.")
-    try:
-        original = await ctx.storage.get(source.storage_key)
-    except StorageError as exc:
-        raise MediaServiceError(exc.status_code, "storage_failed", exc.public_message) from None
+    refs = []
+    for item in [source] + [await get_owned(ctx, i) for i in extra_ids]:           # every picture must be the caller's own
+        if item.kind != "image":
+            raise MediaServiceError(400, "unsupported", "That item is not a picture.")
+        try:
+            refs.append((await ctx.storage.get(item.storage_key), item.mime_type))
+        except StorageError as exc:
+            raise MediaServiceError(exc.status_code, "storage_failed", exc.public_message) from None
+    original = refs[0][0]
+    reference = refs if len(refs) > 1 else refs[0]
     sem = asyncio.Semaphore(VARIATION_PARALLEL)
     spent = 0.0
 
@@ -296,7 +308,7 @@ async def vary_and_save(ctx: Ctx, item_id: str, prompt: str, count: Any = None, 
         nonlocal spent
         async with sem:
             try:
-                result = await _generate_retrying(provider, prompt=sent, reference=(original, source.mime_type))
+                result = await _generate_retrying(provider, prompt=sent, reference=reference)
             except MediaError as exc:
                 logger.warning("variation %s of %s failed (HTTP %s)", i + 1, n, exc.status_code)
                 return None
