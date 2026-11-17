@@ -24,7 +24,8 @@ def test_unknown_coin_never_trades():
 
 def test_minimum_confidence_per_coin():
     assert directional.min_conf("btc") == 0.80
-    assert directional.min_conf("xrp") == directional.min_conf("eth") == directional.min_conf("sol") == 0.85
+    assert directional.min_conf("xrp") == 0.84
+    assert directional.min_conf("eth") == directional.min_conf("sol") == 0.90
 
 
 def test_btc_trades_at_its_tier_and_eth_does_not_at_the_same_confidence():
@@ -55,7 +56,7 @@ def test_publish_overwrites_and_reserve_adds():
 
 def test_open_sides_follow_the_coin_floor():
     # v1.21: a fresh window opens a leg only where the model clears the coin's floor
-    assert directional.open_sides(0.84, "eth") == (False, False)   # v1.32: ETH, SOL and XRP open from 85%
+    assert directional.open_sides(0.89, "eth") == (False, False)   # ETH and SOL open from 90% (owner, 2026-11-17)
     assert directional.open_sides(0.96, "eth") == (True, False)
     assert directional.open_sides(0.04, "eth") == (False, True)
     assert directional.open_sides(0.82, "btc") == (True, False)
