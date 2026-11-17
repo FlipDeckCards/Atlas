@@ -466,6 +466,7 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         ["Nov 11", "Skipped hours become half-size caution hours with an 85% calibrated floor and a 70¢ entry floor."],
         ["Nov 11", "BTC 5m entry floor of 75¢ after five losses that day, all bought at 64-73¢ against a much less confident market."],
         ["Nov 11", "BTC 5m sizes cut to 1% / 4% / 8% until it proves itself. XRP 5m sized up to 3-10% from 84% confidence, window limit 10%."],
+        ["Nov 17", "Retired ETH 1h and SOL 15m: the account runs the four 5-minute desks only (BTC, XRP live; ETH, SOL on paper)."],
     ])
 
     # ---- 9. watch list
