@@ -1,4 +1,4 @@
-"""v1.22: edge and late are single-bet methods; one bet per method per window, never against a side already bet, 20% per window."""
+"""v1.22: edge and late are single-bet methods; one bet per method per window, never against a side already bet, 10% per window (20% before 2026-11-17)."""
 from openjarvis.polybot import directional
 
 
@@ -34,12 +34,14 @@ def test_no_bet_against_a_side_already_bet():
     assert ok is False and "other side" in why
 
 
-def test_window_total_is_capped_at_20_percent():
-    bets = {"directional": ("up", 10.0, 20.0), "edge": ("up", 8.0, 16.0)}
-    assert directional.window_room(bets, 100.0) == 2.0            # 20 of 100 total, 18 used
+def test_window_total_is_capped_at_10_percent():
+    # owner, 2026-11-17: BTC 5m's window total 10% (was 20%), the same as XRP 5m
+    bets = {"directional": ("up", 5.0, 10.0), "edge": ("up", 3.0, 6.0)}
+    assert directional.window_room(bets, 100.0) == 2.0            # 10 of 100 total, 8 used
     assert directional.may_take(bets, "up", 5.0, 100.0)[0] is False
     assert directional.may_take(bets, "up", 2.0, 100.0)[0] is True
-    assert directional.window_room({"late": ("down", 25.0, 30.0)}, 100.0) == 0.0
+    assert directional.window_room({"late": ("down", 12.0, 15.0)}, 100.0) == 0.0
+    assert directional.window_total_pct("btc") == 10.0 and directional.window_total_pct("xrp") == 10.0
 
 
 def test_empty_window_allows_a_first_bet():

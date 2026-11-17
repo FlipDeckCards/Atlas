@@ -95,7 +95,7 @@ CUSHION_Z = 0.5
 # v1.22: each method (directional, edge, late) may place ONE bet per window. Edge and Late are extra triggers with their own
 # entry rules; they keep the same confidence floor, lot tier, cushion and momentum filters as directional. Every method's bets in
 # a window together stay under WINDOW_TOTAL_PCT of the balance, and no method may bet against a side already bet in that window.
-WINDOW_TOTAL_PCT = 20.0
+WINDOW_TOTAL_PCT = 10.0     # owner, 2026-11-17: BTC 5m 10% (was 20%), the same as XRP 5m
 EDGE_GAP = 0.04          # edge: the model's odds beat the ask by at least 4 cents (owner, 2026-10-31; was 6)
 LATE_PROB = 0.90         # late: the model is at least 90% sure
 LATE_MAX_COST = 0.95     # ... and the side costs 95 cents or less
