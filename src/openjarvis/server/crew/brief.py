@@ -375,8 +375,8 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
 
     roles = {
         "btc": "The flagship. Live since the start and the source of most of the data behind the rules. Full method set and its own "
-               "calibrated steps. Sizes cut on 2026-11-11 (owner) to 1% / 4% / 8% (were 7 / 8 / 10%) until it proves itself again after "
-               "losing $42.56 that day. It sets the shared daily starting balance for the whole account.",
+               "calibrated steps. Sizes cut on 2026-11-11 (owner) from 7 / 8 / 10% to 1 / 4 / 8% after losing $42.56 that day; set to "
+               "3% / 5% / 8% on 2026-11-17 (owner). It sets the shared daily starting balance for the whole account.",
         "eth": "ETH 5m: calibrated confidence, 85% floor, a flat 3% per bet and at most 3% per window (owner, 2026-11-17, a live test). "
                "Skips buys under 85c (since 2026-11-10), enters only in the last 3 minutes, and skips a bet while the price already moves "
                "more than 1 sd toward it. On paper from 2026-11-10; live test judged at 30 live trades or two weeks.",
@@ -385,7 +385,7 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
                "more than 1 sd toward it (replacing the old rule that blocked both sides whenever the price rose). Live test judged at "
                "50 live trades.",
         "xrp": "XRP 5m: calibrated confidence only. Sized up on 2026-11-11 (owner) after its v1.22 start (22 trades, 82% won, +11.1% per "
-               "dollar staked): no trade under 84%, then 3% / 5% / 7% / 10%, with a 10% per-window limit. Its losses cluster overnight, "
+               "dollar staked): no trade under 84%, then 3% at 84%, 5% at 85-87% and 8% at 88%+ (owner, 2026-11-17; the 7% and 10% steps are gone), with a 10% per-window limit. Its losses cluster overnight, "
                "so 3-5 AM is halved. Its lifetime live record before 1.22 was about break-even, so its v1.22 results are watched closely.",
     }
     for f in facts:
@@ -468,6 +468,7 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         ["Nov 11", "BTC 5m entry floor of 75¢ after five losses that day, all bought at 64-73¢ against a much less confident market."],
         ["Nov 11", "BTC 5m sizes cut to 1% / 4% / 8% until it proves itself. XRP 5m sized up to 3-10% from 84% confidence, window limit 10%."],
         ["Nov 17", "Retired ETH 1h and SOL 15m: the account runs the four 5-minute desks only (BTC, XRP live; ETH, SOL on paper)."],
+        ["Nov 17", "Sizes: BTC 5m 3% / 5% / 8% at 80 / 84 / 88% calibrated (was 1 / 4 / 8%); XRP 5m three steps, 3% / 5% / 8% at 84 / 85 / 88% (was 3 / 5 / 7 / 10%)."],
         ["Nov 17", "ETH 5m and SOL 5m set up for a small live test: flat 3% bets, last 3 minutes only, no chasing momentum. Their live trades above the floors were about break-even (-2%); the earlier gains came from closing sweeps on a single day (Oct 30)."],
     ])
 
