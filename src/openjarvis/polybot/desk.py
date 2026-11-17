@@ -728,12 +728,20 @@ class Desk:
     def _taken(self, slug: str, method: str) -> bool:
         return method in self._bets.get(slug, {})
 
-    def _place(self, slug: str, method: str, side: str, usd: float, qty: float) -> None:
+    def _place(self, slug: str, method: str, side: str, usd: float, qty: float, price: Optional[float] = None,
+               now: Optional[float] = None) -> None:
         """v1.22: record a bet the method just placed in this window (one per method), and count it against the windows' cap."""
         self._bets.setdefault(slug, {})[method] = (side, round(usd, 4), qty)
         raw = None if self.fair_model is None else (self.fair_model if side == "up" else 1.0 - self.fair_model)
+        b = self.book
         self._decision[(slug, side)] = {"decision_method": method, "decision_raw": None if raw is None else round(raw, 4),
-                                        "decision_conf": None if raw is None else round(self._calib(raw), 4)}
+                                        "decision_conf": None if raw is None else round(self._calib(raw), 4),
+                                        # 2026-11-17 diagnostic: the price the bot decided on and how old its book was, next to what it paid
+                                        "decision_price": None if price is None else round(price, 4),
+                                        "decision_book_age_s": None if (b is None or now is None) else round(now - b.ts, 2),
+                                        "decision_last_trade": None if b is None else b.last_trade_px,
+                                        "decision_last_trade_age_s": None if (b is None or now is None or not b.last_trade_ts)
+                                        else round(now - b.last_trade_ts, 1)}
         if len(self._decision) > 200:
             self._decision = dict(list(self._decision.items())[-100:])
         self._dir_pending.add(slug)
@@ -935,7 +943,7 @@ class Desk:
                             if q >= w.min_qty and ok_win:
                                 price = b.best_ask if side == "up" else b.best_bid
                                 want = [strategy.Quote(side, price, q, taker=True)]
-                                self._place(w.slug, "directional", side, usd, q)
+                                self._place(w.slug, "directional", side, usd, q, price=cost, now=now)
                                 why = f"Directional ({tier}): {side} at {cost * 100:.0f}c, edge {edge * 100:.1f}c after fees, lot {lot_pct:.0f}%."
                     # v1.22: edge and late are extra single-bet methods: one bet each per window, never against a side already bet
                     if self.cfg.directional and self.fair_model is not None and b.best_ask is not None and b.best_bid is not None:
@@ -964,7 +972,7 @@ class Desk:
                             if q >= w.min_qty:
                                 price = b.best_ask if side == "up" else b.best_bid
                                 want = [strategy.Quote(side, price, q, taker=True)]
-                                self._place(w.slug, method, side, usd, q)
+                                self._place(w.slug, method, side, usd, q, price=cost, now=now)
                                 why = f"{method.title()}: {side} at {cost * 100:.0f}c, model {gap * 100:.0f} points over the price, lot {lot_pct:.0f}%."
                     if not want and not self._taken(w.slug, "directional") and self.cfg.directional:
                         z_now = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)
