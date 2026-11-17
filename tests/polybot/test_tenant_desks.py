@@ -303,8 +303,8 @@ def test_xrp_desks_sizes_and_window_limit():
         c = from_env({"POLYBOT_WINDOW_PCT": "20", "POLYBOT_SWEEP_PCT": "10"}, asset=a)
         assert c.window_pct == 10.0 and c.sweep_pct == 1.0, a          # owner, 2026-11-11: XRP window limit 10% (was 5%)
     assert directional.window_total_pct("xrp") == 10.0 and directional.window_total_pct("eth") == 3.0
-    # owner, 2026-11-11: no trade under 84%, then 3 / 5 / 7 / 10 / 10%
-    assert [directional.size_pct(p, "xrp") for p in (0.83, 0.84, 0.86, 0.90, 0.93, 0.96)] == [0.0, 3.0, 5.0, 7.0, 10.0, 10.0]
+    # owner, 2026-11-17: no trade under 84%, then 84% = 3%, 85-87% = 5%, 88%+ = 8%
+    assert [directional.size_pct(p, "xrp") for p in (0.83, 0.84, 0.86, 0.90, 0.93, 0.96)] == [0.0, 3.0, 5.0, 8.0, 8.0, 8.0]
     assert directional.min_conf("xrp") == 0.84
     assert from_env({"POLYBOT_WINDOW_PCT": "10"}, asset="btc").window_pct == 10.0
 
