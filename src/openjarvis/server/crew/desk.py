@@ -422,7 +422,8 @@ async def export_fills(pool, asset: str = "btc", account: str = "") -> str:
     wr = csv.writer(buf)
     wr.writerow(["time_utc", "mode", "version", "window_end_utc", "slug", "side", "price", "qty", "cost", "fair",
                  "model_prob_side", "edge", "sd_from_strike", "sigma", "secs_left", "move_left_usd", "momentum_z", "trend_z", "mid", "spread",
-                 "book_up", "model_vs_market", "sweep", "window_result", "window_pnl", "decision_method", "decision_raw", "decision_conf"])
+                 "book_up", "model_vs_market", "sweep", "window_result", "window_pnl", "decision_method", "decision_raw", "decision_conf",
+                 "decision_price", "decision_book_age_s", "decision_last_trade", "decision_last_trade_age_s"])
     for r in rows:
         feat = _j(r["features"])
         m = feat.get("model")
@@ -437,7 +438,9 @@ async def export_fills(pool, asset: str = "btc", account: str = "") -> str:
                      round(r["cost"], 2), r["fair"], conf, edge, sd_from_strike(conf), sg, sl, mv,
                      feat.get("momentum_z"), feat.get("trend_z"), feat.get("mid"), feat.get("spread"), feat.get("book_up"),
                      feat.get("model_vs_market"), feat.get("sweep") is True, res, r["pnl"],
-                     feat.get("decision_method"), feat.get("decision_raw"), feat.get("decision_conf")])
+                     feat.get("decision_method"), feat.get("decision_raw"), feat.get("decision_conf"),
+                     feat.get("decision_price"), feat.get("decision_book_age_s"), feat.get("decision_last_trade"),
+                     feat.get("decision_last_trade_age_s")])
     return buf.getvalue()
 
 
