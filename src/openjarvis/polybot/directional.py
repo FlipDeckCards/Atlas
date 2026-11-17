@@ -50,8 +50,9 @@ TIERS = {
     # Owner, 2026-11-11: XRP 5m sized up after its v1.22 start (22 trades, 82% won, +11.1% per $ staked): no trade under 84%,
     # 84% = 3%, 85-87 = 5%, 88-91 = 7%, 92%+ = 10%; its window limit rises to 10% (config.SMALL_COINS).
     "xrp": ((92, 10.0), (88, 7.0), (85, 5.0), (84, 3.0)),
-    "eth": ((95, 5.0), (92, 3.0), (88, 2.0), (85, 1.0)),
-    "sol": ((95, 5.0), (92, 3.0), (88, 2.0), (85, 1.0)),
+    # Owner, 2026-11-17 (live test): ETH 5m and SOL 5m bet a flat 3% from 85% (their confidence steps did not predict results)
+    "eth": ((85, 3.0),),
+    "sol": ((85, 3.0),),
 }
 
 
