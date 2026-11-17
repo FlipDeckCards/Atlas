@@ -1351,20 +1351,37 @@ function deskSec(key) {
     }
   }
   // what makes money and what loses it: every settled fill, cut by the conditions it happened in
-  const an = (DESK.analysis_by || {})[DESK_VIEW] || (DESK.analysis && DESK_VIEW === DESK.analysis.mode ? DESK.analysis : null);
+  // 2026-11-17: three scopes - all history under today's rules (default), this version only, all history
+  const scopes = (DESK.analysis_scopes || {})[DESK_VIEW] || null;
+  const scope = PANEL_OPEN[A + ':wscope'] || 'rules';
+  const an = (scopes && scopes[scope]) || (DESK.analysis_by || {})[DESK_VIEW] || (DESK.analysis && DESK_VIEW === DESK.analysis.mode ? DESK.analysis : null);
   if (an && !an.fills) {                              // a new desk (or an empty tab): the breakdown is there and fills in as trades settle
     const al = mk('div', 'lbl'); al.style.marginTop = '12px'; al.textContent = 'What wins and what loses · 0 settled fills'; s.append(al);
     s.append(mk('div', 'dim', 'No settled ' + DESK_VIEW + ' fills yet. The breakdown fills in as this desk\'s trades settle.'));
   } else if (an) {
     const wOpen = !!PANEL_OPEN[A + ':wins'];
-    const al = mk('div', 'lbl'); al.style.marginTop = '12px'; al.textContent = 'What wins and what loses · ' + an.fills + ' settled fills'; s.append(al);
+    const al = mk('div', 'lbl'); al.style.marginTop = '12px';
+    al.textContent = 'What wins and what loses · ' + an.fills + ' settled fills' + (an.scope_label ? ' · ' + an.scope_label : ''); s.append(al);
     const ww = mk('div', 'desk-tabs'), wb = mk('button', 'b', wOpen ? 'Hide breakdown ▾' : 'Show breakdown ▸');
     wb.onclick = () => { PANEL_OPEN[A + ':wins'] = !wOpen; renderSide(); }; ww.append(wb); s.append(ww);
+    if (wOpen && scopes) {
+      const sw = mk('div', 'desk-tabs');
+      [['rules', 'All history, current rules'], ['version', 'This version'], ['all', 'All history']].forEach(([k, lbl]) => {
+        const n = scopes[k] ? scopes[k].fills : 0;
+        const bt = mk('button', 'b' + (k === scope ? ' on' : ''), lbl + ' (' + n + ')');
+        bt.onclick = () => { PANEL_OPEN[A + ':wscope'] = k; renderSide(); }; sw.append(bt);
+      });
+      s.append(sw);
+      s.append(mk('div', 'dim', scope === 'rules'
+        ? 'Every past fill that today\'s rules would still take (confidence floor and entry rules; calibration and hour sizes at the time are not replayed). Use this one to decide changes.'
+        : scope === 'all' ? 'Every fill on every version, including trades the bot no longer makes.' : 'Only the current strategy version\'s fills.'));
+    }
     if (wOpen) Object.values(an.groups || {}).forEach(rows => {
       const tb = mk('div', 'pnl-table');
       rows.forEach(r => { const row = mk('div', 'pnl-row'); row.append(mk('span', null, r.condition), mk('span', null, r.fills + ' fills'),
         mk('span', null, r.win_rate + '% won'), mk('span', null, (r.per_contract >= 0 ? '+' : '') + (r.per_contract * 100).toFixed(1) + 'c/ct'));
-        const p = mk('span', null, signed(r.profit)); p.style.color = pnlColor(r.profit); row.append(p); tb.append(row); });
+        const p = mk('span', null, signed(r.profit) + (r.return_pct == null ? '' : ' (' + (r.return_pct >= 0 ? '+' : '') + r.return_pct + '%)'));
+        p.style.color = pnlColor(r.profit); row.append(p); tb.append(row); });
       s.append(tb);
     });
   }

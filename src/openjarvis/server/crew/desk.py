@@ -453,34 +453,99 @@ BUCKETS = {
 }
 
 
-async def analysis(pool, mode: str = "paper", version: str = STRATEGY_VERSION, asset: str = "btc") -> Dict[str, Any]:
+SCOPES = ("rules", "version", "all")     # 2026-11-17 (owner): what wins and what loses over three sets of fills
+SCOPE_LABELS = {"version": "this version", "all": "all history", "rules": "all history, current rules"}
+_RULE_DESKS: Dict[str, Any] = {}
+_AN_CACHE: Dict[tuple, tuple] = {}
+AN_TTL_S = 60.0
+
+
+def _rule_desk(asset: str):
+    """A paper Desk used only to ask today's entry rules about a past fill (never trades)."""
+    if asset not in _RULE_DESKS:
+        from openjarvis.polybot.desk import Desk
+        _RULE_DESKS[asset] = Desk(from_env({}, asset=asset), None, None)
+    return _RULE_DESKS[asset]
+
+
+def still_allowed(asset: str, t: Dict[str, Any]) -> bool:
+    """Would today's rules still take this past fill? Replays what the fill record holds: the model's confidence for the side
+    against the desk's confidence floor, and the entry rules (price floors, momentum, Up/Down and last-minute blocks).
+    Closing sweeps have their own rules and are kept. Calibration and hour sizing at the time cannot be replayed exactly."""
+    from openjarvis.polybot import directional
+
+    if t.get("sweep"):
+        return True
+    conf = t.get("model_side")
+    if conf is not None and conf < directional.min_conf(asset, calibrated=True):
+        return False
+    try:
+        d = _rule_desk(asset)
+    except Exception:
+        return True
+    return d._block_rule(float(t.get("secs_left") or 0.0), t["cost"], t.get("momentum_z"), t["side"]) is None
+
+
+async def analysis(pool, mode: str = "paper", version: str = STRATEGY_VERSION, asset: str = "btc", scope: str = "version") -> Dict[str, Any]:
     """Every settled fill, cut by the conditions it happened in: how often that kind of trade won and what it made per contract.
-    This is how the desk's rules get tuned: keep the conditions that make money, cut the ones that lose it."""
+    This is how the desk's rules get tuned: keep the conditions that make money, cut the ones that lose it.
+    scope: "version" = the current strategy version's fills; "all" = every version; "rules" = every version, but only the fills
+    today's rules would still take (bigger sample, without trades the bot no longer makes)."""
+    scope = scope if scope in SCOPES else "version"
+    key = (mode, version, asset, scope)
+    hit = _AN_CACHE.get(key)
+    if hit is not None and time.monotonic() - hit[0] < AN_TTL_S and scope != "version":
+        return hit[1]
     await _ensure(pool)
+    ver_sql, args = ("AND coalesce(f.version, '1.0') = $2 ", (mode, version, asset)) if scope == "version" else ("", (mode, asset))
+    n = 3 if scope == "version" else 2
     async with pool.acquire() as c:
         rows = await c.fetch(
             f"SELECT f.side, f.price, f.qty, f.cost, f.features, w.up FROM polybot_fills f JOIN polybot_windows w ON w.slug = f.slug AND w.mode = f.mode "
-            f"WHERE f.mode = $1 AND coalesce(f.version, '1.0') = $2 AND w.up IS NOT NULL AND " + desk_sql("f.slug") + " = $3", mode, version, asset)
+            f"WHERE f.mode = $1 {ver_sql}AND w.up IS NOT NULL AND " + desk_sql("f.slug") + f" = ${n}", *args)
     trades = []
     for r in rows:
         feat = _j(r["features"])
         cost_per = r["price"] if r["side"] == "up" else 1.0 - r["price"]
         won = bool(r["up"]) if r["side"] == "up" else not bool(r["up"])
         mz = feat.get("momentum_z")
-        trades.append({"won": won, "qty": float(r["qty"]), "pnl": float(r["qty"]) * ((1.0 if won else 0.0) - cost_per),
-                       "edge": feat.get("edge"), "secs_left": feat.get("secs_left"), "cost": cost_per,
-                       "momentum_with": None if mz is None else (mz if r["side"] == "up" else -mz)})
-    out: Dict[str, Any] = {"mode": mode, "version": version, "fills": len(trades), "groups": {}}
+        m = feat.get("model")
+        t = {"won": won, "qty": float(r["qty"]), "pnl": float(r["qty"]) * ((1.0 if won else 0.0) - cost_per),
+             "edge": feat.get("edge"), "secs_left": feat.get("secs_left"), "cost": cost_per, "side": r["side"],
+             "momentum_z": mz, "sweep": feat.get("sweep") is True,
+             "model_side": None if not isinstance(m, (int, float)) else (m if r["side"] == "up" else 1.0 - m),
+             "momentum_with": None if mz is None else (mz if r["side"] == "up" else -mz)}
+        if scope == "rules" and not still_allowed(asset, t):
+            continue
+        trades.append(t)
+    out: Dict[str, Any] = {"mode": mode, "version": version, "scope": scope, "scope_label": SCOPE_LABELS[scope],
+                           "fills": len(trades), "groups": {}}
     for feat, buckets in BUCKETS.items():
         rows_out = []
         for label, lo, hi in buckets:
             g = [t for t in trades if t.get(feat) is not None and lo <= t[feat] < hi]
             if not g:
                 continue
+            staked = sum(t["qty"] * t["cost"] for t in g)
             rows_out.append({"condition": label, "fills": len(g), "win_rate": round(100.0 * sum(t["won"] for t in g) / len(g), 1),
                              "profit": round(sum(t["pnl"] for t in g), 2),
-                             "per_contract": round(sum(t["pnl"] for t in g) / max(1e-9, sum(t["qty"] for t in g)), 3)})
+                             "per_contract": round(sum(t["pnl"] for t in g) / max(1e-9, sum(t["qty"] for t in g)), 3),
+                             "return_pct": round(100.0 * sum(t["pnl"] for t in g) / staked, 1) if staked > 0 else None})
         out["groups"][feat] = rows_out
+    if scope != "version":
+        _AN_CACHE[key] = (time.monotonic(), out)
+    return out
+
+
+async def analysis_scopes(pool, mode: str, asset: str, version_result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The breakdown over each scope for one ledger (the Station switches between them). version_result reuses a breakdown of
+    the current version already computed for this ledger."""
+    out = {}
+    for sc in SCOPES:
+        if sc == "version" and version_result is not None:
+            out[sc] = {**version_result, "scope": "version", "scope_label": SCOPE_LABELS["version"]}
+        else:
+            out[sc] = await analysis(pool, mode, asset=asset, scope=sc)
     return out
 
 
@@ -717,7 +782,10 @@ async def summary(pool, *, trade_limit: int = 50, asset: str = "btc", account: s
             "hours": {"paper": await by_hour(pool, paper, rows), "live": await by_hour(pool, live, live_rows)},
             "analysis": await analysis(pool, live if mode == "live" else paper, asset=rows),
             # both ledgers, so the breakdown shows on whichever tab is open (paper desks too)
-            "analysis_by": {"paper": await analysis(pool, paper, asset=rows), "live": await analysis(pool, live, asset=live_rows)}}
+            "analysis_by": (an_by := {"paper": await analysis(pool, paper, asset=rows), "live": await analysis(pool, live, asset=live_rows)}),
+            # 2026-11-17: the same breakdown over this version, all history, and all history under today's rules
+            "analysis_scopes": {"paper": await analysis_scopes(pool, paper, rows, an_by["paper"]),
+                                "live": await analysis_scopes(pool, live, live_rows, an_by["live"])}}
 
 
 def deposits() -> Optional[float]:
