@@ -650,8 +650,12 @@ class Desk:
         15-minute BTC: no buy priced 70-90c at any time (about 80c needs an 80% win rate; this bot won 75%)."""
         if self.cfg.asset == "btc15" and side == "down":
             return "btc15 down"                                     # v1.36: BTC 15m's Down bets: 49 live fills, 71% won, -$24.79 (Up: +$15.93)
-        if self.cfg.asset == "sol" and momentum is not None and momentum > 0.3:
-            return "sol momentum"                                   # v1.35: SOL 5m, price already moving with the bet: 17 live fills, 12 won, -$4.40
+        # Owner, 2026-11-17: no chasing on ETH 5m / SOL 5m: skip a bet while the price already moves more than 1 sd toward it.
+        # Live fills at/above each floor: SOL -14.7% chasing vs +7.5% otherwise (26/47 fills), ETH -3.7% vs -0.1% (18/24).
+        # Replaces v1.35's "sol momentum", which blocked both sides whenever the price was rising.
+        if self.cfg.asset in ("eth", "sol") and momentum is not None and side in ("up", "down"):
+            if (momentum if side == "up" else -momentum) > 1.0:
+                return "chasing momentum"
         if self.cfg.asset == "btc" and side == "down" and 0.70 <= price < 0.80:
             return "btc down 70-79c"                                # BTC 5m Down buys at 70-79c: 75 live fills, 67% won, -$37 (break-even needs ~75%)
         # v1.39: the BTC 5m Up-under-40c block is removed. Oct 29-Nov 9 live fills: 46 fills, 30% won, +$19.44 (the old block had

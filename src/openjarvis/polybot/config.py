@@ -318,7 +318,11 @@ ONE_HOUR_TIMING = {"directional_secs_left": 900.0, "directional_min_secs": 120.0
 
 
 # owner, 2026-11-07 (v1.32): XRP, SOL and ETH bets run 1-5% by confidence, so a window holds at most 5%; sweeps stay at 1%.
-SMALL_COINS = {"xrp": (10.0, 1.0), "sol": (5.0, 1.0), "eth": (5.0, 1.0)}   # coin -> (window %, sweep %); XRP 10% since 2026-11-11 (owner)
+SMALL_COINS = {"xrp": (10.0, 1.0), "sol": (3.0, 1.0), "eth": (3.0, 1.0)}   # coin -> (window %, sweep %); XRP 10% since 2026-11-11 (owner);
+                                                                             # ETH/SOL 3% since 2026-11-17 (owner: live test at 3%)
+# Owner, 2026-11-17 (ETH 5m / SOL 5m live test): enter only with this many seconds or fewer left. Live fills at/above each floor
+# entered with more than 3 minutes left lost on both desks (ETH -3.7% over 12, SOL -14.9% over 18).
+ENTRY_WINDOW_S = {"eth": 180.0, "sol": 180.0}
 
 
 def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Config:
@@ -326,6 +330,8 @@ def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Con
     if cfg.coin in SMALL_COINS:
         win, swp = SMALL_COINS[cfg.coin]
         cfg = replace(cfg, window_pct=min(cfg.window_pct, win), sweep_pct=min(cfg.sweep_pct, swp))
+    if cfg.asset in ENTRY_WINDOW_S:
+        cfg = replace(cfg, directional_secs_left=min(cfg.directional_secs_left, ENTRY_WINDOW_S[cfg.asset]))
     if cfg.horizon == "1h" and cfg.asset in PINNED_HORIZON:
         cfg = replace(cfg, **ONE_HOUR_TIMING)
     return cfg

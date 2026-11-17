@@ -242,9 +242,11 @@ def test_one_hour_desks_get_one_hour_timing_and_the_others_keep_theirs():
         c = from_env({}, asset=a)
         assert (c.directional_min_secs, c.directional_secs_left, c.late_split_s) == (120.0, 900.0, 300.0), a
         assert (c.sweep_secs_left, c.sweep_secs_left_night, c.momentum_s) == (300.0, 300.0, 120.0), a
-    for a in ("btc", "btc15", "eth", "eth15", "xrp15"):
+    for a in ("btc", "btc15", "eth15", "xrp15"):
         c = from_env({}, asset=a)
         assert (c.directional_min_secs, c.directional_secs_left, c.late_split_s, c.sweep_secs_left) == (30.0, 240.0, 60.0, 60.0), a
+    for a in ("eth", "sol"):                     # owner, 2026-11-17: ETH 5m / SOL 5m enter only in the last 3 minutes
+        assert from_env({}, asset=a).directional_secs_left == 180.0, a
     assert "2-15 minute" in directional.explain(None, None, None, (0, 0), (0, 0), None, False, window=(120.0, 900.0))
     assert "30-240 second" in directional.explain(None, None, None, (0, 0), (0, 0), None, False)
 
@@ -300,7 +302,7 @@ def test_xrp_desks_sizes_and_window_limit():
     for a in ("xrp", "xrp15", "xrp1h"):
         c = from_env({"POLYBOT_WINDOW_PCT": "20", "POLYBOT_SWEEP_PCT": "10"}, asset=a)
         assert c.window_pct == 10.0 and c.sweep_pct == 1.0, a          # owner, 2026-11-11: XRP window limit 10% (was 5%)
-    assert directional.window_total_pct("xrp") == 10.0 and directional.window_total_pct("eth") == 5.0
+    assert directional.window_total_pct("xrp") == 10.0 and directional.window_total_pct("eth") == 3.0
     # owner, 2026-11-11: no trade under 84%, then 3 / 5 / 7 / 10 / 10%
     assert [directional.size_pct(p, "xrp") for p in (0.83, 0.84, 0.86, 0.90, 0.93, 0.96)] == [0.0, 3.0, 5.0, 7.0, 10.0, 10.0]
     assert directional.min_conf("xrp") == 0.84
@@ -356,6 +358,6 @@ def test_desks_on_one_key_share_one_open_orders_read_and_back_off_after_a_429():
 def test_sol_and_eth_desks_are_capped_at_one_percent_too():
     for a in ("sol", "sol15", "sol1h", "eth", "eth15", "eth1h"):
         c = from_env({"POLYBOT_WINDOW_PCT": "10", "POLYBOT_SWEEP_PCT": "10"}, asset=a)
-        assert c.window_pct == 5.0 and c.sweep_pct == 1.0, a
+        assert c.window_pct == 3.0 and c.sweep_pct == 1.0, a     # owner, 2026-11-17: 3% (was 5%)
     for a in ("btc", "btc15", "btc1h"):
         assert from_env({"POLYBOT_WINDOW_PCT": "10"}, asset=a).window_pct == 10.0, a

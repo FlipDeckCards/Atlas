@@ -36,8 +36,10 @@ def test_sol_5m_blocks_buys_when_price_is_already_moving_with_the_bet():
     from openjarvis.polybot.desk import Desk
 
     sol = Desk(from_env({}, asset="sol"), None, None)
-    assert sol._blocked_entry(200, 0.85, 0.5)            # moving with the bet: blocked at any price
-    assert not sol._blocked_entry(200, 0.85, 0.1)        # flat or against: allowed
+    # 2026-11-17: side-aware "chasing momentum" (more than 1 sd toward the bet) replaces v1.35's any-side 0.3 sd block
+    assert sol._blocked_entry(200, 0.85, 1.2, "up") and sol._blocked_entry(200, 0.85, -1.2, "down")
+    assert not sol._blocked_entry(200, 0.85, 0.5, "up")   # mild move with the bet: allowed now
+    assert not sol._blocked_entry(200, 0.85, 1.2, "down")  # moving against the bet: allowed
     btc = Desk(from_env({}, asset="btc"), None, None)
     assert not btc._blocked_entry(200, 0.85, 0.5)        # BTC's "with" trades are profitable: unchanged
 
