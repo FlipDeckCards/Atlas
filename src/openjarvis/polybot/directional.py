@@ -52,9 +52,11 @@ TIERS = {
     # 84% = 3%, 85-87 = 5%, 88-91 = 7%, 92%+ = 10%; its window limit rises to 10% (config.SMALL_COINS).
     # Owner, 2026-11-17: three steps - 84% = 3%, 85-87% = 5%, 88%+ = 8% (were 7% at 88-91% and 10% at 92%+)
     "xrp": ((88, 8.0), (85, 5.0), (84, 3.0)),
-    # Owner, 2026-11-17 (live test): ETH 5m and SOL 5m bet a flat 3% from 85% (their confidence steps did not predict results)
-    "eth": ((85, 3.0),),
-    "sol": ((85, 3.0),),
+    # Owner, 2026-11-17 (live test): ETH 5m and SOL 5m bet a flat 3% (their confidence steps did not predict results).
+    # Floor 90% calibrated (owner, 2026-11-17; was 85%): 85% calibrated let in raw 89-94% readings, the range that lost live;
+    # 90% calibrated is about raw 95%, the only range that was near break-even.
+    "eth": ((90, 3.0),),
+    "sol": ((90, 3.0),),
 }
 
 

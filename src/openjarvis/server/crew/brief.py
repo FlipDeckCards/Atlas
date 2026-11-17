@@ -377,10 +377,10 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         "btc": "The flagship. Live since the start and the source of most of the data behind the rules. Full method set and its own "
                "calibrated steps. Sizes cut on 2026-11-11 (owner) from 7 / 8 / 10% to 1 / 4 / 8% after losing $42.56 that day; set to "
                "3% / 5% / 8% on 2026-11-17 (owner). It sets the shared daily starting balance for the whole account.",
-        "eth": "ETH 5m: calibrated confidence, 85% floor, a flat 3% per bet and at most 3% per window (owner, 2026-11-17, a live test). "
+        "eth": "ETH 5m: calibrated confidence, 90% floor (raw about 95%; was 85% until 2026-11-17), a flat 3% per bet and at most 3% per window (owner, 2026-11-17, a live test). "
                "Skips buys under 85c (since 2026-11-10), enters only in the last 3 minutes, and skips a bet while the price already moves "
                "more than 1 sd toward it. On paper from 2026-11-10; live test judged at 30 live trades or two weeks.",
-        "sol": "SOL 5m: calibrated confidence, 85% floor, a flat 3% per bet and at most 3% per window (owner, 2026-11-17, a live test). "
+        "sol": "SOL 5m: calibrated confidence, 90% floor (raw about 95%; was 85% until 2026-11-17), a flat 3% per bet and at most 3% per window (owner, 2026-11-17, a live test). "
                "Skips buys under 75c (since 2026-11-10), enters only in the last 3 minutes, and skips a bet while the price already moves "
                "more than 1 sd toward it (replacing the old rule that blocked both sides whenever the price rose). Live test judged at "
                "50 live trades.",
@@ -471,6 +471,7 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         ["Nov 17", "BTC 5m's per-window total lowered to 10% (was 20%), the same as XRP 5m, so one bad window cannot pass the 18% daily stop."],
         ["Nov 17", "Sizes: BTC 5m 3% / 5% / 8% at 80 / 84 / 88% calibrated (was 1 / 4 / 8%); XRP 5m three steps, 3% / 5% / 8% at 84 / 85 / 88% (was 3 / 5 / 7 / 10%)."],
         ["Nov 17", "ETH 5m and SOL 5m set up for a small live test: flat 3% bets, last 3 minutes only, no chasing momentum. Their live trades above the floors were about break-even (-2%); the earlier gains came from closing sweeps on a single day (Oct 30)."],
+        ["Nov 17", "ETH 5m and SOL 5m floor raised to 90% calibrated (was 85%). 85% calibrated let in raw 89% readings (SOL's first live-test trade, a 1-cent loss); 90% calibrated is about raw 95%, the only range near break-even live."],
     ])
 
     # ---- 9. watch list
