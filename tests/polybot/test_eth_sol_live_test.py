@@ -27,7 +27,7 @@ def test_no_chasing_on_eth_and_sol_only():
         assert d._block_rule(120, 0.90, -1.5, "up") is None          # moving against the bet: allowed
         assert d._block_rule(120, 0.90, 0.5, "down") is None
     x = Desk(from_env({}, asset="xrp"), None, None)
-    assert x._block_rule(120, 0.90, 1.5, "up") is None
+    assert x._block_rule(200, 0.90, 1.5, "up") is None          # 3-4 min left (1-3 min at 70c+ has its own XRP rule)
 
 
 def test_a_raw_89_reading_no_longer_clears_the_sol_floor():
