@@ -424,7 +424,8 @@ async def export_fills(pool, asset: str = "btc", account: str = "") -> str:
                  "model_prob_side", "edge", "sd_from_strike", "sigma", "secs_left", "move_left_usd", "momentum_z", "trend_z", "mid", "spread",
                  "book_up", "model_vs_market", "sweep", "window_result", "window_pnl", "decision_method", "decision_raw", "decision_conf",
                  "decision_price", "decision_book_age_s", "decision_last_trade", "decision_last_trade_age_s",
-                 "decision_to_fill_s", "paid_vs_decision"])
+                 "decision_to_fill_s", "paid_vs_decision", "decision_qty", "decision_ask_size", "decision_depth_2c",
+                 "decision_depth_2c_usd"])
     for r in rows:
         feat = _j(r["features"])
         m = feat.get("model")
@@ -442,7 +443,9 @@ async def export_fills(pool, asset: str = "btc", account: str = "") -> str:
                      feat.get("decision_method"), feat.get("decision_raw"), feat.get("decision_conf"),
                      feat.get("decision_price"), feat.get("decision_book_age_s"), feat.get("decision_last_trade"),
                      feat.get("decision_last_trade_age_s"), feat.get("decision_to_fill_s"),
-                     None if not isinstance(feat.get("decision_price"), (int, float)) else round(bp - feat["decision_price"], 4)])
+                     None if not isinstance(feat.get("decision_price"), (int, float)) else round(bp - feat["decision_price"], 4),
+                     feat.get("decision_qty"), feat.get("decision_ask_size"), feat.get("decision_depth_2c"),
+                     feat.get("decision_depth_2c_usd")])
     return buf.getvalue()
 
 

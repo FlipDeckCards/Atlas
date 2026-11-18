@@ -799,6 +799,22 @@ class Desk:
         new = min(lot_pct + add, cap)
         return new, f" (+{new - lot_pct:.0f}% bonus: {', '.join(kinds)})"
 
+    def _depth(self, side: str, within: float = 0.02) -> Dict[str, Any]:
+        """Contracts on offer for this side at the best price and within `within` of it (Up buys lift the offers; Down buys hit the
+        Up bids, at 1 - bid), with the dollars that would cost. Empty when there is no book."""
+        b = self.book
+        if b is None:
+            return {}
+        levels = list(b.offers or []) if side == "up" else [(1.0 - px, sz) for px, sz in (b.bids or [])]
+        levels = sorted((float(px), float(sz)) for px, sz in levels if sz)
+        if not levels:
+            return {"decision_ask_size": 0.0, "decision_depth_2c": 0.0, "decision_depth_2c_usd": 0.0}
+        best = levels[0][0]
+        near = [(px, sz) for px, sz in levels if px <= best + within + 1e-9]
+        return {"decision_ask_size": round(levels[0][1], 2),
+                "decision_depth_2c": round(sum(sz for _, sz in near), 2),
+                "decision_depth_2c_usd": round(sum(px * sz for px, sz in near), 2)}
+
     def _decision_feats(self, f) -> Dict[str, Any]:
         """The decision record for this fill's bet, plus the seconds from the decision to the fill being seen
         (2026-11-18 diagnostic; the broker reads fills about once a second)."""
@@ -822,7 +838,10 @@ class Desk:
                                         "decision_last_trade_age_s": None if (b is None or now is None or not b.last_trade_ts)
                                         else round(now - b.last_trade_ts, 1),
                                         # 2026-11-18 diagnostic: when the bet was decided (the order goes out in the same step)
-                                        "decision_ts": None if now is None else round(now, 3)}
+                                        "decision_ts": None if now is None else round(now, 3),
+                                        # 2026-11-18 diagnostic (owner): how much the market offered for this side, to find the largest
+                                        # bet that fills at the best price as the account grows
+                                        "decision_qty": round(float(qty), 4), **self._depth(side)}
         if len(self._decision) > 200:
             self._decision = dict(list(self._decision.items())[-100:])
         self._dir_pending.add(slug)
