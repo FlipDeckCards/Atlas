@@ -713,6 +713,10 @@ class Desk:
         # (+2.7%); 65-69c won 60% of 20 (-31%), so the floor stays above that. Down at 70-79c stays blocked by its own rule.
         if self.cfg.asset == "btc" and price < 0.70:
             return "btc 5m under 70c"
+        # Owner, 2026-11-18: XRP 5m skips buys at 70c+ with 1-3 minutes left. Live on v1.22 (105 fills): 1-3 min at 70c+ won 76% of 47
+        # (-$20.68; ~78% needed to break even at those prices), 3-4 min at 70-79c won 83% of 23 (+$11.08). All history shows the same split.
+        if self.cfg.asset == "xrp" and 60.0 < secs_left <= 180.0 and price >= 0.70:
+            return "xrp 1-3 min at 70c+"
         if self.cfg.asset in ("btc", "eth", "sol", "xrp"):          # v1.28: BTC 5m's block, copied to the other 5-minute desks
             return "last 60s 30-70c" if (secs_left <= 60.0 and 0.30 <= price <= 0.70) else None
         if self.cfg.asset == "btc15" and 0.70 <= price < 0.90:

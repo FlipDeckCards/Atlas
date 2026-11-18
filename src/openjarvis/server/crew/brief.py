@@ -384,7 +384,8 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
                "Skips buys under 75c (since 2026-11-10), enters only in the last 3 minutes, and skips a bet while the price already moves "
                "more than 1 sd toward it (replacing the old rule that blocked both sides whenever the price rose). Live test judged at "
                "50 live trades.",
-        "xrp": "XRP 5m: calibrated confidence only. Sized up on 2026-11-11 (owner) after its v1.22 start (22 trades, 82% won, +11.1% per "
+        "xrp": "XRP 5m: calibrated confidence only. Skips buys at 70c+ with 1-3 minutes left (owner, 2026-11-18: they won 76% of 47 live "
+               "fills, under the ~78% those prices need). Sized up on 2026-11-11 (owner) after its v1.22 start (22 trades, 82% won, +11.1% per "
                "dollar staked): no trade under 84%, then 3% at 84%, 5% at 85-87% and 8% at 88%+ (owner, 2026-11-17; the 7% and 10% steps are gone), with a 10% per-window limit. Its losses cluster overnight, "
                "so 3-5 AM is halved. Its lifetime live record before 1.22 was about break-even, so its v1.22 results are watched closely.",
     }
@@ -472,6 +473,7 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         ["Nov 17", "Sizes: BTC 5m 3% / 5% / 8% at 80 / 84 / 88% calibrated (was 1 / 4 / 8%); XRP 5m three steps, 3% / 5% / 8% at 84 / 85 / 88% (was 3 / 5 / 7 / 10%)."],
         ["Nov 17", "ETH 5m and SOL 5m set up for a small live test: flat 3% bets, last 3 minutes only, no chasing momentum. Their live trades above the floors were about break-even (-2%); the earlier gains came from closing sweeps on a single day (Oct 30)."],
         ["Nov 17", "ETH 5m and SOL 5m floor raised to 90% calibrated (was 85%). 85% calibrated let in raw 89% readings (SOL's first live-test trade, a 1-cent loss); 90% calibrated is about raw 95%, the only range near break-even live."],
+        ["Nov 18", "XRP 5m skips buys at 70¢+ with 1-3 minutes left. On v1.22 (105 live fills) those won 76% of 47 (-$20.68) while 3-4 minutes left at 70-79¢ won 83% (+$11.08); the same split shows across all history. The owner's goal: fewer trades that make money every day over many trades that break even; more money goes in once a desk does that consistently."],
         ["Nov 18", "BTC 5m entry floor lowered to 70¢ (was 75¢). Live since Nov 5, 70-74¢ won 74% of 53 trades (+2.8% per dollar), about the same as 75-79¢; 65-69¢ won 60% (-31%), so the floor stays above it. Down bets at 70-79¢ stay blocked."],
     ])
 
