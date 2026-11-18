@@ -778,6 +778,27 @@ class Desk:
     def _taken(self, slug: str, method: str) -> bool:
         return method in self._bets.get(slug, {})
 
+    def _win_bonus(self, lot_pct: float, side: str, cost: float, secs_left: float) -> Tuple[float, str]:
+        """Owner, 2026-11-18 (XRP 5m): confidence sets the tier; a bet that is also one of the three "what wins" kinds gets the bonus
+        on top (capped). The kinds, from XRP's v1.22 live fills: over 3 minutes left, bought 30-70c, or edge over 10c (the fair value
+        of the side bought minus its price, as the Station's breakdown measures it). One kind is enough."""
+        rule = directional.WIN_BONUS.get(self.cfg.asset)
+        if not rule or lot_pct <= 0:
+            return lot_pct, ""
+        add, cap = rule
+        fair_side = None if self.fair is None else (self.fair if side == "up" else 1.0 - self.fair)
+        kinds = []
+        if secs_left > 180.0:
+            kinds.append("over 3 min left")
+        if 0.30 <= cost < 0.70:
+            kinds.append("bought 30-70c")
+        if fair_side is not None and fair_side - cost > 0.10:
+            kinds.append("edge over 10c")
+        if not kinds:
+            return lot_pct, ""
+        new = min(lot_pct + add, cap)
+        return new, f" (+{new - lot_pct:.0f}% bonus: {', '.join(kinds)})"
+
     def _decision_feats(self, f) -> Dict[str, Any]:
         """The decision record for this fill's bet, plus the seconds from the decision to the fill being seen
         (2026-11-18 diagnostic; the broker reads fills about once a second)."""
@@ -995,6 +1016,7 @@ class Desk:
                             pick = None
                         if pick is not None:
                             side, cost, tier, edge, lot_pct = pick
+                            lot_pct, _bonus = self._win_bonus(lot_pct, side, cost, w.end - now)
                             size_here = (b.offers[0][1] if b.offers else 0.0) if side == "up" else (b.bids[0][1] if b.bids else 0.0)
                             bets = self._bets.get(w.slug, {})
                             usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self._xacct()), directional.window_room(bets, equity, self.cfg.asset))   # lot by coin and confidence; capped across all desks and the window
@@ -1005,7 +1027,7 @@ class Desk:
                                 price = b.best_ask if side == "up" else b.best_bid
                                 want = [strategy.Quote(side, price, q, taker=True)]
                                 self._place(w.slug, "directional", side, usd, q, price=cost, now=now)
-                                why = f"Directional ({tier}): {side} at {cost * 100:.0f}c, edge {edge * 100:.1f}c after fees, lot {lot_pct:.0f}%."
+                                why = f"Directional ({tier}): {side} at {cost * 100:.0f}c, edge {edge * 100:.1f}c after fees, lot {lot_pct:.0f}%{_bonus}."
                     # v1.22: edge and late are extra single-bet methods: one bet each per window, never against a side already bet
                     if self.cfg.directional and self.fair_model is not None and b.best_ask is not None and b.best_bid is not None:
                         split = self.cfg.late_split_s                    # 60 s on 5m/15m desks; 300 s on the 1-hour desks (v1.27)
@@ -1018,6 +1040,7 @@ class Desk:
                             if pick is None:
                                 continue
                             side, cost, _, gap, lot_pct = pick
+                            lot_pct, _bonus = self._win_bonus(lot_pct, side, cost, w.end - now)
                             if self._entry_check(now, w, cost, self.momentum, side):
                                 why = f"{method.title()}: skipped by entry rule, buy at {cost * 100:.0f}c."
                                 continue
@@ -1034,7 +1057,7 @@ class Desk:
                                 price = b.best_ask if side == "up" else b.best_bid
                                 want = [strategy.Quote(side, price, q, taker=True)]
                                 self._place(w.slug, method, side, usd, q, price=cost, now=now)
-                                why = f"{method.title()}: {side} at {cost * 100:.0f}c, model {gap * 100:.0f} points over the price, lot {lot_pct:.0f}%."
+                                why = f"{method.title()}: {side} at {cost * 100:.0f}c, model {gap * 100:.0f} points over the price, lot {lot_pct:.0f}%{_bonus}."
                     if not want and not self._taken(w.slug, "directional") and self.cfg.directional:
                         z_now = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)
                         in_win = self.cfg.directional_min_secs <= w.end - now <= self.cfg.directional_secs_left
