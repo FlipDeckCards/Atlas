@@ -97,6 +97,11 @@ class Desk:
         self._dir_pending: set = set()                       # v1.18: windows where a directional trade was placed
         self._bets: Dict[str, Dict[str, Tuple[str, float, float]]] = {}   # v1.22: window -> {method: (side, usd, qty)}, one bet per method
         self._decision: Dict[Tuple[str, str], Dict[str, Any]] = {}       # (window, side) -> the confidence the bet was decided on
+        # 2026-11-18: windows a candidate was logged on, settled from the venue even when not traded, so every blocked buy can be
+        # checked against how its window ended (untraded windows were never settled, so most blocked buys showed "unknown")
+        self._watched: Dict[str, float] = {}               # slug -> window end (unix)
+        self._backfill: List[str] = []                     # older candidate windows still without a result
+        self._backfill_loaded = 0.0
         self._fill_conf: Dict[str, List[Tuple[str, Optional[float], Optional[float]]]] = {}   # per window: (side, model conf, book conf)
         # live calibration: a side's raw model confidence -> the win rate its bucket has actually shown (shrunk toward the raw value)
         self._calib = lambda p: self._calibrated(p)
@@ -425,6 +430,39 @@ class Desk:
             if self.cfg.mode == "live":
                 await self.push("Desk entry", text)
 
+    async def settle_watched(self, now: float) -> None:
+        """Record how every watched window settled, traded or not (the venue's final $1 / $0 answer only), and slowly fill in
+        older candidate windows that never got a result. Results only feed the blocked-trades export; trading is unchanged."""
+        for slug, end in list(self._watched.items()):
+            if slug in self.open_windows or now < end + 20:
+                continue
+            if now > end + 900:
+                self._watched.pop(slug, None)                      # no final answer in 15 minutes: give up on this one
+                self._t.pop(f"wsettle:{slug}", None)
+                continue
+            if not self._due(f"wsettle:{slug}", 15.0, now):
+                continue
+            s = await self.c.settlement(slug)
+            if s is not None and (s >= 0.99 or s <= 0.01):
+                self.ledger.result(slug, s >= 0.5, None)
+                self._watched.pop(slug, None)
+                self._t.pop(f"wsettle:{slug}", None)
+        fn = getattr(self.store, "unsettled_candidates", None)
+        if fn is None:
+            return
+        if not self._backfill and now - self._backfill_loaded > 1800:
+            self._backfill_loaded = now
+            try:
+                self._backfill = list(await fn(self.ledger.asset, 300))
+            except Exception as exc:                                # the export is a diagnostic: never let it stop the desk
+                self.log("warn", f"{self.name}: could not list unsettled candidate windows ({exc}).")
+                self._backfill = []
+        if self._backfill and self._due("wbackfill", 3.0, now):
+            slug = self._backfill.pop()
+            s = await self.c.settlement(slug)
+            if s is not None and (s >= 0.99 or s <= 0.01):
+                self.ledger.result(slug, s >= 0.5, None)
+
     async def settle_due(self, now: float) -> None:
         for slug, w in list(self.open_windows.items()):
             if now < w.end + 3 or not w.price_to_beat:
@@ -701,6 +739,8 @@ class Desk:
             vol = research.vol_bucket(sigma) if self.cfg.asset == "btc" else None
             row = research.candidate_row(w.slug, now, w.end - now, side, price, self.fair, momentum, sigma, vol, reason)
             self.ledger.candidate({**row, "ts_unix": now})
+            if len(self._watched) < 500:
+                self._watched.setdefault(w.slug, float(w.end))
         return reason
 
     async def _share_day_start(self, now: float) -> None:
@@ -779,6 +819,7 @@ class Desk:
         await self.load_book(now)
         await self.on_fills(await self.broker.sync(self.book, now))
         await self.settle_due(now)
+        await self.settle_watched(now)
         await self.refresh_positions(now)
         if self.cfg.mode == "live":
             self.balance = await self.broker.balance()

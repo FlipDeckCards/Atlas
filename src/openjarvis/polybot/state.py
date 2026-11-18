@@ -86,6 +86,10 @@ class ScopedStore:
     async def flush(self, ledger) -> None:
         await self.store.flush(ledger)
 
+    async def unsettled_candidates(self, asset: str, limit: int = 300) -> List[str]:
+        fn = getattr(self.store, "unsettled_candidates", None)
+        return await fn(asset, limit) if fn else []
+
     async def pair_history(self, days: int = 21) -> List[Dict[str, Any]]:
         fn = getattr(self.store, "pair_history", None)
         if not fn:
@@ -208,6 +212,15 @@ class PgStore:
                 if events:
                     await c.executemany("INSERT INTO polybot_events (ts, level, text, asset) VALUES ($1,$2,$3,$4)",
                                         [(_t(e["ts"]), e["level"], e["text"], e.get("asset") or "btc") for e in events])
+
+    async def unsettled_candidates(self, asset: str, limit: int = 300) -> List[str]:
+        """2026-11-18: candidate windows of this desk (ledger asset) that closed over 10 minutes ago and still have no result."""
+        async with self.pool.acquire() as c:
+            rows = await c.fetch(
+                "SELECT DISTINCT c.slug FROM polybot_candidates c LEFT JOIN polybot_window_results r ON r.asset = c.asset AND r.slug = c.slug "
+                "WHERE c.asset = $1 AND r.slug IS NULL AND c.ts < now() - interval '15 minutes' ORDER BY c.slug DESC LIMIT $2",
+                asset, int(limit))
+        return [r["slug"] for r in rows]
 
     async def pair_history(self, asset: str, days: int = 21, live_label: str = "live") -> List[Dict[str, Any]]:
         """v1.14: settled LIVE fills of one desk over the last `days` days, with how their window settled (for learned pair sizing)."""
