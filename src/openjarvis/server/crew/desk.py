@@ -423,7 +423,8 @@ async def export_fills(pool, asset: str = "btc", account: str = "") -> str:
     wr.writerow(["time_utc", "mode", "version", "window_end_utc", "slug", "side", "price", "qty", "cost", "fair",
                  "model_prob_side", "edge", "sd_from_strike", "sigma", "secs_left", "move_left_usd", "momentum_z", "trend_z", "mid", "spread",
                  "book_up", "model_vs_market", "sweep", "window_result", "window_pnl", "decision_method", "decision_raw", "decision_conf",
-                 "decision_price", "decision_book_age_s", "decision_last_trade", "decision_last_trade_age_s"])
+                 "decision_price", "decision_book_age_s", "decision_last_trade", "decision_last_trade_age_s",
+                 "decision_to_fill_s", "paid_vs_decision"])
     for r in rows:
         feat = _j(r["features"])
         m = feat.get("model")
@@ -440,7 +441,8 @@ async def export_fills(pool, asset: str = "btc", account: str = "") -> str:
                      feat.get("model_vs_market"), feat.get("sweep") is True, res, r["pnl"],
                      feat.get("decision_method"), feat.get("decision_raw"), feat.get("decision_conf"),
                      feat.get("decision_price"), feat.get("decision_book_age_s"), feat.get("decision_last_trade"),
-                     feat.get("decision_last_trade_age_s")])
+                     feat.get("decision_last_trade_age_s"), feat.get("decision_to_fill_s"),
+                     None if not isinstance(feat.get("decision_price"), (int, float)) else round(bp - feat["decision_price"], 4)])
     return buf.getvalue()
 
 

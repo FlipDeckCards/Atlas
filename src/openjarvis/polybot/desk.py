@@ -386,7 +386,7 @@ class Desk:
             "sigma": None if self.sigma is None else round(self.sigma, 3),
             "sweep": (f.slug, f.side) in self._sweeps,                                      # v1.13: bought by a closing sweep
         }
-        feats.update(self._decision.get((f.slug, f.side)) or {})        # the raw and calibrated confidence at the moment of the decision
+        feats.update(self._decision_feats(f))        # what the bot saw when it decided the bet, and how long the fill took
         bu = shadow.book_up(getattr(self.book, "bids", None), getattr(self.book, "offers", None))
         bconf = None if bu is None else (bu if f.side == "up" else round(1.0 - bu, 4))
         mconf = None if self.fair_model is None else (self.fair_model if f.side == "up" else 1.0 - self.fair_model)
@@ -732,6 +732,14 @@ class Desk:
     def _taken(self, slug: str, method: str) -> bool:
         return method in self._bets.get(slug, {})
 
+    def _decision_feats(self, f) -> Dict[str, Any]:
+        """The decision record for this fill's bet, plus the seconds from the decision to the fill being seen
+        (2026-11-18 diagnostic; the broker reads fills about once a second)."""
+        dec = dict(self._decision.get((f.slug, f.side)) or {})
+        if isinstance(dec.get("decision_ts"), (int, float)):
+            dec["decision_to_fill_s"] = round(f.ts - dec["decision_ts"], 2)
+        return dec
+
     def _place(self, slug: str, method: str, side: str, usd: float, qty: float, price: Optional[float] = None,
                now: Optional[float] = None) -> None:
         """v1.22: record a bet the method just placed in this window (one per method), and count it against the windows' cap."""
@@ -745,7 +753,9 @@ class Desk:
                                         "decision_book_age_s": None if (b is None or now is None) else round(now - b.ts, 2),
                                         "decision_last_trade": None if b is None else b.last_trade_px,
                                         "decision_last_trade_age_s": None if (b is None or now is None or not b.last_trade_ts)
-                                        else round(now - b.last_trade_ts, 1)}
+                                        else round(now - b.last_trade_ts, 1),
+                                        # 2026-11-18 diagnostic: when the bet was decided (the order goes out in the same step)
+                                        "decision_ts": None if now is None else round(now, 3)}
         if len(self._decision) > 200:
             self._decision = dict(list(self._decision.items())[-100:])
         self._dir_pending.add(slug)
