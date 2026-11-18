@@ -709,8 +709,10 @@ class Desk:
             return "sol 5m under 75c"
         # Owner, 2026-11-11: BTC 5m under 75c won 55.8% over 389 live fills (+1.1% per $ staked); 75c+ won 87.4% over 278 (+2.9%).
         # All five BTC 5m losses on 2026-11-11 were bought at 64-73c with the model 78-99% sure.
-        if self.cfg.asset == "btc" and price < 0.75:
-            return "btc 5m under 75c"
+        # Owner, 2026-11-18: lowered to 70c (was 75c). Live since Nov 5: 70-74c won 74% of 53 (+2.8% per $), about the same as 75-79c
+        # (+2.7%); 65-69c won 60% of 20 (-31%), so the floor stays above that. Down at 70-79c stays blocked by its own rule.
+        if self.cfg.asset == "btc" and price < 0.70:
+            return "btc 5m under 70c"
         if self.cfg.asset in ("btc", "eth", "sol", "xrp"):          # v1.28: BTC 5m's block, copied to the other 5-minute desks
             return "last 60s 30-70c" if (secs_left <= 60.0 and 0.30 <= price <= 0.70) else None
         if self.cfg.asset == "btc15" and 0.70 <= price < 0.90:

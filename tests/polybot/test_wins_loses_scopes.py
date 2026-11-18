@@ -47,7 +47,7 @@ def test_three_scopes_and_the_current_rules_filter(monkeypatch):
     rows = [
         _fill("1.22", "up", 0.80, 0.95, 1.0, 120, True),     # today's rules take it
         _fill("1.21", "up", 0.82, 0.96, 1.0, 120, True),     # an older version, still allowed today
-        _fill("1.21", "up", 0.60, 0.90, 1.0, 120, False),    # BTC 5m under 75c: ruled out today
+        _fill("1.21", "up", 0.60, 0.90, 1.0, 120, False),    # BTC 5m under 70c: ruled out today
         _fill("1.21", "up", 0.85, 0.70, 1.0, 120, False),    # model under the 80% floor: ruled out today
         _fill("1.21", "up", 0.85, 0.95, 0.1, 120, False),    # flat momentum: ruled out today
     ]

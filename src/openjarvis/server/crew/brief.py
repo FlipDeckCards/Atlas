@@ -300,8 +300,8 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         "Last-minute block: on every 5-minute desk, no bet in the final 60 seconds when the side costs between 30¢ and 70¢ "
         "(a coin-flip price that late has historically lost).",
         "Price limits: the desks never buy a side under 15¢ or over 80¢ outside sweeps. ETH 5m skips buys under 85¢ and SOL 5m "
-        "skips buys under 75¢ (owner, 2026-11-10); BTC 5m skips buys under 75¢ (owner, 2026-11-11: under 75¢ it won 55.8% of 389 "
-        "live fills, at 75¢ and up 87.4% of 278, with more profit per dollar staked).",
+        "skips buys under 75¢ (owner, 2026-11-10); BTC 5m skips buys under 70¢ (owner, 2026-11-18; 75¢ from 2026-11-11: 70-74¢ had "
+        "won 74% of 53 live trades at +2.8% per dollar, about the same as 75-79¢, while 65-69¢ won 60% at -31%).",
         f"Caution hours (owner, 2026-11-11): the hours that used to be skipped trade at half size, and a bet in one needs at least "
         f"{CAUTION_MIN_CONF:.0%} calibrated confidence and a buy price of at least {CAUTION_MIN_PRICE * 100:.0f}¢ (section 4.3).",
         "Cushion and momentum: a directional bet also needs the index to be far enough on its side of the line for the time left, "
@@ -472,6 +472,7 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         ["Nov 17", "Sizes: BTC 5m 3% / 5% / 8% at 80 / 84 / 88% calibrated (was 1 / 4 / 8%); XRP 5m three steps, 3% / 5% / 8% at 84 / 85 / 88% (was 3 / 5 / 7 / 10%)."],
         ["Nov 17", "ETH 5m and SOL 5m set up for a small live test: flat 3% bets, last 3 minutes only, no chasing momentum. Their live trades above the floors were about break-even (-2%); the earlier gains came from closing sweeps on a single day (Oct 30)."],
         ["Nov 17", "ETH 5m and SOL 5m floor raised to 90% calibrated (was 85%). 85% calibrated let in raw 89% readings (SOL's first live-test trade, a 1-cent loss); 90% calibrated is about raw 95%, the only range near break-even live."],
+        ["Nov 18", "BTC 5m entry floor lowered to 70¢ (was 75¢). Live since Nov 5, 70-74¢ won 74% of 53 trades (+2.8% per dollar), about the same as 75-79¢; 65-69¢ won 60% (-31%), so the floor stays above it. Down bets at 70-79¢ stay blocked."],
     ])
 
     # ---- 9. watch list
