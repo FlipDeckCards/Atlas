@@ -1,4 +1,4 @@
-"""A subscriber's own Polymarket Desk: copies of the owner's two bots (BTC 5m and BTC 15m) on THEIR Polymarket keys.
+"""A subscriber's own Polymarket Desk: copies of the owner's BTC 5m and XRP 5m bots (XRP added 2026-11-18) on THEIR Polymarket keys.
 
 Nothing is shared with the owner's desks: the keys are the subscriber's (stored encrypted in crew_secrets), and every row the desk
 writes carries their account tag (kv keys 'status@<tag>', ledger labels 'live@<tag>' / 'paper@<tag>', log lines 'btc@<tag>'), so
@@ -68,7 +68,7 @@ class TenantDesks:
 
     def __init__(self, store, pool, env=None) -> None:
         self.store, self.pool, self.env = store, pool, env
-        self.runners: Dict[str, list] = {}                  # uid -> [Runner, Runner]
+        self.runners: Dict[str, list] = {}                  # uid -> one Runner per TENANT_ASSETS desk
 
     async def start(self, uid: str) -> bool:
         from openjarvis.polybot.config import for_account, from_env

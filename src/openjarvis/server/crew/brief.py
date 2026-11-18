@@ -250,7 +250,7 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         f"Account: {_money(bal)} on the BTC 5m desk's latest reading." if bal is not None else "Account: balance not reported yet.",
         f"Risk ceiling: never more than {exposure.CROSS_DESK_PCT:.0f}% of the account at risk at once across every desk, a daily stop "
         "for the whole account, and per-window limits on each desk.",
-        f"Family accounts: {len(family)} brother account(s) run their own isolated copy of BTC 5m on their own "
+        f"Family accounts: {len(family)} brother account(s) run their own isolated copies of BTC 5m and XRP 5m on their own "
         "Polymarket keys; you can view them read-only from ACCOUNTS.",
     ])
 
@@ -413,7 +413,7 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
     # ---- 6. family accounts
     d.add_heading("6. Family accounts", level=1)
     _para(d, "Each brother has his own free Aibussol account with a blank Station, the Polymarket Desk business, and his own copies of "
-             "one bot: BTC 5m. They trade on his own Polymarket keys, with his own ledger, his own daily stop and "
+             "two bots: BTC 5m and XRP 5m (XRP added 2026-11-18, starting in paper until he taps LIVE). They trade on his own Polymarket keys, with his own ledger, his own daily stop and "
              f"his own {exposure.CROSS_DESK_PCT:.0f}% all-desk cap, so nothing he does touches your account and his downloads show only "
              "his trades. The bot logic, sizing steps and hours are the same as yours. You can open any of them read-only from the "
              "ACCOUNTS menu.")
@@ -475,6 +475,7 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         ["Nov 17", "Sizes: BTC 5m 3% / 5% / 8% at 80 / 84 / 88% calibrated (was 1 / 4 / 8%); XRP 5m three steps, 3% / 5% / 8% at 84 / 85 / 88% (was 3 / 5 / 7 / 10%)."],
         ["Nov 17", "ETH 5m and SOL 5m set up for a small live test: flat 3% bets, last 3 minutes only, no chasing momentum. Their live trades above the floors were about break-even (-2%); the earlier gains came from closing sweeps on a single day (Oct 30)."],
         ["Nov 17", "ETH 5m and SOL 5m floor raised to 90% calibrated (was 85%). 85% calibrated let in raw 89% readings (SOL's first live-test trade, a 1-cent loss); 90% calibrated is about raw 95%, the only range near break-even live."],
+        ["Nov 18", "The brothers' accounts get XRP 5m next to BTC 5m: the same bot and rules as yours, on their own keys, starting in paper until each taps LIVE."],
         ["Nov 18", "XRP 5m size bonus: confidence sets the tier; a bet that is also one of the three most profitable 'what wins' kinds on its current version (over 3 minutes left +$28.07, bought 30-70¢ +$24.83, edge over 10¢ +$35.21) gets +3%, capped at 10%. One kind is enough."],
         ["Nov 18", "XRP 5m skips buys at 70¢+ with 1-3 minutes left. On v1.22 (105 live fills) those won 76% of 47 (-$20.68) while 3-4 minutes left at 70-79¢ won 83% (+$11.08); the same split shows across all history. The owner's goal: fewer trades that make money every day over many trades that break even; more money goes in once a desk does that consistently."],
         ["Nov 18", "BTC 5m entry floor lowered to 70¢ (was 75¢). Live since Nov 5, 70-74¢ won 74% of 53 trades (+2.8% per dollar), about the same as 75-79¢; 65-69¢ won 60% (-31%), so the floor stays above it. Down bets at 70-79¢ stay blocked."],
