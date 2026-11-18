@@ -115,7 +115,7 @@ async def run_once(engine, pool, now: Optional[dt.datetime] = None) -> List[Dict
         accounts.append((tenant_desks.account_tag(uid), uid, f"{name}'s desks"))
     results, owner_lines = [], []
     for account, uid, title in accounts:
-        assets = desk.TENANT_ASSETS if account else ("btc",)
+        assets = ("btc",)                  # the 7 AM review covers BTC 5m only, for the owner and subscribers alike (their XRP copy matches the owner's)
         lines = []
         for a in assets:
             try:

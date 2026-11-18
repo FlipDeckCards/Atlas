@@ -479,7 +479,7 @@ async function refresh() {
   gate(null);
   S = r.data;
   document.getElementById('t-acct').hidden = !S.owner;
-  DESK_ORDER = (S.owner && !VIEW_AS) ? OWNER_DESK_ORDER : ['btc'];
+  DESK_ORDER = (S.owner && !VIEW_AS) ? OWNER_DESK_ORDER : TENANT_DESK_ORDER.slice();
   spinOnMissionChange(S.missions || []);                  // a mission started or finished: spin the ring
   document.getElementById('c-run').textContent = S.running;
   document.getElementById('c-spend').textContent = money(S.spend.today_usd) + (S.spend.daily_cap_usd == null ? ' · no cap' : ' of ' + money(S.spend.daily_cap_usd) + ' cap');
@@ -995,7 +995,8 @@ const DESK_ASSET = Object.fromEntries(Object.entries(DESK_KEY).map(([a, k]) => [
 // retired desks (owner, 2026-11-10: BTC 15m, BTC 1h, SOL 1h, XRP 15m, XRP 1h) are not shown; the server stops them
 const RETIRED_DESKS = ['btc15', 'btc1h', 'sol1h', 'xrp15', 'xrp1h', 'eth15', 'eth1h', 'sol15'];
 const OWNER_DESK_ORDER = DESK_COINS.flatMap(c => [c, c + '15', c + '1h']).filter(a => !RETIRED_DESKS.includes(a));
-let DESK_ORDER = ['btc'];
+const TENANT_DESK_ORDER = ['btc', 'xrp'];      // owner, 2026-11-18: subscribers' desks (desk.TENANT_ASSETS)
+let DESK_ORDER = TENANT_DESK_ORDER.slice();
 const DESK_LABEL = a => a === 'btclate' ? 'BTC 5m Late' : (DESK_COIN(a) + ' ' + (/15$/.test(a) ? '15m' : /1h$/.test(a) ? '1h' : '5m'));   // the desk's name
 const DESK_COIN = a => (a === 'btclate' ? 'btc' : a.replace(/(15|1h)$/, '')).toUpperCase();                 // the coin it trades
 let DESKS = {}, DESK_ATS = {}, DESK_LOADINGS = {}, DESK_VIEW = '', DESK_OPEN = {};
@@ -1027,7 +1028,7 @@ async function accountMenu() {
 }
 function enterAccount(a) {
   if (!VIEW_AS) OWN_DESKS = { d: DESKS, at: DESK_ATS, ld: DESK_LOADINGS, v: DESK_VIEW };
-  VIEW_AS = a.id; VIEW_INFO = { name: a.name, email: a.email, loading: true }; DESK_ORDER = ['btc'];
+  VIEW_AS = a.id; VIEW_INFO = { name: a.name, email: a.email, loading: true }; DESK_ORDER = TENANT_DESK_ORDER.slice();
   DESKS = {}; DESK_ATS = {}; DESK_LOADINGS = {}; DESK_VIEW = '';
   document.getElementById('t-acct').textContent = String(a.name).toUpperCase().slice(0, 14) + ' ▾'; document.getElementById('t-acct').classList.add('on');
   selected = 'acct'; renderSide(true);
@@ -1037,7 +1038,7 @@ function enterAccount(a) {
 }
 function exitAccount() {
   if (VIEW_AS && OWN_DESKS) { DESKS = OWN_DESKS.d; DESK_ATS = OWN_DESKS.at; DESK_LOADINGS = OWN_DESKS.ld; DESK_VIEW = OWN_DESKS.v; }
-  VIEW_AS = ''; VIEW_INFO = null; OWN_DESKS = null; DESK_ORDER = (S && S.owner) ? OWNER_DESK_ORDER : ['btc'];
+  VIEW_AS = ''; VIEW_INFO = null; OWN_DESKS = null; DESK_ORDER = (S && S.owner) ? OWNER_DESK_ORDER : TENANT_DESK_ORDER.slice();
   const b = document.getElementById('t-acct'); b.textContent = 'ACCOUNTS ▾'; b.classList.remove('on');
   if (selected === 'acct') selected = 'hub';
   renderSide(true);
