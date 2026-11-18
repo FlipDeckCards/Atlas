@@ -527,6 +527,11 @@ class Desk:
                     logger.warning("shadow sizing not saved")
             w.settled = True
             del self.open_windows[slug]
+            # 2026-11-18: remember it, so the untracked-trade check does not flag a position Polymarket still lists for a moment after
+            # this desk has settled it (SOL 5m 21:05z: recorded and settled at +$0.28, then flagged "Unrecorded trade")
+            settled = self.__dict__.setdefault("_settled_slugs", [])
+            settled.append(slug)
+            del settled[:-200]
             await self._shared().put(f"openspend:{slug}:{self.cfg.asset}{self._acct_sfx()}", 0.0)      # settled: nothing left booked here
             self._t.pop(f"settle:{slug}", None)
             self.rs.roll(now)
@@ -635,7 +640,8 @@ class Desk:
         mark = f"-{self.base.coin}-updown-{self.horizon}-"
         seen = self.__dict__.setdefault("_untracked_seen", set())
         for slug, p in pos.items():
-            if mark not in slug or slug in self.open_windows or slug in seen or (p or {}).get("expired"):
+            if (mark not in slug or slug in self.open_windows or slug in seen or (p or {}).get("expired")
+                    or slug in self.__dict__.get("_settled_slugs", ())):
                 continue
             cost = abs(money((p or {}).get("cost")) or 0.0)
             if cost < 0.05:
