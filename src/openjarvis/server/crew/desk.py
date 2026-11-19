@@ -32,6 +32,8 @@ from openjarvis.polybot.config import COINS as _COINS, desk_label as _label
 for _c in _COINS:                                    # v1.26: 1-hour desks for every coin, 15-minute for ETH, SOL and XRP
     for _s in ("15", "1h"):
         KEYS.setdefault(_c + _s, f"polymarket-{_c}{_s}")
+for _c in ("gold", "silver", "wti", "natgas"):        # 2026-11-19 (owner): commodity 15m desks
+    KEYS.setdefault(_c, f"polymarket-{_c}")
 # v1.23: the late-only paper desk trades BTC 5m markets, so its rows are read as BTC with its own paper label
 LEDGER_OF = {"btclate": "paper-late"}
 LIVE_OF = {"btclate": "live-late"}                  # the late desk's real-money rows: its own live scoreboard
@@ -39,7 +41,8 @@ ASSET_ROWS = {"btclate": "btc"}
 ASSET_OF = {v: k for k, v in KEYS.items()}
 NAMES = {"btc": "Polymarket Desk", "btc15": "Polymarket BTC 15m Desk", "eth": "Polymarket ETH Desk", "sol": "Polymarket SOL Desk",
          "xrp": "Polymarket XRP Desk", "btclate": "Polymarket BTC Late Desk (paper)"}
-COLORS = {"btc": "#00e5ff", "btc15": "#4fc3f7", "eth": "#8c8cff", "sol": "#14f195", "xrp": "#ffb347", "btclate": "#ff7ad9"}
+COLORS = {"btc": "#00e5ff", "btc15": "#4fc3f7", "eth": "#8c8cff", "sol": "#14f195", "xrp": "#ffb347", "btclate": "#ff7ad9",
+          "gold": "#ffd54f", "silver": "#cfd8dc", "wti": "#bcaaa4", "natgas": "#64b5f6"}
 for _a in KEYS:
     NAMES.setdefault(_a, f"Polymarket {_label(_a)} Desk")
     COLORS.setdefault(_a, COLORS.get(_a[:3], "#00e5ff"))
@@ -106,6 +109,26 @@ async def paper_first(pool, assets) -> list:
         except Exception:
             logger.exception("could not check the %s desk's control row; not starting it", a)
     return ok
+
+
+async def commodity_live_once(pool, assets) -> None:
+    """Owner, 2026-11-19: the commodity desks trade real money from the start at 1% ("paper trading doesn't work"). Each one's
+    control row is set to LIVE once (marked commodity_live_v1); after that only the owner's Station taps (Back to paper, Pause,
+    Kill switch, Go live) change it. Live still needs the worker's POLYBOT_ALLOW_LIVE and its keys, as for every desk."""
+    from openjarvis.polybot.config import COMMODITIES
+
+    for a in assets:
+        if a not in COMMODITIES:
+            continue
+        try:
+            await _ensure(pool)
+            ctl = await get_kv(pool, kv_key("control", a))
+            if not ctl.get("commodity_live_v1"):
+                ctl.update(mode="live", commodity_live_v1=True, paused=False, kill=False)
+                await put_control(pool, ctl, a)
+                logger.warning("Commodity desk %s set to LIVE at 1%% (owner's instruction, 2026-11-19)", a)
+        except Exception:
+            logger.exception("could not set the %s commodity desk live; it stays as it was", a)
 
 
 async def put_control(pool, control: Dict[str, Any], asset: str = "btc", account: str = "") -> None:

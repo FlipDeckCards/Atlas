@@ -934,7 +934,7 @@ function factorySec(key) {
     const d = DESKS[a]; const wf = d && !d.error && ((d.status || {}).mode || 'paper') === (DESK_VIEW || 'live') ? windowFlag(d.status || {}, DESK_LABEL(a) + ' Desk') : null; if (wf) s.append(wf);   // the desks on the LIVE or PAPER side, as the switch says
   }); }
   if (key === 'polymarket' && !isOwner() && DESKS.btc && DESKS.btc.error && /Connect/.test(DESKS.btc.error)) s.append(polymarketConnectSec());
-  else if (key === 'polymarket') { s.append(deskViewTabs()); DESK_ORDER.map(a => DESK_KEY[a]).forEach(k => s.append(deskSec(k))); if (isOwner() && !VIEW_AS) s.append(commodityWatchSec()); s.append(deskLogSec()); }   // one LIVE/PAPER switch, every desk, the commodity watch (owner), then one log   // one LIVE/PAPER switch, every desk, then one log
+  else if (key === 'polymarket') { s.append(deskViewTabs()); DESK_ORDER.map(a => DESK_KEY[a]).forEach(k => s.append(deskSec(k))); s.append(deskLogSec()); }   // one LIVE/PAPER switch, every desk, the commodity watch (owner), then one log   // one LIVE/PAPER switch, every desk, then one log
   if (/stock market/i.test(b.label || '')) s.append(robinhoodSec());                    // all Robinhood crypto work lives in the Stock Market factory
   if (b.platform) {
     const c = S.connections && S.connections[key];
@@ -994,10 +994,13 @@ const DESK_ASSET = Object.fromEntries(Object.entries(DESK_KEY).map(([a, k]) => [
 // v1.26: BTC 5m, 15m, 1h, then ETH, SOL and XRP the same (the 10 new desks start in paper). Subscribers' Stations keep their own two.
 // retired desks (owner, 2026-11-10: BTC 15m, BTC 1h, SOL 1h, XRP 15m, XRP 1h) are not shown; the server stops them
 const RETIRED_DESKS = ['btc15', 'btc1h', 'sol1h', 'xrp15', 'xrp1h', 'eth15', 'eth1h', 'sol15'];
-const OWNER_DESK_ORDER = DESK_COINS.flatMap(c => [c, c + '15', c + '1h']).filter(a => !RETIRED_DESKS.includes(a));
+const COMMODITY_DESKS = ['gold', 'silver', 'wti', 'natgas'];   // owner, 2026-11-19: commodity 15m desks, below the crypto desks
+COMMODITY_DESKS.forEach(c => { DESK_KEY[c] = 'polymarket-' + c; DESK_ASSET['polymarket-' + c] = c; });
+const OWNER_DESK_ORDER = DESK_COINS.flatMap(c => [c, c + '15', c + '1h']).filter(a => !RETIRED_DESKS.includes(a)).concat(COMMODITY_DESKS);
 const TENANT_DESK_ORDER = ['btc', 'xrp'];      // owner, 2026-11-18: subscribers' desks (desk.TENANT_ASSETS)
 let DESK_ORDER = TENANT_DESK_ORDER.slice();
-const DESK_LABEL = a => a === 'btclate' ? 'BTC 5m Late' : (DESK_COIN(a) + ' ' + (/15$/.test(a) ? '15m' : /1h$/.test(a) ? '1h' : '5m'));   // the desk's name
+const DESK_LABEL = a => a === 'btclate' ? 'BTC 5m Late' : COMMODITY_DESKS.includes(a) ? ({ wti: 'WTI OIL', natgas: 'NATGAS' }[a] || a.toUpperCase()) + ' 15m'
+  : (DESK_COIN(a) + ' ' + (/15$/.test(a) ? '15m' : /1h$/.test(a) ? '1h' : '5m'));   // the desk's name
 const DESK_COIN = a => (a === 'btclate' ? 'btc' : a.replace(/(15|1h)$/, '')).toUpperCase();                 // the coin it trades
 let DESKS = {}, DESK_ATS = {}, DESK_LOADINGS = {}, DESK_VIEW = '', DESK_OPEN = {};
 let PANEL_OPEN = {};   // per desk: 'detail' (version details), 'trades' (full trade log), 'wins' (what wins and loses); all start retracted
@@ -1020,7 +1023,7 @@ function scoutTop(book) {
 function commodityWatchSec() {
   const s = mk('div'); s.style.borderTop = '1px solid rgba(0,229,255,0.25)'; s.style.marginTop = '10px'; s.style.paddingTop = '8px';
   const h = mk('div', 'h', 'Commodity watch · read only'); h.style.fontSize = '15px'; s.append(h);
-  s.append(mk('div', 'dim', 'Gold, silver, WTI oil and natural gas 15-minute markets. No orders: the server records each window, its order book and how it settled, and looks for a live price feed. Watch desks with the model come once a feed is found.'));
+  s.append(mk('div', 'dim', 'Gold, silver, WTI oil and natural gas 15-minute markets. Watch desks: the model runs on Polymarket\u2019s live price for each and logs the calls a desk would make (80%+), checked against how each window settles. They never send an order.'));
   loadScout(false);
   if (!SCOUT) { s.append(mk('div', 'dim', 'Loading…')); return s; }
   if (SCOUT.error) { s.append(mk('div', 'dim', SCOUT.error)); return s; }
@@ -1036,6 +1039,10 @@ function commodityWatchSec() {
     box.append(mk('div', 'dim', 'Window to ' + end + ' · Up ' + side(top && top.up) + ' · Down ' + side(top && top.down)));
     box.append(mk('div', 'dim', 'Price feed: ' + (d.price_feed ? 'found (' + d.price_feed + ')' : d.feed_checked ? 'not found yet' : 'checking')));
     box.append(mk('div', 'dim', 'Settled windows watched: ' + d.settled + (d.settled ? ' · Up ' + d.ups + ' / Down ' + d.downs + ' · last ' + (d.recent || []).map(x => x[0]).join('') : '')));
+    const m = (SCOUT.model || {})[d.coin];
+    if (m) box.append(mk('div', null, 'Model calls (80%+, no orders): ' + m.calls + (m.settled ? ' · settled ' + m.settled + ', won ' + m.won
+      + ' (' + Math.round(100 * m.won / m.settled) + '%) · ' + (m.ret_pct >= 0 ? '+' : '') + m.ret_pct + '% per $ at the price seen · last ' + (m.recent || []).join('') : '')
+      + (m.blocked ? ' · ' + m.blocked + ' blocked by rules' : '')));
     s.append(box);
   });
   return s;
@@ -1211,8 +1218,9 @@ function deskSec(key) {
   const DESK = DESKS[A];
   const s = mk('div'); s.style.marginTop = '10px';
   s.style.borderTop = '1px solid rgba(0,229,255,0.25)'; s.style.paddingTop = '10px';
-  const hd = mk('div', 'h', DESK_LABEL(A) + ' Desk'); hd.style.color = ({ btc: '#00e5ff', btc15: '#4fc3f7', btclate: '#ff7ad9', eth: '#8c8cff', sol: '#14f195', xrp: '#ffb347' })[A] || ({ BTC: '#00e5ff', ETH: '#8c8cff', SOL: '#14f195', XRP: '#ffb347' })[DESK_COIN(A)]; hd.style.fontSize = '16px'; s.append(hd);
+  const hd = mk('div', 'h', DESK_LABEL(A) + ' Desk'); hd.style.color = ({ btc: '#00e5ff', btc15: '#4fc3f7', btclate: '#ff7ad9', eth: '#8c8cff', sol: '#14f195', xrp: '#ffb347', gold: '#ffd54f', silver: '#cfd8dc', wti: '#bcaaa4', natgas: '#64b5f6' })[A] || ({ BTC: '#00e5ff', ETH: '#8c8cff', SOL: '#14f195', XRP: '#ffb347' })[DESK_COIN(A)]; hd.style.fontSize = '16px'; s.append(hd);
   if (A === 'btc') s.append(mk('div', 'dim', 'Strategy: pairs, directional, edge and late, one bet per method per window; 10% cap per window; never against a side already bet.'));
+  if (COMMODITY_DESKS.includes(A)) s.append(mk('div', 'dim', 'Commodity 15-minute desk on Polymarket\u2019s live price for it: flat 1% bets from 60% confidence, 1% cap per window, every hour, raw model, until there is data for sizing, hours and strategy.'));
   if (A === 'btclate') s.append(mk('div', 'dim', 'Strategy: late only, paper. One bet per window, 30-60 s before the close, when the model is 90%+ and the side costs 95c or less.'));
   if (!DESK) { s.append(mk('div', 'dim', 'Loading the desk…')); return s; }
   if (DESK.error) { s.append(mk('div', 'dim', DESK.error)); return s; }
