@@ -420,7 +420,11 @@ def create_app(
             from openjarvis.server.crew.store import CrewStore
             from openjarvis.server.crew.tenant_desks import TenantDesks, seed_from_env
 
-            tpool = await asyncpg.create_pool(dsn, min_size=1, max_size=int(os.environ.get("POLYBOT_TENANT_POOL") or 12))
+            # 2026-11-19: every subscriber desk holds one connection for its whole life (its lock), so the pool must fit all of them
+            # plus room for their queries: 8 desks x up to 4 accounts + 4. POLYBOT_TENANT_POOL can only raise it.
+            from openjarvis.server.crew.desk import TENANT_ASSETS as _TA
+            _tmin = len(_TA) * 4 + 4
+            tpool = await asyncpg.create_pool(dsn, min_size=1, max_size=max(_tmin, int(os.environ.get("POLYBOT_TENANT_POOL") or 0)))
             tstore = CrewStore(tpool)
             await tstore.ensure_tables()
             await seed_from_env(tstore, tpool)
