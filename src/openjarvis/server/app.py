@@ -393,6 +393,21 @@ def create_app(
                 r.start()
             app.state.desk_pool, app.state.desk_runner, app.state.desk_runners = pool, runners[0], runners
             logger.info("Polymarket Desks started inside Aibussol: %s", ", ".join(a.upper() for a in assets))
+            try:
+                # 2026-11-18 (owner): commodity scout, read-only, writes SCOUT lines to the server log (polybot/scout.py)
+                if (os.environ.get("POLYBOT_SCOUT") or "true").strip().lower() not in ("0", "false", "no", "off"):
+                    import asyncio
+
+                    from openjarvis.polybot.client import PolymarketUS
+                    from openjarvis.polybot.scout import Scout
+
+                    _c = from_env(asset="btc")
+                    _sc = PolymarketUS(getattr(_c, "key_id", "") or "", getattr(_c, "secret_key", "") or "")
+                    _sc.low_priority = True
+                    app.state.scout = Scout(_sc)
+                    app.state.scout_task = asyncio.create_task(app.state.scout.forever())
+            except Exception:
+                logger.exception("Commodity scout did not start; the desks run normally")
         except Exception:
             logger.exception("Polymarket Desk did not start; the rest of Aibussol runs normally")
         try:
