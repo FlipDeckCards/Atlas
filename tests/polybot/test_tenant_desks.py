@@ -363,7 +363,7 @@ def test_sol_and_eth_desks_are_capped_at_one_percent_too():
         assert from_env({"POLYBOT_WINDOW_PCT": "10"}, asset=a).window_pct == 10.0, a
 
 
-def test_subscribers_run_btc_and_xrp_5m():
-    # owner, 2026-11-18: the brothers' accounts get XRP 5m next to BTC 5m
-    assert desk.TENANT_ASSETS == ("btc", "xrp")
-    assert "XRP" in desk.TENANT_BUSINESS["description"]
+def test_subscribers_run_the_same_desks_as_the_owner():
+    # owner, 2026-11-19: the brothers' Stations match the owner's (crypto 5m + commodity 15m)
+    assert desk.TENANT_ASSETS == ("btc", "xrp", "sol", "eth", "gold", "silver", "wti", "natgas")
+    assert "XRP" in desk.TENANT_BUSINESS["description"] and "gold" in desk.TENANT_BUSINESS["description"]

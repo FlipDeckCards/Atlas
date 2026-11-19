@@ -997,7 +997,7 @@ const RETIRED_DESKS = ['btc15', 'btc1h', 'sol1h', 'xrp15', 'xrp1h', 'eth15', 'et
 const COMMODITY_DESKS = ['gold', 'silver', 'wti', 'natgas'];   // owner, 2026-11-19: commodity 15m desks, below the crypto desks
 COMMODITY_DESKS.forEach(c => { DESK_KEY[c] = 'polymarket-' + c; DESK_ASSET['polymarket-' + c] = c; });
 const OWNER_DESK_ORDER = DESK_COINS.flatMap(c => [c, c + '15', c + '1h']).filter(a => !RETIRED_DESKS.includes(a)).concat(COMMODITY_DESKS);
-const TENANT_DESK_ORDER = ['btc', 'xrp'];      // owner, 2026-11-18: subscribers' desks (desk.TENANT_ASSETS)
+const TENANT_DESK_ORDER = ['btc', 'xrp', 'sol', 'eth', 'gold', 'silver', 'wti', 'natgas'];      // owner, 2026-11-19: subscribers' desks match the owner's (desk.TENANT_ASSETS)
 let DESK_ORDER = TENANT_DESK_ORDER.slice();
 const DESK_LABEL = a => a === 'btclate' ? 'BTC 5m Late' : COMMODITY_DESKS.includes(a) ? ({ wti: 'WTI OIL', natgas: 'NATGAS' }[a] || a.toUpperCase()) + ' 15m'
   : (DESK_COIN(a) + ' ' + (/15$/.test(a) ? '15m' : /1h$/.test(a) ? '1h' : '5m'));   // the desk's name
