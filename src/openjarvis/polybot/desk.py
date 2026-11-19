@@ -860,6 +860,30 @@ class Desk:
             if not last:
                 self._bets[w.slug].pop(method, None)
 
+    def _no_order(self, w, now: float, side: str, cost: float, budget_usd: float, lot_usd: float, headroom: float, room: float,
+                  usd: float, size_here: float, ok_win: bool, why_win: str = "") -> None:
+        """2026-11-18 diagnostic (owner): a bet the model decided on and every rule allowed, but no order went out. Log which limit
+        stopped it, once per window, side and reason, as a candidate row ("no order: ...") and a desk-log line. Trading is unchanged."""
+        limits = {"day budget or hour size": budget_usd, "confidence lot": lot_usd, "all-desk cap": headroom, "window limit": room}
+        binding = min(limits, key=lambda k: limits[k])
+        if not ok_win:
+            reason, detail = "window rule", why_win or "the window's bets do not allow it"
+        elif usd <= 0 or usd / max(cost, 0.01) < w.min_qty:
+            reason, detail = f"bet too small ({binding})", f"${usd:.2f} at {cost * 100:.0f}c is under the {w.min_qty:g}-contract minimum; tightest limit: {binding} ${limits[binding]:.2f}"
+        elif size_here < w.min_qty:
+            reason, detail = "nothing on offer", f"{size_here:g} contracts at the best price"
+        else:
+            reason, detail = "other", f"${usd:.2f} at {cost * 100:.0f}c, {size_here:g} on offer"
+        key = (w.slug, side, "no order: " + reason)
+        if key in self._cand_seen:
+            return
+        self._cand_seen.add(key)
+        row = research.candidate_row(w.slug, now, w.end - now, side, cost, self.fair, self.momentum, self.sigma, None, "no order: " + reason)
+        self.ledger.candidate({**row, "ts_unix": now})
+        if len(self._watched) < 500:
+            self._watched.setdefault(w.slug, float(w.end))
+        self.log("info", f"{self.name}: decided {side} at {cost * 100:.0f}c but sent no order: {detail}.")
+
     def _taker_limit(self, side: str, b) -> float:
         """The limit sent with a taker bet: TAKER_SLIP through the best price (up: over the Up ask; down: under the Up bid, which is
         over the Down ask), so a market that ticks the bot's way in the second before the order lands still fills. The order still
@@ -1119,6 +1143,9 @@ class Desk:
                                 want = [strategy.Quote(side, price, q, taker=True)]
                                 self._place(w.slug, "directional", side, usd, q, price=cost, now=now)
                                 why = f"Directional ({tier}): {side} at {cost * 100:.0f}c, edge {edge * 100:.1f}c after fees, lot {lot_pct:.0f}%{_bonus}."
+                            else:
+                                self._no_order(w, now, side, cost, budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self._xacct()),
+                                               directional.window_room(bets, equity, self.cfg.asset), usd, size_here, ok_win)
                     # v1.22: edge and late are extra single-bet methods: one bet each per window, never against a side already bet
                     if self.cfg.directional and self.fair_model is not None and b.best_ask is not None and b.best_bid is not None:
                         split = self.cfg.late_split_s                    # 60 s on 5m/15m desks; 300 s on the 1-hour desks (v1.27)
@@ -1141,10 +1168,12 @@ class Desk:
                             bets = self._bets.get(w.slug, {})
                             usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self._xacct()), directional.window_room(bets, equity, self.cfg.asset))
                             ok_win, why_win = directional.may_take(bets, side, usd, equity, self.cfg.asset)
+                            size_here = (b.offers[0][1] if b.offers else 0.0) if side == "up" else (b.bids[0][1] if b.bids else 0.0)
                             if not ok_win:
                                 why = f"{method.title()}: {why_win}."
+                                self._no_order(w, now, side, cost, budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self._xacct()),
+                                               directional.window_room(bets, equity, self.cfg.asset), usd, size_here, False, why_win)
                                 continue
-                            size_here = (b.offers[0][1] if b.offers else 0.0) if side == "up" else (b.bids[0][1] if b.bids else 0.0)
                             q = strategy._qty(usd, cost, w.min_qty)
                             q = min(q, round(size_here // w.min_qty * w.min_qty, 6))
                             if q >= w.min_qty:
@@ -1152,6 +1181,9 @@ class Desk:
                                 want = [strategy.Quote(side, price, q, taker=True)]
                                 self._place(w.slug, method, side, usd, q, price=cost, now=now)
                                 why = f"{method.title()}: {side} at {cost * 100:.0f}c, model {gap * 100:.0f} points over the price, lot {lot_pct:.0f}%{_bonus}."
+                            else:
+                                self._no_order(w, now, side, cost, budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self._xacct()),
+                                               directional.window_room(bets, equity, self.cfg.asset), usd, size_here, True)
                     if not want and not self._taken(w.slug, "directional") and self.cfg.directional:
                         z_now = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)
                         in_win = self.cfg.directional_min_secs <= w.end - now <= self.cfg.directional_secs_left
