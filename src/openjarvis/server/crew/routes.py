@@ -550,9 +550,50 @@ async def crew_scout(request: Request):
     if g[3]:
         return JSONResponse({"detail": "Owner only."}, status_code=403)
     sc = getattr(request.app.state, "scout", None)
-    if sc is None:
-        return {"scanned_at": None, "desks": [], "off": True}
-    return sc.summary()
+    out = sc.summary() if sc is not None else {"scanned_at": None, "desks": [], "off": True}
+    out["model"] = await _watch_model_stats(g[2])
+    return out
+
+
+async def _watch_model_stats(pool) -> dict:
+    """The watch desks' calls (candidates they logged; they never trade) against how each window settled, per commodity."""
+    from openjarvis.polybot.config import WATCH
+
+    stats = {w: {"calls": 0, "settled": 0, "won": 0, "ret": 0.0, "blocked": 0, "recent": []} for w in WATCH}
+    try:
+        async with pool.acquire() as c:
+            rows = await c.fetch(
+                "SELECT c.asset, c.slug, c.side, c.price, c.blocked_by, r.up FROM polybot_candidates c "
+                "LEFT JOIN polybot_window_results r ON r.asset = c.asset AND r.slug = c.slug "
+                "WHERE c.asset = ANY($1::text[]) AND c.ts > now() - interval '30 days' ORDER BY c.ts", list(WATCH))
+    except Exception:
+        return stats
+    seen = set()
+    for r in rows:
+        a = r["asset"]
+        if a not in stats:
+            continue
+        if r["blocked_by"]:
+            stats[a]["blocked"] += 1
+            continue
+        k = (a, r["slug"], r["side"])
+        if k in seen:
+            continue
+        seen.add(k)
+        s = stats[a]
+        s["calls"] += 1
+        if r["up"] is None:
+            continue
+        won = (r["side"] == "up") == bool(r["up"])
+        p = float(r["price"] or 0) or 0.5
+        s["settled"] += 1
+        s["won"] += int(won)
+        s["ret"] += ((1 - p) / p) if won else -1.0
+        s["recent"] = (s["recent"] + ["W" if won else "L"])[-12:]
+    for s in stats.values():
+        s["ret_pct"] = round(100 * s["ret"] / s["settled"], 1) if s["settled"] else None
+        s.pop("ret")
+    return stats
 
 
 @router.get("/api/crew/desk/candidates.csv")

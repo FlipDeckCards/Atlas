@@ -202,11 +202,11 @@ class PolymarketUS:
         """Best bid/offer (the official SDK's markets.bbo): GET /v1/markets/{slug}/bbo on the public gateway."""
         return await self._shared(f"bbo|{slug}", 0.8, lambda: self._req("GET", f"/v1/markets/{slug}/bbo"), public=True)
 
-    async def index_prices(self, asset: str, start: int, end: int = 0, bucket: str = "ASSET_PRICE_BUCKET_1S") -> List[tuple]:
-        """[(unix second, close)] for real prints only (gap-filled candles are dropped)."""
-        fetch = lambda: self._req("GET", "/v1/asset-prices/history", params={"assets": f"crypto:{asset}", "from": int(start), "to": int(end), "bucket": bucket})
+    async def index_prices(self, asset: str, start: int, end: int = 0, bucket: str = "ASSET_PRICE_BUCKET_1S", kind: str = "crypto") -> List[tuple]:
+        """[(unix second, close)] for real prints only (gap-filled candles are dropped). kind: crypto, or commodity (watch desks)."""
+        fetch = lambda: self._req("GET", "/v1/asset-prices/history", params={"assets": f"{kind}:{asset}", "from": int(start), "to": int(end), "bucket": bucket})
         if end == 0 and time.time() - start <= 30:                 # v1.30: the recent tape, shared by every desk on the coin (1 s)
-            d = await self._shared(f"idx|{asset}|{bucket}", 1.0, fetch, public=True)
+            d = await self._shared(f"idx|{kind}:{asset}|{bucket}", 1.0, fetch, public=True)
         else:
             d = await fetch()
         out = []

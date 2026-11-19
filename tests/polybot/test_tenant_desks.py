@@ -194,17 +194,17 @@ def test_twelve_desks_five_fifteen_and_one_hour_for_every_coin():
     from openjarvis.polybot.state import asset_of as desk_of
     from openjarvis.polybot import directional
 
-    assert len(ASSETS) == 4 and set(ASSETS) == {"btc", "eth", "sol", "xrp"} and len(NEW_DESKS) == 10 and "btc" not in NEW_DESKS and "btc15" not in NEW_DESKS
+    assert len(ASSETS) == 8 and set(ASSETS) == {"btc", "eth", "sol", "xrp", "gold", "silver", "wti", "natgas"} and len(NEW_DESKS) == 10 and "btc" not in NEW_DESKS and "btc15" not in NEW_DESKS
     for a in ASSETS:
         cfg = from_env({"POLYBOT_HORIZON_ETH": "15m", "POLYBOT_HORIZON_NIGHT": "5m"}, asset=a)   # old settings never move a new desk
-        want = "15m" if a.endswith("15") else "1h" if a.endswith("1h") else "5m"
+        want = "15m" if (a.endswith("15") or a in ("gold", "silver", "wti", "natgas")) else "1h" if a.endswith("1h") else "5m"
         if a != "btc":
             assert cfg.horizon == want and (cfg.horizon_night == "" or a == "btc15"), a
         assert desk_of(f"cpc-{cfg.coin}-updown-{want}-2026-11-06-1300z") == a
     assert desk_of("cpceth-eth-updown-15m-2026-11-06-1300z") == "eth15"
     assert desk_label("sol1h") == "SOL 1h" and desk_label("btc") == "BTC 5m"
     assert directional.min_conf("eth15") == directional.min_conf("eth") and directional.min_conf("btc1h") == directional.min_conf("btc")
-    assert len({lock_id(a) for a in ASSETS}) == 4
+    assert len({lock_id(a) for a in ASSETS}) == 8                     # each desk its own lock (4 crypto + 4 commodity)
 
 
 def test_new_desks_start_in_paper_even_if_an_old_row_says_live():

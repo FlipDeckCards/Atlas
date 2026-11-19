@@ -199,7 +199,9 @@ class Desk:
     # ── data ──────────────────────────────────────────────────────────────────────────
     async def load_index(self, now: float, backfill: bool = False) -> None:
         start = int(now) - (3599 if backfill else 20)
-        self.tape.extend(await self.c.index_prices(self.base.coin, start, 0))
+        kind = getattr(self.cfg, "price_kind", "crypto")
+        self.tape.extend(await (self.c.index_prices(self.base.coin, start, 0) if kind == "crypto"
+                                else self.c.index_prices(self.base.coin, start, 0, kind=kind)))
 
     async def find_window(self, now: float) -> None:
         w = self.window
@@ -1115,7 +1117,8 @@ class Desk:
                     if want and any(self._entry_check(now, w, q.price, self.momentum, q.side) for q in want):
                         want, why = [], "Skipped by entry rule: pair leg at a blocked price."
                     can_up_m, can_down_m, mom_why = brain.side_filters(self.momentum, self.cfg.momentum_z, self.name)
-                    self._retry_missed(w, now)
+                    if not self.cfg.watch_only:
+                        self._retry_missed(w, now)
                     if not want and not self._taken(w.slug, "directional") and self.cfg.directional and "directional" in self.cfg.methods \
                             and self.fair_model is not None and b.best_ask is not None and b.best_bid is not None \
                             and self.cfg.directional_min_secs <= w.end - now <= self.cfg.directional_secs_left:
@@ -1233,6 +1236,8 @@ class Desk:
                 reason = "Already filled on both sides this window; holding to settlement."
             else:
                 reason = (why + " " if why else "") + f"No price is {lim.min_edge:.2f} better than fair value right now."
+        if getattr(self.cfg, "watch_only", False):
+            want = []                                          # 2026-11-18: a watch desk never sends an order (its calls are logged as candidates)
         if w:
             await self.broker.set_quotes(w.slug, want, now)
         elif self.broker.resting:

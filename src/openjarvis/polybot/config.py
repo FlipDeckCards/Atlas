@@ -57,6 +57,8 @@ class Config:
     secret_key: str = ""
     horizon: str = "5m"                 # which Up/Down series: 5m, 15m or 1h (in trading hours)
     horizon_night: str = ""             # outside trading hours, if different (BTC: 15m by day, 5m at night for the sweeps)
+    watch_only: bool = False            # 2026-11-18 (owner): a watch desk never sends an order; it logs the model's calls and how windows end
+    price_kind: str = "crypto"          # Polymarket's live price feed family: crypto:<coin> or commodity:<name>
     account: str = ""                   # whose desk: "" is the owner's (env keys); a subscriber's tag keeps its own store, lock, ledger and controls
     asset: str = "btc"                  # the desk's id (btc, btc15, eth, sol, xrp): its own store, lock, controls and scoreboard
     coin: str = "btc"                   # the coin it trades (btc15 trades BTC's 15-minute markets)
@@ -133,7 +135,7 @@ HORIZON_SUFFIX = {"5m": "", "15m": "15", "1h": "1h"}   # desk id = coin + suffix
 # trading as before; the 10 new desks start in PAPER (no control row yet) until the owner taps Go live on each.
 # v1.40 (owner, 2026-11-10): five desks retired and removed from Station (BTC 1h added the same day). Their past trades stay in the database.
 RETIRED = ("btc15", "btc1h", "sol1h", "xrp15", "xrp1h", "eth15", "eth1h", "sol15")   # eth1h, sol15: owner 2026-11-17 (5-minute desks only)
-ASSETS = tuple(a for a in (c + s for c in COINS for s in ("", "15", "1h")) if a not in RETIRED)
+ASSETS = tuple(a for a in (c + s for c in COINS for s in ("", "15", "1h")) if a not in RETIRED) + ("gold", "silver", "wti", "natgas")
 COIN = {c + s: c for c in COINS for s in ("15", "1h")}  # desk id -> the coin it trades (default: the same name)
 FIXED_HORIZON = {"btc15": "15m", "btclate": "5m"}        # desks pinned to one window length (a shared POLYBOT_HORIZON never changes them)
 # the new desks are pinned hard to their window length: no environment setting (old POLYBOT_HORIZON_ETH and the like) can move them
@@ -162,6 +164,13 @@ def for_account(cfg: "Config", account: str, key_id: str, secret_key: str, notif
     return replace(cfg, account=account, key_id=key_id, secret_key=secret_key, notify_url=notify_url,
                    ledger=label_for(cfg.ledger, account), live_ledger=label_for(cfg.live_ledger, account))
 METHODS = {"btclate": ("late",)}
+# 2026-11-19 (owner): commodity desks on Polymarket US's 15-minute Up/Down markets (gold, silver, WTI oil, natural gas). Full desks
+# like the crypto ones (Station panel, trade log, Pause, Go live), run on Polymarket's own 1-second commodity price feed
+# (commodity:<name>). They start in paper; the owner's Go live tap takes each live. Flat 1% bets until there is data for sizing.
+WATCH = ("gold", "silver", "wti", "natgas")
+COMMODITIES = WATCH
+for _w in WATCH:
+    COIN[_w] = _w
 PAPER_ONLY = ()                          # desks that can never trade real money (none now: btclate trades live, on its own ledger)
 
 
@@ -170,6 +179,8 @@ def desk_label(asset: str) -> str:
     a = (asset or "btc").lower()
     if a == "btclate":
         return "BTC Late"
+    if a in WATCH:
+        return {"wti": "WTI Oil", "natgas": "NATGAS"}.get(a, a.upper()) + " 15m"
     c = coin_of(a)
     return f"{c.upper()} " + ("15m" if a == c + "15" else "1h" if a == c + "1h" else "5m")
 
@@ -189,6 +200,12 @@ def assets_from_env(env: Optional[Mapping[str, str]] = None) -> list:
     raw = (e.get("POLYBOT_ASSETS") or "btc").lower()
     out = [a.strip() for a in raw.split(",") if a.strip() in ASSETS]
     return list(dict.fromkeys(out)) or ["btc"]
+
+
+def watch_from_env(env: Optional[Mapping[str, str]] = None) -> list:
+    """2026-11-19: the commodity desks the server runs next to the crypto desks (POLYBOT_WATCH=off: none)."""
+    e = os.environ if env is None else env
+    return [] if (e.get("POLYBOT_WATCH") or "on").strip().lower() in ("0", "false", "no", "off") else list(WATCH)
 
 
 # v1.31 (owner, 2026-11-07): each 5-minute desk sized by Los Angeles hour from its own profit-by-hour table.
@@ -318,7 +335,7 @@ ONE_HOUR_TIMING = {"directional_secs_left": 900.0, "directional_min_secs": 120.0
 
 
 # owner, 2026-11-07 (v1.32): XRP, SOL and ETH bets run 1-5% by confidence, so a window holds at most 5%; sweeps stay at 1%.
-SMALL_COINS = {"xrp": (10.0, 1.0), "sol": (3.0, 1.0), "eth": (3.0, 1.0)}   # coin -> (window %, sweep %); XRP 10% since 2026-11-11 (owner);
+SMALL_COINS = {"xrp": (10.0, 1.0), "sol": (3.0, 1.0), "eth": (3.0, 1.0), "gold": (1.0, 1.0), "silver": (1.0, 1.0), "wti": (1.0, 1.0), "natgas": (1.0, 1.0)}   # commodities: 1% per window (owner, 2026-11-19)   # coin -> (window %, sweep %); XRP 10% since 2026-11-11 (owner);
                                                                              # ETH/SOL 3% since 2026-11-17 (owner: live test at 3%)
 # Owner, 2026-11-17 (ETH 5m / SOL 5m live test): enter only with this many seconds or fewer left. Live fills at/above each floor
 # entered with more than 3 minutes left lost on both desks (ETH -3.7% over 12, SOL -14.9% over 18).
@@ -334,6 +351,9 @@ def from_env(env: Optional[Mapping[str, str]] = None, asset: str = "btc") -> Con
         cfg = replace(cfg, directional_secs_left=min(cfg.directional_secs_left, ENTRY_WINDOW_S[cfg.asset]))
     if cfg.horizon == "1h" and cfg.asset in PINNED_HORIZON:
         cfg = replace(cfg, **ONE_HOUR_TIMING)
+    if cfg.asset in WATCH:
+        # owner, 2026-11-19: raw trading in every hour until the data says which hours and strategies work
+        cfg = replace(cfg, price_kind="commodity", horizon="15m", horizon_night="", hour_size=(), trade_start="00:00", trade_end="23:59")
     return cfg
 
 
@@ -362,6 +382,6 @@ def apply_control(base: Config, control: Dict[str, Any]) -> Config:
                 hs[h] = min(1.0, max(0.0, f))
         cfg = replace(cfg, hour_size=tuple(sorted((h, f) for h, f in hs.items() if f != 1.0)))
     want = str((control or {}).get("mode") or "paper").lower()
-    if base.asset in PAPER_ONLY:
+    if base.asset in PAPER_ONLY or base.watch_only:       # watch_only: a desk that never trades (none at present)
         return replace(cfg, mode="paper")
     return replace(cfg, mode="live" if (want == "live" and base.allow_live and base.key_id and base.secret_key) else "paper")
