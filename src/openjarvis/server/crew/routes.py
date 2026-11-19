@@ -541,6 +541,20 @@ async def crew_desk(request: Request, limit: int = 50, asset: str = "btc", view:
     return out
 
 
+@router.get("/api/crew/scout")
+async def crew_scout(request: Request):
+    """Owner only (2026-11-18): the commodity watch (gold, silver, WTI, natural gas 15m), read-only, from polybot/scout.py."""
+    g = await _desk_gate(request, "")
+    if isinstance(g, JSONResponse):
+        return g
+    if g[3]:
+        return JSONResponse({"detail": "Owner only."}, status_code=403)
+    sc = getattr(request.app.state, "scout", None)
+    if sc is None:
+        return {"scanned_at": None, "desks": [], "off": True}
+    return sc.summary()
+
+
 @router.get("/api/crew/desk/candidates.csv")
 async def crew_desk_candidates_export(request: Request, view: str = ""):
     """Every entry the bots considered (v1.42), with the rule that blocked it and how the window settled, as one CSV, for the owner."""

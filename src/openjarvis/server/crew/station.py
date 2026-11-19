@@ -934,7 +934,7 @@ function factorySec(key) {
     const d = DESKS[a]; const wf = d && !d.error && ((d.status || {}).mode || 'paper') === (DESK_VIEW || 'live') ? windowFlag(d.status || {}, DESK_LABEL(a) + ' Desk') : null; if (wf) s.append(wf);   // the desks on the LIVE or PAPER side, as the switch says
   }); }
   if (key === 'polymarket' && !isOwner() && DESKS.btc && DESKS.btc.error && /Connect/.test(DESKS.btc.error)) s.append(polymarketConnectSec());
-  else if (key === 'polymarket') { s.append(deskViewTabs()); DESK_ORDER.map(a => DESK_KEY[a]).forEach(k => s.append(deskSec(k))); s.append(deskLogSec()); }   // one LIVE/PAPER switch, every desk, then one log
+  else if (key === 'polymarket') { s.append(deskViewTabs()); DESK_ORDER.map(a => DESK_KEY[a]).forEach(k => s.append(deskSec(k))); if (isOwner() && !VIEW_AS) s.append(commodityWatchSec()); s.append(deskLogSec()); }   // one LIVE/PAPER switch, every desk, the commodity watch (owner), then one log   // one LIVE/PAPER switch, every desk, then one log
   if (/stock market/i.test(b.label || '')) s.append(robinhoodSec());                    // all Robinhood crypto work lives in the Stock Market factory
   if (b.platform) {
     const c = S.connections && S.connections[key];
@@ -987,7 +987,7 @@ const CATALOG_KEYS = ['etsy', 'stripe', 'google_play', 'app_store', 'deadzone'];
 const CATALOG_TITLE = { etsy: 'Listings in the shop', stripe: 'Products on Stripe', google_play: 'Apps on Google Play', app_store: 'Apps on the App Store', deadzone: 'Games on the Deadzone site' };
 // ── the Polymarket Desk: scoreboard (win rate, total profit, trades), switches and the full trade log ──
 // three desks (BTC, ETH, SOL), one Polymarket account: each factory key maps to its asset
-const DESK_COINS = ['btc', 'eth', 'sol', 'xrp'];
+const DESK_COINS = ['btc', 'xrp', 'sol', 'eth'];      // owner, 2026-11-18: BTC, XRP, SOL, ETH on the Station
 const DESK_KEY = { btc: 'polymarket', btc15: 'polymarket-btc15', eth: 'polymarket-eth', sol: 'polymarket-sol', xrp: 'polymarket-xrp', btclate: 'polymarket-btclate' };
 DESK_COINS.forEach(c => ['15', '1h'].forEach(sfx => { if (!DESK_KEY[c + sfx]) DESK_KEY[c + sfx] = 'polymarket-' + c + sfx; }));   // v1.26: 12 desks
 const DESK_ASSET = Object.fromEntries(Object.entries(DESK_KEY).map(([a, k]) => [k, a]));
@@ -1001,6 +1001,45 @@ const DESK_LABEL = a => a === 'btclate' ? 'BTC 5m Late' : (DESK_COIN(a) + ' ' + 
 const DESK_COIN = a => (a === 'btclate' ? 'btc' : a.replace(/(15|1h)$/, '')).toUpperCase();                 // the coin it trades
 let DESKS = {}, DESK_ATS = {}, DESK_LOADINGS = {}, DESK_VIEW = '', DESK_OPEN = {};
 let PANEL_OPEN = {};   // per desk: 'detail' (version details), 'trades' (full trade log), 'wins' (what wins and loses); all start retracted
+// ── commodity watch (owner, 2026-11-18): gold, silver, WTI, natural gas 15m, read only, from the server's scout ──
+let SCOUT = null, SCOUT_AT = 0, SCOUT_LOADING = false;
+const SCOUT_LABEL = { gold: 'GOLD 15m', silver: 'SILVER 15m', wti: 'WTI Oil 15m', natgas: 'NATGAS 15m' };
+function loadScout(force) {
+  if (!isOwner() || VIEW_AS || SCOUT_LOADING || (!force && Date.now() - SCOUT_AT < 60000)) return;
+  SCOUT_LOADING = true;
+  api('/api/crew/scout').then(r => { SCOUT = r.ok ? r.data : { error: (r.data && r.data.detail) || 'The commodity watch could not be loaded.' };
+    SCOUT_AT = Date.now(); SCOUT_LOADING = false; if (selected === 'f:polymarket') renderSide(); }).catch(() => { SCOUT_LOADING = false; });
+}
+function scoutTop(book) {
+  if (!book || typeof book !== 'object') return null;
+  const pv = v => (v && typeof v === 'object') ? Number(v.value) : Number(v);
+  const lv = rows => (rows || []).map(r => [pv(r.px), pv(r.qty)]).filter(x => x[0] > 0 && x[1] > 0);
+  const offers = lv(book.offers).sort((a, b) => a[0] - b[0]), bids = lv(book.bids).sort((a, b) => b[0] - a[0]);
+  return { up: offers[0] || null, down: bids[0] ? [1 - bids[0][0], bids[0][1]] : null };
+}
+function commodityWatchSec() {
+  const s = mk('div'); s.style.borderTop = '1px solid rgba(0,229,255,0.25)'; s.style.marginTop = '10px'; s.style.paddingTop = '8px';
+  const h = mk('div', 'h', 'Commodity watch · read only'); h.style.fontSize = '15px'; s.append(h);
+  s.append(mk('div', 'dim', 'Gold, silver, WTI oil and natural gas 15-minute markets. No orders: the server records each window, its order book and how it settled, and looks for a live price feed. Watch desks with the model come once a feed is found.'));
+  loadScout(false);
+  if (!SCOUT) { s.append(mk('div', 'dim', 'Loading…')); return s; }
+  if (SCOUT.error) { s.append(mk('div', 'dim', SCOUT.error)); return s; }
+  if (SCOUT.off) { s.append(mk('div', 'dim', 'The commodity scout is off on the server.')); return s; }
+  if (!SCOUT.scanned_at) { s.append(mk('div', 'dim', 'First scan runs about a minute into the next 15-minute window.')); return s; }
+  (SCOUT.desks || []).forEach(d => {
+    const box = mk('div'); box.style.margin = '8px 0'; box.style.padding = '6px 8px'; box.style.border = '1px solid rgba(255,255,255,0.08)';
+    const t = mk('div', null, SCOUT_LABEL[d.coin] || d.coin.toUpperCase()); t.style.fontWeight = '600'; box.append(t);
+    if (!d.market) { box.append(mk('div', 'dim', 'No market this window (outside trading hours?).')); s.append(box); return; }
+    const end = d.window_end ? new Date(d.window_end * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '?';
+    const top = scoutTop(d.book);
+    const side = x => x ? Math.round(x[0] * 100) + '¢ (' + Math.round(x[1]) + ' on offer)' : 'none';
+    box.append(mk('div', 'dim', 'Window to ' + end + ' · Up ' + side(top && top.up) + ' · Down ' + side(top && top.down)));
+    box.append(mk('div', 'dim', 'Price feed: ' + (d.price_feed ? 'found (' + d.price_feed + ')' : d.feed_checked ? 'not found yet' : 'checking')));
+    box.append(mk('div', 'dim', 'Settled windows watched: ' + d.settled + (d.settled ? ' · Up ' + d.ups + ' / Down ' + d.downs + ' · last ' + (d.recent || []).map(x => x[0]).join('') : '')));
+    s.append(box);
+  });
+  return s;
+}
 function loadDesk(force, asset) {
   const a = asset || 'btc';
   const every = (a === 'btc' || a === 'btc15' || selected === 'f:polymarket') ? 15000 : 60000;   // the new desks refresh slower unless open
