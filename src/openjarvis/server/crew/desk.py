@@ -773,7 +773,7 @@ async def export_events(pool, account: str = "") -> str:
     import io
 
     await _ensure(pool)
-    keys = {event_asset(a, account): a for a in ("btc", "btc15", "btclate", "eth", "sol", "xrp")}
+    keys = {event_asset(a, account): a for a in dict.fromkeys(("btc", "btc15", "btclate", "eth", "sol", "xrp", *KEYS))}   # every desk, commodities too
     async with pool.acquire() as c:
         rows = await c.fetch("SELECT ts, level, text, coalesce(asset, 'btc') AS asset FROM polybot_events "
                              "WHERE coalesce(asset, 'btc') = ANY($1::text[]) ORDER BY id", list(keys))
