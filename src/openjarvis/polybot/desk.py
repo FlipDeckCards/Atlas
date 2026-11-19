@@ -10,6 +10,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from dataclasses import replace
 
@@ -59,6 +60,21 @@ def is_series(m: Dict[str, Any], asset: str, horizon: str) -> bool:
 
 
 # How much of the live correction is applied (1.0 = full, 0.5 = half). 2026-11-11: 0.6 (0.75 left BTC 5m almost no trades).
+def commodity_closed_until(now: float) -> Optional[float]:
+    """2026-11-19: Polymarket lists no 15-minute commodity windows while US futures/metals are shut: the daily break 5-6 PM New York
+    time (Mon-Thu) and the weekend, Fri 5 PM to Sun 6 PM New York. Returns the reopening time (unix), or None when open."""
+    ny = ZoneInfo("America/New_York")
+    t = dt.datetime.fromtimestamp(now, ny)
+    wd, h = t.weekday(), t.hour                                     # Mon=0 .. Sun=6
+    if (wd == 4 and h >= 17) or wd == 5 or (wd == 6 and h < 18):
+        days = (6 - wd) % 7
+        reopen = (t + dt.timedelta(days=days)).replace(hour=18, minute=0, second=0, microsecond=0)
+        return reopen.timestamp()
+    if wd <= 3 and h == 17:
+        return t.replace(hour=18, minute=0, second=0, microsecond=0).timestamp()
+    return None
+
+
 CORRECTION_STRENGTH = 0.6
 # 2026-11-18 (owner): order outcomes. A taker bet may pay TAKER_SLIP through the best price it saw; one with no fill after
 # RETRY_AFTER_S is logged "order missed" and decided again from scratch (all rules re-checked), up to RETRY_MAX tries per method per
@@ -107,6 +123,7 @@ class Desk:
         # 2026-11-18: windows a candidate was logged on, settled from the venue even when not traded, so every blocked buy can be
         # checked against how its window ended (untraded windows were never settled, so most blocked buys showed "unknown")
         self._watched: Dict[str, float] = {}               # slug -> window end (unix)
+        self._closed_until: Optional[float] = None          # commodity desks: the market's reopening time while it is closed
         # 2026-11-18 (owner): order outcomes. Live data showed the bets that never filled won ~93% while the ones that filled won ~75%:
         # an order at the price seen misses when the market moves the bot's way. A missed order is now logged and tried again.
         self._attempts: Dict[Tuple[str, str], Dict[str, Any]] = {}   # (window, method) -> first price, side, tries, last try time
@@ -219,6 +236,17 @@ class Desk:
         ended = w is not None and now >= w.end
         if ended:
             self.window = w = None
+        if getattr(self.cfg, "price_kind", "crypto") == "commodity":      # 2026-11-19: no commodity windows in the daily break or weekends
+            reopen = commodity_closed_until(now)
+            if reopen is not None:
+                if self._closed_until != reopen:
+                    self._closed_until = reopen
+                    when = dt.datetime.fromtimestamp(reopen, ZoneInfo("America/Los_Angeles"))
+                    self.log("info", f"{self.name}: market closed (futures/metals break); next windows from "
+                                     f"{when:%a %-I:%M %p} Pacific. Not checking until then.")
+                self.reason = "Market closed until " + dt.datetime.fromtimestamp(reopen, ZoneInfo("America/Los_Angeles")).strftime("%a %-I:%M %p") + " Pacific."
+                return
+            self._closed_until = None
         if not self._due("markets", 2.0 if (ended or w is None) else 10.0, now) and w is not None:
             return
         if w is None and not ended and not self._due("markets_fast", 2.0, now):
