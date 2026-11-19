@@ -1,0 +1,62 @@
+"""2026-11-18 (owner): bets that never filled won ~93% live; the ones that filled ~75%. Taker bets now pay up to 1c through the best
+price, and a bet with no fill after 3 s is logged "order missed" and decided again (all rules re-checked), at most 3 tries per method
+per window and never more than 2c over the first try's price."""
+from types import SimpleNamespace
+
+from openjarvis.polybot import desk as desk_mod
+from openjarvis.polybot.brokers import BookView
+from openjarvis.polybot.config import from_env
+from openjarvis.polybot.desk import Desk
+
+
+def _desk():
+    d = Desk(from_env({}, asset="xrp"), None, None)
+    d.fair_model, d.fair = 0.92, 0.85
+    d.book = BookView(bids=[(0.20, 30)], offers=[(0.78, 20)], last_trade_px=0.78, last_trade_ts=999.0, ts=1000.0)
+    d.broker = SimpleNamespace(resting={})
+    return d
+
+
+def _w(slug="w1", end=1200.0):
+    return SimpleNamespace(slug=slug, end=end)
+
+
+def test_taker_limit_pays_one_cent_through():
+    d = _desk()
+    assert d._taker_limit("up", d.book) == 0.79                  # Up ask 78c -> limit 79c
+    assert d._taker_limit("down", d.book) == 0.19                # Up bid 20c -> Down limit 81c (sell Up at 19c)
+
+
+def test_a_missed_bet_is_logged_and_freed_after_three_seconds():
+    d = _desk()
+    d._place("w1", "directional", "up", 7.8, 10.0, price=0.78, now=1000.0)
+    d._retry_missed(_w(), 1002.0)
+    assert d._taken("w1", "directional")                         # too soon
+    d._retry_missed(_w(), 1003.5)
+    assert not d._taken("w1", "directional")                     # freed for a fresh decision
+    rows = d.ledger.take_candidates()
+    assert any(r.get("blocked_by", "").startswith("order missed (1 of 3") for r in rows)
+
+
+def test_a_filled_or_resting_bet_is_not_retried():
+    d = _desk()
+    d._place("w1", "directional", "up", 7.8, 10.0, price=0.78, now=1000.0)
+    d._filled[("w1", "up")] = 4.0
+    d._retry_missed(_w(), 1010.0)
+    assert d._taken("w1", "directional")
+    d2 = _desk()
+    d2._place("w1", "directional", "up", 7.8, 10.0, price=0.78, now=1000.0)
+    d2.broker.resting = {"up": SimpleNamespace(quote=SimpleNamespace(side="up"))}
+    d2._retry_missed(_w(), 1010.0)
+    assert d2._taken("w1", "directional")
+
+
+def test_three_tries_at_most_and_two_cents_over_the_first_price():
+    d = _desk()
+    for i in range(desk_mod.RETRY_MAX):
+        assert d._retry_price_ok("w1", "directional", "up", 0.80)
+        d._place("w1", "directional", "up", 7.8, 10.0, price=0.78 if i == 0 else 0.80, now=1000.0 + 10 * i)
+        d._retry_missed(_w(), 1005.0 + 10 * i)
+    assert d._taken("w1", "directional")                         # third miss: gave up, the window stays taken
+    assert not d._retry_price_ok("w1", "directional", "up", 0.81)   # 3c over the first 78c
+    assert not d._retry_price_ok("w1", "directional", "down", 0.70) # never flips side

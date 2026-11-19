@@ -60,6 +60,13 @@ def is_series(m: Dict[str, Any], asset: str, horizon: str) -> bool:
 
 # How much of the live correction is applied (1.0 = full, 0.5 = half). 2026-11-11: 0.6 (0.75 left BTC 5m almost no trades).
 CORRECTION_STRENGTH = 0.6
+# 2026-11-18 (owner): order outcomes. A taker bet may pay TAKER_SLIP through the best price it saw; one with no fill after
+# RETRY_AFTER_S is logged "order missed" and decided again from scratch (all rules re-checked), up to RETRY_MAX tries per method per
+# window, never more than RETRY_PAY_UP over the first try's price.
+TAKER_SLIP = 0.01
+RETRY_AFTER_S = 3.0
+RETRY_MAX = 3
+RETRY_PAY_UP = 0.02
 
 
 class Desk:
@@ -100,6 +107,10 @@ class Desk:
         # 2026-11-18: windows a candidate was logged on, settled from the venue even when not traded, so every blocked buy can be
         # checked against how its window ended (untraded windows were never settled, so most blocked buys showed "unknown")
         self._watched: Dict[str, float] = {}               # slug -> window end (unix)
+        # 2026-11-18 (owner): order outcomes. Live data showed the bets that never filled won ~93% while the ones that filled won ~75%:
+        # an order at the price seen misses when the market moves the bot's way. A missed order is now logged and tried again.
+        self._attempts: Dict[Tuple[str, str], Dict[str, Any]] = {}   # (window, method) -> first price, side, tries, last try time
+        self._filled: Dict[Tuple[str, str], float] = {}               # (window, side) -> contracts filled
         self._backfill: List[str] = []                     # older candidate windows still without a result
         self._backfill_loaded = 0.0
         self._fill_conf: Dict[str, List[Tuple[str, Optional[float], Optional[float]]]] = {}   # per window: (side, model conf, book conf)
@@ -416,6 +427,7 @@ class Desk:
     async def on_fills(self, fills: List[Fill]) -> None:
         for f in fills:
             self._book_fill(f)
+            self._filled[(f.slug, f.side)] = self._filled.get((f.slug, f.side), 0.0) + float(f.qty)
             w = self.open_windows.get(f.slug)
             side = f"UP (call-like: pays if {self.base.coin.upper()} closes at/above)" if f.side == "up" else f"DOWN (put-like: pays if {self.base.coin.upper()} closes below)"
             pay = f.price if f.side == "up" else 1 - f.price
@@ -821,6 +833,51 @@ class Desk:
                 "decision_depth_2c": round(sum(sz for _, sz in near), 2),
                 "decision_depth_2c_usd": round(sum(px * sz for px, sz in near), 2)}
 
+    def _retry_missed(self, w, now: float) -> None:
+        """A bet whose order got no fill within RETRY_AFTER_S is logged as "order missed" and freed, so the method can decide again
+        on the next tick with fresh prices and every rule re-checked. At most RETRY_MAX tries per method per window."""
+        for method, bet in list(self._bets.get(w.slug, {}).items()):
+            att = self._attempts.get((w.slug, method))
+            if not att or att.get("ts") is None or now - att["ts"] < RETRY_AFTER_S:
+                continue
+            side = bet[0]
+            if self._filled.get((w.slug, side), 0.0) > 0:
+                continue                                                 # it filled (in full or in part): a bet, nothing to retry
+            if any(getattr(r, "quote", None) is not None and r.quote.side == side for r in getattr(self.broker, "resting", {}).values()):
+                continue                                                 # the order is still on the book: wait (no second order beside it)
+            if att.get("logged") == att["n"]:
+                continue
+            att["logged"] = att["n"]
+            last = att["n"] >= RETRY_MAX
+            reason = f"order missed ({att['n']} of {RETRY_MAX}{', gave up' if last else ''})"
+            price = att.get("first") or 0.0
+            row = research.candidate_row(w.slug, now, w.end - now, side, price, self.fair, self.momentum, self.sigma, None, reason)
+            self.ledger.candidate({**row, "ts_unix": now})
+            if len(self._watched) < 500:
+                self._watched.setdefault(w.slug, float(w.end))
+            self.log("info", f"{self.name}: {method} {side} at {price * 100:.0f}c got no fill in {RETRY_AFTER_S:.0f}s "
+                             f"({att['n']} of {RETRY_MAX}){'; giving up on this window' if last else '; will try again'}.")
+            if not last:
+                self._bets[w.slug].pop(method, None)
+
+    def _taker_limit(self, side: str, b) -> float:
+        """The limit sent with a taker bet: TAKER_SLIP through the best price (up: over the Up ask; down: under the Up bid, which is
+        over the Down ask), so a market that ticks the bot's way in the second before the order lands still fills. The order still
+        fills at the best price on offer; the slip is only the most it may pay."""
+        if side == "up":
+            return round(min(0.99, b.best_ask + TAKER_SLIP), 4)
+        return round(max(0.01, b.best_bid - TAKER_SLIP), 4)
+
+    def _retry_price_ok(self, slug: str, method: str, side: str, cost: float) -> bool:
+        """A retry may pay at most RETRY_PAY_UP over the first decision's price, on the same side."""
+        att = self._attempts.get((slug, method))
+        if not att or not att.get("n"):
+            return True
+        if att.get("side") != side:
+            return False
+        first = att.get("first")
+        return first is None or cost <= first + RETRY_PAY_UP + 1e-9
+
     def _decision_feats(self, f) -> Dict[str, Any]:
         """The decision record for this fill's bet, plus the seconds from the decision to the fill being seen
         (2026-11-18 diagnostic; the broker reads fills about once a second)."""
@@ -833,6 +890,12 @@ class Desk:
                now: Optional[float] = None) -> None:
         """v1.22: record a bet the method just placed in this window (one per method), and count it against the windows' cap."""
         self._bets.setdefault(slug, {})[method] = (side, round(usd, 4), qty)
+        att = self._attempts.setdefault((slug, method), {"first": price, "side": side, "n": 0})
+        att["n"] += 1
+        att["ts"] = now
+        att["qty"] = qty
+        if len(self._attempts) > 400:
+            self._attempts = dict(list(self._attempts.items())[-200:])
         raw = None if self.fair_model is None else (self.fair_model if side == "up" else 1.0 - self.fair_model)
         b = self.book
         self._decision[(slug, side)] = {"decision_method": method, "decision_raw": None if raw is None else round(raw, 4),
@@ -1028,6 +1091,7 @@ class Desk:
                     if want and any(self._entry_check(now, w, q.price, self.momentum, q.side) for q in want):
                         want, why = [], "Skipped by entry rule: pair leg at a blocked price."
                     can_up_m, can_down_m, mom_why = brain.side_filters(self.momentum, self.cfg.momentum_z, self.name)
+                    self._retry_missed(w, now)
                     if not want and not self._taken(w.slug, "directional") and self.cfg.directional and "directional" in self.cfg.methods \
                             and self.fair_model is not None and b.best_ask is not None and b.best_bid is not None \
                             and self.cfg.directional_min_secs <= w.end - now <= self.cfg.directional_secs_left:
@@ -1036,6 +1100,8 @@ class Desk:
                                                   self.shadow.bucket_stats(self.fair_model), self.shadow.bucket_stats(1.0 - self.fair_model), z=z,
                                                   up_ok=can_up_m, down_ok=can_down_m, asset=self.cfg.asset, calib=self._calib_for(w))
                         stopped = None if pick is None else self._entry_check(now, w, pick[1], self.momentum, pick[0])
+                        if not stopped and pick is not None and not self._retry_price_ok(w.slug, "directional", pick[0], pick[1]):
+                            stopped = f"retry over {RETRY_PAY_UP * 100:.0f}c past the first price"
                         if stopped:
                             why = f"Skipped by entry rule ({stopped}): buy at {pick[1] * 100:.0f}c."
                             pick = None
@@ -1049,7 +1115,7 @@ class Desk:
                             q = strategy._qty(usd, cost, w.min_qty)
                             q = min(q, round(size_here // w.min_qty * w.min_qty, 6))
                             if q >= w.min_qty and ok_win:
-                                price = b.best_ask if side == "up" else b.best_bid
+                                price = self._taker_limit(side, b)
                                 want = [strategy.Quote(side, price, q, taker=True)]
                                 self._place(w.slug, "directional", side, usd, q, price=cost, now=now)
                                 why = f"Directional ({tier}): {side} at {cost * 100:.0f}c, edge {edge * 100:.1f}c after fees, lot {lot_pct:.0f}%{_bonus}."
@@ -1069,6 +1135,9 @@ class Desk:
                             if self._entry_check(now, w, cost, self.momentum, side):
                                 why = f"{method.title()}: skipped by entry rule, buy at {cost * 100:.0f}c."
                                 continue
+                            if not self._retry_price_ok(w.slug, method, side, cost):
+                                why = f"{method.title()}: retry over {RETRY_PAY_UP * 100:.0f}c past the first price."
+                                continue
                             bets = self._bets.get(w.slug, {})
                             usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self._xacct()), directional.window_room(bets, equity, self.cfg.asset))
                             ok_win, why_win = directional.may_take(bets, side, usd, equity, self.cfg.asset)
@@ -1079,7 +1148,7 @@ class Desk:
                             q = strategy._qty(usd, cost, w.min_qty)
                             q = min(q, round(size_here // w.min_qty * w.min_qty, 6))
                             if q >= w.min_qty:
-                                price = b.best_ask if side == "up" else b.best_bid
+                                price = self._taker_limit(side, b)
                                 want = [strategy.Quote(side, price, q, taker=True)]
                                 self._place(w.slug, method, side, usd, q, price=cost, now=now)
                                 why = f"{method.title()}: {side} at {cost * 100:.0f}c, model {gap * 100:.0f} points over the price, lot {lot_pct:.0f}%{_bonus}."
