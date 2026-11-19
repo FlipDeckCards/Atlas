@@ -58,9 +58,11 @@ def business(asset: str = "btc") -> Dict[str, str]:
 
 
 BUSINESS = business("btc")
-TENANT_ASSETS = ("btc", "xrp")           # owner, 2026-11-18: subscribers also get XRP 5m (starts in paper; they tap LIVE). Was BTC 5m only (v1.39, 2026-11-10).
+# owner, 2026-11-19: subscribers' Stations match the owner's: the four 5-minute crypto desks and the four commodity 15m desks, the same
+# bots and rules on their own keys. A new copy starts in paper; the account holder taps LIVE. (BTC 5m only from v1.39; XRP added 2026-11-18.)
+TENANT_ASSETS = ("btc", "xrp", "sol", "eth", "gold", "silver", "wti", "natgas")
 TENANT_BUSINESS = {"key": "polymarket", "name": "Polymarket Desk", "url": "https://polymarket.us", "color": "#00e5ff",
-                   "description": "Polymarket Desk runs two trading bots on your own Polymarket US account: BTC and XRP on 5-minute Up/Down windows."}
+                   "description": "Polymarket Desk runs eight trading bots on your own Polymarket US account: BTC, XRP, SOL and ETH on 5-minute Up/Down windows, and gold, silver, WTI oil and natural gas on 15-minute windows."}
 ASSET_SQL = desk_sql("slug")                     # cpc-eth-updown-5m-... -> eth; cpc-btc-updown-15m-... -> btc15
 LIMIT_FIELDS = ("bankroll_usd", "max_window_usd", "max_order_usd", "daily_loss_usd", "daily_loss_pct", "min_edge")
 _READY: Dict[int, bool] = {}
