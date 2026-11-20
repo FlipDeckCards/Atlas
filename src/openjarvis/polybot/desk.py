@@ -1179,10 +1179,13 @@ class Desk:
                     want, why = [], "Holding the directional trade to settlement."          # never hedge a directional bet away
                 elif not lopsided:
                     hf = self.hour_factor(w.start)                     # v1.25: 7 AM windows at half size (the daily review may change it)
-                    budget_usd = min(budget, sizing.window_cap(self.cfg.limits)) * hf
+                    # owner, 2026-11-19: the hour factor scales the confidence lot itself (it used to cut only the window budget, so a
+                    # small lot often came out unchanged in a "half size" hour), and it may now be over 1 (bigger bets in strong hours);
+                    # the window budget and the window limit stay the ceiling.
+                    budget_usd = min(budget, sizing.window_cap(self.cfg.limits)) * min(hf, 1.0)
                     want, why = strategy.pair_takes(b.best_bid, b.best_ask,
                                                     b.offers[0][1] if b.offers else 0.0, b.bids[0][1] if b.bids else 0.0,
-                                                    budget_usd, sizing.window_cap(self.cfg.limits) * hf, w.min_qty, self.cfg.pair_margin) \
+                                                    budget_usd, sizing.window_cap(self.cfg.limits) * min(hf, 1.0), w.min_qty, self.cfg.pair_margin) \
                         if (inv.spent <= 0 and "pairs" in self.cfg.methods and hf > 0) else ([], "Not trading this hour (hour size 0).") if hf <= 0 else ([], "Pairs are off for this desk." if "pairs" not in self.cfg.methods else "Already in this window; holding to settlement.")
                     if want and any(self._entry_check(now, w, q.price, self.momentum, q.side) for q in want):
                         want, why = [], "Skipped by entry rule: pair leg at a blocked price."
@@ -1207,7 +1210,7 @@ class Desk:
                             lot_pct, _bonus = self._win_bonus(lot_pct, side, cost, w.end - now)
                             size_here = (b.offers[0][1] if b.offers else 0.0) if side == "up" else (b.bids[0][1] if b.bids else 0.0)
                             bets = self._bets.get(w.slug, {})
-                            usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self._xacct()), directional.window_room(bets, equity, self.cfg.asset))   # lot by coin and confidence; capped across all desks and the window
+                            usd = min(budget_usd, equity * lot_pct / 100.0 * hf, exposure.headroom(equity, self._xacct()), directional.window_room(bets, equity, self.cfg.asset))   # lot by coin and confidence; capped across all desks and the window
                             ok_win, _ = directional.may_take(bets, side, usd, equity, self.cfg.asset)
                             q = strategy._qty(usd, cost, w.min_qty)
                             q = min(q, round(size_here // w.min_qty * w.min_qty, 6))
@@ -1217,7 +1220,7 @@ class Desk:
                                 self._place(w.slug, "directional", side, usd, q, price=cost, now=now)
                                 why = f"Directional ({tier}): {side} at {cost * 100:.0f}c, edge {edge * 100:.1f}c after fees, lot {lot_pct:.0f}%{_bonus}."
                             else:
-                                self._no_order(w, now, side, cost, budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self._xacct()),
+                                self._no_order(w, now, side, cost, budget_usd, equity * lot_pct / 100.0 * hf, exposure.headroom(equity, self._xacct()),
                                                directional.window_room(bets, equity, self.cfg.asset), usd, size_here, ok_win)
                     # v1.22: edge and late are extra single-bet methods: one bet each per window, never against a side already bet
                     if self.cfg.directional and self.fair_model is not None and b.best_ask is not None and b.best_bid is not None:
@@ -1239,12 +1242,12 @@ class Desk:
                                 why = f"{method.title()}: retry over {RETRY_PAY_UP * 100:.0f}c past the first price."
                                 continue
                             bets = self._bets.get(w.slug, {})
-                            usd = min(budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self._xacct()), directional.window_room(bets, equity, self.cfg.asset))
+                            usd = min(budget_usd, equity * lot_pct / 100.0 * hf, exposure.headroom(equity, self._xacct()), directional.window_room(bets, equity, self.cfg.asset))
                             ok_win, why_win = directional.may_take(bets, side, usd, equity, self.cfg.asset)
                             size_here = (b.offers[0][1] if b.offers else 0.0) if side == "up" else (b.bids[0][1] if b.bids else 0.0)
                             if not ok_win:
                                 why = f"{method.title()}: {why_win}."
-                                self._no_order(w, now, side, cost, budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self._xacct()),
+                                self._no_order(w, now, side, cost, budget_usd, equity * lot_pct / 100.0 * hf, exposure.headroom(equity, self._xacct()),
                                                directional.window_room(bets, equity, self.cfg.asset), usd, size_here, False, why_win)
                                 continue
                             q = strategy._qty(usd, cost, w.min_qty)
@@ -1255,7 +1258,7 @@ class Desk:
                                 self._place(w.slug, method, side, usd, q, price=cost, now=now)
                                 why = f"{method.title()}: {side} at {cost * 100:.0f}c, model {gap * 100:.0f} points over the price, lot {lot_pct:.0f}%{_bonus}."
                             else:
-                                self._no_order(w, now, side, cost, budget_usd, equity * lot_pct / 100.0, exposure.headroom(equity, self._xacct()),
+                                self._no_order(w, now, side, cost, budget_usd, equity * lot_pct / 100.0 * hf, exposure.headroom(equity, self._xacct()),
                                                directional.window_room(bets, equity, self.cfg.asset), usd, size_here, True)
                     if not want and not self._taken(w.slug, "directional") and self.cfg.directional:
                         z_now = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)

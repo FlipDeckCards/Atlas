@@ -94,11 +94,13 @@ def test_seven_am_windows_are_half_size_by_default_and_the_control_row_can_chang
     from openjarvis.polybot.desk import Desk
     from openjarvis.polybot.risk import LA
 
-    assert from_env({}).hour_size == ((4, 0.5), (6, 0.5), (7, 0.5), (8, 0.5), (9, 0.5), (12, 0.5), (14, 0.5), (16, 0.5))   # 5-minute BTC
+    # owner, 2026-11-19: 5-minute crypto desks run midnight-6 AM at 125%, noon-midnight at 75%, mornings at full size
+    assert from_env({}).hour_size == tuple([(h, 1.25) for h in range(6)] + [(h, 0.75) for h in range(12, 24)])
     assert from_env({}).caution_hours == (7, 14, 16) and from_env({}, asset="eth").caution_hours == (7, 9, 14, 16)
     assert from_env({}, asset="btc15").hour_size == ((7, 0.5),)                # 15-minute keeps the old default
     assert from_env({"POLYBOT_HOUR_SIZE": ""}).hour_size == ()                 # an empty setting turns it off
     assert parse_hour_size("7:0.5,16:0,25:1,x:y,9:1") == ((7, 0.5), (16, 0.0))
+    assert parse_hour_size("3:1.25,4:9") == ((3, 1.25), (4, 1.5))               # boosts allowed, capped at 150%
     d = Desk(from_env({}, asset="btc15"), None, None)
     seven = dt.datetime(2026, 11, 4, 7, 5, tzinfo=LA).timestamp()
     eight = dt.datetime(2026, 11, 4, 8, 5, tzinfo=LA).timestamp()
@@ -119,14 +121,13 @@ def test_each_five_minute_desk_has_its_own_hours_and_an_approved_hour_only_chang
 
     at = lambda h: dt.datetime(2026, 11, 4, h, 5, tzinfo=LA).timestamp()
     f = {a: Desk(from_env({}, asset=a), None, None) for a in ("btc", "eth", "sol", "xrp")}
-    assert [f[a].hour_factor(at(9)) for a in ("btc", "eth", "sol", "xrp")] == [0.5, 0.5, 0.5, 0.5]   # ETH 9 AM is a caution hour now (was skipped)
-    assert [f[a].hour_factor(at(10)) for a in ("btc", "eth", "sol", "xrp")] == [1.0, 1.0, 0.5, 1.0]
-    assert [f[a].hour_factor(at(3)) for a in ("btc", "eth", "sol", "xrp")] == [1.0, 1.0, 1.0, 0.5]
-    assert f["sol"].hour_factor(at(22)) == 0.5 and f["btc"].hour_factor(at(23)) == 1.0
-    assert all(f[a].hour_factor(at(14)) == 0.5 and f[a].hour_factor(at(7)) == 0.5 for a in f)   # caution hours: half size
+    assert all(f[a].hour_factor(at(3)) == 1.25 for a in f)                     # owner, 2026-11-19: overnight 125%
+    assert all(f[a].hour_factor(at(9)) == 1.0 and f[a].hour_factor(at(7)) == 1.0 for a in f)   # mornings full size
+    assert all(f[a].hour_factor(at(14)) == 0.75 and f[a].hour_factor(at(22)) == 0.75 for a in f)   # noon-midnight 75%
     d = f["btc"]
     d.cfg = apply_control(d.base, {"hour_size": {"7": 0}})                   # an approved 7 AM skip changes only 7 AM
-    assert d.hour_factor(at(7)) == 0.0 and d.hour_factor(at(14)) == 0.5 and d.hour_factor(at(9)) == 0.5
+    assert d.hour_factor(at(7)) == 0.0 and d.hour_factor(at(14)) == 0.75 and d.hour_factor(at(3)) == 1.25
+    assert from_env({}, asset="gold").hour_size == ()                         # commodity desks: every hour full size
     assert for_account(from_env({}, asset="btc"), "uabc", "k", "s").hour_size == from_env({}, asset="btc").hour_size
 
 
@@ -367,3 +368,12 @@ def test_subscribers_run_the_same_desks_as_the_owner():
     # owner, 2026-11-19: the brothers' Stations match the owner's (crypto 5m + commodity 15m)
     assert desk.TENANT_ASSETS == ("btc", "xrp", "sol", "eth", "gold", "silver", "wti", "natgas")
     assert "XRP" in desk.TENANT_BUSINESS["description"] and "gold" in desk.TENANT_BUSINESS["description"]
+
+
+def test_the_hour_factor_scales_the_bet_itself():
+    # owner, 2026-11-19: a 75% hour makes a 5% lot 3.75%, a 125% hour makes it 6.25% (the window limit still caps it)
+    import inspect
+    from openjarvis.polybot import desk as desk_mod
+    src = inspect.getsource(desk_mod.Desk.step)
+    assert src.count("equity * lot_pct / 100.0 * hf") >= 3
+    assert "min(hf, 1.0)" in src
