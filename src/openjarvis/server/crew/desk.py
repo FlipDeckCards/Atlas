@@ -480,6 +480,13 @@ BUCKETS = {
     "momentum_with": [("price moving against the bet", -99, -0.3), ("price flat", -0.3, 0.3), ("price moving with the bet", 0.3, 99)],
     "secs_left": [("over 3 min left", 180, 9999), ("1-3 min left", 60, 180), ("last minute", -1, 60)],
     "cost": [("bought under 30c", 0, 0.30), ("bought 30-70c", 0.30, 0.70), ("bought over 70c", 0.70, 1.01)],
+    # owner, 2026-11-19: every angle, including when and how sure
+    "model_side": [("model under 80% sure", 0, 0.80), ("model 80-85% sure", 0.80, 0.85), ("model 85-90% sure", 0.85, 0.90),
+                   ("model 90-95% sure", 0.90, 0.95), ("model 95%+ sure", 0.95, 1.01)],
+    "hour_la": [("overnight (12-6 AM)", 0, 6), ("morning (6 AM-12 PM)", 6, 12), ("afternoon (12-6 PM)", 12, 18),
+                ("evening (6 PM-12 AM)", 18, 24)],
+    "weekday": [("Monday", 0, 1), ("Tuesday", 1, 2), ("Wednesday", 2, 3), ("Thursday", 3, 4), ("Friday", 4, 5),
+                ("Saturday", 5, 6), ("Sunday", 6, 7)],
 }
 
 
@@ -531,7 +538,7 @@ async def analysis(pool, mode: str = "paper", version: str = STRATEGY_VERSION, a
     n = 3 if scope == "version" else 2
     async with pool.acquire() as c:
         rows = await c.fetch(
-            f"SELECT f.side, f.price, f.qty, f.cost, f.features, w.up FROM polybot_fills f JOIN polybot_windows w ON w.slug = f.slug AND w.mode = f.mode "
+            f"SELECT f.ts, f.side, f.price, f.qty, f.cost, f.features, w.up FROM polybot_fills f JOIN polybot_windows w ON w.slug = f.slug AND w.mode = f.mode "
             f"WHERE f.mode = $1 {ver_sql}AND w.up IS NOT NULL AND " + desk_sql("f.slug") + f" = ${n}", *args)
     trades = []
     for r in rows:
@@ -545,6 +552,12 @@ async def analysis(pool, mode: str = "paper", version: str = STRATEGY_VERSION, a
              "momentum_z": mz, "sweep": feat.get("sweep") is True,
              "model_side": None if not isinstance(m, (int, float)) else (m if r["side"] == "up" else 1.0 - m),
              "momentum_with": None if mz is None else (mz if r["side"] == "up" else -mz)}
+        try:
+            from openjarvis.polybot.risk import LA
+            lt = r["ts"].astimezone(LA)
+            t["hour_la"], t["weekday"] = lt.hour, lt.weekday()          # Pacific time: when in the day and week the fill happened
+        except Exception:
+            pass
         if scope == "rules" and not still_allowed(asset, t):
             continue
         trades.append(t)
