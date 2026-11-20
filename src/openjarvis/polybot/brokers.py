@@ -194,6 +194,7 @@ class LiveBroker:
         self._bal: Optional[float] = None
         self.rejects: List[str] = []
         self._bal_ts = 0.0
+        self.last_order: Dict[tuple, str] = {}         # 2026-11-20: (slug, side) -> the latest order id sent (for the miss check)
 
     @property
     def resting_cost(self) -> float:
@@ -236,6 +237,9 @@ class LiveBroker:
                     continue
                 raise
             self.resting[side] = Resting(q, oid, now)
+            self.last_order[(slug, side)] = oid
+            if len(self.last_order) > 200:
+                self.last_order.pop(next(iter(self.last_order)))
 
     async def cancel_all(self, now: float = 0.0) -> None:
         # only this desk's own orders: the market is shared with the other desks (BTC 5m and BTC Late), so a market-wide cancel would

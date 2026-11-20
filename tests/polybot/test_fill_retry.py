@@ -87,3 +87,24 @@ def test_a_miss_is_cross_checked_against_fresh_reads_once_per_window():
     asyncio.run(run())
     probe = [m for m in logs if "miss check" in m]
     assert probe and "fresh signed book 81c" in probe[0] and "bot book 78c" in probe[0]
+
+
+def test_order_probe_logs_polymarkets_record_of_a_missed_order():
+    import asyncio
+    from openjarvis.polybot.config import from_env
+    from openjarvis.polybot.desk import Desk
+
+    d = Desk(from_env({}, asset="gold"), None, None)
+    logs = []
+    d.log = lambda lvl, msg: logs.append(msg)
+
+    class C:
+        async def order(self, oid):
+            return {"state": "ORDER_STATE_CANCELED", "cumQuantity": "0", "price": {"value": "0.76"}, "text": "no liquidity"}
+    d.c = C()
+    d.broker = type("B", (), {"last_order": {("m", "up"): "OID1"}, "rejects": []})()
+    asyncio.run(d._order_probe("m", "up", "edge", 1))
+    assert "OID1" in logs[-1] and "ORDER_STATE_CANCELED" in logs[-1] and "no liquidity" in logs[-1]
+    d.broker = type("B", (), {"last_order": {}, "rejects": ["up 5 @ 0.76: HTTP 400 price band"]})()
+    asyncio.run(d._order_probe("m", "up", "edge", 2))
+    assert "no order id was sent" in logs[-1] and "price band" in logs[-1]
