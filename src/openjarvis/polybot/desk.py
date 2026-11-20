@@ -123,6 +123,7 @@ class Desk:
         # 2026-11-18: windows a candidate was logged on, settled from the venue even when not traded, so every blocked buy can be
         # checked against how its window ended (untraded windows were never settled, so most blocked buys showed "unknown")
         self._watched: Dict[str, float] = {}               # slug -> window end (unix)
+        self._miss_probed: Optional[str] = None             # 2026-11-19: the last window whose missed order was cross-checked
         self._closed_until: Optional[float] = None          # commodity desks: the market's reopening time while it is closed
         # 2026-11-18 (owner): order outcomes. Live data showed the bets that never filled won ~93% while the ones that filled won ~75%:
         # an order at the price seen misses when the market moves the bot's way. A missed order is now logged and tried again.
@@ -742,8 +743,8 @@ class Desk:
         if self.cfg.asset in ("eth", "sol") and momentum is not None and side in ("up", "down"):
             if (momentum if side == "up" else -momentum) > 1.0:
                 return "chasing momentum"
-        if self.cfg.asset == "btc" and side == "down" and 0.70 <= price < 0.80:
-            return "btc down 70-79c"                                # BTC 5m Down buys at 70-79c: 75 live fills, 67% won, -$37 (break-even needs ~75%)
+        # owner, 2026-11-19: the BTC 5m "down 70-79c" block is removed. Since Nov 18 it blocked 31 decisions that won 93.5% (+24% per $
+        # at the price seen) while the trades BTC took made +5.5%. (It was added on 75 earlier live fills, 67% won, -$37.)
         # v1.39: the BTC 5m Up-under-40c block is removed. Oct 29-Nov 9 live fills: 46 fills, 30% won, +$19.44 (the old block had
         # cited 44 fills, 25% won, -$27 from an earlier sample that the current fills do not reproduce).
         if self.cfg.asset == "btc" and momentum is not None and -0.3 <= momentum <= 0.3:
@@ -885,6 +886,12 @@ class Desk:
             self.ledger.candidate({**row, "ts_unix": now})
             if len(self._watched) < 500:
                 self._watched.setdefault(w.slug, float(w.end))
+            if not self.cfg.watch_only and self._miss_probed != w.slug:
+                self._miss_probed = w.slug                               # one check per window: enough to see whether the book lags
+                try:
+                    asyncio.get_running_loop().create_task(self._miss_probe(w.slug, side, price))
+                except RuntimeError:
+                    pass
             self.log("info", f"{self.name}: {method} {side} at {price * 100:.0f}c got no fill in {RETRY_AFTER_S:.0f}s "
                              f"({att['n']} of {RETRY_MAX}){'; giving up on this window' if last else '; will try again'}.")
             if not last:
@@ -921,6 +928,41 @@ class Desk:
         if side == "up":
             return round(min(0.99, b.best_ask + TAKER_SLIP), 4)
         return round(max(0.01, b.best_bid - TAKER_SLIP), 4)
+
+    async def _miss_probe(self, slug: str, side: str, price: float) -> None:
+        """2026-11-19 diagnostic (owner): an order that should have filled did not. Read the market's best price for that side from
+        three places right now (the bot's own book, a fresh signed read of the book, and Polymarket's best bid/offer read) and log
+        them next to the price the bot decided on. If the fresh reads sit above the bot's price, the bot's book lags the market."""
+        def side_ask(md):
+            def lv(rows):
+                out = []
+                for r in rows or []:
+                    p_, q_ = money(r.get("px")), money(r.get("qty"))
+                    if p_ is not None and q_:
+                        out.append((p_, q_))
+                return out
+            offers, bids = lv(md.get("offers")), lv(md.get("bids"))
+            if side == "up":
+                return min((p_ for p_, _ in offers), default=None)
+            b = max((p_ for p_, _ in bids), default=None)
+            return None if b is None else 1.0 - b
+        parts = []
+        bk = self.book
+        if bk is not None:
+            mine = (bk.offers[0][0] if bk.offers else None) if side == "up" else (1.0 - bk.bids[0][0] if bk.bids else None)
+            parts.append("bot book " + ("none" if mine is None else f"{mine * 100:.0f}c") + f" ({max(0.0, self.clock() - (bk.ts or 0)):.1f}s old)")
+        try:
+            d = await self.c._req("GET", f"/v1/markets/{slug}/book", auth=True, tries=1)
+            a = side_ask((d or {}).get("marketData") or {})
+            parts.append("fresh signed book " + ("none" if a is None else f"{a * 100:.0f}c"))
+        except Exception as exc:
+            parts.append(f"fresh signed book unreadable ({str(exc)[:40]})")
+        try:
+            d = await self.c._req("GET", f"/v1/markets/{slug}/bbo", tries=1)
+            parts.append("bbo " + str({k: v for k, v in (d or {}).items() if k != "marketSlug"})[:160])
+        except Exception as exc:
+            parts.append(f"bbo unreadable ({str(exc)[:40]})")
+        self.log("warn", f"{self.name}: miss check {side} decided at {price * 100:.0f}c: " + " | ".join(parts) + ".")
 
     def _retry_price_ok(self, slug: str, method: str, side: str, cost: float) -> bool:
         """A retry may pay at most RETRY_PAY_UP over the first decision's price, on the same side."""
