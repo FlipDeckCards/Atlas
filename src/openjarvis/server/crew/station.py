@@ -1231,7 +1231,7 @@ function deskSec(key) {
   s.style.borderTop = '1px solid rgba(0,229,255,0.25)'; s.style.paddingTop = '10px';
   const hd = mk('div', 'h', DESK_LABEL(A) + ' Desk'); hd.style.color = ({ btc: '#00e5ff', btc15: '#4fc3f7', btclate: '#ff7ad9', eth: '#8c8cff', sol: '#14f195', xrp: '#ffb347', gold: '#ffd54f', silver: '#cfd8dc', wti: '#bcaaa4', natgas: '#64b5f6' })[A] || ({ BTC: '#00e5ff', ETH: '#8c8cff', SOL: '#14f195', XRP: '#ffb347' })[DESK_COIN(A)]; hd.style.fontSize = '16px'; s.append(hd);
   if (A === 'btc') s.append(mk('div', 'dim', 'Strategy: pairs, directional, edge and late, one bet per method per window; 10% cap per window; never against a side already bet.'));
-  if (COMMODITY_DESKS.includes(A)) s.append(mk('div', 'dim', 'Commodity 15-minute desk on Polymarket\u2019s live price for it: flat 1% bets from 60% confidence, 1% cap per window, every hour, raw model, until there is data for sizing, hours and strategy.'));
+  if (COMMODITY_DESKS.includes(A)) { const pc = A === 'natgas' ? '1%' : '3%'; s.append(mk('div', 'dim', 'Commodity 15-minute desk on Polymarket\u2019s live price for it: flat ' + pc + ' bets from 60% confidence, ' + pc + ' cap per window, every hour, raw model, until there is data for sizing, hours and strategy.')); }
   if (A === 'btclate') s.append(mk('div', 'dim', 'Strategy: late only, paper. One bet per window, 30-60 s before the close, when the model is 90%+ and the side costs 95c or less.'));
   if (!DESK) { s.append(mk('div', 'dim', 'Loading the desk…')); return s; }
   if (DESK.error) { s.append(mk('div', 'dim', DESK.error)); return s; }
