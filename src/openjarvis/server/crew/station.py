@@ -1060,7 +1060,7 @@ function hourRanges(hs) {
 }
 function loadDesk(force, asset) {
   const a = asset || 'btc';
-  const every = (a === 'btc' || a === 'btc15' || selected === 'f:polymarket') ? 15000 : 60000;   // the new desks refresh slower unless open
+  const every = 10000;                                    // every desk, every 10 s (trades and settlements showed up to a minute late)
   if (DESK_LOADINGS[a] || (!force && Date.now() - (DESK_ATS[a] || 0) < every)) return;
   DESK_LOADINGS[a] = true;
   const view = VIEW_AS, into = DESKS;

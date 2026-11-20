@@ -121,18 +121,21 @@ class Ledger:
         self.events: List[Dict[str, Any]] = []
         self.candidates: List[Dict[str, Any]] = []           # v1.38: every distinct entry candidate and the rule that stopped it, if any
         self.results: List[Dict[str, Any]] = []              # v1.42: every settled window's result, traded or not (for the blocked-trade check)
+        self.urgent = False                                  # a fill or a settled window waits: write it now, not at the next minute's flush
 
     def fill(self, mode: str, f, fair: Optional[float], features: Optional[Dict[str, Any]] = None) -> None:
         from openjarvis.polybot.brain import STRATEGY_VERSION
 
         self.fills.append({"version": STRATEGY_VERSION, "ts": f.ts, "mode": mode, "slug": f.slug, "side": f.side, "price": f.price, "qty": f.qty, "cost": f.cost,
                            "fair": fair, "order_id": f.order_id, "features": features or {}})
+        self.urgent = True
 
     def window(self, row: Dict[str, Any]) -> None:
         from openjarvis.polybot.brain import STRATEGY_VERSION
 
         row.setdefault("version", STRATEGY_VERSION)
         self.windows[f'{row["slug"]}|{row["mode"]}'] = row
+        self.urgent = True
 
     def event(self, level: str, text: str, ts: float) -> None:
         self.events.append({"ts": ts, "level": level, "text": text[:500], "asset": self.asset})
@@ -143,6 +146,7 @@ class Ledger:
     def take(self):
         out = (self.fills, list(self.windows.values()), self.events)
         self.fills, self.windows, self.events = [], {}, []
+        self.urgent = False
         return out
 
     def take_candidates(self) -> List[Dict[str, Any]]:
