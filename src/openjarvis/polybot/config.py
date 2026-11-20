@@ -210,13 +210,11 @@ def watch_from_env(env: Optional[Mapping[str, str]] = None) -> list:
 
 # v1.31 (owner, 2026-11-07): each 5-minute desk sized by Los Angeles hour from its own profit-by-hour table.
 # Rules: 15+ trades and clearly losing -> skip; losing on 8+ trades -> half; too few trades -> BTC's setting; winning -> full.
-HOUR_SIZE_5M = {
-    # 2026-11-11 (owner): the formerly skipped hours trade at half size as "caution hours" (see CAUTION_HOURS_5M)
-    "btc": ((4, 0.5), (6, 0.5), (7, 0.5), (8, 0.5), (9, 0.5), (12, 0.5), (14, 0.5), (16, 0.5)),
-    "eth": ((4, 0.5), (6, 0.5), (7, 0.5), (8, 0.5), (9, 0.5), (12, 0.5), (14, 0.5), (16, 0.5)),
-    "sol": ((4, 0.5), (6, 0.5), (7, 0.5), (8, 0.5), (9, 0.5), (10, 0.5), (12, 0.5), (14, 0.5), (16, 0.5), (22, 0.5)),
-    "xrp": ((3, 0.5), (4, 0.5), (5, 0.5), (6, 0.5), (7, 0.5), (8, 0.5), (9, 0.5), (12, 0.5), (14, 0.5), (16, 0.5)),
-}
+# Owner, 2026-11-19: crypto 5m sizing by Los Angeles hour, from live results since Nov 12 (all four desks): midnight-6 AM +17.8% per $
+# (41 trades) -> 125%; 6 AM-noon about break-even -> 100%; noon-midnight -6.7% to -8.5% -> 75%. Replaces the 2026-11-11 half-size
+# lists (from older versions; they halved 4 AM and 6 AM, now among the best hours). Commodity desks keep every hour at full size.
+_HOURS_5M = tuple([(h, 1.25) for h in range(0, 6)] + [(h, 0.75) for h in range(12, 24)])
+HOUR_SIZE_5M = {"btc": _HOURS_5M, "eth": _HOURS_5M, "sol": _HOURS_5M, "xrp": _HOURS_5M}
 # Caution hours (owner, 2026-11-11): the hours that used to be skipped. A bet in one needs at least CAUTION_MIN_CONF calibrated
 # confidence and a buy price of at least CAUTION_MIN_PRICE, on top of every normal rule.
 CAUTION_HOURS_5M = {"btc": (7, 14, 16), "eth": (7, 9, 14, 16), "sol": (7, 14, 16), "xrp": (7, 14, 16)}
@@ -231,7 +229,8 @@ def default_hour_size(asset: str) -> tuple:
 
 
 def parse_hour_size(raw: Any) -> tuple:
-    """'7:0.5,16:0' or {"7": 0.5} -> ((7, 0.5), (16, 0.0)); bad entries are dropped; factors are clamped to 0..1."""
+    """'7:0.5,16:0' or {"7": 0.5} -> ((7, 0.5), (16, 0.0)); bad entries are dropped; factors are clamped to 0..1.5 (2026-11-19:
+    over 1 is a bigger bet in a strong hour)."""
     items = raw.items() if isinstance(raw, dict) else (p.split(":", 1) for p in str(raw or "").split(",") if ":" in p)
     out = {}
     for h, f in items:
@@ -240,7 +239,7 @@ def parse_hour_size(raw: Any) -> tuple:
         except ValueError:
             continue
         if 0 <= h <= 23:
-            out[h] = min(1.0, max(0.0, f))
+            out[h] = min(1.5, max(0.0, f))
     return tuple(sorted((h, f) for h, f in out.items() if f != 1.0))
 
 

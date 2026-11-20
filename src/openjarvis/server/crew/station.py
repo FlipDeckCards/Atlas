@@ -1047,6 +1047,17 @@ function commodityWatchSec() {
   });
   return s;
 }
+// owner, 2026-11-19: hour sizes shown as ranges ("12 AM-6 AM 125% size, 12 PM-12 AM 75% size") instead of one entry per hour
+function hourRanges(hs) {
+  const lab = h => ((h % 24 % 12) || 12) + (h % 24 < 12 ? ' AM' : ' PM');
+  const sorted = hs.slice().sort((a, b) => a[0] - b[0]), out = [];
+  for (const [h, f] of sorted) {
+    const last = out[out.length - 1];
+    if (last && last.end === h && last.f === f) last.end = h + 1; else out.push({ start: h, end: h + 1, f });
+  }
+  return out.map(r => (r.end - r.start === 1 ? lab(r.start) + ' windows' : lab(r.start) + '\u2013' + lab(r.end))
+    + ' ' + (r.f <= 0 ? 'skipped' : Math.round(r.f * 100) + '% size')).join(', ');
+}
 function loadDesk(force, asset) {
   const a = asset || 'btc';
   const every = (a === 'btc' || a === 'btc15' || selected === 'f:polymarket') ? 15000 : 60000;   // the new desks refresh slower unless open
@@ -1312,7 +1323,7 @@ function deskSec(key) {
   s.append(mk('div', 'dim', 'Limits: bankroll ' + ((st.mode === 'live' && st.account_value != null) ? money(st.account_value) + ' (the whole account)' : money(lim.bankroll_usd)) + ' · bets sized by confidence, up to ' + (st.window_pct || 7.5) + '% of the current balance per window' + (st.window_cap != null ? ' (' + money(st.window_cap) + ' now)' : '')
     + ' · daily stop ' + (lim.daily_loss_pct > 0 ? lim.daily_loss_pct + '% of the day\'s start' + (st.day_limit != null ? ' (' + money(st.day_limit) + ' today)' : '') : money(lim.daily_loss_usd))
     + ' · min edge ' + Number(lim.min_edge || 0).toFixed(2)
-    + (st.hour_size && st.hour_size.length ? ' · ' + st.hour_size.map(([h, f]) => ((h % 12) || 12) + (h < 12 ? ' AM' : ' PM') + ' windows ' + (f <= 0 ? 'skipped' : Math.round(f * 100) + '% size')).join(', ') + ' (7 AM reviewed daily)' : '')));
+    + (st.hour_size && st.hour_size.length ? ' · ' + hourRanges(st.hour_size) + ' (7 AM reviewed daily)' : '')));
   // trade log: every window traded, tap for each fill
   const tl = mk('div', 'lbl'); tl.style.marginTop = '12px'; tl.append(mk('span', null, 'Trade log · ' + DESK_VIEW));
   const rf = mk('span', 'tag', '↻'); rf.style.cursor = 'pointer'; rf.onclick = () => loadDesk(true, A); tl.append(rf);
