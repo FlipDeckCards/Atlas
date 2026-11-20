@@ -916,6 +916,11 @@ class Desk:
                     asyncio.get_running_loop().create_task(self._miss_probe(w.slug, side, price))
                 except RuntimeError:
                     pass
+            if not self.cfg.watch_only:
+                try:
+                    asyncio.get_running_loop().create_task(self._order_probe(w.slug, side, method, att["n"]))
+                except RuntimeError:
+                    pass
             self.log("info", f"{self.name}: {method} {side} at {price * 100:.0f}c got no fill in {RETRY_AFTER_S:.0f}s "
                              f"({att['n']} of {RETRY_MAX}){'; giving up on this window' if last else '; will try again'}.")
             if not last:
@@ -952,6 +957,27 @@ class Desk:
         if side == "up":
             return round(min(0.99, b.best_ask + TAKER_SLIP), 4)
         return round(max(0.01, b.best_bid - TAKER_SLIP), 4)
+
+    async def _order_probe(self, slug: str, side: str, method: str, n: int) -> None:
+        """2026-11-20 diagnostic (owner): a missed order, as Polymarket itself records it: whether it was sent at all, its state,
+        how much filled, its limit and any reason text. Logged as one "order check" desk-log line. Trading is unchanged."""
+        oid = (getattr(self.broker, "last_order", None) or {}).get((slug, side))
+        rej = list(getattr(self.broker, "rejects", None) or [])[-1:]
+        if not oid:
+            self.log("warn", f"{self.name}: order check {method} {side} (try {n}): no order id was sent for this side in this window"
+                             f"{'; last reject: ' + rej[0] if rej else ''}.")
+            return
+        try:
+            o = await self.c.order(oid)
+        except Exception as exc:                                   # noqa: BLE001 - a diagnostic never stops the desk
+            self.log("warn", f"{self.name}: order check {method} {side} (try {n}): order {oid} could not be read ({exc}).")
+            return
+        o = (o or {}).get("order") if isinstance(o, dict) and "order" in o else o
+        o = o or {}
+        keep = ("state", "price", "quantity", "cumQuantity", "leavesQuantity", "avgPx", "tif", "type", "intent", "text",
+                "rejectReason", "cancelReason", "createTime", "updateTime", "participateDontInitiate")
+        brief = {k: o.get(k) for k in keep if o.get(k) not in (None, "", [])}
+        self.log("warn", f"{self.name}: order check {method} {side} (try {n}): order {oid} {brief}")
 
     async def _miss_probe(self, slug: str, side: str, price: float) -> None:
         """2026-11-19 diagnostic (owner): an order that should have filled did not. Read the market's best price for that side from
@@ -1285,7 +1311,9 @@ class Desk:
                             else:
                                 self._no_order(w, now, side, cost, budget_usd, equity * lot_pct / 100.0 * hf, exposure.headroom(equity, self._xacct()),
                                                directional.window_room(bets, equity, self.cfg.asset), usd, size_here, True)
-                    if not want and not self._taken(w.slug, "directional") and self.cfg.directional:
+                    if not want and self.cfg.directional and "directional" not in self.cfg.methods:
+                        why = why or "Directional is off on this desk (BTC only, owner 2026-11-20); edge and late still trade."
+                    elif not want and not self._taken(w.slug, "directional") and self.cfg.directional:
                         z_now = directional.cushion_z(self.tape.at(int(now)), w.price_to_beat, self.sigma, w.end - now)
                         in_win = self.cfg.directional_min_secs <= w.end - now <= self.cfg.directional_secs_left
                         why_dir = directional.explain(self.fair_model, b.best_ask,

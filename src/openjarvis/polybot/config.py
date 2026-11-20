@@ -164,6 +164,11 @@ def for_account(cfg: "Config", account: str, key_id: str, secret_key: str, notif
     return replace(cfg, account=account, key_id=key_id, secret_key=secret_key, notify_url=notify_url,
                    ledger=label_for(cfg.ledger, account), live_ledger=label_for(cfg.live_ledger, account))
 METHODS = {"btclate": ("late",)}
+# Owner, 2026-11-20: the "directional" method runs on BTC 5m only. Live since Nov 12, directional bets lost on every other desk
+# (XRP 35 trades -$22.75, SOL 6 -$9.96, the four commodities 20 -$9.28: -$41.99 over 61) while edge + late made +$27.48 on the
+# same desks; BTC's directional made +$8.36 over 19. The other desks keep pairs, edge and late.
+for _a in ("xrp", "sol", "eth", "gold", "silver", "wti", "natgas"):
+    METHODS[_a] = ("pairs", "edge", "late")
 # 2026-11-19 (owner): commodity desks on Polymarket US's 15-minute Up/Down markets (gold, silver, WTI oil, natural gas). Full desks
 # like the crypto ones (Station panel, trade log, Pause, Go live), run on Polymarket's own 1-second commodity price feed
 # (commodity:<name>). They start in paper; the owner's Go live tap takes each live. Flat 1% bets until there is data for sizing.

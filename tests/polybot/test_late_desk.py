@@ -25,9 +25,12 @@ def test_late_desk_goes_live_on_its_own_ledger_when_approved():
 
 
 def test_the_desks_run_all_four_methods_and_the_paper_label():
-    for a in ("btc", "btc15", "eth", "sol", "xrp"):
+    for a in ("btc", "btc15"):
         c = from_env({}, asset=a)
         assert c.methods == ("pairs", "directional", "edge", "late") and c.ledger == "paper"
+    for a in ("eth", "sol", "xrp", "gold", "silver", "wti", "natgas"):    # owner, 2026-11-20: directional runs on BTC only
+        c = from_env({}, asset=a)
+        assert c.methods == ("pairs", "edge", "late") and c.ledger == "paper"
 
 
 def test_late_desk_has_its_own_store_and_lock():
