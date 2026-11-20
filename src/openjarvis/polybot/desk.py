@@ -517,7 +517,7 @@ class Desk:
                 # v1.22: live money is booked only from the venue's own final answer. The index's 60-second average can land on
                 # the other side of the strike from the venue's close (9:15 PM Nov 2: average above the target, venue settled Down),
                 # so a live window with no final answer stays open instead of being booked from the index.
-                if now >= w.end + 20 and self._due(f"settle:{slug}", 10.0, now):
+                if now >= w.end + 5 and self._due(f"settle:{slug}", 3.0, now):     # 2026-11-19: was +20 s, every 10 s
                     s = await self.c.settlement(slug)
                     if s is not None and (s >= 0.99 or s <= 0.01):                 # only a final $1 / $0 answer counts
                         mine = model.settle(self.tape, int(w.end), w.price_to_beat)
@@ -1470,7 +1470,8 @@ class Desk:
                     if self.rs.errors_in_row == 5:
                         await self.broker.cancel_all(t0)
                         await self.push("Desk problem", f"Internal error, quotes pulled: {exc}")
-                if self._due("flush", self.base.flush_s, t0):
+                # 2026-11-19: a fill or a settled trade is written at once (the Station showed both up to a minute late)
+                if getattr(self.ledger, "urgent", False) or self._due("flush", self.base.flush_s, t0):
                     await self.flush(t0)
                 await self.hourly(t0)
                 steps += 1
