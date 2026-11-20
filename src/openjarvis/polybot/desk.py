@@ -751,7 +751,7 @@ class Desk:
         """The name of the entry rule that rules this buy out, or None when it is allowed. The rules themselves are the same as
         before v1.38 (the name is the only addition).
         Entries the current review rules out (both on 1.21):
-        5-minute BTC: no buy priced 30-70c in the final 60 seconds, and none at any price while the price is flat (momentum between -0.3 and 0.3).
+        5-minute desks: no buy priced 70c or less in the final 60 seconds (30-70c until 2026-11-20); BTC: and none at any price while the price is flat (momentum between -0.3 and 0.3).
         15-minute BTC: no buy priced 70-90c at any time (about 80c needs an 80% win rate; this bot won 75%)."""
         if self.cfg.asset == "btc15" and side == "down":
             return "btc15 down"                                     # v1.36: BTC 15m's Down bets: 49 live fills, 71% won, -$24.79 (Up: +$15.93)
@@ -784,8 +784,14 @@ class Desk:
         # (-$20.68; ~78% needed to break even at those prices), 3-4 min at 70-79c won 83% of 23 (+$11.08). All history shows the same split.
         if self.cfg.asset == "xrp" and 60.0 < secs_left <= 180.0 and price >= 0.70:
             return "xrp 1-3 min at 70c+"
-        if self.cfg.asset in ("btc", "eth", "sol", "xrp"):          # v1.28: BTC 5m's block, copied to the other 5-minute desks
-            return "last 60s 30-70c" if (secs_left <= 60.0 and 0.30 <= price <= 0.70) else None
+        # Owner, 2026-11-20: XRP 5m's floor is 70c, like BTC's. All live XRP fills: 50-70c lost -$21.38 over 42; under 50c made
+        # +$10.15 over 30 (a few large wins). Nov 20 05:43 Down at 60c with 105 s left, against the market, lost $6.96.
+        if self.cfg.asset == "xrp" and price < 0.70:
+            return "xrp 5m under 70c"
+        # v1.28: BTC 5m's block, copied to the other 5-minute desks. Owner, 2026-11-20: widened from 30-70c to every price up to 70c.
+        # Last-60s buys under 30c on the 5m desks: 12 live, 4 won, -$21.81 (Nov 20 01:09 XRP Down at 19c with 45 s left: -$17.40).
+        if self.cfg.asset in ("btc", "eth", "sol", "xrp"):
+            return "last 60s under 70c" if (secs_left <= 60.0 and price <= 0.70) else None
         if self.cfg.asset == "btc15" and 0.70 <= price < 0.90:
             return "btc15 70-90c"
         return None
