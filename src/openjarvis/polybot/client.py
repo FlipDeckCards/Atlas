@@ -184,18 +184,22 @@ class PolymarketUS:
         return (d or {}).get("market") or {}
 
     async def book(self, slug: str) -> Dict[str, Any]:
-        # v1.30: public reads are shared by every desk and account on this server (one read per market per 0.8 s)
-        try:
-            d = await self._shared(f"book|{slug}", 0.8, lambda: self._req("GET", f"/v1/markets/{slug}/book"), public=True)
-        except PMError as exc:
-            # 2026-11-11: the public gateway answers "market not found" for live crypto Up/Down markets its own events list.
-            # The same read, signed, on the trading host still serves the book.
-            if exc.status != 404 or not (self.key_id and self.secret_key):
-                raise
-            d = await self._shared(f"book-signed|{slug}", 0.8, lambda: self._req("GET", f"/v1/markets/{slug}/book", auth=True), public=False)
-            if _SIGNED_BOOK_SEEN.get(slug) is None:
-                _SIGNED_BOOK_SEEN[slug] = True
-                logger.warning("Order book for %s served by the trading host (the public gateway said not found).", slug)
+        # 2026-11-19 (owner): the book is read from the trading host (signed), where orders fill. The public gateway's copy lagged
+        # it by a median 8c (up to 48c) on 21 of 43 missed orders; the bot decided on prices that were already gone. The read is
+        # market data, the same for every account, so one read per market per 0.8 s is shared by every desk and account on this
+        # server (no more requests than before). The public gateway is only the fallback when a signed read is not possible.
+        if self.key_id and self.secret_key:
+            try:
+                d = await self._shared(f"book-signed|{slug}", 0.8, lambda: self._req("GET", f"/v1/markets/{slug}/book", auth=True),
+                                       public=True)
+                return (d or {}).get("marketData") or {}
+            except PMError as exc:
+                if exc.status == 404:
+                    raise                                   # no book on the trading host either: the market is not open yet
+                if _SIGNED_BOOK_SEEN.get(slug) is None:
+                    _SIGNED_BOOK_SEEN[slug] = True
+                    logger.warning("Signed book read for %s failed (%s); using the public gateway.", slug, exc)
+        d = await self._shared(f"book|{slug}", 0.8, lambda: self._req("GET", f"/v1/markets/{slug}/book"), public=True)
         return (d or {}).get("marketData") or {}
 
     async def bbo(self, slug: str) -> Dict[str, Any]:
