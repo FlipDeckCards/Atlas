@@ -60,3 +60,30 @@ def test_three_tries_at_most_and_two_cents_over_the_first_price():
     assert d._taken("w1", "directional")                         # third miss: gave up, the window stays taken
     assert not d._retry_price_ok("w1", "directional", "up", 0.81)   # 3c over the first 78c
     assert not d._retry_price_ok("w1", "directional", "down", 0.70) # never flips side
+
+
+def test_a_miss_is_cross_checked_against_fresh_reads_once_per_window():
+    import asyncio
+
+    class C:
+        def __init__(self):
+            self.calls = []
+
+        async def _req(self, method, path, **kw):
+            self.calls.append(path)
+            if path.endswith("/book"):
+                return {"marketData": {"offers": [{"px": {"value": "0.81"}, "qty": "40"}], "bids": [{"px": {"value": "0.18"}, "qty": "40"}]}}
+            return {"bestAsk": "0.81"}
+    d = _desk()
+    d.c = C()
+    logs = []
+    d.log = lambda lvl, msg: logs.append(msg)
+
+    async def run():
+        d._place("w1", "directional", "up", 7.8, 10.0, price=0.78, now=1000.0)
+        d._retry_missed(_w(), 1003.5)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+    asyncio.run(run())
+    probe = [m for m in logs if "miss check" in m]
+    assert probe and "fresh signed book 81c" in probe[0] and "bot book 78c" in probe[0]

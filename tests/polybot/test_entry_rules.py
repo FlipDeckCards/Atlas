@@ -60,7 +60,8 @@ def test_btc_5m_blocks_down_buys_at_70_to_79c_only():
     from openjarvis.polybot.desk import Desk
 
     btc = Desk(from_env({}, asset="btc"), None, None)
-    assert btc._blocked_entry(200, 0.75, 0.5, "down") and btc._blocked_entry(200, 0.70, 0.5, "down")
+    # owner, 2026-11-19: Down at 70-79c is no longer blocked on BTC 5m
+    assert not btc._blocked_entry(200, 0.75, 0.5, "down") and not btc._blocked_entry(200, 0.70, 0.5, "down")
     assert not btc._blocked_entry(200, 0.80, 0.5, "down")
     assert btc._block_rule(200, 0.69, 0.5, "down") == "btc 5m under 70c"    # 2026-11-11: under 75c the floor applies
     # Up at 75-79c stays allowed; anything under 75c is now stopped by the floor, not an Up/Down rule
