@@ -1500,6 +1500,7 @@ class Desk:
                 await self.broker.cancel_all(self.clock())
             except Exception:
                 logger.exception("final cancel failed")
+            await self.final_readback()
             self.log("info", "Desk stopped; resting orders cancelled.")
             await self.flush(self.clock())
 
@@ -1512,6 +1513,22 @@ class Desk:
                     await self.c.cancel(str(o["id"]), slug)
         except PMError as exc:
             self.log("warn", f"Could not clear old orders: {exc}")
+
+    async def final_readback(self, tries: int = 3) -> None:
+        """2026-11-19: on shutdown, read back the cancelled orders' final state and book any fill, so the next copy picks the
+        window up. (SOL 5m 06:50z: an order filled at 06:54:31 while this copy shut down for a deploy; nothing recorded it and
+        the new copy flagged the $0.57 position as an "Unrecorded trade".)"""
+        for _ in range(tries):
+            if not getattr(self.broker, "closing", None):
+                return
+            try:
+                self.broker._last_sync = 0.0
+                await self.on_fills(await self.broker.sync(self.book, self.clock()))
+            except Exception:
+                logger.exception("final fill read-back failed")
+                return
+            if getattr(self.broker, "closing", None):
+                await self.sleep(0.5)
 
     def restore_windows(self, rows, now: float) -> None:
         """Windows that still held contracts when the last copy stopped (a deploy mid-window) are settled by this copy, so
