@@ -57,3 +57,23 @@ def test_three_scopes_and_the_current_rules_filter(monkeypatch):
     assert out["rules"]["scope_label"] == "all history, current rules"
     row = out["rules"]["groups"]["cost"][0]
     assert row["fills"] == 2 and row["win_rate"] == 100.0 and row["return_pct"] is not None and row["return_pct"] > 0
+
+
+def test_breakdown_includes_time_of_day_weekday_and_confidence(monkeypatch):
+    # owner, 2026-11-19: every angle, including when (Pacific time) and how sure the model was
+    import datetime as dt
+
+    async def _noop(pool):
+        return None
+    monkeypatch.setattr(sdesk, "_ensure", _noop)
+    sdesk._AN_CACHE.clear()
+    a = _fill("1.22", "up", 0.80, 0.97, 1.0, 120, True)
+    a["ts"] = dt.datetime(2026, 11, 19, 10, 30, tzinfo=dt.timezone.utc)      # Thu 2:30 AM Pacific
+    b = _fill("1.22", "up", 0.80, 0.86, 1.0, 120, False)
+    b["ts"] = dt.datetime(2026, 11, 20, 3, 0, tzinfo=dt.timezone.utc)        # Thu 7:00 PM Pacific
+    out = asyncio.run(sdesk.analysis(_Pool([a, b]), "live", "1.22", "btc", "all"))
+    hours = {r["condition"]: r for r in out["groups"]["hour_la"]}
+    assert hours["overnight (12-6 AM)"]["win_rate"] == 100.0 and hours["evening (6 PM-12 AM)"]["win_rate"] == 0.0
+    assert [r["condition"] for r in out["groups"]["weekday"]] == ["Thursday"]
+    conf = {r["condition"] for r in out["groups"]["model_side"]}
+    assert conf == {"model 95%+ sure", "model 85-90% sure"}
