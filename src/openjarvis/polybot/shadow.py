@@ -126,6 +126,24 @@ def sigma_pct(sigma: Optional[float]) -> float:
 
 # v1.36 (owner, 2026-11-08): settled LIVE fills, v1.21, from the owner's desk CSVs, by model confidence bucket: (trades, wins).
 # Seeds each desk's live tally once, so its confidence is corrected from the start. Desks without a CSV start empty.
+def parse_live_calib(d: Any) -> Optional[Dict[str, Dict[str, int]]]:
+    """2026-11-19: a saved shadow record's live tally (bucket -> {n, wins}), or None when it holds no live trades."""
+    lc = (d or {}).get("live_calib") if isinstance(d, dict) else None
+    if not isinstance(lc, dict):
+        return None
+    out: Dict[str, Dict[str, int]] = {}
+    for _, _, lab in BUCKETS:
+        c = lc.get(lab)
+        if isinstance(c, dict):
+            try:
+                n, w = int(c.get("n") or 0), int(c.get("wins") or 0)
+            except (TypeError, ValueError):
+                continue
+            if n >= 0 and 0 <= w <= n:
+                out[lab] = {"n": n, "wins": w}
+    return out if any(c["n"] for c in out.values()) else None
+
+
 LIVE_SEED: Dict[str, Dict[str, Tuple[int, int]]] = {
     "btc": {"under 50": (1, 0), "70-79": (2, 2), "80-89": (167, 126), "90+": (172, 136)},
     "btc15": {"under 50": (1, 1), "70-79": (1, 0), "80-89": (32, 24), "90+": (47, 38)},
@@ -261,12 +279,14 @@ class Shadow:
         self.live_calib[lab]["n"] += 1
         self.live_calib[lab]["wins"] += 1 if won else 0
 
-    def live_calibrated_conf(self, raw: Optional[float], prior_n: float = 20.0) -> Optional[float]:
-        """v1.33: the raw confidence pulled toward the live win rate of its bucket (same shrinkage as calibrated_conf)."""
+    def live_calibrated_conf(self, raw: Optional[float], prior_n: float = 20.0,
+                             table: Optional[Dict[str, Dict[str, int]]] = None) -> Optional[float]:
+        """v1.33: the raw confidence pulled toward the live win rate of its bucket (same shrinkage as calibrated_conf).
+        2026-11-19: `table` is another live tally to use instead of this desk's own (a brother's desk uses the owner's)."""
         if raw is None or not (0.0 <= raw < 1.01):
             return None
         lab = next(l for lo, hi, l in BUCKETS if lo <= raw < hi) if raw < 1.01 else "90+"
-        c = self.live_calib[lab]
+        c = (table or self.live_calib).get(lab) or {"n": 0, "wins": 0}
         return round((c["wins"] + prior_n * raw) / (c["n"] + prior_n), 4)
 
     def bucket_stats(self, prob: float) -> Tuple[int, int]:

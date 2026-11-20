@@ -415,7 +415,8 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
     _para(d, "Each brother has his own free Aibussol account with a blank Station, the Polymarket Desk business, and his own copies of "
              "eight bots, the same as the owner's (all added 2026-11-19 except BTC and XRP; each new copy starts in paper until he taps LIVE). They trade on his own Polymarket keys, with his own ledger, his own daily stop and "
              f"his own {exposure.CROSS_DESK_PCT:.0f}% all-desk cap, so nothing he does touches your account and his downloads show only "
-             "his trades. The bot logic, sizing steps and hours are the same as yours. You can open any of them read-only from the "
+             "his trades. The bot logic, sizing steps and hours are the same as yours, and since 2026-11-19 his desks correct their "
+             "confidence with YOUR live record for each coin (same markets, far more trades). You can open any of them read-only from the "
              "ACCOUNTS menu.")
     if family:
         rows, colors = [], {}
