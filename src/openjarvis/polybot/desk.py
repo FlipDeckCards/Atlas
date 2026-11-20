@@ -1001,18 +1001,38 @@ class Desk:
         if bk is not None:
             mine = (bk.offers[0][0] if bk.offers else None) if side == "up" else (1.0 - bk.bids[0][0] if bk.bids else None)
             parts.append("bot book " + ("none" if mine is None else f"{mine * 100:.0f}c") + f" ({max(0.0, self.clock() - (bk.ts or 0)):.1f}s old)")
+        def flat(md):
+            # 2026-11-20: every field but the price levels, money values as plain numbers (the old line cut the bbo off at 160 chars)
+            out = {}
+            for k, v in (md or {}).items():
+                if k in ("marketSlug", "bids", "offers"):
+                    continue
+                if isinstance(v, dict) and "value" in v:
+                    v = v.get("value")
+                elif isinstance(v, dict):
+                    v = {k2: (v2.get("value") if isinstance(v2, dict) and "value" in v2 else v2) for k2, v2 in v.items()}
+                out[k] = v
+            return out
         try:
             d = await self.c._req("GET", f"/v1/markets/{slug}/book", auth=True, tries=1)
-            a = side_ask((d or {}).get("marketData") or {})
-            parts.append("fresh signed book " + ("none" if a is None else f"{a * 100:.0f}c"))
+            md = (d or {}).get("marketData") or {}
+            a = side_ask(md)
+            parts.append("fresh signed book " + ("none" if a is None else f"{a * 100:.0f}c") + f" {str(flat(md))[:200]}")
         except Exception as exc:
             parts.append(f"fresh signed book unreadable ({str(exc)[:40]})")
-        try:
-            d = await self.c._req("GET", f"/v1/markets/{slug}/bbo", tries=1)
-            parts.append("bbo " + str({k: v for k, v in (d or {}).items() if k != "marketSlug"})[:160])
-        except Exception as exc:
-            parts.append(f"bbo unreadable ({str(exc)[:40]})")
-        self.log("warn", f"{self.name}: miss check {side} decided at {price * 100:.0f}c: " + " | ".join(parts) + ".")
+        for label, auth in (("bbo", False), ("signed bbo", True)):
+            try:
+                d = await self.c._req("GET", f"/v1/markets/{slug}/bbo", auth=auth, tries=1)
+                parts.append(f"{label} " + str(flat((d or {}).get("marketData") or d))[:600])
+            except Exception as exc:
+                parts.append(f"{label} unreadable ({str(exc)[:40]})")
+        # desk-log lines are kept to 500 characters, which cut the bbo off: one line per source
+        head = f"{self.name}: miss check {side} decided at {price * 100:.0f}c: "
+        books = [p_ for p_ in parts if not p_.startswith(("bbo", "signed bbo"))]
+        self.log("warn", head + " | ".join(books) + ".")
+        for p_ in parts:
+            if p_.startswith(("bbo", "signed bbo")):
+                self.log("warn", head + p_[:440])
 
     def _retry_price_ok(self, slug: str, method: str, side: str, cost: float) -> bool:
         """A retry may pay at most RETRY_PAY_UP over the first decision's price, on the same side."""

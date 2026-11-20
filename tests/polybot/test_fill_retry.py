@@ -73,7 +73,7 @@ def test_a_miss_is_cross_checked_against_fresh_reads_once_per_window():
             self.calls.append(path)
             if path.endswith("/book"):
                 return {"marketData": {"offers": [{"px": {"value": "0.81"}, "qty": "40"}], "bids": [{"px": {"value": "0.18"}, "qty": "40"}]}}
-            return {"bestAsk": "0.81"}
+            return {"marketData": {"marketSlug": "w1", "bestAsk": {"value": "0.90"}, "bestBid": {"value": "0.88"}, "currentPx": {"value": "0.895"}}}
     d = _desk()
     d.c = C()
     logs = []
@@ -87,6 +87,7 @@ def test_a_miss_is_cross_checked_against_fresh_reads_once_per_window():
     asyncio.run(run())
     probe = [m for m in logs if "miss check" in m]
     assert probe and "fresh signed book 81c" in probe[0] and "bot book 78c" in probe[0]
+    assert any("'bestAsk': '0.90'" in m and "signed bbo" in m for m in probe) and all(len(m) <= 500 for m in probe)   # 2026-11-20
 
 
 def test_order_probe_logs_polymarkets_record_of_a_missed_order():
