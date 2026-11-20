@@ -625,11 +625,29 @@ class Desk:
     def _calibrated(self, p):
         """v1.36: every desk's confidence is corrected toward its LIVE fills only (paper ran far better and hid the real losses).
         v1.37 (owner, 2026-11-08): the correction is half strength: half of the gap between the raw model and the live rate is applied."""
-        c = self.shadow.live_calibrated_conf(p)
+        c = self.shadow.live_calibrated_conf(p, table=getattr(self, "_owner_live", None))
         if c is None:
             return p
         c = min(c, p)       # 2026-11-11 (owner): calibration only lowers confidence; a few lucky live wins never raise it over the floor
         return round(p + CORRECTION_STRENGTH * (c - p), 4)
+
+    async def load_owner_calib(self, now: float) -> None:
+        """2026-11-19 (owner): a brother's desk trades on the OWNER's live record for this coin (same markets, same model, same
+        outcomes, far more trades), refreshed every 5 minutes. Its own record is still kept, not used. No owner record: its own."""
+        if not self.base.account or not self._due("owner_calib", 300.0, now):
+            return
+        try:
+            from openjarvis.polybot.state import kv_key
+            d = await self._shared().get(kv_key("shadow2", self.cfg.asset, ""))
+        except Exception:
+            logger.warning("owner's live record unreadable; keeping the last one")
+            return
+        first = not hasattr(self, "_owner_live")
+        self._owner_live = shadow.parse_live_calib(d)
+        if first:
+            n = sum(c["n"] for c in (self._owner_live or {}).values())
+            self.log("info", f"Confidence is corrected by the owner's live record ({n} trades)." if n
+                     else "The owner has no live record on this desk yet; using this desk's own.")
 
     def _caution(self, w) -> bool:
         """2026-11-11: is this window in one of the desk's caution hours (the formerly skipped hours)?"""
@@ -1023,6 +1041,7 @@ class Desk:
             self.stats = {"day": self.rs.day, "fills": 0, "windows": 0, "wins": 0}
         if self._due("control", self.base.control_s, now):
             await self.read_control(now)
+        await self.load_owner_calib(now)
         await self.load_index(now)
         if self._due("sigma", 30.0, now) or self.sigma is None:
             self.sigma = self.tape.sigma_per_s(int(now))
