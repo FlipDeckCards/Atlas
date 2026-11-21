@@ -917,7 +917,8 @@ async def summary(pool, *, trade_limit: int = 50, asset: str = "btc", account: s
             "limits": current_limits(control).__dict__,
             "score": {"paper": await scoreboard(pool, paper, asset=rows, account=account), "live": await scoreboard(pool, live, asset=live_rows, account=account)},
             "trades": {"paper": await trades(pool, paper, trade_limit, asset=rows), "live": await trades(pool, live, trade_limit, asset=live_rows)},
-            "events": await events(pool, 30, asset, account), "mode": mode, "strategy": STRATEGY_VERSION, "deposits": None if account else deposits(),
+            "events": await events(pool, 30, asset, account), "mode": mode, "strategy": STRATEGY_VERSION, "deposits": None if account else deposits(), "referral": None if account else referral(),
+            "withdrawn": None if account else withdrawn(),
             "shadow": await shadow_stats(pool, live if mode == "live" else paper, STRATEGY_VERSION, rows), "shadow_detail": await shadow_detail(pool, asset, account),
             "asset": asset, "name": NAMES[asset], "account": account,
             "hours": {"paper": await by_hour(pool, paper, rows), "live": await by_hour(pool, live, live_rows)},
@@ -934,6 +935,26 @@ def deposits() -> Optional[float]:
     import os
     try:
         v = float((os.environ.get("POLYBOT_DEPOSITS_USD") or "").strip())
+    except ValueError:
+        return None
+    return v if v > 0 else None
+
+
+def withdrawn() -> Optional[float]:
+    """Money the owner took out of Polymarket (POLYBOT_WITHDRAWN_USD): it counts toward all-time results."""
+    import os
+    try:
+        v = float((os.environ.get("POLYBOT_WITHDRAWN_USD") or "").strip())
+    except ValueError:
+        return None
+    return v if v > 0 else None
+
+
+def referral() -> Optional[float]:
+    """Referral money Polymarket credited to the owner (POLYBOT_REFERRAL_USD): money in, not trading profit."""
+    import os
+    try:
+        v = float((os.environ.get("POLYBOT_REFERRAL_USD") or "").strip())
     except ValueError:
         return None
     return v if v > 0 else None
@@ -991,7 +1012,7 @@ async def reconciliation(pool) -> Dict[str, Any]:
     out: Dict[str, Any] = {
         "account_value": None if acct is None else round(float(acct), 2),
         "as_of_day": st.get("day"),
-        "deposits": dep,
+        "deposits": dep, "referral": referral(), "withdrawn": withdrawn(),
         "ledger_all_time": ledger_all,
         "ledger_today": ledger_today,
         "account_change_today": None,
@@ -1004,7 +1025,7 @@ async def reconciliation(pool) -> Dict[str, Any]:
             out["account_change_today"] = round(float(acct) - float(start), 2)
             out["unreconciled_today"] = round(out["account_change_today"] - ledger_today, 2)
         if dep:
-            out["account_change_all_time"] = round(float(acct) - dep, 2)
+            out["account_change_all_time"] = round(float(acct) + (withdrawn() or 0) - dep - (referral() or 0), 2)
             out["unreconciled_all_time"] = round(out["account_change_all_time"] - ledger_all, 2)
     return out
 
@@ -1041,7 +1062,9 @@ def status_text(s: Dict[str, Any]) -> str:
         if st.get("account_value") is not None:
             vs = st.get("version_start")
             lines.append(f"Real Polymarket account value ${st['account_value']:.2f}" + (f" ({st['account_value'] - vs:+.2f} since strategy v{st.get('strategy')} started at ${vs:.2f})" if vs is not None else "")
-                         + (f"; all-time {st['account_value'] - s['deposits']:+.2f} on ${s['deposits']:.2f} deposited" if s.get("deposits") else "")
+                         + (f"; all-time {st['account_value'] + (s.get('withdrawn') or 0) - s['deposits'] - (s.get('referral') or 0):+.2f} on ${s['deposits']:.2f} deposited"
+                            + (f" + ${s['referral']:.2f} referral" if s.get("referral") else "")
+                            + (f", ${s['withdrawn']:.2f} withdrawn" if s.get("withdrawn") else "") if s.get("deposits") else "")
                          + ". Trust this over the scoreboard if they differ.")
         lines.append(f"At risk now ${st.get('at_risk', 0):.2f}; today's P&L {st.get('day_pnl', 0):+.2f}"
                      + (f"; buying power ${st['balance']:.2f}" if st.get("balance") is not None else "") + ".")
