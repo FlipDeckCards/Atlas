@@ -388,8 +388,9 @@ def create_app(
             # its own small pool (each desk holds one connection for its lock, plus one to work): never starves the app's
             pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2 * len(assets) + 1)
             assets = await paper_first(pool, assets)                 # v1.26: the 10 new desks start in paper
-            from openjarvis.server.crew.desk import commodity_live_once
+            from openjarvis.server.crew.desk import commodity_live_once, fees_backfill_once
             await commodity_live_once(pool, assets)                   # 2026-11-19: commodity desks live at 1% (owner)
+            await fees_backfill_once(pool)                            # 2026-11-20: past live P&L after Polymarket's taker fee, once
             runners = [Runner(from_env(asset=a), pool) for a in assets]
             for i, r in enumerate(runners):
                 r.start_delay = 0.8 * i          # v1.29: staggered, not all at once

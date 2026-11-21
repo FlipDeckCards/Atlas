@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from openjarvis.polybot.client import PMError, money
-from openjarvis.polybot.strategy import Quote
+from openjarvis.polybot.strategy import Quote, taker_fee
 
 logger = logging.getLogger("polybot.brokers")
 
@@ -54,10 +54,16 @@ class Fill:
     qty: float
     ts: float
     order_id: str = ""
+    fee: float = 0.0     # 2026-11-20: Polymarket's taker fee on this fill (0 for a resting maker order)
 
     @property
     def cost(self) -> float:
         return round(self.qty * (self.price if self.side == "up" else 1.0 - self.price), 6)
+
+
+def fill_fee(price: float, qty: float, taker: bool) -> float:
+    """Polymarket US's taker fee for a fill (the same for either side: it depends on p x (1 - p)); none for a maker fill."""
+    return round(taker_fee(float(price)) * float(qty), 6) if taker else 0.0
 
 
 @dataclass
@@ -170,7 +176,7 @@ class PaperBroker:
             q = round(min(left, got), 2)
             if q > 0:
                 r.filled = round(r.filled + q, 6)
-                fills.append(Fill(self.slug, side, p, q, now, r.order_id))
+                fills.append(Fill(self.slug, side, p, q, now, r.order_id, fee=fill_fee(p, q, r.quote.taker)))
                 if r.left <= 0:
                     del self.resting[side]
         return fills
@@ -267,7 +273,8 @@ class LiveBroker:
             cum = money(o.get("cumQuantity")) or 0.0
             if cum > r.filled + 1e-9:
                 px = money(o.get("avgPx")) or r.quote.price
-                fills.append(Fill(self.slug, side, px, round(cum - r.filled, 6), now, r.order_id))
+                q_ = round(cum - r.filled, 6)
+                fills.append(Fill(self.slug, side, px, q_, now, r.order_id, fee=fill_fee(px, q_, r.quote.taker)))
                 r.filled = cum
             state = str(o.get("state") or "")
             # gone from the open list is not the same as finished: a cancel can still be pending, and the order can still fill.

@@ -38,6 +38,8 @@ CREATE INDEX IF NOT EXISTS polybot_candidates_ts ON polybot_candidates (ts);
 CREATE TABLE IF NOT EXISTS polybot_window_results (slug TEXT NOT NULL, asset TEXT NOT NULL, up BOOLEAN NOT NULL,
   close_price DOUBLE PRECISION, settled_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (asset, slug));
 ALTER TABLE polybot_events ADD COLUMN IF NOT EXISTS asset TEXT;
+ALTER TABLE polybot_windows ADD COLUMN IF NOT EXISTS fees_in_pnl BOOLEAN;
+ALTER TABLE polybot_windows ADD COLUMN IF NOT EXISTS fees DOUBLE PRECISION;
 ALTER TABLE polybot_window_results ADD COLUMN IF NOT EXISTS price_to_beat DOUBLE PRECISION;
 ALTER TABLE polybot_window_results ADD COLUMN IF NOT EXISTS index_close DOUBLE PRECISION;
 ALTER TABLE polybot_window_results ADD COLUMN IF NOT EXISTS index_up BOOLEAN;
@@ -228,11 +230,14 @@ class PgStore:
                 for w in windows:
                     await c.execute(
                         "INSERT INTO polybot_windows (slug, mode, window_start, window_end, price_to_beat, close_price, up, up_qty, up_cost, "
-                        "down_qty, down_cost, pnl, settled_at, version) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT (slug, mode) DO UPDATE SET "
+                        "down_qty, down_cost, pnl, settled_at, version, fees_in_pnl) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) "
+                        "ON CONFLICT (slug, mode) DO UPDATE SET "
                         "close_price = EXCLUDED.close_price, up = EXCLUDED.up, up_qty = EXCLUDED.up_qty, up_cost = EXCLUDED.up_cost, "
-                        "down_qty = EXCLUDED.down_qty, down_cost = EXCLUDED.down_cost, pnl = EXCLUDED.pnl, settled_at = EXCLUDED.settled_at",
+                        "down_qty = EXCLUDED.down_qty, down_cost = EXCLUDED.down_cost, pnl = EXCLUDED.pnl, settled_at = EXCLUDED.settled_at, "
+                        "fees_in_pnl = EXCLUDED.fees_in_pnl",
                         w["slug"], w["mode"], _t(w["window_start"]), _t(w["window_end"]), w["price_to_beat"], w.get("close_price"), w.get("up"),
-                        w["up_qty"], w["up_cost"], w["down_qty"], w["down_cost"], w.get("pnl"), _t(w.get("settled_at")), w.get("version"))
+                        w["up_qty"], w["up_cost"], w["down_qty"], w["down_cost"], w.get("pnl"), _t(w.get("settled_at")), w.get("version"),
+                        w.get("fees_in_pnl"))
                 if events:
                     await c.executemany("INSERT INTO polybot_events (ts, level, text, asset) VALUES ($1,$2,$3,$4)",
                                         [(_t(e["ts"]), e["level"], e["text"], e.get("asset") or "btc") for e in events])

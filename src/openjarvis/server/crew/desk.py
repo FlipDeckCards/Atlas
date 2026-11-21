@@ -133,6 +133,34 @@ async def commodity_live_once(pool, assets) -> None:
             logger.exception("could not set the %s commodity desk live; it stays as it was", a)
 
 
+async def fees_backfill_once(pool) -> None:
+    """Owner, 2026-11-20: P&L is after Polymarket's taker fee (0.0695 x p x (1 - p) per contract). The desks book it from now on;
+    this subtracts it once from every live window settled since v1.22 (Nov 10, when every method crossed the spread) that was
+    booked without it, so the Station, scoreboards and daily sheet match the account. Marked fees_backfill_v1; runs once."""
+    try:
+        await _ensure(pool)
+        flag = await get_kv(pool, "fees_backfill_v1")
+        if flag.get("done"):
+            return
+        async with pool.acquire() as c:
+            async with c.transaction():
+                n = await c.fetchval(
+                    "WITH f AS (SELECT mode, slug, sum(0.0695 * price * (1 - price) * qty) AS fee, "
+                    "sum(CASE WHEN side = 'up' THEN 0.0695 * price * (1 - price) * qty ELSE 0 END) AS fu, "
+                    "sum(CASE WHEN side = 'down' THEN 0.0695 * price * (1 - price) * qty ELSE 0 END) AS fd "
+                    "FROM polybot_fills WHERE mode LIKE 'live%' AND (features->>'fee') IS NULL GROUP BY mode, slug), "
+                    "u AS (UPDATE polybot_windows w SET pnl = w.pnl - f.fee, up_cost = coalesce(w.up_cost, 0) + f.fu, "
+                    "down_cost = coalesce(w.down_cost, 0) + f.fd, fees = f.fee, fees_in_pnl = TRUE FROM f "
+                    "WHERE w.mode = f.mode AND w.slug = f.slug AND w.fees_in_pnl IS NOT TRUE AND w.pnl IS NOT NULL "
+                    "AND w.settled_at >= '2026-11-10' RETURNING 1) SELECT count(*) FROM u")
+                await c.execute("INSERT INTO polybot_kv (key, value, updated_at) VALUES ($1, $2::jsonb, now()) "
+                                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+                                "fees_backfill_v1", json.dumps({"done": True, "windows": int(n or 0)}))
+        logger.warning("Fees backfill: %s live windows since Nov 10 now booked after Polymarket's taker fee", n)
+    except Exception:
+        logger.exception("fees backfill failed; P&L stays as booked")
+
+
 async def put_control(pool, control: Dict[str, Any], asset: str = "btc", account: str = "") -> None:
     await _ensure(pool)
     async with pool.acquire() as c:
@@ -481,7 +509,7 @@ async def export_fills(pool, asset: str = "btc", account: str = "") -> str:
                  "book_up", "model_vs_market", "sweep", "window_result", "window_pnl", "decision_method", "decision_raw", "decision_conf",
                  "decision_price", "decision_book_age_s", "decision_last_trade", "decision_last_trade_age_s",
                  "decision_to_fill_s", "paid_vs_decision", "decision_qty", "decision_ask_size", "decision_depth_2c",
-                 "decision_depth_2c_usd"])
+                 "decision_depth_2c_usd", "fee"])
     for r in rows:
         feat = _j(r["features"])
         m = feat.get("model")
@@ -501,7 +529,9 @@ async def export_fills(pool, asset: str = "btc", account: str = "") -> str:
                      feat.get("decision_last_trade_age_s"), feat.get("decision_to_fill_s"),
                      None if not isinstance(feat.get("decision_price"), (int, float)) else round(bp - feat["decision_price"], 4),
                      feat.get("decision_qty"), feat.get("decision_ask_size"), feat.get("decision_depth_2c"),
-                     feat.get("decision_depth_2c_usd")])
+                     feat.get("decision_depth_2c_usd"),
+                     feat.get("fee") if isinstance(feat.get("fee"), (int, float)) else
+                     (round(0.0695 * bp * (1.0 - bp) * float(r["qty"]), 6) if str(r["mode"]).startswith("live") else 0.0)])
     return buf.getvalue()
 
 
@@ -578,7 +608,10 @@ async def analysis(pool, mode: str = "paper", version: str = STRATEGY_VERSION, a
         won = bool(r["up"]) if r["side"] == "up" else not bool(r["up"])
         mz = feat.get("momentum_z")
         m = feat.get("model")
-        t = {"won": won, "qty": float(r["qty"]), "pnl": float(r["qty"]) * ((1.0 if won else 0.0) - cost_per),
+        # 2026-11-20: after Polymarket's taker fee (recorded per fill from today; earlier live fills get the same formula)
+        fee = feat.get("fee")
+        fee = float(fee) if isinstance(fee, (int, float)) else (0.0695 * cost_per * (1.0 - cost_per) * float(r["qty"]) if str(mode).startswith("live") else 0.0)
+        t = {"won": won, "qty": float(r["qty"]), "pnl": float(r["qty"]) * ((1.0 if won else 0.0) - cost_per) - fee,
              "edge": feat.get("edge"), "secs_left": feat.get("secs_left"), "cost": cost_per, "side": r["side"],
              "momentum_z": mz, "sweep": feat.get("sweep") is True,
              "model_side": None if not isinstance(m, (int, float)) else (m if r["side"] == "up" else 1.0 - m),
