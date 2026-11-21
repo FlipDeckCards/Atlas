@@ -930,7 +930,7 @@ function factorySec(key) {
   const l = mk('div', 'lbl'); l.append(mk('span', null, 'Factory'), mk('span', 'tag', b.state)); s.append(l);
   const h = mk('div', 'h', b.label); h.style.color = b.color; if (key === 'polymarket') h.style.fontSize = '17px'; s.append(h);
   const about = bizAbout(key); if (about) s.append(mk('div', 'dim', about));
-  if (key === 'polymarket') { accountLines(DESKS.btc).forEach(el => s.append(el)); DESK_ORDER.forEach(a => {
+  if (key === 'polymarket') { accountLines(DESKS.btc).forEach(el => s.append(el)); const tb = tradingBox(); if (tb) s.append(tb); DESK_ORDER.forEach(a => {
     const d = DESKS[a]; const wf = d && !d.error && ((d.status || {}).mode || 'paper') === (DESK_VIEW || 'live') ? windowFlag(d.status || {}, DESK_LABEL(a) + ' Desk') : null; if (wf) s.append(wf);   // the desks on the LIVE or PAPER side, as the switch says
   }); }
   if (key === 'polymarket' && !isOwner() && DESKS.btc && DESKS.btc.error && /Connect/.test(DESKS.btc.error)) s.append(polymarketConnectSec());
@@ -947,7 +947,7 @@ function factorySec(key) {
   const site = (S && S.products && S.products[key]) || (FIN && FIN.products && FIN.products[key]) || null;
   if (site) s.append(mk('div', 'dim', (site.live ? 'Site live' : 'Site NOT answering') + (site.url ? ' · ' + site.url : '') + (site.checked_at ? ' · checked ' + ago(site.checked_at) : '')));
   const r = FIN && FIN.factories ? FIN.factories[key] : null;
-  if (r) { s.append(pnlBlock(r, 'P&L')); s.append(mk('div', 'dim', costLine(r))); }
+  if (r && key !== 'polymarket') { s.append(pnlBlock(r, 'P&L')); s.append(mk('div', 'dim', costLine(r))); }   // the desk has its own box (owner 2026-11-21)
   else s.append(mk('div', 'dim', FIN ? 'No money in or out for this factory yet.' : 'Loading the numbers…'));
   if (FIN && FIN.product_stats && FIN.product_stats[key]) {
     const ul = mk('div', 'lbl'); ul.style.marginTop = '12px'; ul.textContent = 'Users'; s.append(ul);
@@ -3225,6 +3225,17 @@ function pnlBlock(r, title) {
   cell('In today', money(r.revenue_today), '#00ff99'); cell('Out today', money(r.cost_today), '#ff8a2a'); cell('Net today', sign(r.net_today), r.net_today < 0 ? '#ff3344' : '#00ff99');
   cell('In 30d', money(r.revenue_30d)); cell('Out 30d', money(r.cost_30d)); cell('Net 30d', sign(r.net_30d), r.net_30d < 0 ? '#ff3344' : '#00ff99');
   cell('MRR', money(r.mrr)); cell('Subscribers', String(r.subscribers || 0));
+  box.append(grid);
+  return box;
+}
+// owner 2026-11-21: the desk's live trading result, today and last 30 days, under the account stack (green up, red down)
+function tradingBox() {
+  const t = FIN && FIN.trading && FIN.trading.polymarket;
+  if (!t) return null;
+  const box = mk('div', 'pnl'), grid = mk('div', 'pnl-g');
+  box.append(mk('div', 'pnl-t', 'P&L'));
+  const cell = (label, v) => { const c = mk('div', 'pnl-c'); c.append(mk('div', 'pnl-l', label)); const b = mk('div', 'pnl-v', signed(Number(v) || 0)); b.style.color = (Number(v) || 0) < 0 ? '#ff3344' : '#00ff99'; c.append(b); grid.append(c); };
+  cell('Today', t.today); cell('30 days', t.d30);
   box.append(grid);
   return box;
 }

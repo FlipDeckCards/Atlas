@@ -442,6 +442,7 @@ async def subscriber_finance(request: Request, engine, uid: str, pool, missions=
         except Exception:
             logger.exception("a subscriber's desk P&L is unavailable")
     out = await fin_u.report(uid, missions, keys, owner=False, trading=trading)
+    out["trading"] = trading                    # 2026-11-21: the desk's own today / 30-day trading P&L box on the Station
     out["products"] = await engine.products_for(uid, biz)
     out["product_stats"], out["aibussol_stats"] = {}, None
     return out
@@ -475,6 +476,7 @@ async def crew_finance(request: Request):
         except Exception:
             logger.exception("desk P&L unavailable")
     out = await fin.report(uid, missions, keys, trading=trading)
+    out["trading"] = trading                    # 2026-11-21: the desk's own today / 30-day trading P&L box on the Station
     out["products"] = engine.products
     from openjarvis.server.crew.product_stats import ProductStats
 
