@@ -3191,10 +3191,11 @@ function tradingBox() {
       // owner 2026-11-21: two more lines per person, each desk's result today (green up, red down)
       const dk = p.desks || {};
       const dv = v => { const x = mk('span', null, v == null ? '—' : v === 0 ? '$0.00' : signed(v)); x.style.color = v == null || v === 0 ? '#8a9aa8' : v < 0 ? '#ff3344' : '#00ff99'; return x; };
-      [['CRYPTO', [['BTC', 'btc'], ['XRP', 'xrp'], ['SOL', 'sol'], ['ETH', 'eth']]], ['CMDTY', [['GLD', 'gold'], ['SIL', 'silver'], ['OIL', 'wti'], ['NTG', 'natgas']]]].forEach(([title, items]) => {
-        const l = mk('div', 'row'); l.style.fontSize = '11px'; l.style.gap = '6px'; l.style.flexWrap = 'wrap'; l.style.paddingLeft = '2px';
-        l.append(mk('span', 'dim', title + ':'));
-        items.forEach(([lab, key], i) => { if (i) l.append(mk('span', 'dim', '|')); l.append(mk('span', 'dim', lab), dv(dk[key])); });
+      // each category on one line (no wrapping, no row dividers): coloured title, then "BTC $x | XRP $x | ..."
+      [['Crypto:', '#00e5ff', [['BTC', 'btc'], ['XRP', 'xrp'], ['SOL', 'sol'], ['ETH', 'eth']]], ['Cmdty:', '#ffd54f', [['GLD', 'gold'], ['SIL', 'silver'], ['OIL', 'wti'], ['NTG', 'natgas']]]].forEach(([title, col, items]) => {
+        const l = mk('div'); l.style.cssText = 'display:flex;flex-wrap:nowrap;align-items:baseline;gap:3px;font-size:9.5px;white-space:nowrap;padding:3px 0 3px 2px;overflow:hidden';
+        const t = mk('span', null, title); t.style.color = col; t.style.fontWeight = '700'; t.style.minWidth = '44px'; l.append(t);
+        items.forEach(([lab, key], i) => { if (i) l.append(mk('span', 'dim', '|')); const it = mk('span'); it.style.whiteSpace = 'nowrap'; const n = mk('span', 'dim', lab + ' '); it.append(n, dv(dk[key])); l.append(it); });
         box.append(l);
       });
     });
