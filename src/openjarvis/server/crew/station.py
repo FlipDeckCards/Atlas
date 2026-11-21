@@ -1147,7 +1147,27 @@ function deskCurve(points) {
   path.setAttribute('points', points.map((p, i) => X(i).toFixed(1) + ',' + Y(p[1]).toFixed(1)).join(' ')); svg.append(path);
   return svg;
 }
-let RH = null, RH_AT = 0;
+let RH = null, RH_AT = 0, RH_MOVES = null, RH_MOVES_OPEN = false;
+function rhMovesTable(m) {
+  // typical move per horizon for each coin, and how often it beat the round-trip cost (public exchange candles)
+  const box = mk('div');
+  if (m.error) { box.append(mk('div', 'dim', m.error)); return box; }
+  const coins = Object.keys(m.coins || {}).filter(k => (m.coins[k] || []).length);
+  if (!coins.length) { box.append(mk('div', 'dim', 'Price history is still loading (the first fill takes a few minutes). Try again shortly.')); return box; }
+  box.append(mk('div', 'dim', 'Typical move (median, either direction) · how often the move beat the ' + m.cost_pct + '% round-trip cost. Under a day: last '
+    + Math.round(((m.span || {})[coins[0]] || {}).intraday_days || 0) + ' days of 5-minute prices; a day and over: last ' + Math.round(((m.span || {})[coins[0]] || {}).daily_days || 0) + ' days.'));
+  const t = document.createElement('table'); t.style.width = '100%'; t.style.fontSize = '12px'; t.style.borderCollapse = 'collapse';
+  const hr = document.createElement('tr'); ['Hold'].concat(coins).forEach(h => { const th = document.createElement('th'); th.textContent = h; th.style.textAlign = 'left'; hr.append(th); }); t.append(hr);
+  (m.coins[coins[0]] || []).forEach((row, i) => {
+    const tr = document.createElement('tr'); const td0 = document.createElement('td'); td0.textContent = row.horizon; tr.append(td0);
+    coins.forEach(cn => { const r = (m.coins[cn] || [])[i] || {}; const td = document.createElement('td');
+      td.textContent = (r.median_abs != null ? r.median_abs.toFixed(2) + '%' : '-') + ' · ' + (r.beat_cost != null ? r.beat_cost + '%' : '-');
+      td.style.color = (r.beat_cost || 0) >= 50 ? '#00ff99' : (r.beat_cost || 0) >= 20 ? '#ffb347' : '#ff3344'; tr.append(td); });
+    t.append(tr);
+  });
+  box.append(t);
+  return box;
+}
 async function loadRH() {
   RH_AT = Date.now();
   const x = await api('/api/crew/robinhood');
@@ -1221,7 +1241,12 @@ function robinhoodSec() {
    ['⬇ Orders CSV', '/api/crew/robinhood/orders.csv', 'robinhood-orders.csv'], ['⬇ Quotes CSV', '/api/crew/robinhood/quotes.csv', 'robinhood-quotes.csv']].forEach(([label, path, name]) => {
     const b = mk('button', 'b', label); b.onclick = rhDownload(path, name); row3.append(b);
   });
+  const mvb = mk('button', 'b', RH_MOVES_OPEN ? 'Hide move stats' : 'Move stats');
+  mvb.onclick = async () => { RH_MOVES_OPEN = !RH_MOVES_OPEN; if (RH_MOVES_OPEN && !RH_MOVES) { const x = await api('/api/crew/robinhood/moves'); RH_MOVES = x.ok ? x.data : { error: (x.data && x.data.detail) || 'HTTP ' + x.status }; } renderSide(); };
+  const mvc = mk('button', 'b', '⬇ Move stats CSV'); mvc.onclick = rhDownload('/api/crew/robinhood/moves.csv', 'robinhood-move-stats.csv');
+  row3.append(mvb, mvc);
   s.append(row3);
+  if (RH_MOVES_OPEN && RH_MOVES) s.append(rhMovesTable(RH_MOVES));
   if (st.last_error) s.append(mk('div', 'dim', 'Last problem: ' + st.last_error));
   (RH.events || []).filter(e => !e.coin).slice(0, 4).forEach(e => s.append(mk('div', 'dim', ago(e.ts) + ' · ' + e.text)));
   // one desk per coin
