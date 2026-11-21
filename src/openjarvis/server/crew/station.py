@@ -1362,14 +1362,14 @@ function deskViewTabs() {
     };
     all.append(b);
   });
-  // owner 2026-11-21: the shadow, daily P&L and brief buttons sit under the four CSVs, same style; every button its own colour
-  const more = mk('div', 'desk-tabs'), [shBtn, shPanel] = shadowBreakdownParts();
-  more.append(shBtn, dailyPnlBtn());
+  // owner 2026-11-21: the daily P&L and brief buttons sit under the four CSVs, same style; every button its own colour
+  const more = mk('div', 'desk-tabs');
+  more.append(dailyPnlBtn());
   if (isOwner() && !VIEW_AS) more.append(briefBtn());              // the business brief: the owner's own Station only
   const COLORS = ['#00e5ff', '#c792ea', '#ff6ec7', '#14f195', '#4f8cff', '#ffd54f', '#f5f5f5'];
   [...all.children, ...more.children].forEach((b, i) => { b.style.borderColor = COLORS[i % COLORS.length]; b.style.color = COLORS[i % COLORS.length]; });
   all.style.flexWrap = 'wrap'; more.style.flexWrap = 'wrap';
-  w.append(all, more, shPanel);
+  w.append(all, more);
   return w;
 }
 function deskSec(key) {
