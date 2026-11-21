@@ -1490,6 +1490,29 @@ async def crew_robinhood_moves(request: Request, cost: float = 1.9):
     return await rh_history.stats(g[1], max(0.0, min(float(cost), 20.0)))
 
 
+@router.get("/api/crew/robinhood/backtest")
+async def crew_robinhood_backtest(request: Request, cost: float = 1.9):
+    """The owner's trailing-stop trend plan, every variant, per coin, on the stored price history (after costs)."""
+    g = await _rh_gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    from openjarvis.server.crew import rh_backtest
+
+    return await rh_backtest.backtest(g[1], max(0.0, min(float(cost), 20.0)))
+
+
+@router.get("/api/crew/robinhood/backtest.csv")
+async def crew_robinhood_backtest_export(request: Request, cost: float = 1.9):
+    g = await _rh_gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    from openjarvis.server.crew import rh_backtest
+
+    bt = await rh_backtest.backtest(g[1], max(0.0, min(float(cost), 20.0)))
+    return Response(content=rh_backtest.backtest_csv(bt), media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="robinhood-backtest.csv"'})
+
+
 @router.get("/api/crew/robinhood/moves.csv")
 async def crew_robinhood_moves_export(request: Request, cost: float = 1.9):
     g = await _rh_gate(request)

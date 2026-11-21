@@ -1244,7 +1244,8 @@ function robinhoodSec() {
   const mvb = mk('button', 'b', RH_MOVES_OPEN ? 'Hide move stats' : 'Move stats');
   mvb.onclick = async () => { RH_MOVES_OPEN = !RH_MOVES_OPEN; if (RH_MOVES_OPEN && !RH_MOVES) { const x = await api('/api/crew/robinhood/moves'); RH_MOVES = x.ok ? x.data : { error: (x.data && x.data.detail) || 'HTTP ' + x.status }; } renderSide(); };
   const mvc = mk('button', 'b', '⬇ Move stats CSV'); mvc.onclick = rhDownload('/api/crew/robinhood/moves.csv', 'robinhood-move-stats.csv');
-  row3.append(mvb, mvc);
+  const btc = mk('button', 'b', '⬇ Trend backtest CSV'); btc.onclick = rhDownload('/api/crew/robinhood/backtest.csv', 'robinhood-backtest.csv');
+  row3.append(mvb, mvc, btc);
   s.append(row3);
   if (RH_MOVES_OPEN && RH_MOVES) s.append(rhMovesTable(RH_MOVES));
   if (st.last_error) s.append(mk('div', 'dim', 'Last problem: ' + st.last_error));
