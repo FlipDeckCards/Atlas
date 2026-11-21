@@ -49,6 +49,9 @@ CREATE TABLE IF NOT EXISTS rh_fills (
   realized_pnl DOUBLE PRECISION, strategy TEXT);
 CREATE INDEX IF NOT EXISTS rh_fills_ts ON rh_fills (ts);
 CREATE TABLE IF NOT EXISTS rh_events (id BIGSERIAL PRIMARY KEY, ts TIMESTAMPTZ NOT NULL DEFAULT now(), level TEXT NOT NULL, text TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS rh_quotes (ts TIMESTAMPTZ NOT NULL DEFAULT now(), coin TEXT NOT NULL, bid DOUBLE PRECISION NOT NULL,
+  ask DOUBLE PRECISION NOT NULL, mid DOUBLE PRECISION NOT NULL);
+CREATE INDEX IF NOT EXISTS rh_quotes_ts ON rh_quotes (ts);
 CREATE TABLE IF NOT EXISTS rh_kv (key TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
 """
 
@@ -237,6 +240,16 @@ class Engine:
             h = self.history.setdefault(c, [])
             h.append((int(now), p["mid"]))
             del h[:-1500]                                   # about 6 hours at one look every 15 s
+        # 2026-11-20 (owner): one quote a minute per coin is kept, to measure Robinhood's real spread and to build price history
+        if self.prices and self._due("quotes", 60.0, now):
+            try:
+                async with self.pool.acquire() as c:
+                    await c.executemany("INSERT INTO rh_quotes (coin, bid, ask, mid) VALUES ($1,$2,$3,$4)",
+                                        [(k, v["bid"], v["ask"], v["mid"]) for k, v in self.prices.items()])
+                    if self._due("quotes_trim", 86400.0, now):
+                        await c.execute("DELETE FROM rh_quotes WHERE ts < now() - interval '120 days'")
+            except Exception:
+                logger.warning("rh quotes not saved")
         if not self.pairs or self._due("pairs", 3600.0, now):
             try:
                 self.pairs = await self.c.trading_pairs([SYMBOL[c] for c in bot.COINS])
@@ -541,6 +554,9 @@ async def state(pool) -> Dict[str, Any]:
         orders = await c.fetch("SELECT id, ts, mode, coin, side, type, notional, qty, limit_price, state, filled_qty, avg_price, "
                                "strategy, reason, detail FROM rh_orders ORDER BY ts DESC LIMIT 30")
         events = await c.fetch("SELECT ts, level, text FROM rh_events ORDER BY id DESC LIMIT 30")
+        spread = await c.fetch("SELECT coin, count(*) AS n, percentile_cont(0.5) WITHIN GROUP (ORDER BY (ask - bid) / mid) AS med, "
+                               "percentile_cont(0.9) WITHIN GROUP (ORDER BY (ask - bid) / mid) AS p90, min(ts) AS since "
+                               "FROM rh_quotes WHERE ts > now() - interval '7 days' GROUP BY coin ORDER BY coin")
         today = dt.datetime.now(dt.timezone.utc).astimezone(_la()).replace(hour=0, minute=0, second=0, microsecond=0)
         score = await c.fetch("SELECT mode, count(*) FILTER (WHERE side = 'sell') AS exits, "
                               "count(*) FILTER (WHERE side = 'sell' AND realized_pnl > 0) AS wins, "
@@ -557,6 +573,8 @@ async def state(pool) -> Dict[str, Any]:
     return {"status": j(st), "control": {**DEFAULT_CONTROL, **j(ctl)},
             "orders": [{**dict(r), "ts": r["ts"].isoformat()} for r in orders],
             "events": [{"ts": r["ts"].isoformat(), "level": r["level"], "text": r["text"]} for r in events],
+            "spread": [{"coin": r["coin"], "samples": int(r["n"]), "median_pct": round(100 * float(r["med"]), 3),
+                        "p90_pct": round(100 * float(r["p90"]), 3), "since": r["since"].isoformat()} for r in spread],
             "scoreboard": {r["mode"]: {"exits": int(r["exits"]), "wins": int(r["wins"]), "pnl": round(float(r["pnl"]), 2),
                                        "today": round(float(r["today"]), 2)} for r in score}}
 
@@ -633,4 +651,21 @@ async def export_orders(pool) -> str:
     for r in rows:
         wr.writerow([r["ts"].isoformat()] + [r[k] for k in ("mode", "coin", "side", "type", "notional", "qty", "limit_price", "state",
                                                                "filled_qty", "avg_price", "strategy", "reason", "detail", "realized_pnl")])
+    return buf.getvalue()
+
+
+async def export_quotes(pool) -> str:
+    """Every saved quote (one a minute per coin): bid and ask include Robinhood's spread; spread_pct is the full buy-sell gap."""
+    import csv
+    import io
+
+    await ensure(pool)
+    async with pool.acquire() as c:
+        rows = await c.fetch("SELECT ts, coin, bid, ask, mid FROM rh_quotes ORDER BY ts")
+    buf = io.StringIO()
+    wr = csv.writer(buf)
+    wr.writerow(["time_utc", "coin", "bid", "ask", "mid", "spread_pct"])
+    for r in rows:
+        wr.writerow([r["ts"].isoformat(), r["coin"], r["bid"], r["ask"], r["mid"],
+                     round(100 * (r["ask"] - r["bid"]) / r["mid"], 4) if r["mid"] else ""])
     return buf.getvalue()

@@ -1434,3 +1434,14 @@ async def crew_robinhood_orders_export(request: Request):
 
     return Response(content=await rh_engine.export_orders(g[1]), media_type="text/csv",
                     headers={"Content-Disposition": 'attachment; filename="robinhood-orders.csv"'})
+
+
+@router.get("/api/crew/robinhood/quotes.csv")
+async def crew_robinhood_quotes_export(request: Request):
+    g = await _rh_gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    from openjarvis.server.crew import rh_engine
+
+    return Response(content=await rh_engine.export_quotes(g[1]), media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="robinhood-quotes.csv"'})

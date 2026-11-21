@@ -1179,6 +1179,7 @@ function robinhoodSec() {
       + (p.unrealized != null ? ' · ' + signed(p.unrealized) : ''));
     if (p.unrealized != null) t.style.color = pnlColor(p.unrealized); r.append(t); s.append(r);
   });
+  if ((RH.spread || []).length) s.append(mk('div', 'dim', 'Robinhood spread (buy vs sell, last 7 days): ' + RH.spread.map(x => x.coin + ' ' + x.median_pct + '% (worst 10%: ' + x.p90_pct + '%)').join(' · ')));
   const sb = (RH.scoreboard || {})[live ? 'live' : 'paper'];
   if (sb) s.append(mk('div', null, 'Scoreboard (' + (live ? 'live' : 'paper') + '): ' + sb.exits + ' exits, ' + sb.wins + ' won · total ' + signed(sb.pnl) + ' · today ' + signed(sb.today)));
   // orders waiting for the owner's approval
@@ -1216,7 +1217,14 @@ function robinhoodSec() {
     const url = URL.createObjectURL(await res.blob()); const a = document.createElement('a'); a.href = url; a.download = 'robinhood-orders.csv';
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-  row2.append(sel, ap, dl); s.append(row2);
+  const dq = mk('button', 'b', '⬇ Quotes CSV');
+  dq.onclick = async () => {
+    const res = await fetch('/api/crew/robinhood/quotes.csv', { headers: { 'Authorization': 'Bearer ' + token() } });
+    if (!res.ok) { alert('Download failed'); return; }
+    const url = URL.createObjectURL(await res.blob()); const a = document.createElement('a'); a.href = url; a.download = 'robinhood-quotes.csv';
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  row2.append(sel, ap, dl, dq); s.append(row2);
   if (st.last_error) s.append(mk('div', 'dim', 'Last problem: ' + st.last_error));
   (RH.events || []).slice(0, 8).forEach(e => s.append(mk('div', 'dim', ago(e.ts) + ' · ' + e.text)));
   return s;
