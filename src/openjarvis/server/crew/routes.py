@@ -1513,6 +1513,19 @@ async def crew_robinhood_backtest_export(request: Request, cost: float = 1.9):
                     headers={"Content-Disposition": 'attachment; filename="robinhood-backtest.csv"'})
 
 
+@router.get("/api/crew/robinhood/backtest_costs.csv")
+async def crew_robinhood_backtest_costs(request: Request):
+    """The trend backtest at 0.1 / 0.25 / 0.5 / 1.0 / 1.9% round trip: what a cheaper exchange would change."""
+    g = await _rh_gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    from openjarvis.server.crew import rh_backtest
+
+    bt = await rh_backtest.backtest_costs(g[1])
+    return Response(content=rh_backtest.backtest_csv(bt), media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="robinhood-backtest-by-cost.csv"'})
+
+
 @router.get("/api/crew/robinhood/moves.csv")
 async def crew_robinhood_moves_export(request: Request, cost: float = 1.9):
     g = await _rh_gate(request)

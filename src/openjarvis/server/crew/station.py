@@ -1245,8 +1245,12 @@ function robinhoodSec() {
   mvb.onclick = async () => { RH_MOVES_OPEN = !RH_MOVES_OPEN; if (RH_MOVES_OPEN && !RH_MOVES) { const x = await api('/api/crew/robinhood/moves'); RH_MOVES = x.ok ? x.data : { error: (x.data && x.data.detail) || 'HTTP ' + x.status }; } renderSide(); };
   const mvc = mk('button', 'b', '⬇ Move stats CSV'); mvc.onclick = rhDownload('/api/crew/robinhood/moves.csv', 'robinhood-move-stats.csv');
   const btc = mk('button', 'b', '⬇ Trend backtest CSV'); btc.onclick = rhDownload('/api/crew/robinhood/backtest.csv', 'robinhood-backtest.csv');
-  row3.append(mvb, mvc, btc);
-  s.append(row3);
+  // the research buttons get their own row so nothing runs off the screen on a phone
+  const row4 = mk('div', 'desk-tabs');
+  row3.style.flexWrap = 'wrap'; row4.style.flexWrap = 'wrap';
+  const btk = mk('button', 'b', '⬇ Backtest by cost CSV'); btk.onclick = rhDownload('/api/crew/robinhood/backtest_costs.csv', 'robinhood-backtest-by-cost.csv');
+  row4.append(mvb, mvc, btc, btk);
+  s.append(row3, row4);
   if (RH_MOVES_OPEN && RH_MOVES) s.append(rhMovesTable(RH_MOVES));
   if (st.last_error) s.append(mk('div', 'dim', 'Last problem: ' + st.last_error));
   (RH.events || []).filter(e => !e.coin).slice(0, 4).forEach(e => s.append(mk('div', 'dim', ago(e.ts) + ' · ' + e.text)));
