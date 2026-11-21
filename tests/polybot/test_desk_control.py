@@ -136,3 +136,42 @@ def test_reset_daily_stop_marks_every_desk():
     out = run(desk.control(pool, "reset_day", asset="btc"))
     assert "reset" in out["done"]
     assert all(pool.kv[k].get("day_reset_at") for k in ("control", "control:eth", "control:sol", "control:xrp"))
+
+
+def test_owner_edits_deposits_referral_withdrawn():
+    import os
+    p = FakePool()
+    old = {k: os.environ.get(k) for k in desk.MONEY_FIELDS.values()}
+    os.environ.update({"POLYBOT_DEPOSITS_USD": "320", "POLYBOT_REFERRAL_USD": "100", "POLYBOT_WITHDRAWN_USD": "100"})
+    desk._MONEY.clear()
+    try:
+        assert run(desk.load_money(p)) == {"deposits": 320.0, "referral": 100.0, "withdrawn": 100.0}   # env until edited
+        out = run(desk.set_money(p, "deposits", 420))
+        assert out["deposits"] == 420.0 and p.kv[desk.MONEY_KEY] == {"deposits": 420.0}
+        run(desk.set_money(p, "withdrawn", 0))
+        assert desk.withdrawn() is None and desk.deposits() == 420.0 and desk.referral() == 100.0
+        desk._MONEY.clear()                                   # a restart: the saved amounts win over the env vars
+        assert run(desk.load_money(p))["deposits"] == 420.0 and desk.withdrawn() is None
+        with pytest.raises(ValueError):
+            run(desk.set_money(p, "salary", 5))
+    finally:
+        desk._MONEY.clear()
+        for k, v in old.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+
+
+def test_each_brother_keeps_his_own_amounts():
+    import os
+    p = FakePool()
+    os.environ["POLYBOT_DEPOSITS_USD"] = "320"
+    desk._MONEY.clear()
+    try:
+        assert run(desk.load_money(p, "uabc")) == {"deposits": None, "referral": None, "withdrawn": None}   # never the owner's
+        run(desk.set_money(p, "deposits", 50, account="uabc"))
+        assert p.kv[desk.money_key("uabc")] == {"deposits": 50.0} and desk.money_key("uabc") == "owner_money@uabc"
+        assert desk.deposits("uabc") == 50.0 and desk.deposits() == 320.0 and desk.deposits("uxyz") is None
+        desk._MONEY.clear()
+        assert run(desk.load_money(p, "uabc"))["deposits"] == 50.0
+    finally:
+        desk._MONEY.clear()
+        os.environ.pop("POLYBOT_DEPOSITS_USD", None)

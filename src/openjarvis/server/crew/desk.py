@@ -828,9 +828,9 @@ async def export_daily(pool, account: str = "", rh_rows: Optional[list] = None) 
 
     if st_acct is not None:
         box("Polymarket account", float(st_acct), "1F77B4")
-    dep = None if account else deposits()
-    if dep and st_acct is not None:
-        ref, wd = referral() or 0.0, withdrawn() or 0.0
+    await load_money(pool, account)
+    dep, ref, wd = deposits(account) or 0.0, referral(account) or 0.0, withdrawn(account) or 0.0
+    if (dep or ref or wd) and st_acct is not None:                 # once that account has entered its amounts
         box("All-time", float(st_acct) + wd - dep - ref, pnl=True)
         box_row += 1
         box("Cash Deposited", dep, "B8860B")
@@ -937,6 +937,7 @@ async def events(pool, limit: int = 30, asset: str = "btc", account: str = "") -
 
 async def summary(pool, *, trade_limit: int = 50, asset: str = "btc", account: str = "") -> Dict[str, Any]:
     asset = asset if asset in KEYS else "btc"
+    await load_money(pool, account)
     status, control = await get_kv(pool, kv_key("status", asset, account)), await get_kv(pool, kv_key("control", asset, account))
     hb = float(status.get("heartbeat") or 0)
     mode = status.get("mode") or "paper"
@@ -948,8 +949,8 @@ async def summary(pool, *, trade_limit: int = 50, asset: str = "btc", account: s
             "limits": current_limits(control).__dict__,
             "score": {"paper": await scoreboard(pool, paper, asset=rows, account=account), "live": await scoreboard(pool, live, asset=live_rows, account=account)},
             "trades": {"paper": await trades(pool, paper, trade_limit, asset=rows), "live": await trades(pool, live, trade_limit, asset=live_rows)},
-            "events": await events(pool, 30, asset, account), "mode": mode, "strategy": STRATEGY_VERSION, "deposits": None if account else deposits(), "referral": None if account else referral(),
-            "withdrawn": None if account else withdrawn(),
+            "events": await events(pool, 30, asset, account), "mode": mode, "strategy": STRATEGY_VERSION, "deposits": deposits(account), "referral": referral(account),
+            "withdrawn": withdrawn(account),
             "shadow": await shadow_stats(pool, live if mode == "live" else paper, STRATEGY_VERSION, rows), "shadow_detail": await shadow_detail(pool, asset, account),
             "asset": asset, "name": NAMES[asset], "account": account,
             "hours": {"paper": await by_hour(pool, paper, rows), "live": await by_hour(pool, live, live_rows)},
@@ -961,34 +962,73 @@ async def summary(pool, *, trade_limit: int = 50, asset: str = "btc", account: s
                                 "live": await analysis_scopes(pool, live, live_rows, an_by["live"])}}
 
 
-def deposits() -> Optional[float]:
-    """Money the owner put into Polymarket (POLYBOT_DEPOSITS_USD); all-time profit = account value - this."""
+# 2026-11-21 (owner): cash deposited, referral deposited and withdrawn are edited on the Station (tap the line), per account:
+# the owner's in polybot_kv "owner_money", each brother's in "owner_money@<tag>". The env vars (POLYBOT_DEPOSITS_USD /
+# _REFERRAL_USD / _WITHDRAWN_USD) are only the owner's starting point; a brother starts at nothing until he enters his own.
+MONEY_KEY = "owner_money"
+MONEY_FIELDS = {"deposits": "POLYBOT_DEPOSITS_USD", "referral": "POLYBOT_REFERRAL_USD", "withdrawn": "POLYBOT_WITHDRAWN_USD"}
+_MONEY: Dict[str, Dict[str, float]] = {}                 # account ("" = owner) -> field -> amount
+
+
+def money_key(account: str = "") -> str:
+    return kv_key(MONEY_KEY, "btc", account)
+
+
+def _money(field: str, account: str = "") -> Optional[float]:
     import os
-    try:
-        v = float((os.environ.get("POLYBOT_DEPOSITS_USD") or "").strip())
-    except ValueError:
-        return None
+    mine = _MONEY.get(account, {})
+    if field in mine:
+        v = mine[field]
+    elif account:
+        return None                                       # a brother's amounts never fall back to the owner's env vars
+    else:
+        try:
+            v = float((os.environ.get(MONEY_FIELDS[field]) or "").strip())
+        except ValueError:
+            return None
     return v if v > 0 else None
 
 
-def withdrawn() -> Optional[float]:
-    """Money the owner took out of Polymarket (POLYBOT_WITHDRAWN_USD): it counts toward all-time results."""
-    import os
-    try:
-        v = float((os.environ.get("POLYBOT_WITHDRAWN_USD") or "").strip())
-    except ValueError:
-        return None
-    return v if v > 0 else None
+async def load_money(pool, account: str = "") -> Dict[str, Optional[float]]:
+    """Refresh one account's edited amounts from the database (every reader calls this first, so all screens and files agree)."""
+    saved = await get_kv(pool, money_key(account))
+    mine = _MONEY.setdefault(account, {})
+    for f in MONEY_FIELDS:
+        if saved.get(f) is not None:
+            try:
+                mine[f] = float(saved[f])
+            except (TypeError, ValueError):
+                pass
+    return {f: _money(f, account) for f in MONEY_FIELDS}
 
 
-def referral() -> Optional[float]:
-    """Referral money Polymarket credited to the owner (POLYBOT_REFERRAL_USD): money in, not trading profit."""
-    import os
-    try:
-        v = float((os.environ.get("POLYBOT_REFERRAL_USD") or "").strip())
-    except ValueError:
-        return None
-    return v if v > 0 else None
+async def set_money(pool, field: str, amount: float, account: str = "") -> Dict[str, Optional[float]]:
+    if field not in MONEY_FIELDS:
+        raise ValueError("unknown field")
+    amount = round(max(0.0, float(amount)), 2)
+    saved = await get_kv(pool, money_key(account))
+    saved[field] = amount
+    await _ensure(pool)
+    async with pool.acquire() as c:
+        await c.execute("INSERT INTO polybot_kv (key, value, updated_at) VALUES ($2, $1::jsonb, now()) "
+                        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()", json.dumps(saved), money_key(account))
+    _MONEY.setdefault(account, {})[field] = amount
+    return {f: _money(f, account) for f in MONEY_FIELDS}
+
+
+def deposits(account: str = "") -> Optional[float]:
+    """Cash put into Polymarket; all-time = account + withdrawn - deposits - referral."""
+    return _money("deposits", account)
+
+
+def withdrawn(account: str = "") -> Optional[float]:
+    """Money taken out of Polymarket: it counts toward all-time results."""
+    return _money("withdrawn", account)
+
+
+def referral(account: str = "") -> Optional[float]:
+    """Referral money Polymarket credited: money in, not trading profit."""
+    return _money("referral", account)
 
 
 async def _ledger_pnl(pool, asset: str, now: dt.datetime, account: str = "") -> Dict[str, float]:
@@ -1039,6 +1079,7 @@ async def reconciliation(pool) -> Dict[str, Any]:
     acct, start = st.get("account_value"), st.get("day_start")
     ledger_all = round(sum(v["all"] + v["pre_all"] for v in per.values()), 2)
     ledger_today = round(sum(v["today"] + v["pre_today"] for v in per.values()), 2)
+    await load_money(pool)
     dep = deposits()
     out: Dict[str, Any] = {
         "account_value": None if acct is None else round(float(acct), 2),
