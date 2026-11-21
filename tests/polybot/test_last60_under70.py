@@ -9,7 +9,7 @@ def test_last_60s_blocks_every_price_up_to_70c_on_5m_desks():
     x = Desk(from_env({}, asset="xrp"), None, None)
     assert x._block_rule(45.0, 0.19, 0.5, "down") in ("xrp 5m under 70c", "last 60s under 70c")
     s = Desk(from_env({}, asset="sol"), None, None)
-    assert s._block_rule(45.0, 0.20, 0.5, "up") == "sol 5m under 75c"
+    assert s._block_rule(45.0, 0.20, 0.5, "up") == "sol 5m under 85c"
     b = Desk(from_env({}, asset="eth"), None, None)
     assert b._block_rule(45.0, 0.90, 0.5, "up") is None                 # 90c in the last minute still allowed
 

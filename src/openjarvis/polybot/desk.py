@@ -785,8 +785,10 @@ class Desk:
         # its 85c+ buys made +$1.19. SOL 5m's 60-74c buys lost money (15 fills, 60% won, -$2.15); its 75c+ buys made +$9.64 (a test).
         if self.cfg.asset == "eth" and price < 0.85:
             return "eth 5m under 85c"
-        if self.cfg.asset == "sol" and price < 0.75:
-            return "sol 5m under 75c"
+        # Owner, 2026-11-21: SOL 5m's floor raised to 85c (was 75c since 2026-11-10), every method. Live since Nov 12 (42 trades):
+        # 85c+ won 21 of 21 (+$6.79); under 85c won 15 of 21 (-$4.52), and every loss was bought under 85c.
+        if self.cfg.asset == "sol" and price < 0.85:
+            return "sol 5m under 85c"
         # Owner, 2026-11-11: BTC 5m under 75c won 55.8% over 389 live fills (+1.1% per $ staked); 75c+ won 87.4% over 278 (+2.9%).
         # All five BTC 5m losses on 2026-11-11 were bought at 64-73c with the model 78-99% sure.
         # Owner, 2026-11-18: lowered to 70c (was 75c). Live since Nov 5: 70-74c won 74% of 53 (+2.8% per $), about the same as 75-79c

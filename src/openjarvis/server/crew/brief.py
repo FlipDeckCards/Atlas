@@ -299,8 +299,8 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
     _bullets(d, [
         "Last-minute block: on every 5-minute desk, no bet in the final 60 seconds when the side costs 70¢ or less "
         "(30-70¢ until 2026-11-20; under 30¢ that late won 4 of 12 live, -$21.81).",
-        "Price limits: the desks never buy a side under 15¢ or over 80¢ outside sweeps. ETH 5m skips buys under 85¢ and SOL 5m "
-        "skips buys under 75¢ (owner, 2026-11-10); BTC 5m skips buys under 70¢ (owner, 2026-11-18; 75¢ from 2026-11-11: 70-74¢ had "
+        "Price limits: the desks never buy a side under 15¢ or over 80¢ outside sweeps. ETH 5m skips buys under 85¢ (owner, 2026-11-10) and SOL 5m "
+        "skips buys under 85¢ (owner, 2026-11-21; 75¢ from 2026-11-10: since Nov 12 its 85¢+ buys won 21 of 21, under 85¢ won 15 of 21 at -$4.52); BTC 5m skips buys under 70¢ (owner, 2026-11-18; 75¢ from 2026-11-11: 70-74¢ had "
         "won 74% of 53 live trades at +2.8% per dollar, about the same as 75-79¢, while 65-69¢ won 60% at -31%). "
         "XRP 5m skips buys under 70¢ too (owner, 2026-11-20; 50-70¢ lost -$21.38 over 42 live trades).",
         f"Caution hours (owner, 2026-11-11): the hours that used to be skipped trade at half size, and a bet in one needs at least "
@@ -382,7 +382,7 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
                "Skips buys under 85c (since 2026-11-10), enters only in the last 3 minutes, and skips a bet while the price already moves "
                "more than 1 sd toward it. On paper from 2026-11-10; live test judged at 30 live trades or two weeks.",
         "sol": "SOL 5m: calibrated confidence, 90% floor (raw about 95%; was 85% until 2026-11-17), a flat 3% per bet and at most 3% per window (owner, 2026-11-17, a live test). "
-               "Skips buys under 75c (since 2026-11-10), enters only in the last 3 minutes, and skips a bet while the price already moves "
+               "Skips buys under 85c (owner, 2026-11-21; 75c from 2026-11-10), enters only in the last 3 minutes, and skips a bet while the price already moves "
                "more than 1 sd toward it (replacing the old rule that blocked both sides whenever the price rose). Live test judged at "
                "50 live trades.",
         "xrp": "XRP 5m: calibrated confidence only. Confidence sets the tier (3 / 5 / 8%); a bet that is also one of the three "
@@ -483,6 +483,7 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         ["Nov 20", "P&L is after Polymarket's taker fee (0.0695 x p x (1 - p) per contract; about 2% of the money staked). The desks book it on every fill; live windows since Nov 10 were restated once. The desks had said $0.00 on Nov 20 while the account was -$3.70 (fees ~$3.8)."],
         ["Nov 20", "Directional method runs on BTC 5m only (owner, noon). Live since Nov 12 it lost on every other desk (XRP 35 trades -$22.75, SOL 6 -$9.96, the commodities 20 -$9.28: -$41.99 over 61) while edge + late made +$27.48 on the same desks; BTC's directional made +$8.36 over 19. Every missed order now also logs Polymarket's own record of it (order check)."],
         ["Nov 20", "Entry rules (owner): every 5m desk now skips any buy at 70c or less in the last 60 seconds (was 30-70c; last-60s buys under 30c: 12 live, 4 won, -$21.81, incl. XRP Down at 19c on Nov 20, -$17.40). XRP 5m gets a 70c floor like BTC (XRP 50-70c: 42 live, -$21.38)."],
+        ["Nov 21", "Buy orders get 3 seconds to match before the bot cancels them (it cancelled them about 1 s in: 64% of 200 checked misses still had the price on offer 3 s later; since Nov 19, 248 windows missed with ~90% of the picks winning). SOL 5m's floor raised to 85c for every method (owner; since Nov 12 its 85c+ buys won 21 of 21, under 85c won 15 of 21 at -$4.52)."],
         ["Nov 19", "Commodity sizing (owner, 10:46 PM): gold, silver and WTI oil to a flat 3% bet and 3% cap per window, from 60% confidence; natural gas stays at 1%."],
         ["Nov 19", "Commodity desks: gold, silver, WTI oil and natural gas 15-minute markets on Polymarket US, full desks like the crypto ones (Station panel below the crypto desks, trade log, Pause, Go live). They run on Polymarket's own 1-second commodity price and bet a flat 1% from 60% confidence (low on purpose, for data across the range) with a 1% cap per window, in every hour, with the crypto desks' four methods (pairs, directional, edge, late) and no calibration, until there is data for sizing, hours and strategy. Live from the start at the owner's instruction (paper results are not trusted); Back to paper, Pause and Kill switch work as on every desk."],
         ["Nov 18", "Order fills: live bets that never filled won about 93% (XRP 345, BTC 148) while the ones that filled won about 75%; the order missed whenever the market moved the bot's way. Taker bets now pay up to 1¢ through the best price, and a bet with no fill after 3 seconds is logged 'order missed' and decided again with every rule re-checked, up to 3 tries per window and never more than 2¢ over the first price."],
