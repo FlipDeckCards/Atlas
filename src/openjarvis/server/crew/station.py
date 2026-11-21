@@ -1754,11 +1754,13 @@ function linksSec() {
   s.append(Object.assign(mk('div', 'lbl'), { textContent: 'Connections' }));
   // connected first, then built but not connected, then not built yet (same order within each group)
   const rank = c => (c && c.connected ? 2 : c && c.built ? 1 : 0);
-  Object.entries(S.connections || {}).filter(([key]) => key !== 'robinhood').sort((a, b) => rank(b[1]) - rank(a[1])).forEach(([key, c]) => {
+  // owner, 2026-11-20: Robinhood is listed here too (its limits and paper mode stay in the Stock Market factory)
+  Object.entries(S.connections || {}).sort((a, b) => rank(b[1]) - rank(a[1])).forEach(([key, c]) => {
     const r = mk('div', 'row'); const d = mk('span', 'dot'); d.style.background = c.connected ? '#00ff88' : c.built ? '#ff6d00' : '#2a3a44';
     const g = mk('div', 'grow'); g.append(mk('div', null, c.label + (c.connected ? ' · connected' : c.built ? ' · not connected' : ' · not built yet')));
     if (!c.connected && c.setup) g.append(mk('div', 'dim', c.setup));
     if (c.note) g.append(mk('div', 'dim', c.note));
+    if (key === 'robinhood') g.append(mk('div', 'dim', 'Read-only for now. Limits and paper mode are in the Stock Market factory.'));
     r.append(d, g);
     if (c.guide) {
       const b = mk('button', c.connected ? 'b no' : 'b', c.connected ? 'Disconnect' : 'Connect');
