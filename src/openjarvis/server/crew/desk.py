@@ -51,8 +51,8 @@ for _a in KEYS:
 def business(asset: str = "btc") -> Dict[str, str]:
     a = asset.lower()
     return {"key": KEYS[a], "name": NAMES[a], "url": "https://polymarket.us", "color": COLORS[a],
-            "description": (f"Polymarket Desk runs 12 trading bots in Polymarket US's Up/Down contracts: 5-minute, 15-minute and 1-hour "
-                            f"windows for BTC, ETH, SOL and XRP." if a == "btc" else
+            "description": ("Polymarket Desk runs 8 live trading bots in Polymarket US's Up/Down contracts: 5-minute windows for BTC, "
+                            "ETH, SOL and XRP, and 15-minute windows for gold, silver, oil and natural gas." if a == "btc" else
                             f"{NAMES[a]} is a trading bot in Polymarket US's "
                             f"{'BTC 5-minute, late method only (paper)' if a == 'btclate' else _label(a)} Up/Down contracts.")}
 
