@@ -165,6 +165,10 @@ def test_daily_pnl_download_reads_only_that_accounts_ledger():
             seen["mode"] = a[0]
             return []
 
+        async def fetchval(self, q, *a):
+            seen["kv"] = a[0]
+            return {"account_value": 165.96}
+
         async def execute(self, *a):
             return None
 
@@ -186,8 +190,20 @@ def test_daily_pnl_download_reads_only_that_accounts_ledger():
     except ImportError:
         return                                            # openpyxl missing here; the query already ran
     assert seen["mode"] == "live@uabc"
-    run(desk.export_daily(P()))
-    assert seen["mode"] == "live"
+    assert seen["kv"] == "status@uabc"                         # a subscriber's box reads their own account value
+    import io, os
+    from openpyxl import load_workbook
+    old = {k: os.environ.get(k) for k in ("POLYBOT_DEPOSITS_USD", "POLYBOT_REFERRAL_USD", "POLYBOT_WITHDRAWN_USD")}
+    os.environ.update({"POLYBOT_DEPOSITS_USD": "320", "POLYBOT_REFERRAL_USD": "100", "POLYBOT_WITHDRAWN_USD": "100"})
+    try:
+        ws = load_workbook(io.BytesIO(run(desk.export_daily(P())))).active
+    finally:
+        for k, v in old.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+    assert seen["mode"] == "live" and seen["kv"] == "status"
+    box = {ws.cell(row=r, column=5).value: ws.cell(row=r, column=6).value for r in range(2, 12) if ws.cell(row=r, column=5).value}
+    assert box == {"Polymarket account": 165.96, "All-time": -154.04, "Cash Deposited": 320, "Referral Deposited": 100,
+                   "Withdrawn": 100, "Settled trades total": 0}
 
 
 def test_twelve_desks_five_fifteen_and_one_hour_for_every_coin():

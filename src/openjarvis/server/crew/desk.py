@@ -807,12 +807,42 @@ async def export_daily(pool, account: str = "", rh_rows: Optional[list] = None) 
         row += 1
     last_day_row = row - 1
 
-    # the total box, to the right of the list
-    header(1, 5, "Total profit")
-    value(2, 5, total_profit)
+    # the account box, to the right of the list (owner 2026-11-21: the same stack as the Station): the real account value,
+    # all-time result (account + withdrawn - cash deposited - referral), what went in and out, then the settled trades' total
+    st_acct = (await get_kv(pool, kv_key("status", "btc", account))).get("account_value")
+    header(1, 5, "Account")
+    header(1, 6, "Amount")
+    box_row = 2
+
+    def box(label, v, color=None, pnl=False):
+        nonlocal box_row
+        lc = ws.cell(row=box_row, column=5, value=label)
+        lc.border, lc.font = border, Font(bold=True, color=color or "000000")
+        if pnl:
+            value(box_row, 6, v)
+        else:
+            c = ws.cell(row=box_row, column=6, value=round(v, 2))
+            c.number_format, c.alignment, c.border = money, Alignment(horizontal="center"), border
+            c.font = Font(bold=True, color=color or "000000")
+        box_row += 1
+
+    if st_acct is not None:
+        box("Polymarket account", float(st_acct), "1F77B4")
+    dep = None if account else deposits()
+    if dep and st_acct is not None:
+        ref, wd = referral() or 0.0, withdrawn() or 0.0
+        box("All-time", float(st_acct) + wd - dep - ref, pnl=True)
+        box_row += 1
+        box("Cash Deposited", dep, "B8860B")
+        if ref:
+            box("Referral Deposited", ref, "7B3FA0")
+        if wd:
+            box("Withdrawn", wd, "C71585")
+        box_row += 1
+    box("Settled trades total", total_profit, pnl=True)
 
     # section 2: each bot by the same days
-    row += 2
+    row = max(row, box_row) + 2
     ws.cell(row=row, column=1, value="By bot").font = Font(bold=True, size=12)
     row += 1
     tot_col = 2 + len(bots)
@@ -837,6 +867,7 @@ async def export_daily(pool, account: str = "", rh_rows: Optional[list] = None) 
     from openpyxl.utils import get_column_letter
     for col in range(3, tot_col + 1):
         ws.column_dimensions[get_column_letter(col)].width = 16
+    ws.column_dimensions["E"].width = max(ws.column_dimensions["E"].width or 0, 22)
     ws.row_dimensions[1].height = 22
     ws.freeze_panes = "A2"
     if rh_rows:
