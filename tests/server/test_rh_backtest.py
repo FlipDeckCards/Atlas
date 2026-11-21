@@ -39,3 +39,12 @@ def test_hourly_aggregation_and_run_all():
     out = bt.run_all({("BTC", 300): c5, ("BTC", 86400): _bars([100 * 1.005 ** i for i in range(200)])})
     assert out["results"] and {r["timeframe"] for r in out["results"]} == {"daily (4 yrs)", "1-hour (120 days)"}
     assert len(bt.backtest_csv(out).splitlines()) == len(out["results"]) + 1
+
+
+def test_csv_cost_column():
+    rows = bt.run_all({("BTC", 86400): _bars([100 * 1.005 ** i for i in range(200)])}, 0.1)["results"]
+    csv_text = bt.backtest_csv({"results": [{"cost_pct": 0.1, **r} for r in rows]})
+    assert csv_text.splitlines()[0].startswith("round_trip_cost_pct,coin")
+    cheap = bt.run(_bars([100 * 1.005 ** i for i in range(200)]), "breakout", 12.0, "single", 0.1)
+    dear = bt.run(_bars([100 * 1.005 ** i for i in range(200)]), "breakout", 12.0, "single", 1.9)
+    assert cheap["return_pct"] > dear["return_pct"]

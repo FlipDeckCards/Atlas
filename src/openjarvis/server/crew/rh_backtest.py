@@ -190,6 +190,32 @@ async def backtest(pool, cost_pct: float = ROUND_TRIP_COST_PCT) -> Dict[str, Any
     return out
 
 
+COST_LEVELS = (0.1, 0.25, 0.5, 1.0, 1.9)          # round trip %: a cheap exchange ... Robinhood's measured spread
+
+
+async def backtest_costs(pool) -> Dict[str, Any]:
+    """The same backtest at several round-trip costs: is a cheaper exchange worth moving to?"""
+    hit = _CACHE.get("bt_costs")
+    if hit and time.monotonic() - hit[0] < 1800:
+        return hit[1]
+    async with pool.acquire() as c:
+        await c.execute(DDL)
+        rows = await c.fetch("SELECT coin, gran, ts, open, high, low, close FROM rh_candles ORDER BY coin, gran, ts")
+    series: Dict[tuple, List[tuple]] = {}
+    for coin, gran, ts, o, h, lo, cl in rows:
+        series.setdefault((coin, gran), []).append((int(ts), o, h, lo, cl))
+
+    def _all() -> Dict[str, Any]:
+        res = []
+        for cost in COST_LEVELS:
+            res += [{"cost_pct": cost, **r} for r in run_all(series, cost)["results"]]
+        return {"cost_pct": "multi", "results": res}
+
+    out = await asyncio.to_thread(_all)
+    _CACHE["bt_costs"] = (time.monotonic(), out)
+    return out
+
+
 COLS = ["coin", "timeframe", "entry", "stop", "sizing", "return_pct", "per_month_pct", "buy_hold_pct", "trades",
         "trades_per_month", "win_rate", "avg_win_pct", "avg_loss_pct", "max_drawdown_pct", "time_in_market_pct", "months"]
 
@@ -198,9 +224,10 @@ def backtest_csv(bt: Dict[str, Any]) -> str:
     import csv
     import io
 
+    cols = (["round_trip_cost_pct"] if bt["results"] and "cost_pct" in bt["results"][0] else []) + COLS
     buf = io.StringIO()
     wr = csv.writer(buf)
-    wr.writerow(COLS)
+    wr.writerow(cols)
     for r in bt["results"]:
-        wr.writerow([r.get(k) for k in COLS])
+        wr.writerow([r.get("cost_pct" if k == "round_trip_cost_pct" else k) for k in cols])
     return buf.getvalue()
