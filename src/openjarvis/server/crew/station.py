@@ -1291,8 +1291,11 @@ function windowFlag(st, label) {
   tag.style.color = cur && cur.paid > 0 ? '#3d8bff' : '#ffb347';
   const detail = cur && cur.paid > 0
     ? ' · Up ' + Number(cur.up_qty || 0).toFixed(2) + ' @ ' + money(cur.up_cost) + ' · Down ' + Number(cur.down_qty || 0).toFixed(2) + ' @ ' + money(cur.down_cost) + ' · paid ' + money(cur.paid)
-    : ' · nothing bought in this window yet';
-  flag.append(mk('span', null, (label ? label + ' · ' : '') + 'Current window (closes ' + wEnd + '): '), tag, mk('span', 'dim', detail));
+    : '';                                                          // NO TRADE already says it (owner 2026-11-21)
+  // owner 2026-11-21: smaller text on the left (desk + window) and the detail; the IN A TRADE / NO TRADE tag stays big
+  const left = mk('span', null, (label ? label + ' · ' : '') + 'Current window (closes ' + wEnd + '): '); left.style.fontSize = '12px';
+  flag.append(left, tag);
+  if (detail) { const det = mk('span', 'dim', detail); det.style.fontSize = '13px'; flag.append(det); }
   return flag;
 }
 // v1.24: the Polymarket account lines (account value, change since the version started, all-time) live once, at the top of the Polymarket Desk
