@@ -38,6 +38,10 @@ CREATE INDEX IF NOT EXISTS polybot_candidates_ts ON polybot_candidates (ts);
 CREATE TABLE IF NOT EXISTS polybot_window_results (slug TEXT NOT NULL, asset TEXT NOT NULL, up BOOLEAN NOT NULL,
   close_price DOUBLE PRECISION, settled_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (asset, slug));
 ALTER TABLE polybot_events ADD COLUMN IF NOT EXISTS asset TEXT;
+ALTER TABLE polybot_window_results ADD COLUMN IF NOT EXISTS price_to_beat DOUBLE PRECISION;
+ALTER TABLE polybot_window_results ADD COLUMN IF NOT EXISTS index_close DOUBLE PRECISION;
+ALTER TABLE polybot_window_results ADD COLUMN IF NOT EXISTS index_up BOOLEAN;
+ALTER TABLE polybot_window_results ADD COLUMN IF NOT EXISTS sigma DOUBLE PRECISION;
 """
 
 
@@ -153,8 +157,12 @@ class Ledger:
         out, self.candidates = self.candidates, []
         return out
 
-    def result(self, slug: str, up: bool, close: Optional[float]) -> None:
-        self.results.append({"slug": slug, "asset": self.asset, "up": bool(up), "close": close})
+    def result(self, slug: str, up: bool, close: Optional[float], beat: Optional[float] = None,
+               index_close: Optional[float] = None, index_up: Optional[bool] = None, sigma: Optional[float] = None) -> None:
+        # 2026-11-20 (owner): the settle check. Next to the venue's answer, what the bot's own index said (its closing average, the
+        # price to beat, and so Up or Down), to measure how far the index and the settlement feed disagree near the line.
+        self.results.append({"slug": slug, "asset": self.asset, "up": bool(up), "close": close, "beat": beat,
+                             "index_close": index_close, "index_up": index_up, "sigma": sigma})
 
     def take_results(self) -> List[Dict[str, Any]]:
         out, self.results = self.results, []
@@ -199,9 +207,14 @@ class PgStore:
         async with self.pool.acquire() as c:
             async with c.transaction():
                 if results:
-                    await c.executemany("INSERT INTO polybot_window_results (slug, asset, up, close_price) VALUES ($1,$2,$3,$4) "
-                                        "ON CONFLICT (asset, slug) DO NOTHING",
-                                        [(r["slug"], r["asset"], r["up"], r["close"]) for r in results])
+                    await c.executemany("INSERT INTO polybot_window_results (slug, asset, up, close_price, price_to_beat, index_close, "
+                                        "index_up, sigma) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) "
+                                        "ON CONFLICT (asset, slug) DO UPDATE SET price_to_beat = coalesce(polybot_window_results.price_to_beat, EXCLUDED.price_to_beat), "
+                                        "index_close = coalesce(polybot_window_results.index_close, EXCLUDED.index_close), "
+                                        "index_up = coalesce(polybot_window_results.index_up, EXCLUDED.index_up), "
+                                        "sigma = coalesce(polybot_window_results.sigma, EXCLUDED.sigma)",
+                                        [(r["slug"], r["asset"], r["up"], r["close"], r.get("beat"), r.get("index_close"), r.get("index_up"),
+                                          r.get("sigma")) for r in results])
                 if cands:
                     await c.executemany("INSERT INTO polybot_candidates (ts, asset, slug, side, price, fair, momentum_z, sigma, vol_tag, secs_left, blocked_by) "
                                         "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",

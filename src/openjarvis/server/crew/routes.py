@@ -609,6 +609,19 @@ async def crew_desk_candidates_export(request: Request, view: str = ""):
                     headers={"Content-Disposition": 'attachment; filename="desk-candidates.csv"'})
 
 
+@router.get("/api/crew/desk/settlechecks.csv")
+async def crew_desk_settle_checks_export(request: Request, view: str = ""):
+    """2026-11-20: every settled window, the bot's index next to Polymarket's result (the settle check), as one CSV, for the owner."""
+    g = await _desk_gate(request, view)
+    if isinstance(g, JSONResponse):
+        return g
+    from openjarvis.server.crew import desk
+
+    body = await desk.export_settle_checks(g[2], account=g[3])
+    return Response(content=body, media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="desk-settle-checks.csv"'})
+
+
 @router.get("/api/crew/desk/shadow.csv")
 async def crew_desk_shadow_export(request: Request, asset: str = "btc", view: str = ""):
     """The shadow log for one bot as CSV: the model at 1.0x, 0.7x and 1.4x volatility per settled window, for the owner."""
