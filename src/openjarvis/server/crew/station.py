@@ -1306,7 +1306,7 @@ function accountLines(DESK) {
   if (DESK_VIEW === 'live' && st.account_value != null) {          // the real money, read from Polymarket: the line that cannot drift
     // stacked, one figure a line, each its own colour (owner, 2026-11-21)
     const line = (text, color) => { const r = mk('div', 'row'), x = mk('span', 'grow', text); x.style.color = color; r.append(x); out.push(r); };
-    line('Polymarket account: ' + money(st.account_value), '#00e5ff');
+    line('Polymarket account: ' + money(st.account_value), '#f5f5f5');
     if (DESK.deposits) {                                            // all-time: account + withdrawn - everything that went in
       const ref = DESK.referral || 0, wd = DESK.withdrawn || 0, all = st.account_value + wd - DESK.deposits - ref;
       line('All-time: ' + signed(all), pnlColor(all));
