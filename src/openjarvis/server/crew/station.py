@@ -1343,11 +1343,8 @@ function accountLines(DESK) {
 }
 function deskViewTabs() {
   // one switch for every desk: LIVE shows each desk's real-money results, PAPER each desk's simulated ones
-  if (!DESK_VIEW) DESK_VIEW = 'live';
-  const w = mk('div', 'sec'), tabs = mk('div', 'desk-tabs');
-  ['live', 'paper'].forEach(m => { const b = mk('button', 'b' + (DESK_VIEW === m ? ' on' : ''), m === 'live' ? 'LIVE (real money)' : 'PAPER (simulated)');
-    b.onclick = () => { DESK_VIEW = m; renderSide(); }; tabs.append(b); });
-  w.append(tabs, mk('div', 'dim', DESK_VIEW === 'live' ? 'Every desk below shows its real-money results.' : 'Every desk below shows its simulated (paper) results.'));
+  DESK_VIEW = 'live';                                               // owner 2026-11-21: live only, no paper switch
+  const w = mk('div', 'sec');
   // every desk's trade log and shadow log, combined into one file each (a "desk" column says which bot)
   const all = mk('div', 'desk-tabs');
   [['⬇ All trades CSV', 'export.csv', 'desk-all-fills.csv'], ['⬇ All shadow CSV', 'shadow.csv', 'desk-all-shadow.csv'], ['⬇ Blocked-trade log CSV', 'candidates.csv', 'desk-candidates.csv'], ['⬇ Settle check CSV', 'settlechecks.csv', 'desk-settle-checks.csv']].forEach(([label, path, name]) => {
@@ -1405,7 +1402,7 @@ function deskSec(key) {
       + ' · ' + NAME + ' momentum ' + Number(st.momentum_z || 0).toFixed(1) + ' sd · 15-min trend ' + Number(st.trend_z || 0).toFixed(1) + ' sd · extra edge from recent results ' + Number(st.extra_edge || 0).toFixed(2)));
   // scoreboard
   const sc = DESK.score || {};
-  if (!DESK_VIEW) DESK_VIEW = (sc.live && sc.live.all && sc.live.all.trades) || st.mode === 'live' ? 'live' : 'paper';
+  DESK_VIEW = 'live';
   // the LIVE / PAPER switch is once, at the top of the Polymarket Desk (deskViewTabs): it flips every desk's scoreboard together
   const v = sc[DESK_VIEW] || {}, a = v.all || {}, t = v.today || {}, d7 = v.d7 || {};
   const box = mk('div', 'pnl'); box.append(mk('div', 'pnl-t', 'Strategy v' + (v.version || DESK.strategy || '') + ' scoreboard · ' + DESK_VIEW + (DESK_VIEW === 'paper' ? ' (not real money)' : '')));
@@ -1421,27 +1418,6 @@ function deskSec(key) {
   cell('Best window', signed(a.best), a.best ? '#00ff99' : null); cell('Worst window', signed(a.worst), a.worst < 0 ? '#ff3344' : null);
   box.append(grid);
   if (v.curve && v.curve.length > 1) { box.append(mk('div', 'pnl-l', 'Running profit')); box.append(deskCurve(v.curve)); }
-  // version details: retracted by default, one tap to open
-  const detOpen = !!PANEL_OPEN[A + ':detail'];
-  const dtw = mk('div', 'desk-tabs'), dtb = mk('button', 'b', detOpen ? 'Version details ▾' : 'Version details ▸');
-  dtb.onclick = () => { PANEL_OPEN[A + ':detail'] = !detOpen; renderSide(); }; dtw.append(dtb); box.append(dtw);
-  if (detOpen) {
-    const swp = v.sweeps || {};
-    box.append(mk('div', 'dim', 'Sweeps (closing, 75-97c): ' + (swp.trades ? swp.trades + ' trades, ' + swp.wins + ' won (' + swp.win_rate + '%), ' + signed(swp.profit) : 'none yet')
-      + ' · included in the totals above'));
-    const sh = v.shadow || {};   // v1.14 learned pair sizing, shadow mode: what bigger bets on proven pair setups would have made
-    if (sh.windows) box.append(mk('div', 'dim', 'Learned pair sizing (shadow, not trading yet): ' + sh.windows + ' pair windows · actual ' + signed(sh.actual)
-      + ' · at learned sizes ' + signed(sh.shadow) + ' · ' + Object.entries(sh.tiers || {}).map(([t, n]) => n + ' ' + t).join(', ')));
-    const sd = v.shadow_detail;   // shadow results: calibration by confidence bucket
-    if (sd) {
-      const cal = (sd.calib && sd.calib.model) || [];
-      const seen = cal.filter(r => r.trades > 0).map(r => r.bucket + ': ' + r.won + '/' + r.trades + ' won' + (r.win_rate == null ? '' : ' (' + r.win_rate + '%)'));
-      box.append(mk('div', 'dim', 'Shadow calibration (model confidence → result): ' + (seen.length ? seen.join(' · ') : 'no settled windows yet')));
-    }
-    const sets = (st.setups || []).filter(x => x.windows >= 3).slice(0, 5);
-    if (sets.length) box.append(mk('div', 'dim', 'Pair setups: ' + sets.map(x => x.label + ' — ' + x.wins + '/' + x.windows + ' won, floor ' + x.floor + '%, ' + signed(x.profit)).join(' | ')));
-    (v.older || []).forEach(o => box.append(mk('div', 'dim', 'Earlier v' + o.version + ': ' + o.trades + ' trades, ' + o.wins + ' won, ' + signed(o.profit) + ' (not counted above)')));
-  }
   s.append(box);
   // switches (going live is an Approve card from Helix, never a button here)
   const ctl = mk('div', 'desk-tabs');
@@ -1463,13 +1439,12 @@ function deskSec(key) {
   if (DESK.read_only) {
     s.append(mk('div', 'dim', 'Read only: you are looking at another account\'s desk. Only its owner can pause it or go live.'));
   } else {
-    if (wantStop) act('Resume', 'resume'); else act('Pause', 'pause');
-    act('Kill switch', 'flatten', 'no');
-    if ((st.mode || 'paper') === 'live') act('Back to paper', 'paper'); else act('Go live', 'go_live');
-    if (/Daily loss limit/.test(st.reason || '')) act('Reset daily stop', 'reset_day');
+    // owner 2026-11-21: one switch (Pause <-> Live) and Restart desk after the daily loss cap; no kill switch, no paper
+    if ((st.mode || 'paper') !== 'live') act('Live', 'go_live');
+    else if (wantStop) act('Live', 'resume');
+    else act('Pause', 'pause');
+    if (/Daily loss limit/.test(st.reason || '')) act('Restart desk', 'reset_day');
     s.append(ctl);
-    if ((st.mode || 'paper') !== 'live') s.append(mk('div', 'dim', isOwner() ? 'Go live puts an Approve card in the Helix inbox; real money only after you tap Approve there.'
-      : 'Go live trades real money on your own Polymarket account, sized by the limits below.'));
   }
   const lim = DESK.limits || {};
   s.append(mk('div', 'dim', 'Limits: bankroll ' + ((st.mode === 'live' && st.account_value != null) ? money(st.account_value) + ' (the whole account)' : money(lim.bankroll_usd)) + ' · bets sized by confidence, up to ' + (st.window_pct || 7.5) + '% of the current balance per window' + (st.window_cap != null ? ' (' + money(st.window_cap) + ' now)' : '')
@@ -1479,34 +1454,8 @@ function deskSec(key) {
   // trade log: every window traded, tap for each fill
   const tl = mk('div', 'lbl'); tl.style.marginTop = '12px'; tl.append(mk('span', null, 'Trade log · ' + DESK_VIEW));
   const rf = mk('span', 'tag', '↻'); rf.style.cursor = 'pointer'; rf.onclick = () => loadDesk(true, A); tl.append(rf);
-  // full trade history for this bot as a CSV file (every fill, all versions), saved to the phone or computer
-  const dl = mk('span', 'tag', '⬇ CSV'); dl.style.cursor = 'pointer'; dl.style.marginLeft = '6px';
-  dl.onclick = async () => {
-    dl.textContent = '…';
-    try {
-      const res = await fetch('/api/crew/desk/export.csv?asset=' + encodeURIComponent(A) + (VIEW_AS ? '&view=' + encodeURIComponent(VIEW_AS) : ''), { headers: { 'Authorization': 'Bearer ' + token() } });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const url = URL.createObjectURL(await res.blob());
-      const a = document.createElement('a'); a.href = url; a.download = 'desk-' + A + '-fills.csv';
-      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-      dl.textContent = '⬇ CSV';
-    } catch (e) { dl.textContent = 'CSV failed'; }
-  };
-  tl.append(dl);
-  // the shadow log for this bot: the model at 1.0x, 0.7x and 1.4x volatility per settled window
-  const sh = mk('span', 'tag', '⬇ shadow'); sh.style.cursor = 'pointer'; sh.style.marginLeft = '6px';
-  sh.onclick = async () => {
-    sh.textContent = '…';
-    try {
-      const res = await fetch('/api/crew/desk/shadow.csv?asset=' + encodeURIComponent(A) + (VIEW_AS ? '&view=' + encodeURIComponent(VIEW_AS) : ''), { headers: { 'Authorization': 'Bearer ' + token() } });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const url = URL.createObjectURL(await res.blob());
-      const a = document.createElement('a'); a.href = url; a.download = 'desk-' + A + '-shadow.csv';
-      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-      sh.textContent = '⬇ shadow';
-    } catch (e) { sh.textContent = 'shadow failed'; }
-  };
-  tl.append(sh); s.append(tl);
+  // owner 2026-11-21: no per-desk CSV / shadow buttons; the combined All trades / All shadow CSVs at the top cover every desk
+  s.append(tl);
   const rows = (DESK.trades || {})[DESK_VIEW] || [];
   if (!rows.length) s.append(mk('div', 'dim', 'No trades yet.'));
   else {
