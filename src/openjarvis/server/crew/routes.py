@@ -450,13 +450,16 @@ async def subscriber_finance(request: Request, engine, uid: str, pool, missions=
     return out
 
 
-async def _family_pnl(pool, owner_trading) -> list:
+async def _family_pnl(pool, owner_trading, owner_view: bool = False) -> list:
     """Owner 2026-11-21: one P&L box with each person's live trading today and over 30 days, on every family Station
     (owner_trading None = work the owner's line out here). Who is who comes from
     POLYBOT_FAMILY ("Mike:owner,Davin:<email start>,..."), kept in the server settings so nobody's email is in the code."""
     import os
 
-    spec = [x.split(":", 1) for x in (os.environ.get("POLYBOT_FAMILY") or "").split(",") if ":" in x]
+    raw = os.environ.get("POLYBOT_FAMILY") or ""
+    if owner_view:                         # owner 2026-11-21: people only on the owner's own box (Yvonne), never on the brothers'
+        raw += "," + (os.environ.get("POLYBOT_FAMILY_OWNER_ONLY") or "")
+    spec = [x.split(":", 1) for x in raw.split(",") if ":" in x]
     if not spec:
         return []
     from openjarvis.server.crew import desk, tenant_desks
@@ -519,7 +522,7 @@ async def crew_finance(request: Request):
             logger.exception("desk P&L unavailable")
     out = await fin.report(uid, missions, keys, trading=trading)
     out["trading"] = trading                    # 2026-11-21: the desk's own today / 30-day trading P&L box on the Station
-    out["family"] = await _family_pnl(pool, trading) if pool is not None else []
+    out["family"] = await _family_pnl(pool, trading, owner_view=True) if pool is not None else []
     out["products"] = engine.products
     from openjarvis.server.crew.product_stats import ProductStats
 
