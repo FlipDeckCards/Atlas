@@ -1114,6 +1114,7 @@ function accountSec() {
     row('Live trading today', t.today); row('Live trading, last 30 days', t.d30); row('Live trading, all time', t.all);
     if (inc.account_value != null) s.append(mk('div', 'dim', 'Polymarket account value ' + money(inc.account_value) + (inc.buying_power != null ? ' · buying power ' + money(inc.buying_power) : '')));
     else s.append(mk('div', 'dim', 'The account value shows once a bot trades live.'));
+    if (DESKS.btc && !DESKS.btc.error) accountLines(DESKS.btc).forEach(el => s.append(el));   // their stack, read only
   } else s.append(mk('div', 'dim', 'No Polymarket Desk on this account yet.'));
   if (i.desk) { s.append(deskViewTabs()); DESK_ORDER.map(a => DESK_KEY[a]).forEach(k => s.append(deskSec(k))); s.append(deskLogSec()); }
   return s;
@@ -1309,15 +1310,33 @@ function accountLines(DESK) {
   const st = DESK.status || {};
   if (DESK_VIEW === 'live' && st.account_value != null) {          // the real money, read from Polymarket: the line that cannot drift
     // stacked, one figure a line, each its own colour (owner, 2026-11-21)
-    const line = (text, color) => { const r = mk('div', 'row'), x = mk('span', 'grow', text); x.style.color = color; r.append(x); out.push(r); };
+    const line = (text, color, field, amt) => {
+      const r = mk('div', 'row'), x = mk('span', 'grow', text); x.style.color = color; r.append(x); out.push(r);
+      if (field && !VIEW_AS) {                                      // 2026-11-21: each account taps to change its own amounts
+        const e = mk('span', 'tag', '✎ edit'); e.style.cursor = 'pointer'; r.append(e);
+        r.style.cursor = 'pointer';
+        r.onclick = async () => {
+          const v = prompt(text.split(':')[0] + ': new total in dollars', String(amt || 0));
+          if (v === null) return;
+          const n = Number(String(v).replace(/[$,\s]/g, ''));
+          if (!isFinite(n) || n < 0) { alert('Please enter a dollar amount, like 420 or 420.50.'); return; }
+          const res = await fetch('/api/crew/desk/money', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token() },
+            body: JSON.stringify({ field, amount: n }) });
+          if (!res.ok) { alert('Could not save that amount.'); return; }
+          Object.keys(DESKS).forEach(k => { const d = DESKS[k]; if (d && !d.error) d[field] = n > 0 ? n : null; });
+          renderSide();
+        };
+      }
+    };
     line('Polymarket account: ' + money(st.account_value), '#f5f5f5');
-    if (DESK.deposits) {                                            // all-time: account + withdrawn - everything that went in
-      const ref = DESK.referral || 0, wd = DESK.withdrawn || 0, all = st.account_value + wd - DESK.deposits - ref;
-      line('All-time: ' + signed(all), pnlColor(all));
+    if (DESK.deposits || DESK.referral || DESK.withdrawn || !VIEW_AS) {   // all-time: account + withdrawn - everything that went in
+      const ref = DESK.referral || 0, wd = DESK.withdrawn || 0, all = st.account_value + wd - (DESK.deposits || 0) - ref;
+      if (DESK.deposits || DESK.referral || DESK.withdrawn) line('All-time: ' + signed(all), pnlColor(all));
+      else out.push(mk('div', 'dim', 'Tap Cash Deposited below to enter what you put in; All-time shows once it is set.'));
       const gap = mk('div'); gap.style.height = '8px'; out.push(gap);
-      line('Cash Deposited: ' + money(DESK.deposits), '#ffd54f');
-      if (ref) line('Referral Deposited: ' + money(ref), '#c792ea');
-      if (wd) line('Withdrawn: ' + money(wd), '#ff6ec7');
+      line('Cash Deposited: ' + money(DESK.deposits), '#ffd54f', 'deposits', DESK.deposits);
+      line('Referral Deposited: ' + money(ref), '#c792ea', 'referral', ref);
+      line('Withdrawn: ' + money(wd), '#ff6ec7', 'withdrawn', wd);
     }
   }
   return out;

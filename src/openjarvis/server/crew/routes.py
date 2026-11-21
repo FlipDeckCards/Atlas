@@ -733,6 +733,30 @@ async def crew_desk_control(body: DeskControlIn, request: Request):
     return out
 
 
+class DeskMoneyIn(BaseModel):
+    field: str = Field(..., max_length=20)
+    amount: float = Field(..., ge=0, le=10_000_000)
+
+
+@router.post("/api/crew/desk/money")
+async def crew_desk_money(body: DeskMoneyIn, request: Request):
+    """Each account edits its own cash deposited / referral deposited / withdrawn (Station, daily P&L file and Helix use them).
+    The owner's go to his account; a brother's to his own. Viewing someone else's Station is read only."""
+    g = await _desk_gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    if g[4]:
+        return JSONResponse({"detail": "You can only change your own amounts."}, status_code=403)
+    from openjarvis.server.crew import desk
+
+    if body.field not in desk.MONEY_FIELDS:
+        return JSONResponse({"detail": "Unknown field."}, status_code=400)
+    out = await desk.set_money(g[2], body.field, body.amount, account=g[3])
+    label = {"deposits": "Cash deposited", "referral": "Referral deposited", "withdrawn": "Withdrawn"}[body.field]
+    await g[1].store.add_event(g[0], "ops", f"Polymarket Desk: {label} set to ${body.amount:,.2f}")
+    return out
+
+
 class PolymarketKeysIn(BaseModel):
     key_id: str = Field(..., max_length=80)
     secret_key: str = Field(..., max_length=200)
