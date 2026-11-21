@@ -3230,6 +3230,18 @@ function pnlBlock(r, title) {
 }
 // owner 2026-11-21: the desk's live trading result, today and last 30 days, under the account stack (green up, red down)
 function tradingBox() {
+  const fam = FIN && FIN.family;
+  if (fam && fam.length && !VIEW_AS) {                              // owner 2026-11-21: one line per person
+    const box = mk('div', 'pnl'); box.append(mk('div', 'pnl-t', 'P&L'));
+    const amt = v => { const x = mk('span', null, v == null ? '—' : signed(v)); x.style.color = v == null ? '' : v < 0 ? '#ff3344' : '#00ff99'; return x; };
+    fam.forEach(p => {
+      const r = mk('div', 'row'); r.style.fontSize = '13px'; r.style.gap = '6px'; r.style.flexWrap = 'wrap';
+      const n = mk('span', null, p.name + ':'); n.style.minWidth = '58px'; n.style.color = '#f5f5f5';
+      r.append(n, mk('span', 'dim', 'Today'), amt(p.today), mk('span', 'dim', '|'), mk('span', 'dim', '30 Day'), amt(p.d30));
+      box.append(r);
+    });
+    return box;
+  }
   const t = FIN && FIN.trading && FIN.trading.polymarket;
   if (!t) return null;
   const box = mk('div', 'pnl'), grid = mk('div', 'pnl-g');

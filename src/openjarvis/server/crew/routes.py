@@ -448,6 +448,42 @@ async def subscriber_finance(request: Request, engine, uid: str, pool, missions=
     return out
 
 
+async def _family_pnl(pool, owner_trading) -> list:
+    """Owner 2026-11-21: one P&L box with each person's live trading today and over 30 days. Who is who comes from
+    POLYBOT_FAMILY ("Mike:owner,Davin:<email start>,..."), kept in the server settings so nobody's email is in the code."""
+    import os
+
+    spec = [x.split(":", 1) for x in (os.environ.get("POLYBOT_FAMILY") or "").split(",") if ":" in x]
+    if not spec:
+        return []
+    from openjarvis.server.crew import desk, tenant_desks
+
+    out = []
+    try:
+        ids = [str(i) for i in await tenant_desks.uids_with_desks(pool)]
+        async with pool.acquire() as c:
+            rows = await c.fetch("SELECT id, email FROM users WHERE id::text = ANY($1::text[])", ids)
+        by_start = {}
+        for r in rows:
+            local = (r["email"] or "").lower().split("@")[0]
+            by_start[local] = str(r["id"])
+        for name, who in spec:
+            name, who = name.strip(), who.strip().lower()
+            if who == "owner":
+                t = (owner_trading or {}).get("polymarket") or {"today": 0.0, "d30": 0.0}
+                out.append({"name": name, "today": t.get("today", 0.0), "d30": t.get("d30", 0.0)})
+                continue
+            uid = by_start.get(who) or next((v for k, v in by_start.items() if k.startswith(who)), None)
+            if uid is None:
+                out.append({"name": name, "today": None, "d30": None})
+                continue
+            per = await desk.live_pnl_all(pool, tenant_desks.account_tag(uid))
+            out.append({"name": name, **{k: round(sum(v[k] for v in per.values()), 2) for k in ("today", "d30")}})
+    except Exception:
+        logger.exception("family P&L unavailable")
+    return out
+
+
 @router.get("/api/crew/finance")
 async def crew_finance(request: Request):
     """P&L per factory and in total (crew/finance.py), the products' live status and Aibussol's own counts."""
@@ -477,6 +513,7 @@ async def crew_finance(request: Request):
             logger.exception("desk P&L unavailable")
     out = await fin.report(uid, missions, keys, trading=trading)
     out["trading"] = trading                    # 2026-11-21: the desk's own today / 30-day trading P&L box on the Station
+    out["family"] = await _family_pnl(pool, trading) if pool is not None else []
     out["products"] = engine.products
     from openjarvis.server.crew.product_stats import ProductStats
 
