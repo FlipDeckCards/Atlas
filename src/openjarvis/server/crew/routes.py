@@ -443,13 +443,16 @@ async def subscriber_finance(request: Request, engine, uid: str, pool, missions=
             logger.exception("a subscriber's desk P&L is unavailable")
     out = await fin_u.report(uid, missions, keys, owner=False, trading=trading)
     out["trading"] = trading                    # 2026-11-21: the desk's own today / 30-day trading P&L box on the Station
+    # owner 2026-11-21: the brothers see the same four-person P&L box as the owner
+    out["family"] = await _family_pnl(pool, None) if pool is not None and trading is not None else []
     out["products"] = await engine.products_for(uid, biz)
     out["product_stats"], out["aibussol_stats"] = {}, None
     return out
 
 
 async def _family_pnl(pool, owner_trading) -> list:
-    """Owner 2026-11-21: one P&L box with each person's live trading today and over 30 days. Who is who comes from
+    """Owner 2026-11-21: one P&L box with each person's live trading today and over 30 days, on every family Station
+    (owner_trading None = work the owner's line out here). Who is who comes from
     POLYBOT_FAMILY ("Mike:owner,Davin:<email start>,..."), kept in the server settings so nobody's email is in the code."""
     import os
 
@@ -470,6 +473,9 @@ async def _family_pnl(pool, owner_trading) -> list:
         for name, who in spec:
             name, who = name.strip(), who.strip().lower()
             if who == "owner":
+                if owner_trading is None:                        # a brother's Station asked: work out the owner's line here
+                    per = await desk.live_pnl_all(pool)
+                    owner_trading = {"polymarket": {k: round(sum(v[k] for v in per.values()), 2) for k in ("today", "d30")}}
                 t = (owner_trading or {}).get("polymarket") or {"today": 0.0, "d30": 0.0}
                 out.append({"name": name, "today": t.get("today", 0.0), "d30": t.get("d30", 0.0)})
                 continue
