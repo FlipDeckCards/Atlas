@@ -700,7 +700,7 @@ def analysis_text(a: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-async def export_daily(pool, account: str = "") -> bytes:
+async def export_daily(pool, account: str = "", rh_rows: Optional[list] = None) -> bytes:
     """The owner's live account profit by trading day (Los Angeles date), newest day on top. Every strategy version before the
     current one is one row at the bottom, as a date range. Green when the day made money, red when it lost. A total box shows
     all profit. Below, each bot's profit by the same days. Returns an .xlsx file."""
@@ -839,6 +839,40 @@ async def export_daily(pool, account: str = "") -> bytes:
         ws.column_dimensions[get_column_letter(col)].width = 16
     ws.row_dimensions[1].height = 22
     ws.freeze_panes = "A2"
+    if rh_rows:
+        # 2026-11-20 (owner): the Robinhood crypto desks on their own sheet (a separate account): profit by day and desk, live
+        # first, then paper. Realized P&L only (sells); open positions count when they are sold.
+        rs = wb.create_sheet("Robinhood")
+        coins = ["BTC", "ETH", "SOL", "XRP"]
+        row = 1
+        for mode in ("live", "paper"):
+            mine = [r for r in rh_rows if r["mode"] == mode]
+            if not mine:
+                continue
+            for i, t in enumerate(["Date (" + mode + ")"] + [c + " (Robinhood)" for c in coins] + ["Day total", "Exits"], start=1):
+                cell = rs.cell(row=row, column=i, value=t)
+                cell.font, cell.fill = Font(color="FFFFFF", bold=True), head_fill
+            row += 1
+            days: Dict[Any, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
+            exits: Dict[Any, int] = defaultdict(int)
+            for r in mine:
+                days[r["day"]][r["coin"]] += float(r["pnl"] or 0)
+                exits[r["day"]] += int(r["exits"] or 0)
+            for day in sorted(days, reverse=True):
+                vals = [round(days[day].get(c, 0.0), 2) for c in coins]
+                tot = round(sum(vals), 2)
+                rs.cell(row=row, column=1, value=day)
+                for i, v in enumerate(vals + [tot], start=2):
+                    cell = rs.cell(row=row, column=i, value=v)
+                    cell.number_format = money
+                    fill, font = style_for(v)
+                    if fill is not None and i == len(vals) + 2:
+                        cell.fill, cell.font = fill, font
+                rs.cell(row=row, column=len(vals) + 3, value=exits[day])
+                row += 1
+            row += 1
+        for col in range(1, 8):
+            rs.column_dimensions[get_column_letter(col)].width = 18
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

@@ -647,7 +647,15 @@ async def crew_desk_daily_export(request: Request, view: str = ""):
         return g
     from openjarvis.server.crew import desk
 
-    body = await desk.export_daily(g[2], account=g[3])                           # this account's trades only, never the owner's
+    rh_rows = None
+    rp = getattr(request.app.state, "rh_pool", None)
+    if rp is not None and not g[3]:                                              # the owner's own workbook: + a Robinhood sheet
+        try:
+            from openjarvis.server.crew import rh_engine
+            rh_rows = await rh_engine.daily_rows(rp)
+        except Exception:
+            rh_rows = None
+    body = await desk.export_daily(g[2], account=g[3], rh_rows=rh_rows)          # this account's trades only, never the owner's
     return Response(content=body, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": 'attachment; filename="desk-daily-pnl.xlsx"'})
 
@@ -1445,3 +1453,27 @@ async def crew_robinhood_quotes_export(request: Request):
 
     return Response(content=await rh_engine.export_quotes(g[1]), media_type="text/csv",
                     headers={"Content-Disposition": 'attachment; filename="robinhood-quotes.csv"'})
+
+
+@router.get("/api/crew/robinhood/trades.csv")
+async def crew_robinhood_trades_export(request: Request, coin: str = ""):
+    """Every Robinhood fill, the four desks combined (?coin=BTC for one), with what the engine saw at each."""
+    g = await _rh_gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    from openjarvis.server.crew import rh_engine
+
+    return Response(content=await rh_engine.export_trades(g[1], coin), media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="robinhood-trades.csv"'})
+
+
+@router.get("/api/crew/robinhood/log.csv")
+async def crew_robinhood_log_export(request: Request, coin: str = ""):
+    """The Robinhood desk log, the four desks combined (?coin=BTC for one)."""
+    g = await _rh_gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    from openjarvis.server.crew import rh_engine
+
+    return Response(content=await rh_engine.export_log(g[1], coin), media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="robinhood-desk-log.csv"'})
