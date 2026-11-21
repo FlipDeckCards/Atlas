@@ -1303,12 +1303,16 @@ function accountLines(DESK) {
   if (!DESK || DESK.error) return out;
   const st = DESK.status || {};
   if (DESK_VIEW === 'live' && st.account_value != null) {          // the real money, read from Polymarket: the line that cannot drift
-    const acct = mk('div', 'row'); acct.append(mk('span', 'grow', 'Polymarket account: ' + money(st.account_value))); out.push(acct);
-    if (DESK.deposits) {                                            // all-time: what the account is worth minus everything that went in
-      const ref = DESK.referral || 0, wd = DESK.withdrawn || 0, all = st.account_value + wd - DESK.deposits - ref, r = mk('div', 'row');
-      const x = mk('span', 'grow', 'All-time: ' + signed(all) + ' on ' + money(DESK.deposits) + ' deposited' + (ref ? ' + ' + money(ref) + ' referral' : '')
-        + (wd ? ' · ' + money(wd) + ' withdrawn' : ''));
-      x.style.color = pnlColor(all); r.append(x); out.push(r);
+    // stacked, one figure a line, each its own colour (owner, 2026-11-21)
+    const line = (text, color) => { const r = mk('div', 'row'), x = mk('span', 'grow', text); x.style.color = color; r.append(x); out.push(r); };
+    line('Polymarket account: ' + money(st.account_value), '#00e5ff');
+    if (DESK.deposits) {                                            // all-time: account + withdrawn - everything that went in
+      const ref = DESK.referral || 0, wd = DESK.withdrawn || 0, all = st.account_value + wd - DESK.deposits - ref;
+      line('All-time: ' + signed(all), pnlColor(all));
+      const gap = mk('div'); gap.style.height = '8px'; out.push(gap);
+      line('Cash Deposited: ' + money(DESK.deposits), '#ffd54f');
+      if (ref) line('Referral Deposited: ' + money(ref), '#c792ea');
+      if (wd) line('Withdrawn: ' + money(wd), '#ff9f43');
     }
   }
   return out;
