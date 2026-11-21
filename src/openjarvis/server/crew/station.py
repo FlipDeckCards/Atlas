@@ -3188,6 +3188,15 @@ function tradingBox() {
       const n = mk('span', null, p.name + ':'); n.style.minWidth = '58px'; n.style.color = '#f5f5f5';
       r.append(n, mk('span', 'dim', 'Today'), amt(p.today), mk('span', 'dim', '|'), mk('span', 'dim', '30 Day'), amt(p.d30));
       box.append(r);
+      // owner 2026-11-21: two more lines per person, each desk's result today (green up, red down)
+      const dk = p.desks || {};
+      const dv = v => { const x = mk('span', null, v == null ? '—' : v === 0 ? '$0.00' : signed(v)); x.style.color = v == null || v === 0 ? '#8a9aa8' : v < 0 ? '#ff3344' : '#00ff99'; return x; };
+      [['CRYPTO', [['BTC', 'btc'], ['XRP', 'xrp'], ['SOL', 'sol'], ['ETH', 'eth']]], ['CMDTY', [['GLD', 'gold'], ['SIL', 'silver'], ['OIL', 'wti'], ['NTG', 'natgas']]]].forEach(([title, items]) => {
+        const l = mk('div', 'row'); l.style.fontSize = '11px'; l.style.gap = '6px'; l.style.flexWrap = 'wrap'; l.style.paddingLeft = '2px';
+        l.append(mk('span', 'dim', title + ':'));
+        items.forEach(([lab, key], i) => { if (i) l.append(mk('span', 'dim', '|')); l.append(mk('span', 'dim', lab), dv(dk[key])); });
+        box.append(l);
+      });
     });
     return box;
   }
