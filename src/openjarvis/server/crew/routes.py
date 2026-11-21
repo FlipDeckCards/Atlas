@@ -476,18 +476,20 @@ async def _family_pnl(pool, owner_trading, owner_view: bool = False) -> list:
         for name, who in spec:
             name, who = name.strip(), who.strip().lower()
             if who == "owner":
+                per = await desk.live_pnl_all(pool)
                 if owner_trading is None:                        # a brother's Station asked: work out the owner's line here
-                    per = await desk.live_pnl_all(pool)
                     owner_trading = {"polymarket": {k: round(sum(v[k] for v in per.values()), 2) for k in ("today", "d30")}}
                 t = (owner_trading or {}).get("polymarket") or {"today": 0.0, "d30": 0.0}
-                out.append({"name": name, "today": t.get("today", 0.0), "d30": t.get("d30", 0.0)})
+                out.append({"name": name, "today": t.get("today", 0.0), "d30": t.get("d30", 0.0),
+                            "desks": {a: round(v["today"], 2) for a, v in per.items()}})
                 continue
             uid = by_start.get(who) or next((v for k, v in by_start.items() if k.startswith(who)), None)
             if uid is None:
                 out.append({"name": name, "today": None, "d30": None})
                 continue
             per = await desk.live_pnl_all(pool, tenant_desks.account_tag(uid))
-            out.append({"name": name, **{k: round(sum(v[k] for v in per.values()), 2) for k in ("today", "d30")}})
+            out.append({"name": name, **{k: round(sum(v[k] for v in per.values()), 2) for k in ("today", "d30")},
+                        "desks": {a: round(v["today"], 2) for a, v in per.items()}})   # owner 2026-11-21: today per desk under each name
     except Exception:
         logger.exception("family P&L unavailable")
     return out
