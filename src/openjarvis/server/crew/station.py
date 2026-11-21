@@ -3183,8 +3183,8 @@ function tradingBox() {
   if (fam && fam.length && !VIEW_AS) {                              // owner 2026-11-21: one line per person
     const box = mk('div', 'pnl'); box.append(mk('div', 'pnl-t', 'P&L'));
     const amt = v => { const x = mk('span', null, v == null ? '—' : signed(v)); x.style.color = v == null ? '' : v < 0 ? '#ff3344' : '#00ff99'; return x; };
-    fam.forEach(p => {
-      const r = mk('div', 'row'); r.style.fontSize = '13px'; r.style.gap = '6px'; r.style.flexWrap = 'wrap';
+    fam.forEach((p, pi) => {
+      const r = mk('div', 'row'); r.style.fontSize = '13px'; r.style.gap = '6px'; r.style.flexWrap = 'wrap'; if (pi) r.style.marginTop = '16px';   // a gap between people
       const n = mk('span', null, p.name + ':'); n.style.minWidth = '58px'; n.style.color = '#f5f5f5';
       r.append(n, mk('span', 'dim', 'Today'), amt(p.today), mk('span', 'dim', '|'), mk('span', 'dim', '30 Day'), amt(p.d30));
       box.append(r);
@@ -3193,8 +3193,8 @@ function tradingBox() {
       const dv = v => { const x = mk('span', null, v == null ? '—' : v === 0 ? '$0.00' : signed(v)); x.style.color = v == null || v === 0 ? '#8a9aa8' : v < 0 ? '#ff3344' : '#00ff99'; return x; };
       // each category on one line (no wrapping, no row dividers): coloured title, then "BTC $x | XRP $x | ..."
       [['Crypto:', '#00e5ff', [['BTC', 'btc'], ['XRP', 'xrp'], ['SOL', 'sol'], ['ETH', 'eth']]], ['Cmdty:', '#ffd54f', [['GLD', 'gold'], ['SIL', 'silver'], ['OIL', 'wti'], ['NTG', 'natgas']]]].forEach(([title, col, items]) => {
-        const l = mk('div'); l.style.cssText = 'display:flex;flex-wrap:nowrap;align-items:baseline;gap:3px;font-size:9.5px;white-space:nowrap;padding:3px 0 3px 2px;overflow:hidden';
-        const t = mk('span', null, title); t.style.color = col; t.style.fontWeight = '700'; t.style.minWidth = '44px'; l.append(t);
+        const l = mk('div'); l.style.cssText = 'display:flex;flex-wrap:nowrap;align-items:baseline;gap:3px;font-size:8px;white-space:nowrap;padding:3px 0 3px 16px;overflow:hidden';
+        const t = mk('span', null, title); t.style.color = col; t.style.fontWeight = '700'; t.style.minWidth = '38px'; l.append(t);
         items.forEach(([lab, key], i) => { if (i) l.append(mk('span', 'dim', '|')); const it = mk('span'); it.style.whiteSpace = 'nowrap'; const n = mk('span', 'dim', lab + ' '); it.append(n, dv(dk[key])); l.append(it); });
         box.append(l);
       });
