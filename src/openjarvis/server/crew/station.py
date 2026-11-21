@@ -1312,7 +1312,7 @@ function accountLines(DESK) {
       const gap = mk('div'); gap.style.height = '8px'; out.push(gap);
       line('Cash Deposited: ' + money(DESK.deposits), '#ffd54f');
       if (ref) line('Referral Deposited: ' + money(ref), '#c792ea');
-      if (wd) line('Withdrawn: ' + money(wd), '#ff9f43');
+      if (wd) line('Withdrawn: ' + money(wd), '#ff6ec7');
     }
   }
   return out;
