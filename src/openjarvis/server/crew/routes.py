@@ -315,7 +315,7 @@ OWNER_BUSINESSES = (
     {"key": "deadzone", "name": "Deadzone", "url": "https://cybervoid-6tbo.onrender.com", "color": "#ff3344",
      "description": "Deadzone is a mobile game studio project, with its backend and iOS build kept here."},
     {"key": "polymarket", "name": "Polymarket Desk", "url": "https://polymarket.us", "color": "#00e5ff",
-     "description": "Polymarket Desk runs 12 trading bots in Polymarket US's Up/Down contracts: 5-minute, 15-minute and 1-hour windows for BTC, ETH, SOL and XRP."})
+     "description": "Polymarket Desk runs 8 live trading bots in Polymarket US's Up/Down contracts: 5-minute windows for BTC, ETH, SOL and XRP, and 15-minute windows for gold, silver, oil and natural gas."})
 OWNER_FIXED_KEYS = {b["key"] for b in OWNER_BUSINESSES}
 
 
