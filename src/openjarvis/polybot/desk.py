@@ -413,16 +413,20 @@ class Desk:
         w.mode = self.lmode()
         self.open_windows[w.slug] = w
         w.fills[f.side] = w.fills.get(f.side, 0) + 1
+        # 2026-11-20 (owner): the taker fee is part of what a side cost, so every P&L (scoreboards, daily sheet, Station) is after
+        # fees and matches the account (Nov 20: desks said $0.00, the account was -$3.70, the day's fees ~$3.8)
+        fee = float(getattr(f, "fee", 0.0) or 0.0)
         if f.side == "up":
             w.inv.up_qty += f.qty
-            w.inv.up_cost += f.cost
+            w.inv.up_cost += f.cost + fee
         else:
             w.inv.down_qty += f.qty
-            w.inv.down_cost += f.cost
+            w.inv.down_cost += f.cost + fee
         b = self.book
         cost_per = f.price if f.side == "up" else 1.0 - f.price
         fair_side = None if self.fair is None else (self.fair if f.side == "up" else 1.0 - self.fair)
         feats = {
+            "fee": round(fee, 6),
             # what the desk saw at the moment of the fill, so results can be cut by condition later
             "model": None if self.fair_model is None else round(self.fair_model, 4),
             "mid": None if self.mid is None else round(self.mid, 4),
@@ -594,7 +598,8 @@ class Desk:
                 self.learner.add(pnl, w.inv.spent)
             self.ledger.window({"slug": slug, "mode": w.mode, "window_start": w.start, "window_end": w.end, "price_to_beat": w.price_to_beat,
                                 "close_price": close, "up": up, "up_qty": w.inv.up_qty, "up_cost": round(w.inv.up_cost, 4),
-                                "down_qty": w.inv.down_qty, "down_cost": round(w.inv.down_cost, 4), "pnl": pnl, "settled_at": now})
+                                "down_qty": w.inv.down_qty, "down_cost": round(w.inv.down_cost, 4), "pnl": pnl, "settled_at": now,
+                                "fees_in_pnl": True})
             text = (f"EXIT (settled) {w.mode.upper()} · {slug} · {self.name} {'UP' if up else 'DOWN'} (open ${w.price_to_beat:,.2f}"
                     + (f", close ${close:,.2f}" if close else "") + f") · held Up {w.inv.up_qty:g} / Down {w.inv.down_qty:g}, paid ${w.inv.spent:.2f}, "
                     f"got ${payout:.2f} · P&L {'+' if pnl >= 0 else ''}{pnl:.2f} · today {'+' if self.rs.day_pnl >= 0 else ''}{self.rs.day_pnl:.2f}")
