@@ -142,3 +142,38 @@ def test_position_average_cost_and_realized_pnl():
     p.buy(1.0, 200.0)
     assert p.avg_cost == 150.0
     assert p.sell(1.0, 180.0) == 30.0 and p.qty == 1.0
+
+
+def test_a_paused_desk_skips_its_coin_only():
+    e = _engine()
+    E.STRATEGIES["t"] = lambda snap: [E.Signal("BTC", "buy", "test")]
+    try:
+        e.control = E._merge_control({"strategy": "t", "coins": {"BTC": {"paused": True}}})
+        asyncio.run(e.run_strategy(1000.0))
+    finally:
+        E.STRATEGIES.pop("t")
+    assert e.paper.pos["BTC"].qty == 0
+    assert any("BTC desk is paused" in str(x[1]) for x in e.pool.log)
+
+
+def test_daily_stop_blocks_buys():
+    e = _engine()
+    e.control = E._merge_control({"strategy": "t", "daily_stop_pct": 5})
+    e.day = {"date": "x", "start": {"paper": 1100.0}}                 # $1,000 now vs $1,100 at the start: -9%
+    assert e.stopped_today()
+    E.STRATEGIES["t"] = lambda snap: [E.Signal("BTC", "buy", "test")]
+    try:
+        asyncio.run(e.run_strategy(1000.0))
+    finally:
+        E.STRATEGIES.pop("t")
+    assert e.paper.pos["BTC"].qty == 0
+
+
+def test_fill_features_and_control_merge():
+    e = _engine()
+    asyncio.run(e.record_fill("o1", "paper", "BTC", "buy", 0.001, 60100.0, "t"))
+    sql, args = [x for x in e.pool.log if "INSERT INTO rh_fills" in x[0]][0]
+    f = json.loads(args[-1])
+    assert f["spread_pct"] == round(100 * 200 / 60000, 4) and f["mid"] == 60000.0 and "hour_la" in f
+    c = E._merge_control({"coins": {"XRP": {"paused": True}}})
+    assert c["coins"]["XRP"]["paused"] and not c["coins"]["BTC"]["paused"] and c["daily_stop_pct"] == 8.0

@@ -1154,43 +1154,45 @@ async function loadRH() {
   RH = x.ok ? x.data : { error: (x.data && x.data.detail) || ('HTTP ' + x.status) };
   renderSide();
 }
+function rhDownload(path, name) {
+  return async () => {
+    const res = await fetch(path, { headers: { 'Authorization': 'Bearer ' + token() } });
+    if (!res.ok) { alert('Download failed'); return; }
+    const url = URL.createObjectURL(await res.blob()); const a = document.createElement('a'); a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+}
 function robinhoodSec() {
-  // 2026-11-20 (owner): the Robinhood crypto engine, ready for a strategy. Paper by default; live needs a strategy, the
+  // 2026-11-20 (owner): the Robinhood engine (top) and one desk per coin (below), like the Polymarket desks. One engine underneath:
+  // the 3% per order and 12% at-risk limits are shared by the four desks. Paper by default; live needs a strategy, the
   // connection and the owner's Go live; each live order can wait for the owner's Approve.
   if (Date.now() - RH_AT > 15000) loadRH();
   const c = (S.connections && S.connections.robinhood) || {};
-  const s = mk('div', 'sec');
-  s.append(mk('div', 'h', 'Robinhood (crypto)'));
-  if (!RH) { s.append(mk('div', 'dim', 'Loading…')); return s; }
-  if (RH.error) { s.append(mk('div', 'dim', RH.error)); return s; }
-  const st = RH.status || {}, ctl = RH.control || {}, live = ctl.mode === 'live';
+  const wrap = mk('div');
+  const s = mk('div', 'sec'); wrap.append(s);
+  s.append(mk('div', 'h', 'Robinhood (crypto) · engine'));
+  if (!RH) { s.append(mk('div', 'dim', 'Loading…')); return wrap; }
+  if (RH.error) { s.append(mk('div', 'dim', RH.error)); return wrap; }
+  const st = RH.status || {}, ctl = RH.control || {}, live = ctl.mode === 'live', lim = st.limits || {};
   const alive = st.heartbeat && (Date.now() / 1000 - st.heartbeat) < 90;
   s.append(mk('div', 'dim', (c.connected ? 'Connected' : 'Not connected: ' + (c.setup || 'set the Robinhood keys on Render.'))
     + ' · engine ' + (alive ? 'running' : 'not reporting') + ' · ' + (live ? 'LIVE (real money)' : 'PAPER (simulated)') + (ctl.paused ? ' · PAUSED' : '')));
-  s.append(mk('div', 'dim', 'Strategy: ' + (ctl.strategy || 'none selected (the engine only watches prices)') + (st.why ? ' · ' + st.why : '')));
-  s.append(mk('div', 'dim', 'Limits: each order risks at most ' + ((st.limits || {}).per_order_pct || 3) + '% of the account; BTC, ETH, SOL and XRP together never more than '
-    + ((st.limits || {}).max_exposure_pct || 12) + '% at risk.' + (st.exposure_pct != null ? ' At risk now: ' + st.exposure_pct + '%.' : '')));
+  s.append(mk('div', 'dim', 'Strategy: ' + (ctl.strategy || 'none selected (the desks only watch prices)') + (st.why ? ' · ' + st.why : '')));
+  s.append(mk('div', 'dim', 'Limits: ' + (lim.per_order_pct || 3) + '% of the account per order · ' + (lim.max_exposure_pct || 12) + '% at risk across the four desks · daily stop '
+    + (lim.daily_stop_pct ? lim.daily_stop_pct + '% (no new buys after that loss in a day)' : 'off')
+    + (st.exposure_pct != null ? ' · at risk now ' + st.exposure_pct + '%' : '') + (st.day_pct != null ? ' · today ' + (st.day_pct >= 0 ? '+' : '') + st.day_pct + '%' : '')
+    + (st.stopped_today ? ' · DAILY STOP HIT' : '')));
   if (st.account_value != null) s.append(mk('div', null, (live ? 'Account' : 'Paper account') + ': ' + money(st.account_value) + ' · cash ' + money(st.cash)
     + (live && st.buying_power != null ? ' · buying power ' + money(st.buying_power) : '')));
-  const pr = st.prices || {};
-  if (Object.keys(pr).length) s.append(mk('div', 'dim', Object.entries(pr).map(([k, v]) => k + ' ' + money(v.mid)).join(' · ')));
-  (st.positions || []).forEach(p => {
-    const r = mk('div', 'row'); const t = mk('span', 'grow', p.coin + ': ' + Number(p.qty).toPrecision(6) + ' @ ' + money(p.avg_cost) + ' · now ' + money(p.value)
-      + (p.unrealized != null ? ' · ' + signed(p.unrealized) : ''));
-    if (p.unrealized != null) t.style.color = pnlColor(p.unrealized); r.append(t); s.append(r);
-  });
-  if ((RH.spread || []).length) s.append(mk('div', 'dim', 'Robinhood spread (buy vs sell, last 7 days): ' + RH.spread.map(x => x.coin + ' ' + x.median_pct + '% (worst 10%: ' + x.p90_pct + '%)').join(' · ')));
   const sb = (RH.scoreboard || {})[live ? 'live' : 'paper'];
-  if (sb) s.append(mk('div', null, 'Scoreboard (' + (live ? 'live' : 'paper') + '): ' + sb.exits + ' exits, ' + sb.wins + ' won · total ' + signed(sb.pnl) + ' · today ' + signed(sb.today)));
-  // orders waiting for the owner's approval
+  if (sb) s.append(mk('div', null, 'All desks (' + (live ? 'live' : 'paper') + '): ' + sb.exits + ' exits, ' + sb.wins + ' won · total ' + signed(sb.pnl) + ' · today ' + signed(sb.today)));
   (RH.orders || []).filter(o => o.state === 'pending_approval').forEach(o => {
-    const r = mk('div', 'row'); r.append(mk('span', 'grow', 'APPROVE? ' + o.side.toUpperCase() + ' ' + Number(o.qty).toPrecision(6) + ' ' + o.coin + ' (~' + money(o.notional) + ') · ' + (o.reason || '')));
+    const r = mk('div', 'row'); r.append(mk('span', 'grow', 'APPROVE? ' + o.coin + ' desk: ' + o.side.toUpperCase() + ' ' + Number(o.qty).toPrecision(6) + ' ' + o.coin + ' (~' + money(o.notional) + ') · ' + (o.reason || '')));
     const y = mk('button', 'b', 'Approve'), n = mk('button', 'b no', 'Reject');
     y.onclick = async () => { const x = await api('/api/crew/robinhood/approve', 'POST', { order_id: o.id, approve: true }); if (!x.ok) alert(x.data.detail || 'Could not approve.'); loadRH(); };
     n.onclick = async () => { await api('/api/crew/robinhood/approve', 'POST', { order_id: o.id, approve: false }); loadRH(); };
     r.append(y, n); s.append(r);
   });
-  // controls
   const tap = async (action, value, ask) => {
     if (ask && !confirm(ask)) return;
     const x = await api('/api/crew/robinhood/control', 'POST', { action, value });
@@ -1201,7 +1203,7 @@ function robinhoodSec() {
   const bl = mk('button', 'b' + (live ? ' on' : ''), 'GO LIVE');
   if (st.live_blocked) { bl.disabled = true; bl.title = 'Not yet: ' + st.live_blocked + '.'; }
   bl.onclick = () => tap('live', null, 'Trade REAL money on Robinhood with strategy "' + ctl.strategy + '"?' + (ctl.approve_each ? ' Each order will still wait for your Approve.' : ''));
-  const bpa = mk('button', 'b', ctl.paused ? 'Resume' : 'Pause'); bpa.onclick = () => tap(ctl.paused ? 'resume' : 'pause');
+  const bpa = mk('button', 'b', ctl.paused ? 'Resume all' : 'Pause all'); bpa.onclick = () => tap(ctl.paused ? 'resume' : 'pause');
   const bk = mk('button', 'b no', 'Kill switch'); bk.onclick = () => tap('kill', null, 'Cancel every open order the bot placed on Robinhood, pause, and go back to paper?');
   row.append(bp, bl, bpa, bk); s.append(row);
   const row2 = mk('div', 'row');
@@ -1210,24 +1212,45 @@ function robinhoodSec() {
   sel.onchange = () => tap('strategy', sel.value);
   const ap = mk('button', 'b' + (ctl.approve_each ? ' on' : ''), ctl.approve_each ? 'Approve each order: ON' : 'Approve each order: OFF');
   ap.onclick = () => tap('approve_each', !ctl.approve_each, ctl.approve_each ? 'Let live orders go out without your Approve each time?' : null);
-  const dl = mk('button', 'b', '⬇ Orders CSV');
-  dl.onclick = async () => {
-    const res = await fetch('/api/crew/robinhood/orders.csv', { headers: { 'Authorization': 'Bearer ' + token() } });
-    if (!res.ok) { alert('Download failed'); return; }
-    const url = URL.createObjectURL(await res.blob()); const a = document.createElement('a'); a.href = url; a.download = 'robinhood-orders.csv';
-    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-  };
-  const dq = mk('button', 'b', '⬇ Quotes CSV');
-  dq.onclick = async () => {
-    const res = await fetch('/api/crew/robinhood/quotes.csv', { headers: { 'Authorization': 'Bearer ' + token() } });
-    if (!res.ok) { alert('Download failed'); return; }
-    const url = URL.createObjectURL(await res.blob()); const a = document.createElement('a'); a.href = url; a.download = 'robinhood-quotes.csv';
-    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-  };
-  row2.append(sel, ap, dl, dq); s.append(row2);
+  const ds = mk('button', 'b', 'Daily stop: ' + (lim.daily_stop_pct ? lim.daily_stop_pct + '%' : 'off'));
+  ds.onclick = () => { const v = prompt('Daily stop: stop new buys after the account loses this % in a day (0 = off).', String(lim.daily_stop_pct || 0)); if (v !== null) tap('daily_stop', v); };
+  row2.append(sel, ap, ds); s.append(row2);
+  // every desk combined, one file each (a "desk" column says which coin)
+  const row3 = mk('div', 'desk-tabs');
+  [['⬇ All trades CSV', '/api/crew/robinhood/trades.csv', 'robinhood-trades.csv'], ['⬇ Desk log CSV', '/api/crew/robinhood/log.csv', 'robinhood-desk-log.csv'],
+   ['⬇ Orders CSV', '/api/crew/robinhood/orders.csv', 'robinhood-orders.csv'], ['⬇ Quotes CSV', '/api/crew/robinhood/quotes.csv', 'robinhood-quotes.csv']].forEach(([label, path, name]) => {
+    const b = mk('button', 'b', label); b.onclick = rhDownload(path, name); row3.append(b);
+  });
+  s.append(row3);
   if (st.last_error) s.append(mk('div', 'dim', 'Last problem: ' + st.last_error));
-  (RH.events || []).slice(0, 8).forEach(e => s.append(mk('div', 'dim', ago(e.ts) + ' · ' + e.text)));
-  return s;
+  (RH.events || []).filter(e => !e.coin).slice(0, 4).forEach(e => s.append(mk('div', 'dim', ago(e.ts) + ' · ' + e.text)));
+  // one desk per coin
+  const spread = {}; (RH.spread || []).forEach(x => { spread[x.coin] = x; });
+  ['BTC', 'ETH', 'SOL', 'XRP'].forEach(coin => {
+    const d = mk('div', 'sec'); wrap.append(d);
+    const cd = (RH.coins || {})[coin] || {}, cc = (ctl.coins || {})[coin] || {};
+    d.append(mk('div', 'h', coin + ' Desk (Robinhood)' + (cc.paused ? ' · PAUSED' : '')));
+    const p = (st.prices || {})[coin], sp = spread[coin];
+    d.append(mk('div', 'dim', (p ? coin + ' ' + money(p.mid) + ' · buy ' + money(p.ask) + ' / sell ' + money(p.bid) : 'No price yet')
+      + (sp ? ' · spread ' + sp.median_pct + '% typical, ' + sp.p90_pct + '% worst 10% (' + sp.samples + ' quotes)' : '')));
+    const pos = (st.positions || []).find(x => x.coin === coin);
+    const flag = mk('div', 'row'); flag.style.fontSize = '15px';
+    const tag = mk('span', null, pos ? 'IN A TRADE' : 'NO POSITION'); tag.style.fontWeight = '700'; tag.style.color = pos ? '#3d8bff' : '#ffb347';
+    flag.append(tag, mk('span', 'dim', pos ? ' · ' + Number(pos.qty).toPrecision(6) + ' ' + coin + ' @ ' + money(pos.avg_cost) + ' · now ' + money(pos.value)
+      + (pos.unrealized != null ? ' · ' + signed(pos.unrealized) : '') : ' · nothing held by this desk'));
+    d.append(flag);
+    const ms = (cd.scoreboard || {})[live ? 'live' : 'paper'];
+    d.append(mk('div', null, 'Scoreboard (' + (live ? 'live' : 'paper') + '): ' + (ms ? ms.exits + ' exits, ' + ms.wins + ' won'
+      + (ms.exits ? ' (' + Math.round(100 * ms.wins / ms.exits) + '%)' : '') + ' · total ' + signed(ms.pnl) + ' · today ' + signed(ms.today)
+      + (ms.bought ? ' · return ' + (100 * ms.pnl / ms.bought).toFixed(1) + '% of money in' : '') : 'no trades yet')));
+    const r = mk('div', 'desk-tabs');
+    const pb = mk('button', 'b', cc.paused ? 'Resume ' + coin : 'Pause ' + coin); pb.onclick = () => tap('coin_pause', { coin, paused: !cc.paused });
+    const tb = mk('button', 'b', '⬇ ' + coin + ' trades'); tb.onclick = rhDownload('/api/crew/robinhood/trades.csv?coin=' + coin, 'robinhood-' + coin.toLowerCase() + '-trades.csv');
+    const lb = mk('button', 'b', '⬇ ' + coin + ' desk log'); lb.onclick = rhDownload('/api/crew/robinhood/log.csv?coin=' + coin, 'robinhood-' + coin.toLowerCase() + '-desk-log.csv');
+    r.append(pb, tb, lb); d.append(r);
+    (cd.events || []).slice(0, 5).forEach(e => d.append(mk('div', 'dim', ago(e.ts) + ' · ' + e.text)));
+  });
+  return wrap;
 }
 
 // v1.22 window flag: is there a trade in the window the desk is in right now, and what is it (one line; label optional)

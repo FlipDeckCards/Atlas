@@ -52,10 +52,15 @@ CREATE TABLE IF NOT EXISTS rh_events (id BIGSERIAL PRIMARY KEY, ts TIMESTAMPTZ N
 CREATE TABLE IF NOT EXISTS rh_quotes (ts TIMESTAMPTZ NOT NULL DEFAULT now(), coin TEXT NOT NULL, bid DOUBLE PRECISION NOT NULL,
   ask DOUBLE PRECISION NOT NULL, mid DOUBLE PRECISION NOT NULL);
 CREATE INDEX IF NOT EXISTS rh_quotes_ts ON rh_quotes (ts);
+ALTER TABLE rh_events ADD COLUMN IF NOT EXISTS coin TEXT;
+ALTER TABLE rh_fills ADD COLUMN IF NOT EXISTS features JSONB;
 CREATE TABLE IF NOT EXISTS rh_kv (key TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
 """
 
-DEFAULT_CONTROL = {"mode": "paper", "paused": False, "strategy": "", "approve_each": True}
+DEFAULT_CONTROL = {"mode": "paper", "paused": False, "strategy": "", "approve_each": True,
+                   # 2026-11-20 (owner): one desk per coin. Each can be paused on its own; the daily stop (percent of the day's
+                   # starting value) stops new buys for the rest of the Los Angeles day once the day's loss reaches it.
+                   "coins": {c: {"paused": False} for c in bot.COINS}, "daily_stop_pct": 8.0}   # 8%: owner, 2026-11-20
 
 
 # ── the strategy slot ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -92,8 +97,11 @@ STRATEGIES: Dict[str, Callable[[Snapshot], List[Signal]]] = {}
 class Position:
     qty: float = 0.0
     avg_cost: float = 0.0
+    opened: float = 0.0              # unix time the position was opened (hold time on exit)
 
-    def buy(self, qty: float, price: float) -> None:
+    def buy(self, qty: float, price: float, ts: float = 0.0) -> None:
+        if self.qty <= 0:
+            self.opened = ts
         total = self.qty + qty
         self.avg_cost = (self.avg_cost * self.qty + price * qty) / total if total > 0 else 0.0
         self.qty = total
@@ -104,7 +112,7 @@ class Position:
         pnl = (price - self.avg_cost) * q
         self.qty = round(self.qty - q, 10)
         if self.qty <= 1e-12:
-            self.qty, self.avg_cost = 0.0, 0.0
+            self.qty, self.avg_cost, self.opened = 0.0, 0.0, 0.0
         return pnl
 
 
@@ -137,6 +145,8 @@ class Engine:
         self._t: Dict[str, float] = {}
         self._stop = asyncio.Event()
         self.ready = False
+        self.day: Dict[str, Any] = {}
+        self._reasons: Dict[str, str] = {}                  # order id -> the strategy's reason (recorded with the fill)
 
     # small helpers
     def _due(self, name: str, every: float, now: float) -> bool:
@@ -145,11 +155,11 @@ class Engine:
             return True
         return False
 
-    async def log(self, level: str, text: str) -> None:
-        logger.info("RH %s: %s", level, text)
+    async def log(self, level: str, text: str, coin: Optional[str] = None) -> None:
+        logger.info("RH %s %s: %s", coin or "-", level, text)
         try:
             async with self.pool.acquire() as c:
-                await c.execute("INSERT INTO rh_events (level, text) VALUES ($1, $2)", level, text[:1000])
+                await c.execute("INSERT INTO rh_events (level, text, coin) VALUES ($1, $2, $3)", level, text[:1000], coin)
         except Exception:
             logger.warning("rh event not saved")
 
@@ -179,13 +189,13 @@ class Engine:
     async def setup(self) -> None:
         async with self.pool.acquire() as c:
             await c.execute(DDL)
-            rows = await c.fetch("SELECT mode, coin, side, qty, price FROM rh_fills ORDER BY id")
+            rows = await c.fetch("SELECT ts, mode, coin, side, qty, price FROM rh_fills ORDER BY id")
         paper_cash = PAPER_START_CASH
         for r in rows:
             book = self.paper if r["mode"] == "paper" else self.live
             p = book.pos.setdefault(r["coin"], Position())
             if r["side"] == "buy":
-                p.buy(float(r["qty"]), float(r["price"]))
+                p.buy(float(r["qty"]), float(r["price"]), r["ts"].timestamp())
                 if r["mode"] == "paper":
                     paper_cash -= float(r["qty"]) * float(r["price"])
             else:
@@ -193,7 +203,8 @@ class Engine:
                 if r["mode"] == "paper":
                     paper_cash += float(r["qty"]) * float(r["price"])
         self.paper.cash = round(paper_cash, 2)
-        self.control = {**DEFAULT_CONTROL, **(await self.kv_get("control"))}
+        self.control = _merge_control(await self.kv_get("control"))
+        self.day = await self.kv_get("day")
         self.ready = True
 
     # ── the loop ──
@@ -220,7 +231,7 @@ class Engine:
 
     async def step(self) -> None:
         now = self.clock()
-        self.control = {**DEFAULT_CONTROL, **(await self.kv_get("control"))}
+        self.control = _merge_control(await self.kv_get("control"))
         if self.control.get("kill"):
             await self.kill()
         if not rh.configured():
@@ -229,6 +240,7 @@ class Engine:
         await self.read_market(now)
         if self.control.get("mode") == "live" and self._due("account", ACCOUNT_EVERY_S, now):
             await self.read_account()
+        await self.roll_day(now)
         await self.run_approved(now)
         why = await self.run_strategy(now)
         await self.write_status(now, why)
@@ -273,6 +285,31 @@ class Engine:
                 except (TypeError, ValueError):
                     continue
 
+    async def roll_day(self, now: float) -> None:
+        """The day's starting value (Los Angeles date) per mode, for the daily stop and the scoreboard's 'today'."""
+        if not self.prices:
+            return
+        today = dt.datetime.fromtimestamp(now, _la()).date().isoformat()
+        mode = self.control.get("mode") or "paper"
+        d = getattr(self, "day", {}) or {}
+        if d.get("date") != today or mode not in (d.get("start") or {}):
+            start = dict(d.get("start") or {}) if d.get("date") == today else {}
+            start[mode] = self.book().value(self.prices)
+            self.day = {"date": today, "start": start, "stopped": {} if d.get("date") != today else d.get("stopped", {})}
+            await self.kv_put("day", self.day)
+
+    def day_loss_pct(self) -> Optional[float]:
+        mode = self.control.get("mode") or "paper"
+        st = ((getattr(self, "day", {}) or {}).get("start") or {}).get(mode)
+        if not st or not self.prices:
+            return None
+        return round(100.0 * (self.book().value(self.prices) - st) / st, 2)
+
+    def stopped_today(self) -> bool:
+        pct = self.day_loss_pct()
+        lim = float(self.control.get("daily_stop_pct") or 0)
+        return bool(lim > 0 and pct is not None and pct <= -lim)
+
     def book(self) -> Book:
         return self.live if self.control.get("mode") == "live" else self.paper
 
@@ -306,9 +343,22 @@ class Engine:
         except Exception as exc:
             await self.log("warn", f"Strategy '{name}' failed: {exc}")
             return f"Strategy '{name}' failed this loop."
+        stopped = self.stopped_today()
+        if stopped and not (self.day or {}).get("stopped", {}).get(mode):
+            self.day.setdefault("stopped", {})[mode] = True
+            await self.kv_put("day", self.day)
+            msg = (f"Daily stop: the {mode} account is down {-self.day_loss_pct():.1f}% today (limit "
+                   f"{float(self.control.get('daily_stop_pct') or 0):g}%). No new buys until midnight Los Angeles time; exits still run.")
+            await self.log("warn", msg)
+            await self.push("Daily stop", msg)
         for s in signals:
+            if (self.control.get("coins") or {}).get(s.coin, {}).get("paused"):
+                await self.log("info", f"{s.coin} desk is paused: {s.side} skipped ({s.reason}).", s.coin)
+                continue
+            if stopped and s.side == "buy":
+                continue
             await self.act(s, name, now)
-        return f"Strategy '{name}': {len(signals)} signal(s) this loop."
+        return f"Strategy '{name}': {len(signals)} signal(s) this loop." + (" Daily stop: buys off." if stopped else "")
 
     def size(self, s: Signal) -> tuple:
         """(dollars, coin quantity, why) for a signal, inside the owner's limits."""
@@ -350,15 +400,16 @@ class Engine:
             return
         usd, qty, why = self.size(s)
         if qty <= 0:
-            await self.log("info", f"{strategy}: {s.side} {s.coin} skipped ({why}).")
+            await self.log("info", f"{strategy}: {s.side} {s.coin} skipped ({why}).", s.coin)
             return
         oid = str(uuid.uuid4())
         mode = self.control.get("mode") or "paper"
         typ = "limit" if s.limit_price else "market"
         state = "pending_approval" if (mode == "live" and self.control.get("approve_each", True)) else "new"
         await self.record_order(oid, mode, s.coin, s.side, typ, usd, qty, s.limit_price, state, strategy, s.reason)
+        self._reasons[oid] = s.reason
         if state == "pending_approval":
-            await self.log("info", f"Waiting for your approval: {s.side} {qty:g} {s.coin} (~${usd:.2f}). {s.reason}")
+            await self.log("info", f"Waiting for your approval: {s.side} {qty:g} {s.coin} (~${usd:.2f}). {s.reason}", s.coin)
             await self.push("Approve order?", f"{s.side.upper()} {qty:g} {s.coin} (~${usd:.2f}) · {s.reason} · approve on the Station within 5 minutes")
             return
         await self.execute(oid, mode, s.coin, s.side, typ, qty, s.limit_price, strategy, s.reason)
@@ -382,6 +433,8 @@ class Engine:
     async def execute(self, oid: str, mode: str, coin: str, side: str, typ: str, qty: float, limit_price: Optional[float],
                       strategy: str, reason: str) -> None:
         px = self.prices.get(coin) or {}
+        if reason:
+            self._reasons.setdefault(oid, reason)
         if mode != "live":                                   # paper: fill now at the real ask or bid, or not at all
             price = px.get("ask") if side == "buy" else px.get("bid")
             if not price or (limit_price and ((side == "buy" and price > limit_price) or (side == "sell" and price < limit_price))):
@@ -398,7 +451,7 @@ class Engine:
             o = await self.c.place_order(SYMBOL[coin], side, client_order_id=oid, asset_quantity=qty, limit_price=limit_price)
         except Exception as exc:
             await self.set_state(oid, "failed", str(exc)[:300])
-            await self.log("warn", f"Robinhood refused {side} {qty:g} {coin}: {exc}")
+            await self.log("warn", f"Robinhood refused {side} {qty:g} {coin}: {exc}", coin)
             await self.push("Order refused", f"{side.upper()} {qty:g} {coin}: {str(exc)[:200]}")
             return
         xid = str(o.get("id") or "")
@@ -475,8 +528,18 @@ class Engine:
         book = self.live if mode == "live" else self.paper
         p = book.pos.setdefault(coin, Position())
         realized = None
+        now = self.clock()
+        px = self.prices.get(coin) or {}
+        feats = {"reason": self._reasons.pop(oid, ""), "mid": px.get("mid"), "bid": px.get("bid"), "ask": px.get("ask"),
+                 "spread_pct": round(100 * (px["ask"] - px["bid"]) / px["mid"], 4) if px.get("mid") else None,
+                 "paid_vs_mid_pct": round(100 * (price - px["mid"]) / px["mid"], 4) if px.get("mid") else None,
+                 "hour_la": dt.datetime.fromtimestamp(now, _la()).hour, "weekday": dt.datetime.fromtimestamp(now, _la()).weekday(),
+                 "entry_price": round(p.avg_cost, 8) if side == "sell" else None,
+                 "hold_s": round(now - p.opened) if side == "sell" and p.opened else None,
+                 "account_value": self.book().value(self.prices) if self.prices else None,
+                 "day_pct": self.day_loss_pct()}
         if side == "buy":
-            p.buy(qty, price)
+            p.buy(qty, price, now)
             if mode == "paper":
                 book.cash = round(book.cash - qty * price, 2)
         else:
@@ -484,13 +547,14 @@ class Engine:
             if mode == "paper":
                 book.cash = round(book.cash + qty * price, 2)
         async with self.pool.acquire() as c:
-            await c.execute("INSERT INTO rh_fills (mode, order_id, coin, side, qty, price, notional, realized_pnl, strategy) "
-                            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)", mode, oid, coin, side, qty, price, round(qty * price, 2), realized, strategy)
+            await c.execute("INSERT INTO rh_fills (mode, order_id, coin, side, qty, price, notional, realized_pnl, strategy, features) "
+                            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)", mode, oid, coin, side, qty, price, round(qty * price, 2),
+                            realized, strategy, json.dumps(feats))
         text = (f"{'ENTRY' if side == 'buy' else 'EXIT'} {mode.upper()} · {side.upper()} {qty:g} {coin} at ${price:,.4f} = ${qty * price:,.2f}"
                 + ("" if realized is None else f" · P&L {'+' if realized >= 0 else ''}{realized:.2f}") + (f" · {strategy}" if strategy else ""))
-        await self.log("trade", text)
+        await self.log("trade", text, coin)
         if mode == "live":
-            await self.push("Entry" if side == "buy" else "Exit", text)
+            await self.push(f"{coin} {'entry' if side == 'buy' else 'exit'}", text)
 
     async def kill(self) -> None:
         """Cancel every open Robinhood order this engine placed (never the owner's own), pause, back to paper, clear the kill flag."""
@@ -534,7 +598,9 @@ class Engine:
                   "buying_power": self.account.get("buying_power"), "prices": prices, "positions": pos,
                   "holdings": self.holdings,
                   "exposure_pct": round(100 * sum(book.exposure(prices).values()) / book.value(prices), 1) if prices and book.value(prices) else None,
-                  "limits": {"per_order_pct": bot.PER_ORDER_PCT, "max_exposure_pct": bot.MAX_EXPOSURE_PCT},
+                  "limits": {"per_order_pct": bot.PER_ORDER_PCT, "max_exposure_pct": bot.MAX_EXPOSURE_PCT,
+                             "daily_stop_pct": float(self.control.get("daily_stop_pct") or 0)},
+                  "day_pct": self.day_loss_pct(), "stopped_today": self.stopped_today(),
                   "last_error": self.last_error}
         await self.kv_put("status", status)
 
@@ -553,7 +619,9 @@ async def state(pool) -> Dict[str, Any]:
         ctl = await c.fetchval("SELECT value FROM rh_kv WHERE key = 'control'")
         orders = await c.fetch("SELECT id, ts, mode, coin, side, type, notional, qty, limit_price, state, filled_qty, avg_price, "
                                "strategy, reason, detail FROM rh_orders ORDER BY ts DESC LIMIT 30")
-        events = await c.fetch("SELECT ts, level, text FROM rh_events ORDER BY id DESC LIMIT 30")
+        events = await c.fetch("SELECT ts, level, text, coin FROM rh_events ORDER BY id DESC LIMIT 30")
+        coin_events = await c.fetch("SELECT * FROM (SELECT ts, level, text, coin, row_number() OVER (PARTITION BY coin ORDER BY id DESC) AS rn "
+                                    "FROM rh_events WHERE coin IS NOT NULL) x WHERE rn <= 8 ORDER BY ts DESC")
         spread = await c.fetch("SELECT coin, count(*) AS n, percentile_cont(0.5) WITHIN GROUP (ORDER BY (ask - bid) / mid) AS med, "
                                "percentile_cont(0.9) WITHIN GROUP (ORDER BY (ask - bid) / mid) AS p90, min(ts) AS since "
                                "FROM rh_quotes WHERE ts > now() - interval '7 days' GROUP BY coin ORDER BY coin")
@@ -562,6 +630,11 @@ async def state(pool) -> Dict[str, Any]:
                               "count(*) FILTER (WHERE side = 'sell' AND realized_pnl > 0) AS wins, "
                               "coalesce(sum(realized_pnl), 0) AS pnl, coalesce(sum(realized_pnl) FILTER (WHERE ts >= $1), 0) AS today "
                               "FROM rh_fills GROUP BY mode", today)
+        coin_score = await c.fetch("SELECT mode, coin, count(*) FILTER (WHERE side = 'sell') AS exits, "
+                                   "count(*) FILTER (WHERE side = 'sell' AND realized_pnl > 0) AS wins, "
+                                   "coalesce(sum(realized_pnl), 0) AS pnl, coalesce(sum(realized_pnl) FILTER (WHERE ts >= $1), 0) AS today, "
+                                   "coalesce(sum(notional) FILTER (WHERE side = 'buy'), 0) AS bought, max(ts) AS last "
+                                   "FROM rh_fills GROUP BY mode, coin", today)
 
     def j(v):
         if isinstance(v, str):
@@ -570,13 +643,30 @@ async def state(pool) -> Dict[str, Any]:
             except ValueError:
                 return {}
         return v or {}
-    return {"status": j(st), "control": {**DEFAULT_CONTROL, **j(ctl)},
+    return {"status": j(st), "control": _merge_control(j(ctl)),
             "orders": [{**dict(r), "ts": r["ts"].isoformat()} for r in orders],
-            "events": [{"ts": r["ts"].isoformat(), "level": r["level"], "text": r["text"]} for r in events],
+            "events": [{"ts": r["ts"].isoformat(), "level": r["level"], "text": r["text"], "coin": r["coin"]} for r in events],
+            "coins": {cn: {"events": [{"ts": r["ts"].isoformat(), "level": r["level"], "text": r["text"]} for r in coin_events if r["coin"] == cn],
+                           "scoreboard": {r["mode"]: {"exits": int(r["exits"]), "wins": int(r["wins"]), "pnl": round(float(r["pnl"]), 2),
+                                                      "today": round(float(r["today"]), 2), "bought": round(float(r["bought"]), 2),
+                                                      "last": r["last"].isoformat() if r["last"] else None}
+                                          for r in coin_score if r["coin"] == cn}} for cn in bot.COINS},
             "spread": [{"coin": r["coin"], "samples": int(r["n"]), "median_pct": round(100 * float(r["med"]), 3),
                         "p90_pct": round(100 * float(r["p90"]), 3), "since": r["since"].isoformat()} for r in spread],
             "scoreboard": {r["mode"]: {"exits": int(r["exits"]), "wins": int(r["wins"]), "pnl": round(float(r["pnl"]), 2),
                                        "today": round(float(r["today"]), 2)} for r in score}}
+
+
+def _merge_control(saved: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """The saved control row over the defaults, the per-coin part merged coin by coin."""
+    saved = dict(saved or {})
+    ctl = {**DEFAULT_CONTROL, **saved}
+    coins = {c: {"paused": False} for c in bot.COINS}
+    for c, v in (saved.get("coins") or {}).items():
+        if c in coins and isinstance(v, dict):
+            coins[c].update(v)
+    ctl["coins"] = coins
+    return ctl
 
 
 def _la():
@@ -589,7 +679,7 @@ async def control(pool, action: str, value: Any = None) -> Dict[str, Any]:
     await ensure(pool)
     async with pool.acquire() as c:
         cur = await c.fetchval("SELECT value FROM rh_kv WHERE key = 'control'")
-    ctl = {**DEFAULT_CONTROL, **(json.loads(cur) if isinstance(cur, str) else (cur or {}))}
+    ctl = _merge_control(json.loads(cur) if isinstance(cur, str) else (cur or {}))
     if action == "pause":
         ctl["paused"] = True
     elif action == "resume":
@@ -613,6 +703,20 @@ async def control(pool, action: str, value: Any = None) -> Dict[str, Any]:
             ctl["mode"] = "paper"
     elif action == "approve_each":
         ctl["approve_each"] = bool(value)
+    elif action == "coin_pause":
+        v = value if isinstance(value, dict) else {}
+        coin = str(v.get("coin") or "").upper()
+        if coin not in bot.COINS:
+            raise ValueError(f"No {coin or 'such'} desk.")
+        ctl["coins"][coin]["paused"] = bool(v.get("paused"))
+    elif action == "daily_stop":
+        try:
+            pct = float(value)
+        except (TypeError, ValueError):
+            raise ValueError("The daily stop is a percent, e.g. 6.")
+        if not 0 <= pct <= 50:
+            raise ValueError("The daily stop must be between 0 (off) and 50%.")
+        ctl["daily_stop_pct"] = pct
     else:
         raise ValueError(f"Unknown action '{action}'.")
     async with pool.acquire() as c:
@@ -669,3 +773,49 @@ async def export_quotes(pool) -> str:
         wr.writerow([r["ts"].isoformat(), r["coin"], r["bid"], r["ask"], r["mid"],
                      round(100 * (r["ask"] - r["bid"]) / r["mid"], 4) if r["mid"] else ""])
     return buf.getvalue()
+
+
+async def export_trades(pool, coin: str = "") -> str:
+    """Every Robinhood fill, all four desks combined (or one), with what the engine saw: one row per fill, a desk column."""
+    import csv
+    import io
+
+    await ensure(pool)
+    async with pool.acquire() as c:
+        rows = await c.fetch("SELECT ts, mode, coin, side, qty, price, notional, realized_pnl, strategy, features, order_id "
+                             "FROM rh_fills WHERE ($1 = '' OR coin = $1) ORDER BY ts", coin.upper())
+    cols = ["reason", "mid", "bid", "ask", "spread_pct", "paid_vs_mid_pct", "hour_la", "weekday", "entry_price", "hold_s",
+            "account_value", "day_pct"]
+    buf = io.StringIO()
+    wr = csv.writer(buf)
+    wr.writerow(["time_utc", "desk", "mode", "side", "qty", "price", "dollars", "realized_pnl", "strategy", *cols, "order_id"])
+    for r in rows:
+        f = r["features"]
+        f = json.loads(f) if isinstance(f, str) else (f or {})
+        wr.writerow([r["ts"].isoformat(), f"{r['coin']} (Robinhood)", r["mode"], r["side"], r["qty"], r["price"], r["notional"],
+                     r["realized_pnl"], r["strategy"], *[f.get(k) for k in cols], r["order_id"]])
+    return buf.getvalue()
+
+
+async def export_log(pool, coin: str = "") -> str:
+    """The Robinhood desk log, all desks combined (or one): time, desk (blank for engine-wide lines), level, text."""
+    import csv
+    import io
+
+    await ensure(pool)
+    async with pool.acquire() as c:
+        rows = await c.fetch("SELECT ts, coin, level, text FROM rh_events WHERE ($1 = '' OR coin = $1) ORDER BY id", coin.upper())
+    buf = io.StringIO()
+    wr = csv.writer(buf)
+    wr.writerow(["time_utc", "desk", "level", "text"])
+    for r in rows:
+        wr.writerow([r["ts"].isoformat(), r["coin"] or "ENGINE", r["level"], r["text"]])
+    return buf.getvalue()
+
+
+async def daily_rows(pool) -> list:
+    """(Los Angeles date, mode, coin, realized P&L, exits) for the daily P&L workbook's Robinhood sheet."""
+    await ensure(pool)
+    async with pool.acquire() as c:
+        return await c.fetch("SELECT (ts AT TIME ZONE 'America/Los_Angeles')::date AS day, mode, coin, coalesce(sum(realized_pnl), 0) AS pnl, "
+                             "count(*) FILTER (WHERE side = 'sell') AS exits FROM rh_fills GROUP BY 1, 2, 3 ORDER BY 1 DESC")
