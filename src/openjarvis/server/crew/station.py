@@ -1147,18 +1147,78 @@ function deskCurve(points) {
   path.setAttribute('points', points.map((p, i) => X(i).toFixed(1) + ',' + Y(p[1]).toFixed(1)).join(' ')); svg.append(path);
   return svg;
 }
+let RH = null, RH_AT = 0;
+async function loadRH() {
+  RH_AT = Date.now();
+  const x = await api('/api/crew/robinhood');
+  RH = x.ok ? x.data : { error: (x.data && x.data.detail) || ('HTTP ' + x.status) };
+  renderSide();
+}
 function robinhoodSec() {
-  // Robinhood crypto: connection, the owner's risk limits, and paper mode. Live orders are not built yet, so Go live stays off.
+  // 2026-11-20 (owner): the Robinhood crypto engine, ready for a strategy. Paper by default; live needs a strategy, the
+  // connection and the owner's Go live; each live order can wait for the owner's Approve.
+  if (Date.now() - RH_AT > 15000) loadRH();
   const c = (S.connections && S.connections.robinhood) || {};
   const s = mk('div', 'sec');
-  const h = mk('div', 'h', 'Robinhood (crypto)'); s.append(h);
-  s.append(mk('div', 'dim', c.connected ? 'Connected. The bot can read your crypto accounts; it cannot place orders yet.' : (c.setup || 'Not connected yet.')));
-  s.append(mk('div', 'dim', 'Limits: each order risks at most 3% of the account. BTC, ETH, SOL and XRP together never have more than 12% at risk.'));
+  s.append(mk('div', 'h', 'Robinhood (crypto)'));
+  if (!RH) { s.append(mk('div', 'dim', 'Loading…')); return s; }
+  if (RH.error) { s.append(mk('div', 'dim', RH.error)); return s; }
+  const st = RH.status || {}, ctl = RH.control || {}, live = ctl.mode === 'live';
+  const alive = st.heartbeat && (Date.now() / 1000 - st.heartbeat) < 90;
+  s.append(mk('div', 'dim', (c.connected ? 'Connected' : 'Not connected: ' + (c.setup || 'set the Robinhood keys on Render.'))
+    + ' · engine ' + (alive ? 'running' : 'not reporting') + ' · ' + (live ? 'LIVE (real money)' : 'PAPER (simulated)') + (ctl.paused ? ' · PAUSED' : '')));
+  s.append(mk('div', 'dim', 'Strategy: ' + (ctl.strategy || 'none selected (the engine only watches prices)') + (st.why ? ' · ' + st.why : '')));
+  s.append(mk('div', 'dim', 'Limits: each order risks at most ' + ((st.limits || {}).per_order_pct || 3) + '% of the account; BTC, ETH, SOL and XRP together never more than '
+    + ((st.limits || {}).max_exposure_pct || 12) + '% at risk.' + (st.exposure_pct != null ? ' At risk now: ' + st.exposure_pct + '%.' : '')));
+  if (st.account_value != null) s.append(mk('div', null, (live ? 'Account' : 'Paper account') + ': ' + money(st.account_value) + ' · cash ' + money(st.cash)
+    + (live && st.buying_power != null ? ' · buying power ' + money(st.buying_power) : '')));
+  const pr = st.prices || {};
+  if (Object.keys(pr).length) s.append(mk('div', 'dim', Object.entries(pr).map(([k, v]) => k + ' ' + money(v.mid)).join(' · ')));
+  (st.positions || []).forEach(p => {
+    const r = mk('div', 'row'); const t = mk('span', 'grow', p.coin + ': ' + Number(p.qty).toPrecision(6) + ' @ ' + money(p.avg_cost) + ' · now ' + money(p.value)
+      + (p.unrealized != null ? ' · ' + signed(p.unrealized) : ''));
+    if (p.unrealized != null) t.style.color = pnlColor(p.unrealized); r.append(t); s.append(r);
+  });
+  const sb = (RH.scoreboard || {})[live ? 'live' : 'paper'];
+  if (sb) s.append(mk('div', null, 'Scoreboard (' + (live ? 'live' : 'paper') + '): ' + sb.exits + ' exits, ' + sb.wins + ' won · total ' + signed(sb.pnl) + ' · today ' + signed(sb.today)));
+  // orders waiting for the owner's approval
+  (RH.orders || []).filter(o => o.state === 'pending_approval').forEach(o => {
+    const r = mk('div', 'row'); r.append(mk('span', 'grow', 'APPROVE? ' + o.side.toUpperCase() + ' ' + Number(o.qty).toPrecision(6) + ' ' + o.coin + ' (~' + money(o.notional) + ') · ' + (o.reason || '')));
+    const y = mk('button', 'b', 'Approve'), n = mk('button', 'b no', 'Reject');
+    y.onclick = async () => { const x = await api('/api/crew/robinhood/approve', 'POST', { order_id: o.id, approve: true }); if (!x.ok) alert(x.data.detail || 'Could not approve.'); loadRH(); };
+    n.onclick = async () => { await api('/api/crew/robinhood/approve', 'POST', { order_id: o.id, approve: false }); loadRH(); };
+    r.append(y, n); s.append(r);
+  });
+  // controls
+  const tap = async (action, value, ask) => {
+    if (ask && !confirm(ask)) return;
+    const x = await api('/api/crew/robinhood/control', 'POST', { action, value });
+    if (!x.ok) alert(x.data.detail || 'Not possible right now.'); loadRH();
+  };
   const row = mk('div', 'row');
-  const paper = mk('button', 'b on', 'PAPER (simulated)'); paper.disabled = true;
-  const live = mk('button', 'b', 'GO LIVE'); live.disabled = true; live.title = 'Not built yet: Robinhood order placement is not wired up.';
-  row.append(paper, live); s.append(row);
-  s.append(mk('div', 'dim', 'Paper mode sends no orders. Going live will need your approval for each order.'));
+  const bp = mk('button', 'b' + (live ? '' : ' on'), 'PAPER'); bp.onclick = () => tap('paper');
+  const bl = mk('button', 'b' + (live ? ' on' : ''), 'GO LIVE');
+  if (st.live_blocked) { bl.disabled = true; bl.title = 'Not yet: ' + st.live_blocked + '.'; }
+  bl.onclick = () => tap('live', null, 'Trade REAL money on Robinhood with strategy "' + ctl.strategy + '"?' + (ctl.approve_each ? ' Each order will still wait for your Approve.' : ''));
+  const bpa = mk('button', 'b', ctl.paused ? 'Resume' : 'Pause'); bpa.onclick = () => tap(ctl.paused ? 'resume' : 'pause');
+  const bk = mk('button', 'b no', 'Kill switch'); bk.onclick = () => tap('kill', null, 'Cancel every open order the bot placed on Robinhood, pause, and go back to paper?');
+  row.append(bp, bl, bpa, bk); s.append(row);
+  const row2 = mk('div', 'row');
+  const sel = document.createElement('select');
+  [''].concat(st.strategies || []).forEach(n => { const o = document.createElement('option'); o.value = n; o.textContent = n || 'No strategy'; if (n === (ctl.strategy || '')) o.selected = true; sel.append(o); });
+  sel.onchange = () => tap('strategy', sel.value);
+  const ap = mk('button', 'b' + (ctl.approve_each ? ' on' : ''), ctl.approve_each ? 'Approve each order: ON' : 'Approve each order: OFF');
+  ap.onclick = () => tap('approve_each', !ctl.approve_each, ctl.approve_each ? 'Let live orders go out without your Approve each time?' : null);
+  const dl = mk('button', 'b', '⬇ Orders CSV');
+  dl.onclick = async () => {
+    const res = await fetch('/api/crew/robinhood/orders.csv', { headers: { 'Authorization': 'Bearer ' + token() } });
+    if (!res.ok) { alert('Download failed'); return; }
+    const url = URL.createObjectURL(await res.blob()); const a = document.createElement('a'); a.href = url; a.download = 'robinhood-orders.csv';
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  row2.append(sel, ap, dl); s.append(row2);
+  if (st.last_error) s.append(mk('div', 'dim', 'Last problem: ' + st.last_error));
+  (RH.events || []).slice(0, 8).forEach(e => s.append(mk('div', 'dim', ago(e.ts) + ' · ' + e.text)));
   return s;
 }
 
@@ -1760,7 +1820,7 @@ function linksSec() {
     const g = mk('div', 'grow'); g.append(mk('div', null, c.label + (c.connected ? ' · connected' : c.built ? ' · not connected' : ' · not built yet')));
     if (!c.connected && c.setup) g.append(mk('div', 'dim', c.setup));
     if (c.note) g.append(mk('div', 'dim', c.note));
-    if (key === 'robinhood') g.append(mk('div', 'dim', 'Read-only for now. Limits and paper mode are in the Stock Market factory.'));
+    if (key === 'robinhood') g.append(mk('div', 'dim', 'Trading engine, limits, strategy and Go live are in the Stock Market factory.'));
     r.append(d, g);
     if (c.guide) {
       const b = mk('button', c.connected ? 'b no' : 'b', c.connected ? 'Disconnect' : 'Connect');

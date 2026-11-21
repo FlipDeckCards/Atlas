@@ -4,7 +4,8 @@ Rules set by the owner:
   - each order risks at most 3% of the total account value;
   - the four coins together never have more than 12% of the account at risk at once;
   - paper trading first; live orders only when the owner approves each one (the Station's go-live button).
-The live order path is not wired to Robinhood yet: it refuses to run and says why.
+2026-11-20: the live order path now runs in rh_engine.py (orders, read-back, kill switch, approvals, strategy slot); this module
+keeps the limits. place_live below is the old placeholder and is no longer used.
 """
 
 from __future__ import annotations

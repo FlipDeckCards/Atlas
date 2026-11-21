@@ -442,6 +442,22 @@ def create_app(
             app.state.hour_review_task = asyncio.create_task(hour_review.loop(app), name="desk-hour-review")   # the daily 7 AM review
         except Exception:
             logger.exception("the daily 7 AM review did not start")
+        try:
+            # 2026-11-20 (owner): the Robinhood crypto engine. Paper unless the owner takes it live; with no strategy it only watches.
+            if dsn and (os.environ.get("ROBINHOOD_ENGINE") or "true").strip().lower() not in ("0", "false", "no", "off"):
+                import asyncio
+
+                import asyncpg
+
+                from openjarvis.polybot.runtime import ntfy_pusher
+                from openjarvis.server.crew import notify_url
+                from openjarvis.server.crew.rh_engine import Engine
+
+                app.state.rh_pool = await asyncpg.create_pool(dsn, min_size=1, max_size=3)
+                app.state.rh_engine = Engine(app.state.rh_pool, notify=ntfy_pusher(notify_url()))
+                app.state.rh_task = asyncio.create_task(app.state.rh_engine.forever(), name="robinhood-engine")
+        except Exception:
+            logger.exception("the Robinhood engine did not start; the rest of Aibussol runs normally")
 
     @app.on_event("shutdown")
     async def _shutdown_desk() -> None:
@@ -455,6 +471,15 @@ def create_app(
 
             await asyncio.gather(*(r.stop() for r in runners), return_exceptions=True)     # each cancels its resting orders first
             await app.state.desk_pool.close()
+
+    @app.on_event("shutdown")
+    async def _shutdown_robinhood() -> None:
+        eng = getattr(app.state, "rh_engine", None)
+        if eng is not None:
+            eng.stop()
+            pool = getattr(app.state, "rh_pool", None)
+            if pool is not None:
+                await pool.close()
 
     @app.on_event("shutdown")
     async def _shutdown_crew() -> None:

@@ -1367,3 +1367,70 @@ async def crew_google_callback(request: Request, code: str = "", state: str = ""
         return HTMLResponse("<p>Google could not be connected right now. <a href='/station'>Back to the Station</a></p>", status_code=502)
     await engine.store.add_event(uid, "connection", "Google (Gmail and Drive) connected.")
     return RedirectResponse("/station?connected=google", status_code=303)
+
+
+# ── 2026-11-20 (owner): Robinhood crypto engine ──────────────────────────────────────────────────────────────────────────
+
+async def _rh_gate(request: Request):
+    """(uid, pool) for the owner only: Robinhood trades the owner's own account."""
+    g = await _gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    uid, engine = g
+    if not await engine.is_owner(uid):
+        return JSONResponse({"detail": "Only the owner can see or control Robinhood."}, status_code=403)
+    pool = getattr(request.app.state, "rh_pool", None)
+    if pool is None:
+        return JSONResponse({"detail": "The Robinhood engine is not running (no database, or ROBINHOOD_ENGINE=false)."}, status_code=503)
+    return uid, pool
+
+
+@router.get("/api/crew/robinhood")
+async def crew_robinhood(request: Request):
+    g = await _rh_gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    from openjarvis.server.crew import rh_engine
+
+    return await rh_engine.state(g[1])
+
+
+@router.post("/api/crew/robinhood/control")
+async def crew_robinhood_control(request: Request):
+    """Body {"action": pause|resume|paper|live|kill|strategy|approve_each, "value": ...}."""
+    g = await _rh_gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    from openjarvis.server.crew import rh_engine
+
+    body = await request.json()
+    try:
+        return {"control": await rh_engine.control(g[1], str(body.get("action") or ""), body.get("value"))}
+    except ValueError as exc:
+        return _err(exc)
+
+
+@router.post("/api/crew/robinhood/approve")
+async def crew_robinhood_approve(request: Request):
+    """Body {"order_id": ..., "approve": true|false}: the owner's answer to a live order waiting for approval."""
+    g = await _rh_gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    from openjarvis.server.crew import rh_engine
+
+    body = await request.json()
+    try:
+        return {"state": await rh_engine.approve(g[1], str(body.get("order_id") or ""), bool(body.get("approve")))}
+    except ValueError as exc:
+        return _err(exc)
+
+
+@router.get("/api/crew/robinhood/orders.csv")
+async def crew_robinhood_orders_export(request: Request):
+    g = await _rh_gate(request)
+    if isinstance(g, JSONResponse):
+        return g
+    from openjarvis.server.crew import rh_engine
+
+    return Response(content=await rh_engine.export_orders(g[1]), media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="robinhood-orders.csv"'})
