@@ -946,7 +946,10 @@ class Desk:
         limits = {"day budget or hour size": budget_usd, "confidence lot": lot_usd, "all-desk cap": headroom, "window limit": room}
         binding = min(limits, key=lambda k: limits[k])
         if not ok_win:
-            reason, detail = "window rule", why_win or "the window's bets do not allow it"
+            # 2026-11-21 (owner): name the numbers, so a $0 limit shows which one it was (SOL was blocked every night 12-6 AM)
+            reason = "window rule"
+            detail = (f"{why_win or 'the window bets do not allow it'} (bet ${usd:.2f} = smallest of: day budget or hour size ${budget_usd:.2f}, "
+                      f"confidence lot ${lot_usd:.2f}, all-desk cap ${headroom:.2f}, window room ${room:.2f})")
         elif usd <= 0 or usd / max(cost, 0.01) < w.min_qty:
             reason, detail = f"bet too small ({binding})", f"${usd:.2f} at {cost * 100:.0f}c is under the {w.min_qty:g}-contract minimum; tightest limit: {binding} ${limits[binding]:.2f}"
         elif size_here < w.min_qty:
@@ -1014,11 +1017,19 @@ class Desk:
         if bk is not None:
             mine = (bk.offers[0][0] if bk.offers else None) if side == "up" else (1.0 - bk.bids[0][0] if bk.bids else None)
             parts.append("bot book " + ("none" if mine is None else f"{mine * 100:.0f}c") + f" ({max(0.0, self.clock() - (bk.ts or 0)):.1f}s old)")
+        def levels(md):
+            # 2026-11-21 (owner): the top three price levels each way with their sizes (the stats dump cut them off)
+            def top(rows, best_low):
+                lv_ = [(money(r.get("px")), money(r.get("qty"))) for r in rows or []]
+                lv_ = sorted([x for x in lv_ if x[0] is not None and x[1]], key=lambda x: x[0], reverse=not best_low)[:3]
+                return ", ".join(f"{p_ * 100:.0f}c x{q_:g}" for p_, q_ in lv_) or "none"
+            return f"offers [{top(md.get('offers'), True)}] bids [{top(md.get('bids'), False)}]"
+
         def flat(md):
             # 2026-11-20: every field but the price levels, money values as plain numbers (the old line cut the bbo off at 160 chars)
             out = {}
             for k, v in (md or {}).items():
-                if k in ("marketSlug", "bids", "offers"):
+                if k in ("marketSlug", "bids", "offers", "stats"):     # stats (open/high/low/volume) crowded out the bid and offer
                     continue
                 if isinstance(v, dict) and "value" in v:
                     v = v.get("value")
@@ -1030,7 +1041,7 @@ class Desk:
             d = await self.c._req("GET", f"/v1/markets/{slug}/book", auth=True, tries=1)
             md = (d or {}).get("marketData") or {}
             a = side_ask(md)
-            parts.append("fresh signed book " + ("none" if a is None else f"{a * 100:.0f}c") + f" {str(flat(md))[:200]}")
+            parts.append("fresh signed book " + ("none" if a is None else f"{a * 100:.0f}c") + " " + levels(md))
         except Exception as exc:
             parts.append(f"fresh signed book unreadable ({str(exc)[:40]})")
         for label, auth in (("bbo", False), ("signed bbo", True)):

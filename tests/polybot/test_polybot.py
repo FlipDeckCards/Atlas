@@ -1037,3 +1037,33 @@ def test_v120_direction_tiers_btc():
     assert directional.size_pct(0.65) == 0.0 and directional.size_pct(0.80) == 3.0 and directional.size_pct(0.86) == 5.0 and directional.size_pct(0.92) == 8.0
     # momentum rule: the Up side is blocked, so the Down side is the only one left
     assert directional.decide(0.20, 0.60, 0.40, (0, 0), (0, 0), up_ok=False, down_ok=True) is None or directional.decide(0.20, 0.60, 0.40, (0, 0), (0, 0), up_ok=False, down_ok=True)[0] == "down"
+
+
+def test_a_buy_order_gets_time_to_match_before_it_is_cancelled():
+    """2026-11-21 (owner): a taker order is held TAKER_HOLD_S before the desk may cancel it (it used to go on the next tick)."""
+    from openjarvis.polybot.brokers import LiveBroker, TAKER_HOLD_S
+
+    class C:
+        def __init__(self):
+            self.n, self.cancelled = 0, []
+
+        async def place(self, *a, **kw):
+            self.n += 1
+            return f"o{self.n}"
+
+        async def cancel(self, oid, slug):
+            self.cancelled.append(oid)
+
+    c = C()
+    b = LiveBroker(c)
+    run(b.set_quotes("s", [Quote("up", 0.81, 5.0, taker=True)], now=10.0))
+    run(b.set_quotes("s", [], now=11.0))                       # the next tick no longer wants it: still held
+    assert "up" in b.resting and c.cancelled == []
+    run(b.set_quotes("s", [], now=10.0 + TAKER_HOLD_S + 0.1))  # past the hold: cancelled as before
+    assert "up" not in b.resting and c.cancelled == ["o1"]
+    run(b.set_quotes("s", [Quote("down", 0.40, 5.0)], now=20.0))   # a resting maker quote is not held
+    run(b.set_quotes("s", [], now=20.5))
+    assert "down" not in b.resting
+    run(b.set_quotes("s", [Quote("up", 0.81, 5.0, taker=True)], now=30.0))
+    run(b.set_quotes("s2", [], now=30.5))                      # a new window still cancels everything at once
+    assert b.resting == {}

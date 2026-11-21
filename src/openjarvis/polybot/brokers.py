@@ -66,6 +66,12 @@ def fill_fee(price: float, qty: float, taker: bool) -> float:
     return round(taker_fee(float(price)) * float(qty), 6) if taker else 0.0
 
 
+# 2026-11-21 (owner): the desk log showed 64% of "missed" orders still had their price on offer 3 s later: the bot was
+# cancelling its own buy order on the next tick (about 1 s) because the bet was already taken, before Polymarket matched it.
+# A taker (buy) order now stays up for this long; the desk's retry (RETRY_AFTER_S) waits for it to go before trying again.
+TAKER_HOLD_S = 3.0
+
+
 @dataclass
 class Resting:
     quote: Quote
@@ -223,6 +229,8 @@ class LiveBroker:
         for side in list(self.resting):
             r = self.resting[side]
             q = sides.get(side)
+            if r.quote.taker and now - r.placed_ts < TAKER_HOLD_S:
+                continue          # 2026-11-21 (owner): a buy order gets TAKER_HOLD_S to match before it is cancelled (it used to go 1 s later)
             if not keep(r, q):
                 await self._cancel(r)
                 del self.resting[side]
