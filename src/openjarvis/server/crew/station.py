@@ -1293,7 +1293,11 @@ function windowFlag(st, label) {
     ? ' · Up ' + Number(cur.up_qty || 0).toFixed(2) + ' @ ' + money(cur.up_cost) + ' · Down ' + Number(cur.down_qty || 0).toFixed(2) + ' @ ' + money(cur.down_cost) + ' · paid ' + money(cur.paid)
     : '';                                                          // NO TRADE already says it (owner 2026-11-21)
   // owner 2026-11-21: smaller text on the left (desk + window) and the detail; the IN A TRADE / NO TRADE tag stays big
-  const left = mk('span', null, (label ? label + ' · ' : '') + 'Current window (closes ' + wEnd + '): '); left.style.fontSize = '12px';
+  // owner 2026-11-21: two lines (desk, then window), the closing time in white, like "12:40:00am"
+  const left = mk('span'); left.style.fontSize = '12px';
+  if (label) left.append(mk('div', null, label));
+  const t = mk('span', null, wEnd.replace(/\s?([AP])M$/i, (m, x) => x.toLowerCase() + 'm')); t.style.color = '#f5f5f5';
+  const w2 = mk('div', null, 'Current Window (closes '); w2.append(t, document.createTextNode(')')); left.append(w2);
   flag.append(left, tag);
   if (detail) { const det = mk('span', 'dim', detail); det.style.fontSize = '13px'; flag.append(det); }
   return flag;
