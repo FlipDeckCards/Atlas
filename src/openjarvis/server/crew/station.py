@@ -946,8 +946,6 @@ function factorySec(key) {
   if (CATALOG_KEYS.includes(key)) s.append(catalogSec(key));
   const site = (S && S.products && S.products[key]) || (FIN && FIN.products && FIN.products[key]) || null;
   if (site) s.append(mk('div', 'dim', (site.live ? 'Site live' : 'Site NOT answering') + (site.url ? ' · ' + site.url : '') + (site.checked_at ? ' · checked ' + ago(site.checked_at) : '')));
-  if (key === 'polymarket') s.append(dailyPnlSec());
-  if (key === 'polymarket' && isOwner() && !VIEW_AS) s.append(briefSec());   // the business brief: the owner's own Station only
   const r = FIN && FIN.factories ? FIN.factories[key] : null;
   if (r) { s.append(pnlBlock(r, 'P&L')); s.append(mk('div', 'dim', costLine(r))); }
   else s.append(mk('div', 'dim', FIN ? 'No money in or out for this factory yet.' : 'Loading the numbers…'));
@@ -1341,7 +1339,14 @@ function deskViewTabs() {
     };
     all.append(b);
   });
-  w.append(all);
+  // owner 2026-11-21: the shadow, daily P&L and brief buttons sit under the four CSVs, same style; every button its own colour
+  const more = mk('div', 'desk-tabs'), [shBtn, shPanel] = shadowBreakdownParts();
+  more.append(shBtn, dailyPnlBtn());
+  if (isOwner() && !VIEW_AS) more.append(briefBtn());              // the business brief: the owner's own Station only
+  const COLORS = ['#00e5ff', '#c792ea', '#ff6ec7', '#14f195', '#4f8cff', '#ffd54f', '#f5f5f5'];
+  [...all.children, ...more.children].forEach((b, i) => { b.style.borderColor = COLORS[i % COLORS.length]; b.style.color = COLORS[i % COLORS.length]; });
+  all.style.flexWrap = 'wrap'; more.style.flexWrap = 'wrap';
+  w.append(all, more, shPanel);
   return w;
 }
 function deskSec(key) {
@@ -1578,30 +1583,26 @@ function sdCell(z) { return mk('span', null, z == null ? '—' : (z >= 0 ? '+' :
 // move: how far the index can still travel before the close, in dollars (sigma x square root of seconds left)
 function moveCell(m) { return mk('span', null, m == null ? '—' : '±$' + Number(m).toFixed(0)); }
 // one account-wide download: live profit by trading day (both BTC desks), as an Excel file with a chart
-function dailyPnlSec() {
-  const wrap = mk('div'); wrap.style.marginTop = '10px';
-  const b = mk('button', null, '⬇ Daily P&L (Excel)'); b.style.cursor = 'pointer';
+function dailyPnlBtn() {
+  const label = '⬇ Daily P&L (Excel)', b = mk('button', 'b', label);
   b.onclick = async () => {
-    b.textContent = 'Downloading…';
+    b.textContent = '…';
     try {
       const res = await fetch('/api/crew/desk/daily.xlsx' + (VIEW_AS ? '?view=' + encodeURIComponent(VIEW_AS) : ''), { headers: { 'Authorization': 'Bearer ' + token() } });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const url = URL.createObjectURL(await res.blob());
       const a = document.createElement('a'); a.href = url; a.download = 'desk-daily-pnl.xlsx';
       document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-      b.textContent = '⬇ Daily P&L (Excel)';
-    } catch (e) { b.textContent = 'Daily P&L failed'; }
+      b.textContent = label;
+    } catch (e) { b.textContent = 'Download failed'; }
   };
-  wrap.append(b);
-  return wrap;
+  return b;
 }
 // the business brief (Word): the whole operation, desk by desk, built from the live settings when downloaded; owner only
-function briefSec() {
-  const wrap = mk('div'); wrap.style.marginTop = '10px';
-  const label = '⬇ Business brief (Word)';
-  const b = mk('button', null, label); b.style.cursor = 'pointer';
+function briefBtn() {
+  const label = '⬇ Business brief (Word)', b = mk('button', 'b', label);
   b.onclick = async () => {
-    b.textContent = 'Building the brief…';
+    b.textContent = '…';
     try {
       const res = await fetch('/api/crew/desk/brief.docx', { headers: { 'Authorization': 'Bearer ' + token() } });
       if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -1611,23 +1612,22 @@ function briefSec() {
       b.textContent = label;
     } catch (e) { b.textContent = 'Brief failed'; }
   };
-  wrap.append(b);
-  return wrap;
+  return b;
 }
 // shadow breakdown: the six shadow strategies (three per timeframe) and calibration result, per desk, opened from a button under the desk log
 let SHADOW_OPEN = false;   // kept across re-renders: the desk panel rebuilds whenever a desk reloads
-function shadowBreakdownSec() {
-  const wrap = mk('div'); wrap.style.marginTop = '10px';
-  const btn = mk('button', null, SHADOW_OPEN ? 'Shadow strategies ▾' : 'Shadow strategies ▸'); btn.style.cursor = 'pointer';
+function shadowBreakdownParts() {
+  // the toggle button sits with the download buttons; its panel opens below them
+  const label = () => SHADOW_OPEN ? 'Shadow strategies ▾' : 'Shadow strategies ▸';
+  const btn = mk('button', 'b', label());
   const panel = mk('div'); panel.style.display = SHADOW_OPEN ? 'block' : 'none'; panel.style.marginTop = '8px';
   if (SHADOW_OPEN) renderShadow(panel);
   btn.onclick = () => {
     SHADOW_OPEN = !SHADOW_OPEN;
-    panel.style.display = SHADOW_OPEN ? 'block' : 'none'; btn.textContent = SHADOW_OPEN ? 'Shadow strategies ▾' : 'Shadow strategies ▸';
+    panel.style.display = SHADOW_OPEN ? 'block' : 'none'; btn.textContent = label();
     if (SHADOW_OPEN) renderShadow(panel);
   };
-  wrap.append(btn, panel);
-  return wrap;
+  return [btn, panel];
 }
 function renderShadow(panel) {
   panel.replaceChildren();
@@ -1672,7 +1672,6 @@ function deskLogSec() {
   if (!ev.length) s.append(mk('div', 'dim', 'Nothing logged yet.'));
   ev.slice(0, 24).forEach(e => { const r = mk('div', 'desk-fill'); const t = mk('span', null, DESK_LABEL(e.asset) + ' ');
     t.style.color = ({ btc: '#00e5ff', btc15: '#4fc3f7', btclate: '#ff7ad9', eth: '#8c8cff', sol: '#14f195', xrp: '#ffb347' })[e.asset]; r.append(t, document.createTextNode(new Date(e.ts).toLocaleTimeString() + ' · ' + e.text)); s.append(r); });
-  s.append(shadowBreakdownSec());
   return s;
 }
 const CAT = {};
