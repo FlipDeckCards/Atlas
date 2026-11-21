@@ -268,6 +268,8 @@ class Desk:
         if nxt and nxt.slug in self.recent:
             nxt = self.recent[nxt.slug]
         self.window = nxt
+        if nxt and not self.base.account and len(self._watched) < 500:
+            self._watched.setdefault(nxt.slug, float(nxt.end))   # 2026-11-20: the settle check covers every window (owner's desks)
         if nxt:
             nxt.mode = self.lmode()
             self.recent[nxt.slug] = nxt
@@ -487,7 +489,11 @@ class Desk:
                 continue
             s = await self.c.settlement(slug)
             if s is not None and (s >= 0.99 or s <= 0.01):
-                self.ledger.result(slug, s >= 0.5, None)
+                rw = self.recent.get(slug)
+                beat = getattr(rw, "price_to_beat", None) if rw is not None else None
+                ix = model.settle(self.tape, int(end), beat) if beat else None
+                self.ledger.result(slug, s >= 0.5, None, beat=beat, index_close=ix[0] if ix else None,
+                                   index_up=ix[1] if ix else None, sigma=self.sigma)
                 self._watched.pop(slug, None)
                 self._t.pop(f"wsettle:{slug}", None)
         fn = getattr(self.store, "unsettled_candidates", None)
@@ -538,7 +544,9 @@ class Desk:
             if res is None:
                 continue
             close, up = res
-            self.ledger.result(slug, bool(up), close)               # v1.42: every settled window, traded or not
+            ix = model.settle(self.tape, int(w.end), w.price_to_beat) if w.price_to_beat else None
+            self.ledger.result(slug, bool(up), close, beat=w.price_to_beat, index_close=ix[0] if ix else None,
+                               index_up=ix[1] if ix else None, sigma=self.sigma)   # v1.42: every settled window; 2026-11-20: + the index
             self.shadow.settle(slug, up)
             for method, (side, usd, qty) in self._bets.pop(slug, {}).items():
                 if method != "directional":

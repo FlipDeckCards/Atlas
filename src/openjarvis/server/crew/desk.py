@@ -242,6 +242,37 @@ async def export_candidates(pool, account: str = "") -> str:
     return buf.getvalue()
 
 
+async def export_settle_checks(pool, account: str = "") -> str:
+    """2026-11-20 (owner): every settled window with what the bot's own index said next to the venue's answer: the price to beat,
+    the index's closing average, the gap (in dollars, basis points and the move expected in a minute), and whether they agreed.
+    Measures how far the index and Polymarket's settlement feed disagree near the line. Owner's desks only (subscribers: header)."""
+    import csv
+    import io
+    import math
+
+    cols = ["settled_utc", "desk", "slug", "price_to_beat", "index_close", "gap_usd", "gap_bp", "gap_sd_1min",
+            "index_says", "venue_says", "agree"]
+    buf = io.StringIO()
+    wr = csv.writer(buf)
+    wr.writerow(cols)
+    if account:
+        return buf.getvalue()
+    await _ensure(pool)
+    async with pool.acquire() as c:
+        rows = await c.fetch("SELECT settled_at, asset, slug, up, price_to_beat, index_close, index_up, sigma FROM polybot_window_results "
+                             "WHERE index_close IS NOT NULL AND price_to_beat IS NOT NULL AND position('@' in asset) = 0 ORDER BY settled_at")
+    from openjarvis.polybot.config import desk_label
+    for r in rows:
+        beat, ic = float(r["price_to_beat"]), float(r["index_close"])
+        gap = ic - beat
+        sig = float(r["sigma"]) if r["sigma"] else None
+        sd = round(gap / (sig * math.sqrt(60)), 3) if sig and sig > 0 else ""
+        iu, vu = bool(r["index_up"]), bool(r["up"])
+        wr.writerow([r["settled_at"].isoformat(), desk_label(r["asset"]), r["slug"], beat, ic, round(gap, 6),
+                     round(gap / beat * 1e4, 3) if beat else "", sd, "UP" if iu else "DOWN", "UP" if vu else "DOWN", 1 if iu == vu else 0])
+    return buf.getvalue()
+
+
 async def export_shadow(pool, asset: str = "btc", account: str = "") -> str:
     """The shadow log for this desk as CSV: one row per settled window, with the model's probability that Up wins at its
     standard view (1.0x volatility), tighter (0.7x) and wider (1.4x), the book's view, the seconds left at the last tick, and the result."""
