@@ -3193,9 +3193,9 @@ function tradingBox() {
       const dv = v => { const x = mk('span', null, v == null ? '—' : v === 0 ? '$0.00' : signed(v)); x.style.color = v == null || v === 0 ? '#8a9aa8' : v < 0 ? '#ff3344' : '#00ff99'; return x; };
       // each category on one line (no wrapping, no row dividers): coloured title, then "BTC $x | XRP $x | ..."
       [['Crypto:', '#00e5ff', [['BTC', 'btc'], ['XRP', 'xrp'], ['SOL', 'sol'], ['ETH', 'eth']]], ['Cmdty:', '#ffd54f', [['GLD', 'gold'], ['SIL', 'silver'], ['OIL', 'wti'], ['NTG', 'natgas']]]].forEach(([title, col, items]) => {
-        const l = mk('div'); l.style.cssText = 'display:flex;flex-wrap:nowrap;align-items:baseline;gap:3px;font-size:8px;white-space:nowrap;padding:3px 0 3px 16px;overflow:hidden';
-        const t = mk('span', null, title); t.style.color = col; t.style.fontWeight = '700'; t.style.minWidth = '38px'; l.append(t);
-        items.forEach(([lab, key], i) => { if (i) l.append(mk('span', 'dim', '|')); const it = mk('span'); it.style.whiteSpace = 'nowrap'; const n = mk('span', 'dim', lab + ' '); it.append(n, dv(dk[key])); l.append(it); });
+        const l = mk('div'); l.style.cssText = 'display:grid;grid-template-columns:38px repeat(4,1fr);align-items:baseline;font-size:8px;white-space:nowrap;padding:3px 0 3px 8px;overflow:hidden';   // same columns on both lines so the bars line up
+        const t = mk('span', null, title); t.style.color = col; t.style.fontWeight = '700'; l.append(t);
+        items.forEach(([lab, key], i) => { const it = mk('span'); it.style.cssText = 'white-space:nowrap;' + (i ? 'border-left:1px solid #4a5a68;padding-left:4px' : 'padding-left:0'); it.append(mk('span', 'dim', lab + ' '), dv(dk[key])); l.append(it); });
         box.append(l);
       });
     });
