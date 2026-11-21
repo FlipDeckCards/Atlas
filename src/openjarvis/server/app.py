@@ -453,9 +453,11 @@ def create_app(
                 from openjarvis.server.crew import notify_url
                 from openjarvis.server.crew.rh_engine import Engine
 
-                app.state.rh_pool = await asyncpg.create_pool(dsn, min_size=1, max_size=3)
+                app.state.rh_pool = await asyncpg.create_pool(dsn, min_size=1, max_size=4)
                 app.state.rh_engine = Engine(app.state.rh_pool, notify=ntfy_pusher(notify_url()))
                 app.state.rh_task = asyncio.create_task(app.state.rh_engine.forever(), name="robinhood-engine")
+                from openjarvis.server.crew import rh_history      # 2026-11-20: price history for move stats and backtests
+                app.state.rh_history_task = asyncio.create_task(rh_history.loop(app.state.rh_pool), name="robinhood-history")
         except Exception:
             logger.exception("the Robinhood engine did not start; the rest of Aibussol runs normally")
 
