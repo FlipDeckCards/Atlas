@@ -82,8 +82,9 @@ def test_eth_5m_and_sol_5m_entry_price_floors():
     # ETH 5m: buys under 85c are blocked; 85c and up allowed
     assert eth._block_rule(200, 0.84, 0.0) == "eth 5m under 85c" and eth._blocked_entry(200, 0.60)
     assert eth._block_rule(200, 0.85, 0.0) is None and eth._block_rule(200, 0.95, 0.0) is None
-    # SOL 5m: buys under 75c are blocked; 75c and up allowed (momentum rule still applies separately)
-    assert sol._block_rule(200, 0.74, 0.0) == "sol 5m under 75c" and sol._block_rule(200, 0.75, 0.0) is None
+    # SOL 5m: buys under 85c are blocked (owner, 2026-11-21; was 75c); 85c and up allowed (momentum rule still applies separately)
+    assert sol._block_rule(200, 0.84, 0.0) == "sol 5m under 85c" and sol._block_rule(200, 0.75, 0.0) == "sol 5m under 85c"
+    assert sol._block_rule(200, 0.85, 0.0) is None
     # BTC 5m is floored at 70c; XRP 5m too since 2026-11-20
     assert btc._block_rule(200, 0.40, 1.0) == "btc 5m under 70c" and btc._block_rule(200, 0.75, 1.0) is None
     assert xrp._block_rule(200, 0.50, 1.0) == "xrp 5m under 70c" and xrp._block_rule(200, 0.75, 1.0) is None
