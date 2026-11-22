@@ -129,6 +129,7 @@ class Desk:
         # 2026-11-18 (owner): order outcomes. Live data showed the bets that never filled won ~93% while the ones that filled won ~75%:
         # an order at the price seen misses when the market moves the bot's way. A missed order is now logged and tried again.
         self._attempts: Dict[Tuple[str, str], Dict[str, Any]] = {}   # (window, method) -> first price, side, tries, last try time
+        self._partial_probed: set = set()
         self._filled: Dict[Tuple[str, str], float] = {}               # (window, side) -> contracts filled
         self._backfill: List[str] = []                     # older candidate windows still without a result
         self._backfill_loaded = 0.0
@@ -466,6 +467,7 @@ class Desk:
         for f in fills:
             self._book_fill(f)
             self._filled[(f.slug, f.side)] = self._filled.get((f.slug, f.side), 0.0) + float(f.qty)
+            self._probe_partial(f)
             w = self.open_windows.get(f.slug)
             side = f"UP (call-like: pays if {self.base.coin.upper()} closes at/above)" if f.side == "up" else f"DOWN (put-like: pays if {self.base.coin.upper()} closes below)"
             pay = f.price if f.side == "up" else 1 - f.price
@@ -1007,6 +1009,24 @@ class Desk:
         except Exception as exc:                                   # noqa: BLE001 - a diagnostic never stops the desk
             parts.append(f"signed book unreadable ({str(exc)[:40]})")
         self.log("info", f"{self.name}: order sent {method} {side} (try {n}): " + " | ".join(parts) + ".")
+
+    def _probe_partial(self, f) -> None:
+        """2026-11-22 diagnostic (owner): a live buy that filled well under the size the bot decided on (Mike's BTC 08:11 UTC: 5.05 of
+        12.76 with 355 offered) gets the same "order check" as a miss: Polymarket's own record of the order. Once per window and side."""
+        dec = (self._decision.get((f.slug, f.side)) or {})
+        want = dec.get("decision_qty")
+        if not isinstance(self.broker, LiveBroker) or self.cfg.watch_only or not isinstance(want, (int, float)) or want <= 0:
+            return
+        if float(f.qty) >= 0.9 * float(want) or (f.slug, f.side) in self._partial_probed:
+            return
+        self._partial_probed.add((f.slug, f.side))
+        if len(self._partial_probed) > 200:
+            self._partial_probed = set(list(self._partial_probed)[-100:])
+        self.log("info", f"{self.name}: partial fill {f.side}: {float(f.qty):g} of the {float(want):g} contracts decided.")
+        try:
+            asyncio.get_running_loop().create_task(self._order_probe(f.slug, f.side, "partial fill", 0))
+        except RuntimeError:
+            pass
 
     async def _order_probe(self, slug: str, side: str, method: str, n: int) -> None:
         """2026-11-20 diagnostic (owner): a missed order, as Polymarket itself records it: whether it was sent at all, its state,
