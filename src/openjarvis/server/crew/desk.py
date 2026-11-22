@@ -1103,6 +1103,18 @@ async def reconciliation(pool) -> Dict[str, Any]:
     return out
 
 
+async def account_all_time(pool, account: str = "") -> Optional[float]:
+    """Owner 2026-11-22: the "All-time" the Station shows under the account stack: the Polymarket account value + withdrawn - cash
+    deposited - referral. None when the account's amounts are not entered yet or its desk has not reported a value."""
+    await load_money(pool, account)
+    st = await get_kv(pool, kv_key("status", "btc", account))
+    acct = st.get("account_value")
+    dep, ref, wd = deposits(account), referral(account), withdrawn(account)
+    if acct is None or not (dep or ref or wd):
+        return None
+    return round(float(acct) + (wd or 0.0) - (dep or 0.0) - (ref or 0.0), 2)
+
+
 async def live_pnl(pool) -> Dict[str, float]:
     return (await live_pnl_all(pool))["btc"]
 
