@@ -206,6 +206,7 @@ class LiveBroker:
         self._bal: Optional[float] = None
         self.rejects: List[str] = []
         self._bal_ts = 0.0
+        self.skipped: Dict[tuple, float] = {}          # 2026-11-21: (slug, side) -> when a buy was NOT sent because the ask had run past its limit
         self.last_sent: Dict[tuple, Any] = {}          # 2026-11-21: (slug, side) -> the request body and reply of the latest order (diagnostic)
         self.last_order: Dict[tuple, str] = {}         # 2026-11-20: (slug, side) -> the latest order id sent (for the miss check)
 
@@ -219,6 +220,27 @@ class LiveBroker:
         except PMError as exc:
             logger.warning("cancel %s: %s", r.order_id, exc)
         self.closing[r.order_id] = r
+
+    RUN_CHECK_S = 0.6                 # longest the pre-send price read may take; on a timeout or an error the order goes out as before
+
+    async def _ran_away(self, slug: str, q: Quote) -> bool:
+        """2026-11-21 (owner): one signed read of the book right before a buy goes out. True only when the market's best ask on our side
+        is already beyond the limit we are about to send (the order could not fill, and would sit 3 s before the bet is decided again).
+        Anything unreadable, empty or slow says False: the order is sent exactly as before."""
+        import asyncio
+
+        try:
+            d = await asyncio.wait_for(self.c._req("GET", f"/v1/markets/{slug}/book", auth=True, tries=1), self.RUN_CHECK_S)
+            md = (d or {}).get("marketData") or {}
+            if q.side == "up":
+                px = [money(r.get("px")) for r in md.get("offers") or []]
+                px = [x for x in px if x is not None]
+                return bool(px) and min(px) > q.price + 0.005
+            px = [money(r.get("px")) for r in md.get("bids") or []]
+            px = [x for x in px if x is not None]
+            return bool(px) and max(px) < q.price - 0.005          # Down ask = 1 - best Up bid, our limit = 1 - q.price
+        except Exception:                                        # noqa: BLE001 - a failed read never stops an order
+            return False
 
     async def set_quotes(self, slug: str, want: List[Quote], now: float) -> None:
         if slug != self.slug and self.resting:
@@ -241,6 +263,11 @@ class LiveBroker:
             if any(r.quote.side == side for r in self.closing.values()):
                 # a cancelled order on this side may have filled before the cancel landed: place nothing new on this side
                 # until its final state is read back (the live 2:40 / 2:45 windows doubled up exactly this way)
+                continue
+            if q.taker and await self._ran_away(slug, q):
+                self.skipped[(slug, side)] = now                 # the retry logic decides again at once, on the real price
+                self.rejects.append(f"{side} {q.qty:g} @ {q.price:.2f}: price ran past the limit before sending, not sent")
+                self.rejects = self.rejects[-20:]
                 continue
             try:
                 oid = await self.c.place(slug, side, q.price, q.qty, post_only=not q.taker)

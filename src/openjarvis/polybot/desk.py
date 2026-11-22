@@ -83,6 +83,7 @@ TAKER_SLIP = 0.01
 RETRY_AFTER_S = 3.0
 RETRY_MAX = 3
 RETRY_PAY_UP = 0.02
+RETRY_PAY_UP_MOVED = 0.05      # 2026-11-21 (owner): after a try that was not sent because the price had run past its limit, a retry may follow the market this far
 
 
 class Desk:
@@ -908,9 +909,14 @@ class Desk:
         on the next tick with fresh prices and every rule re-checked. At most RETRY_MAX tries per method per window."""
         for method, bet in list(self._bets.get(w.slug, {}).items()):
             att = self._attempts.get((w.slug, method))
-            if not att or att.get("ts") is None or now - att["ts"] < RETRY_AFTER_S:
+            if not att or att.get("ts") is None:
                 continue
             side = bet[0]
+            ran = (getattr(self.broker, "skipped", None) or {}).pop((w.slug, side), None) is not None
+            if ran:
+                att["moved"] = True                                      # the price ran past our limit before the order went out: decide again now
+            elif now - att["ts"] < RETRY_AFTER_S:
+                continue
             if self._filled.get((w.slug, side), 0.0) > 0:
                 continue                                                 # it filled (in full or in part): a bet, nothing to retry
             if any(getattr(r, "quote", None) is not None and r.quote.side == side for r in getattr(self.broker, "resting", {}).values()):
@@ -931,12 +937,13 @@ class Desk:
                     asyncio.get_running_loop().create_task(self._miss_probe(w.slug, side, price))
                 except RuntimeError:
                     pass
-            if not self.cfg.watch_only:
+            if not self.cfg.watch_only and not ran:
                 try:
                     asyncio.get_running_loop().create_task(self._order_probe(w.slug, side, method, att["n"]))
                 except RuntimeError:
                     pass
-            self.log("info", f"{self.name}: {method} {side} at {price * 100:.0f}c got no fill in {RETRY_AFTER_S:.0f}s "
+            how = "was not sent, the price had already run past its limit" if ran else f"got no fill in {RETRY_AFTER_S:.0f}s"
+            self.log("info", f"{self.name}: {method} {side} at {price * 100:.0f}c {how} "
                              f"({att['n']} of {RETRY_MAX}){'; giving up on this window' if last else '; will try again'}.")
             if not last:
                 self._bets[w.slug].pop(method, None)
@@ -1017,15 +1024,17 @@ class Desk:
             return
         o = (o or {}).get("order") if isinstance(o, dict) and "order" in o else o
         o = o or {}
-        keep = ("state", "price", "quantity", "cumQuantity", "leavesQuantity", "avgPx", "tif", "type", "intent", "text",
-                "rejectReason", "cancelReason", "createTime", "updateTime", "participateDontInitiate")
-        brief = {k: o.get(k) for k in keep if o.get(k) not in (None, "", [])}
-        brief.update({k: v for k, v in o.items() if k not in brief and v not in (None, "", []) and k not in ("id", "marketSlug")})
+        keep = ("state", "price", "quantity", "cumQuantity", "avgPx", "tif", "type", "intent", "side", "text", "rejectReason",
+                "cancelReason", "participateDontInitiate", "createTime", "updateTime")
+        brief = {k: (o.get(k) if not isinstance(o.get(k), dict) else o.get(k).get("value")) for k in keep if o.get(k) not in (None, "", [])}
+        for k, v in o.items():                                         # anything else Polymarket sends, except the bulky market block
+            if k not in brief and k not in ("id", "marketSlug", "marketMetadata", "leavesQuantity") and v not in (None, "", []):
+                brief[k] = v if not isinstance(v, dict) else v.get("value", "...")
         sent = ((getattr(self.broker, "last_sent", None) or {}).get((slug, side)) or {})
         sb = sent.get("body") or {}
         if sb:
-            brief["sent"] = {"post_only": sb.get("participateDontInitiate"), "limit": (sb.get("price") or {}).get("value"),
-                             "qty": sb.get("quantity"), "intent": sb.get("intent"), "reply_keys": sorted((sent.get("reply") or {}))[:8]}
+            brief = {"sent": {"post_only": sb.get("participateDontInitiate"), "limit": (sb.get("price") or {}).get("value"),
+                              "qty": sb.get("quantity")}, **brief}
         self.log("warn", f"{self.name}: order check {method} {side} (try {n}): order {oid} {brief}")
 
     async def _miss_probe(self, slug: str, side: str, price: float) -> None:
@@ -1099,7 +1108,8 @@ class Desk:
         if att.get("side") != side:
             return False
         first = att.get("first")
-        return first is None or cost <= first + RETRY_PAY_UP + 1e-9
+        room = RETRY_PAY_UP_MOVED if att.get("moved") else RETRY_PAY_UP
+        return first is None or cost <= first + room + 1e-9
 
     def _decision_feats(self, f) -> Dict[str, Any]:
         """The decision record for this fill's bet, plus the seconds from the decision to the fill being seen

@@ -129,3 +129,64 @@ def test_send_probe_logs_the_book_as_the_order_goes_out():
     assert "signed book at send 80c offers [80c x12, 81c x50]" in logs[-1]
     asyncio.run(d._send_probe("w1", "down", "edge", 2, 0.80))
     assert "signed book at send 80c" in logs[-1]                 # Down ask = 1 - best Up bid (20c)
+
+
+def _book(offers, bids):
+    return {"marketData": {"offers": [{"px": {"value": str(p)}, "qty": {"value": "10"}} for p in offers],
+                           "bids": [{"px": {"value": str(p)}, "qty": {"value": "10"}} for p in bids]}}
+
+
+def _live(reply):
+    import asyncio
+    from openjarvis.polybot.brokers import LiveBroker
+    from openjarvis.polybot.strategy import Quote
+
+    class C:
+        placed = []
+
+        async def _req(self, *a, **k):
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+
+        async def place(self, slug, side, price, qty, post_only=True):
+            self.placed.append((side, price))
+            return "oid1"
+
+    c = C()
+    b = LiveBroker(c)
+    return asyncio, b, c, Quote
+
+
+def test_a_buy_whose_ask_already_ran_past_the_limit_is_not_sent():
+    asyncio, b, c, Quote = _live(_book([0.95, 0.96], [0.94]))
+    asyncio.run(b.set_quotes("s", [Quote("up", 0.79, 5.0, taker=True)], 100.0))
+    assert c.placed == [] and ("s", "up") in b.skipped              # ask 95c, limit 79c: it could not fill
+    asyncio, b, c, Quote = _live(_book([0.26], [0.04]))
+    asyncio.run(b.set_quotes("s", [Quote("down", 0.25, 5.0, taker=True)], 100.0))
+    assert c.placed == [] and ("s", "down") in b.skipped            # Down cost 96c against a 75c limit
+
+
+def test_a_buy_that_can_still_fill_or_whose_book_is_unreadable_is_sent():
+    asyncio, b, c, Quote = _live(_book([0.78], [0.20]))
+    asyncio.run(b.set_quotes("s", [Quote("up", 0.79, 5.0, taker=True)], 100.0))
+    assert c.placed == [("up", 0.79)] and not b.skipped
+    asyncio, b, c, Quote = _live(RuntimeError("boom"))
+    asyncio.run(b.set_quotes("s", [Quote("up", 0.79, 5.0, taker=True)], 100.0))
+    assert c.placed == [("up", 0.79)]                               # an unreadable book never blocks an order
+    asyncio, b, c, Quote = _live(_book([], []))
+    asyncio.run(b.set_quotes("s", [Quote("down", 0.25, 5.0, taker=True)], 100.0))
+    assert c.placed == [("down", 0.25)]
+
+
+def test_a_skipped_send_is_decided_again_at_once_and_may_follow_the_market_five_cents():
+    d = _desk()
+    d.broker = SimpleNamespace(resting={}, skipped={("w1", "up"): 1000.5})
+    d._place("w1", "directional", "up", 7.8, 10.0, price=0.78, now=1000.0)
+    d._retry_missed(_w(), 1000.6)                                   # well inside 3 s
+    assert not d._taken("w1", "directional")
+    assert d._retry_price_ok("w1", "directional", "up", 0.83)       # first 78c + 5c
+    assert not d._retry_price_ok("w1", "directional", "up", 0.84)
+    d2 = _desk()
+    d2._place("w1", "directional", "up", 7.8, 10.0, price=0.78, now=1000.0)
+    assert not d2._retry_price_ok("w1", "directional", "up", 0.81)  # an ordinary retry is still 2c at most
