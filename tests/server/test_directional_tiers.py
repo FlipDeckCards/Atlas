@@ -25,7 +25,8 @@ def test_unknown_coin_never_trades():
 def test_minimum_confidence_per_coin():
     assert directional.min_conf("btc") == 0.80
     assert directional.min_conf("xrp") == 0.84
-    assert directional.min_conf("eth") == directional.min_conf("sol") == 0.90
+    assert directional.min_conf("eth") == 0.85      # owner, 2026-11-22: back to 85% (90% left ETH with no trades)
+    assert directional.min_conf("sol") == 0.90
 
 
 def test_btc_trades_at_its_tier_and_eth_does_not_at_the_same_confidence():

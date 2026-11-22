@@ -59,7 +59,7 @@ TIERS = {
     # Owner, 2026-11-17 (live test): ETH 5m and SOL 5m bet a flat 3% (their confidence steps did not predict results).
     # Floor 90% calibrated (owner, 2026-11-17; was 85%): 85% calibrated let in raw 89-94% readings, the range that lost live;
     # 90% calibrated is about raw 95%, the only range that was near break-even.
-    "eth": ((90, 3.0),),
+    "eth": ((85, 3.0),),      # owner, 2026-11-22: ETH back to 85% calibrated (90% left it with no trades since Nov 17); SOL stays at 90%
     "sol": ((90, 3.0),),
 }
 

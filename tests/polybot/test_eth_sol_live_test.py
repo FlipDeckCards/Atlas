@@ -3,11 +3,11 @@ from openjarvis.polybot.config import from_env
 from openjarvis.polybot.desk import Desk
 
 
-def test_eth_sol_flat_3_percent_from_90():
-    # owner, 2026-11-17: floor 90% calibrated (was 85%, which let in raw 89% readings)
-    for a in ("eth", "sol"):
-        assert [directional.size_pct(p, a) for p in (0.85, 0.899, 0.90, 0.99)] == [0.0, 0.0, 3.0, 3.0]
-        assert directional.min_conf(a, calibrated=True) == 0.90
+def test_eth_flat_3_percent_from_85_and_sol_from_90():
+    # owner: SOL floor 90% calibrated since 2026-11-17; ETH put back to 85% on 2026-11-22 (90% left it with no trades)
+    for a, floor in (("eth", 0.85), ("sol", 0.90)):
+        assert [directional.size_pct(p, a) for p in (0.84, 0.85, 0.899, 0.90, 0.99)] == [0.0 if p < floor else 3.0 for p in (0.84, 0.85, 0.899, 0.90, 0.99)]
+        assert directional.min_conf(a, calibrated=True) == floor
         assert directional.window_total_pct(a) == 3.0
         assert from_env({"POLYBOT_WINDOW_PCT": "20"}, asset=a).window_pct == 3.0
 

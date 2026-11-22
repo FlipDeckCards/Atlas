@@ -378,7 +378,7 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         "btc": "The flagship. Live since the start and the source of most of the data behind the rules. Full method set and its own "
                "calibrated steps. Sizes cut on 2026-11-11 (owner) from 7 / 8 / 10% to 1 / 4 / 8% after losing $42.56 that day; set to "
                "3% / 5% / 8% on 2026-11-17 (owner). It sets the shared daily starting balance for the whole account.",
-        "eth": "ETH 5m: calibrated confidence, 90% floor (raw about 95%; was 85% until 2026-11-17), a flat 3% per bet and at most 3% per window (owner, 2026-11-17, a live test). "
+        "eth": "ETH 5m: calibrated confidence, 85% floor (90% from 2026-11-17 to 2026-11-21 left it with no trades; owner put it back on 2026-11-22), a flat 3% per bet and at most 3% per window (owner, 2026-11-17, a live test). "
                "Skips buys under 85c (since 2026-11-10), enters only in the last 3 minutes, and skips a bet while the price already moves "
                "more than 1 sd toward it. On paper from 2026-11-10; live test judged at 30 live trades or two weeks.",
         "sol": "SOL 5m: calibrated confidence, 90% floor (raw about 95%; was 85% until 2026-11-17), a flat 3% per bet and at most 3% per window (owner, 2026-11-17, a live test). "
