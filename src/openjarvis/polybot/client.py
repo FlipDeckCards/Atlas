@@ -235,6 +235,7 @@ class PolymarketUS:
                 "tif": "TIME_IN_FORCE_GOOD_TILL_CANCEL", "participateDontInitiate": bool(post_only),
                 "manualOrderIndicator": "MANUAL_ORDER_INDICATOR_AUTOMATIC"}
         d = await self._req("POST", "/v1/orders", body=body, auth=True, tries=1)
+        self.last_post = {"body": body, "reply": d}                 # 2026-11-21: shown by the order check (diagnostic only)
         oid = str(d.get("id") or "")
         if not oid:
             raise PMError(f"No order id returned: {d}")

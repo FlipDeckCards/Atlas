@@ -206,6 +206,7 @@ class LiveBroker:
         self._bal: Optional[float] = None
         self.rejects: List[str] = []
         self._bal_ts = 0.0
+        self.last_sent: Dict[tuple, Any] = {}          # 2026-11-21: (slug, side) -> the request body and reply of the latest order (diagnostic)
         self.last_order: Dict[tuple, str] = {}         # 2026-11-20: (slug, side) -> the latest order id sent (for the miss check)
 
     @property
@@ -252,6 +253,7 @@ class LiveBroker:
                 raise
             self.resting[side] = Resting(q, oid, now)
             self.last_order[(slug, side)] = oid
+            self.last_sent[(slug, side)] = getattr(self.c, "last_post", None)
             if len(self.last_order) > 200:
                 self.last_order.pop(next(iter(self.last_order)))
 
