@@ -214,3 +214,63 @@ def test_a_short_fill_gets_an_order_check_and_a_full_one_does_not():
     assert probes == [("w1", "up", "partial fill")] and "5.05 of the 12.76" in logs[0]
     logs, probes = asyncio.run(go(12.0))
     assert probes == [] and logs == []
+
+
+def _ioc_client(refuse=False):
+    from openjarvis.polybot.client import PMError
+
+    class C:
+        placed = []
+
+        async def _req(self, *a, **k):
+            return _book([0.78], [0.20])
+
+        async def place(self, slug, side, price, qty, post_only=True, ioc=False):
+            if ioc and refuse:
+                raise PMError("bad tif", status=400)
+            self.placed.append((side, price, ioc))
+            return "oid1"
+
+    return C()
+
+
+def test_sol_buys_go_out_immediate_or_cancel_and_are_not_held_or_cancelled():
+    import asyncio
+    from openjarvis.polybot.brokers import LiveBroker
+    from openjarvis.polybot.strategy import Quote
+
+    c = _ioc_client()
+    b = LiveBroker(c)
+    b.ioc = True
+    asyncio.run(b.set_quotes("s", [Quote("up", 0.79, 5.0, taker=True)], 100.0))
+    assert c.placed == [("up", 0.79, True)] and b.resting["up"].ioc
+    asyncio.run(b.set_quotes("s", [], 100.5))                       # no cancel call for an order that is already filled or dead
+    assert "up" in b.resting and not b.closing
+    c2 = _ioc_client()
+    b2 = LiveBroker(c2)                                              # default: the normal order
+    asyncio.run(b2.set_quotes("s", [Quote("up", 0.79, 5.0, taker=True)], 100.0))
+    assert c2.placed == [("up", 0.79, False)]
+
+
+def test_a_refused_immediate_or_cancel_falls_back_to_the_normal_order_for_good():
+    import asyncio
+    from openjarvis.polybot.brokers import LiveBroker
+    from openjarvis.polybot.strategy import Quote
+
+    c = _ioc_client(refuse=True)
+    b = LiveBroker(c)
+    b.ioc = True
+    asyncio.run(b.set_quotes("s", [Quote("up", 0.79, 5.0, taker=True)], 100.0))
+    assert c.placed == [("up", 0.79, False)] and b.ioc is False
+
+
+def test_sol_retries_after_one_second_and_the_others_after_three():
+    d = _desk()
+    d.broker = SimpleNamespace(resting={}, ioc=True)
+    d._place("w1", "directional", "up", 7.8, 10.0, price=0.78, now=1000.0)
+    d._retry_missed(_w(), 1001.2)
+    assert not d._taken("w1", "directional")
+    d2 = _desk()
+    d2._place("w1", "directional", "up", 7.8, 10.0, price=0.78, now=1000.0)
+    d2._retry_missed(_w(), 1001.2)
+    assert d2._taken("w1", "directional")
