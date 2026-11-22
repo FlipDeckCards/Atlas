@@ -109,3 +109,23 @@ def test_order_probe_logs_polymarkets_record_of_a_missed_order():
     d.broker = type("B", (), {"last_order": {}, "rejects": ["up 5 @ 0.76: HTTP 400 price band"]})()
     asyncio.run(d._order_probe("m", "up", "edge", 2))
     assert "no order id was sent" in logs[-1] and "price band" in logs[-1]
+
+
+def test_send_probe_logs_the_book_as_the_order_goes_out():
+    import asyncio
+
+    d = _desk()
+    logs = []
+    d.log = lambda lvl, msg: logs.append(msg)
+    d.clock = lambda: 1001.0
+
+    class C:
+        async def _req(self, method, path, auth=False, tries=1):
+            return {"marketData": {"offers": [{"px": {"value": "0.80"}, "qty": {"value": "12"}}, {"px": {"value": "0.81"}, "qty": {"value": "50"}}],
+                                   "bids": [{"px": {"value": "0.20"}, "qty": {"value": "30"}}]}}
+    d.c = C()
+    asyncio.run(d._send_probe("w1", "up", "edge", 1, 0.78))
+    assert "order sent edge up (try 1)" in logs[-1] and "decided at 78c" in logs[-1] and "bot book 78c" in logs[-1]
+    assert "signed book at send 80c offers [80c x12, 81c x50]" in logs[-1]
+    asyncio.run(d._send_probe("w1", "down", "edge", 2, 0.80))
+    assert "signed book at send 80c" in logs[-1]                 # Down ask = 1 - best Up bid (20c)
