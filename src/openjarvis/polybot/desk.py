@@ -1020,6 +1020,12 @@ class Desk:
         keep = ("state", "price", "quantity", "cumQuantity", "leavesQuantity", "avgPx", "tif", "type", "intent", "text",
                 "rejectReason", "cancelReason", "createTime", "updateTime", "participateDontInitiate")
         brief = {k: o.get(k) for k in keep if o.get(k) not in (None, "", [])}
+        brief.update({k: v for k, v in o.items() if k not in brief and v not in (None, "", []) and k not in ("id", "marketSlug")})
+        sent = ((getattr(self.broker, "last_sent", None) or {}).get((slug, side)) or {})
+        sb = sent.get("body") or {}
+        if sb:
+            brief["sent"] = {"post_only": sb.get("participateDontInitiate"), "limit": (sb.get("price") or {}).get("value"),
+                             "qty": sb.get("quantity"), "intent": sb.get("intent"), "reply_keys": sorted((sent.get("reply") or {}))[:8]}
         self.log("warn", f"{self.name}: order check {method} {side} (try {n}): order {oid} {brief}")
 
     async def _miss_probe(self, slug: str, side: str, price: float) -> None:
