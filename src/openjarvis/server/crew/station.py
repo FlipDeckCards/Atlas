@@ -3185,7 +3185,7 @@ function tradingBox() {
     const amt = v => { const x = mk('span', null, v == null ? '—' : signed(v)); x.style.color = v == null ? '' : v < 0 ? '#ff3344' : '#00ff99'; return x; };
     fam.forEach((p, pi) => {
       const r = mk('div', 'row'); r.style.fontSize = '10px'; r.style.gap = '5px'; r.style.flexWrap = 'nowrap'; r.style.whiteSpace = 'nowrap'; if (pi) r.style.marginTop = '16px';   // a gap between people; 10px so "Total" fits on the line (owner 2026-11-22)
-      const n = mk('span', null, p.name + ':'); n.style.minWidth = '44px'; n.style.color = '#f5f5f5';
+      const n = mk('span', null, p.name + ':'); n.style.color = '#f5f5f5';           // 2026-11-22 (owner): just one space after the name, so the whole line fits
       const dm = t => { const x = mk('span', 'dim', t); x.style.fontSize = 'inherit'; return x; };      // the grey labels follow the line's 10px (they were bigger)
       r.append(n, dm('Today'), amt(p.today), dm('|'), dm('30 Day'), amt(p.d30));
       if ('total' in p) r.append(dm('|'), dm('Total'), amt(p.total));   // owner 2026-11-22: since the start, only on the owner's own Station (the server sends it only there)

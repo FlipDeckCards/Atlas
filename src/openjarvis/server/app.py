@@ -419,7 +419,7 @@ def create_app(
             import asyncpg
 
             from openjarvis.server.crew.store import CrewStore
-            from openjarvis.server.crew.tenant_desks import TenantDesks, seed_from_env
+            from openjarvis.server.crew.tenant_desks import TenantDesks, seed_from_env, seed_money_from_env
 
             # 2026-11-19: every subscriber desk holds one connection for its whole life (its lock), so the pool must fit all of them
             # plus room for their queries: 8 desks x up to 4 accounts + 4. POLYBOT_TENANT_POOL can only raise it.
@@ -429,6 +429,7 @@ def create_app(
             tstore = CrewStore(tpool)
             await tstore.ensure_tables()
             await seed_from_env(tstore, tpool)
+            await seed_money_from_env(tpool)                    # 2026-11-22: one-time cash / referral amounts for an account (POLYBOT_SEED_MONEY)
             app.state.tenant_desks = TenantDesks(tstore, tpool)
             app.state.tenant_desk_pool = tpool
             await app.state.tenant_desks.start_all()
