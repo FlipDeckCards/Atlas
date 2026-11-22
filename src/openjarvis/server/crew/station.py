@@ -3184,9 +3184,10 @@ function tradingBox() {
     const box = mk('div', 'pnl'); box.append(mk('div', 'pnl-t', 'P&L'));
     const amt = v => { const x = mk('span', null, v == null ? '—' : signed(v)); x.style.color = v == null ? '' : v < 0 ? '#ff3344' : '#00ff99'; return x; };
     fam.forEach((p, pi) => {
-      const r = mk('div', 'row'); r.style.fontSize = '13px'; r.style.gap = '6px'; r.style.flexWrap = 'wrap'; if (pi) r.style.marginTop = '16px';   // a gap between people
-      const n = mk('span', null, p.name + ':'); n.style.minWidth = '58px'; n.style.color = '#f5f5f5';
+      const r = mk('div', 'row'); r.style.fontSize = '10px'; r.style.gap = '5px'; r.style.flexWrap = 'nowrap'; r.style.whiteSpace = 'nowrap'; if (pi) r.style.marginTop = '16px';   // a gap between people; 10px so "Total" fits on the line (owner 2026-11-22)
+      const n = mk('span', null, p.name + ':'); n.style.minWidth = '50px'; n.style.color = '#f5f5f5';
       r.append(n, mk('span', 'dim', 'Today'), amt(p.today), mk('span', 'dim', '|'), mk('span', 'dim', '30 Day'), amt(p.d30));
+      if ('total' in p) r.append(mk('span', 'dim', '|'), mk('span', 'dim', 'Total'), amt(p.total));   // owner 2026-11-22: since the start, only on the owner's own Station (the server sends it only there)
       box.append(r);
       // owner 2026-11-21: two more lines per person, each desk's result today (green up, red down)
       const dk = p.desks || {};
