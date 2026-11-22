@@ -1352,7 +1352,7 @@ function deskViewTabs() {
     b.onclick = async () => {
       b.textContent = '…';
       try {
-        const res = await fetch('/api/crew/desk/' + path + '?asset=all' + (VIEW_AS ? '&view=' + encodeURIComponent(VIEW_AS) : ''), { headers: { 'Authorization': 'Bearer ' + token() } });
+        const res = await fetch('/api/crew/desk/' + path + '?asset=all' + (VIEW_AS ? '&view=' + encodeURIComponent(VIEW_AS) : (isOwner() ? '&team=1' : '')), { headers: { 'Authorization': 'Bearer ' + token() } });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const url = URL.createObjectURL(await res.blob());
         const a = document.createElement('a'); a.href = url; a.download = name;
@@ -1563,7 +1563,7 @@ function dailyPnlBtn() {
   b.onclick = async () => {
     b.textContent = '…';
     try {
-      const res = await fetch('/api/crew/desk/daily.xlsx' + (VIEW_AS ? '?view=' + encodeURIComponent(VIEW_AS) : ''), { headers: { 'Authorization': 'Bearer ' + token() } });
+      const res = await fetch('/api/crew/desk/daily.xlsx' + (VIEW_AS ? '?view=' + encodeURIComponent(VIEW_AS) : (isOwner() ? '?team=1' : '')), { headers: { 'Authorization': 'Bearer ' + token() } });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const url = URL.createObjectURL(await res.blob());
       const a = document.createElement('a'); a.href = url; a.download = 'desk-daily-pnl.xlsx';
@@ -1636,7 +1636,7 @@ function deskLogSec() {
   dlg.onclick = async () => {
     dlg.textContent = '…';
     try {
-      const res = await fetch('/api/crew/desk/log.csv' + (VIEW_AS ? '?view=' + encodeURIComponent(VIEW_AS) : ''), { headers: { 'Authorization': 'Bearer ' + token() } });
+      const res = await fetch('/api/crew/desk/log.csv' + (VIEW_AS ? '?view=' + encodeURIComponent(VIEW_AS) : (isOwner() ? '?team=1' : '')), { headers: { 'Authorization': 'Bearer ' + token() } });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const url = URL.createObjectURL(await res.blob());
       const a = document.createElement('a'); a.href = url; a.download = 'desk-log.csv';

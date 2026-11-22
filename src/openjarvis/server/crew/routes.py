@@ -646,28 +646,118 @@ async def _watch_model_stats(pool) -> dict:
     return stats
 
 
+async def _team_accounts(pool) -> list:
+    """Owner 2026-11-21: [(name, account tag)] for the owner (tag "") and everyone in POLYBOT_FAMILY / POLYBOT_FAMILY_OWNER_ONLY who has
+    a desk, so the owner's downloads can carry his brothers' and Yvonne's data next to his own (one "account" column says whose)."""
+    import os
+
+    raw = (os.environ.get("POLYBOT_FAMILY") or "") + "," + (os.environ.get("POLYBOT_FAMILY_OWNER_ONLY") or "")
+    spec = [x.split(":", 1) for x in raw.split(",") if ":" in x]
+    out = []
+    if not spec:
+        return [("Mike", "")]
+    from openjarvis.server.crew import tenant_desks
+
+    ids = [str(i) for i in await tenant_desks.uids_with_desks(pool)]
+    async with pool.acquire() as c:
+        rows = await c.fetch("SELECT id, email FROM users WHERE id::text = ANY($1::text[])", ids)
+    by_start = {(r["email"] or "").lower().split("@")[0]: str(r["id"]) for r in rows}
+    for name, who in spec:
+        name, who = name.strip(), who.strip().lower()
+        if who == "owner":
+            out.append((name, ""))
+            continue
+        uid = by_start.get(who) or next((v for k, v in by_start.items() if k.startswith(who)), None)
+        if uid is not None:
+            out.append((name, tenant_desks.account_tag(uid)))
+    if not any(t == "" for _, t in out):
+        out.insert(0, ("Mike", ""))
+    return out
+
+
+async def _team_csv(pool, fetch) -> str:
+    """One CSV from every person's own export (fetch(account_tag) -> csv text), with an "account" first column naming whose rows they are."""
+    import csv
+    import io
+
+    buf = io.StringIO()
+    wr = csv.writer(buf)
+    header = None
+    for name, tag in await _team_accounts(pool):
+        text = await fetch(tag)
+        rows = csv.reader(io.StringIO(text))
+        head = next(rows, None)
+        if not head:
+            continue
+        if header is None:
+            header = head
+            wr.writerow(["account"] + header)
+        idx = [head.index(h) if h in head else None for h in header]       # tolerate a column order that differs between accounts
+        for r in rows:
+            wr.writerow([name] + [(r[i] if i is not None and i < len(r) else "") for i in idx])
+        del text
+    return buf.getvalue()
+
+
+async def _team_xlsx(pool, rh_rows=None) -> bytes:
+    """One workbook: each person's daily P&L sheets, named with their name ("Mike - Daily P&L", "Davin - Daily P&L", ...)."""
+    import io
+    from copy import copy
+    from openpyxl import Workbook, load_workbook
+    from openjarvis.server.crew import desk
+
+    out = Workbook()
+    out.remove(out.active)
+    for name, tag in await _team_accounts(pool):
+        body = await desk.export_daily(pool, account=tag, rh_rows=rh_rows if not tag else None)
+        src = load_workbook(io.BytesIO(body))
+        for ws in src.worksheets:
+            dst = out.create_sheet((name + " - " + ws.title)[:31])
+            for row in ws.iter_rows():
+                for c in row:
+                    n = dst.cell(row=c.row, column=c.column, value=c.value)
+                    if c.has_style:
+                        n.font, n.fill, n.border = copy(c.font), copy(c.fill), copy(c.border)
+                        n.alignment, n.number_format = copy(c.alignment), c.number_format
+            for k, d in ws.column_dimensions.items():
+                dst.column_dimensions[k].width = d.width
+            for k, d in ws.row_dimensions.items():
+                if d.height:
+                    dst.row_dimensions[k].height = d.height
+            dst.freeze_panes = ws.freeze_panes
+    buf = io.BytesIO()
+    out.save(buf)
+    return buf.getvalue()
+
+
 @router.get("/api/crew/desk/candidates.csv")
-async def crew_desk_candidates_export(request: Request, view: str = ""):
+async def crew_desk_candidates_export(request: Request, view: str = "", team: int = 0):
     """Every entry the bots considered (v1.42), with the rule that blocked it and how the window settled, as one CSV, for the owner."""
     g = await _desk_gate(request, view)
     if isinstance(g, JSONResponse):
         return g
     from openjarvis.server.crew import desk
 
-    body = await desk.export_candidates(g[2], account=g[3])
+    if team and not g[3]:                                  # owner's own Station: everyone's rows, an account column says whose
+        body = await _team_csv(g[2], lambda t: desk.export_candidates(g[2], account=t))
+    else:
+        body = await desk.export_candidates(g[2], account=g[3])
     return Response(content=body, media_type="text/csv",
                     headers={"Content-Disposition": 'attachment; filename="desk-candidates.csv"'})
 
 
 @router.get("/api/crew/desk/settlechecks.csv")
-async def crew_desk_settle_checks_export(request: Request, view: str = ""):
+async def crew_desk_settle_checks_export(request: Request, view: str = "", team: int = 0):
     """2026-11-20: every settled window, the bot's index next to Polymarket's result (the settle check), as one CSV, for the owner."""
     g = await _desk_gate(request, view)
     if isinstance(g, JSONResponse):
         return g
     from openjarvis.server.crew import desk
 
-    body = await desk.export_settle_checks(g[2], account=g[3])
+    if team and not g[3]:
+        body = await _team_csv(g[2], lambda t: desk.export_settle_checks(g[2], account=t))
+    else:
+        body = await desk.export_settle_checks(g[2], account=g[3])
     return Response(content=body, media_type="text/csv",
                     headers={"Content-Disposition": 'attachment; filename="desk-settle-checks.csv"'})
 
@@ -690,7 +780,7 @@ async def crew_desk_shadow_export(request: Request, asset: str = "btc", view: st
 
 
 @router.get("/api/crew/desk/daily.xlsx")
-async def crew_desk_daily_export(request: Request, view: str = ""):
+async def crew_desk_daily_export(request: Request, view: str = "", team: int = 0):
     """Profit by trading day for each bot, with the day total, for the owner."""
     g = await _desk_gate(request, view)
     if isinstance(g, JSONResponse):
@@ -705,7 +795,10 @@ async def crew_desk_daily_export(request: Request, view: str = ""):
             rh_rows = await rh_engine.daily_rows(rp)
         except Exception:
             rh_rows = None
-    body = await desk.export_daily(g[2], account=g[3], rh_rows=rh_rows)          # this account's trades only, never the owner's
+    if team and not g[3]:                                                        # owner's own Station: one sheet set per person
+        body = await _team_xlsx(g[2], rh_rows)
+    else:
+        body = await desk.export_daily(g[2], account=g[3], rh_rows=rh_rows)      # this account's trades only, never the owner's
     return Response(content=body, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": 'attachment; filename="desk-daily-pnl.xlsx"'})
 
@@ -728,20 +821,23 @@ async def crew_desk_brief(request: Request):
 
 
 @router.get("/api/crew/desk/log.csv")
-async def crew_desk_log_export(request: Request, view: str = ""):
+async def crew_desk_log_export(request: Request, view: str = "", team: int = 0):
     """The full desk log for every desk as one CSV file, for the owner."""
     g = await _desk_gate(request, view)
     if isinstance(g, JSONResponse):
         return g
     from openjarvis.server.crew import desk
 
-    body = await desk.export_events(g[2], account=g[3])
+    if team and not g[3]:
+        body = await _team_csv(g[2], lambda t: desk.export_events(g[2], account=t))
+    else:
+        body = await desk.export_events(g[2], account=g[3])
     return Response(content=body, media_type="text/csv",
                     headers={"Content-Disposition": 'attachment; filename="desk-log.csv"'})
 
 
 @router.get("/api/crew/desk/export.csv")
-async def crew_desk_export(request: Request, asset: str = "btc", view: str = ""):
+async def crew_desk_export(request: Request, asset: str = "btc", view: str = "", team: int = 0):
     """Every fill the desk ever made (all strategy versions, paper and live) as one CSV file, for the owner."""
     g = await _desk_gate(request, view)
     if isinstance(g, JSONResponse):
@@ -749,7 +845,9 @@ async def crew_desk_export(request: Request, asset: str = "btc", view: str = "")
     from openjarvis.server.crew import desk
 
     a = (asset or "btc").lower()
-    if a == "all":                                                               # every desk's fills in one file, in time order
+    if a == "all" and team and not g[3]:                                         # owner's own Station: everyone's fills, an account column says whose
+        body = await _team_csv(g[2], lambda t: desk.export_all(g[2], "fills", account=t))
+    elif a == "all":                                                             # every desk's fills in one file, in time order
         body = await desk.export_all(g[2], "fills", account=g[3])
     else:
         body = await desk.export_fills(g[2], asset=a, account=g[3])
