@@ -99,7 +99,7 @@ def open_sides(fair_up: Optional[float], asset: str = "btc") -> Tuple[bool, bool
 
 # Owner, 2026-11-18: a bet that is also one of the three "what wins" kinds (over 3 minutes left, bought 30-70c, edge over 10c)
 # gets this much on top of its confidence tier, capped. XRP 5m only, the one desk with 100+ fills on its current version.
-WIN_BONUS = {"xrp": (3.0, 10.0)}          # coin -> (percentage points added, cap in % of the balance)
+WIN_BONUS = {"xrp": (3.0, 10.0), "btc": (3.0, 10.0)}   # BTC 5m (owner, 2026-11-22): the same +3 points, but only for bets with under 3 minutes left          # coin -> (percentage points added, cap in % of the balance)
 
 
 CUSHION_Z = 0.5
