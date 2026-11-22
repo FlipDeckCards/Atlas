@@ -164,6 +164,47 @@ async def seed_from_env(store, pool, env=None) -> List[str]:
     return done
 
 
+async def seed_money_from_env(pool, env=None) -> List[str]:
+    """2026-11-22 (owner): POLYBOT_SEED_MONEY = "Adam:110:25,Lionel:110:25" (name : cash deposited : referral [: withdrawn]) fills in
+    an account's money amounts once. Names are the ones in POLYBOT_FAMILY. A field the account has already saved is never overwritten,
+    so their own later edits stand. Clear the variable once the Station shows the amounts. Returns the names seeded."""
+    from openjarvis.server.crew import desk
+
+    e = os.environ if env is None else env
+    raw = (e.get("POLYBOT_SEED_MONEY") or "").strip()
+    if not raw:
+        return []
+    who = {}
+    for part in (e.get("POLYBOT_FAMILY") or "").split(","):
+        if ":" in part:
+            n, w = part.split(":", 1)
+            who[n.strip().lower()] = w.strip().lower()
+    done = []
+    for item in raw.split(","):
+        bits = [b.strip() for b in item.split(":")]
+        name = bits[0].lower() if bits else ""
+        start = who.get(name)
+        if not start or start == "owner" or len(bits) < 2:
+            continue
+        try:
+            amounts = dict(zip(("deposits", "referral", "withdrawn"), [float(b) for b in bits[1:4]]))
+        except ValueError:
+            continue
+        async with pool.acquire() as c:
+            uid = await c.fetchval("SELECT id FROM users WHERE lower(email) LIKE $1 ORDER BY length(email) LIMIT 1", start + "%")
+        if not uid:
+            logger.warning("POLYBOT_SEED_MONEY: no account for %s", bits[0])
+            continue
+        tag = account_tag(str(uid))
+        saved = await desk.get_kv(pool, desk.money_key(tag))
+        for field, amount in amounts.items():
+            if saved.get(field) is None and amount > 0:
+                await desk.set_money(pool, field, amount, account=tag)
+        done.append(bits[0])
+        logger.info("POLYBOT_SEED_MONEY: amounts set for %s (account %s); clear the variable now", bits[0], tag)
+    return done
+
+
 async def overview(pool, store, uid: str) -> Dict[str, Any]:
     """What the owner sees when he switches to a subscriber's account: their desks' live and paper results and account value."""
     from openjarvis.server.crew import desk
