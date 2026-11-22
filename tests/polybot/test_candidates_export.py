@@ -52,4 +52,17 @@ def test_candidates_export_checks_blocked_buys_against_the_window_result_and_lea
     assert len(lines) == 3                                                       # header + two owner rows
     assert "eth 5m under 85c" in lines[1] and lines[1].endswith("DOWN,1")
     assert lines[2].endswith("UP,1") and "BTC 5m" in lines[2]
-    assert asyncio.run(desk.export_candidates(_Pool(cands, results), account="x@y")).strip() == lines[0]
+    assert asyncio.run(desk.export_candidates(_Pool(cands, results), account="x@y")).strip() == lines[0]   # no rows for that account
+
+
+def test_candidates_export_for_an_account_holds_only_its_own_copies_with_the_markets_result():
+    from openjarvis.server.crew import desk
+
+    cands = [
+        _cand("btc", "cpc-btc-updown-5m-y", "up", 0.60, ""),                     # the owner's: not in the account's file
+        _cand("btc@ucc70a6f6b1be", "cpc-btc-updown-5m-y", "up", 0.60, "btc down 70-79c"),
+        _cand("btc@uother", "cpc-btc-updown-5m-y", "up", 0.60, ""),              # another account's: not in this file
+    ]
+    results = [{"slug": "cpc-btc-updown-5m-y", "asset": "btc", "up": True}]       # the result is stored under the base desk
+    lines = asyncio.run(desk.export_candidates(_Pool(cands, results), account="ucc70a6f6b1be")).strip().splitlines()
+    assert len(lines) == 2 and "BTC 5m" in lines[1] and "btc down 70-79c" in lines[1] and lines[1].endswith("UP,1")

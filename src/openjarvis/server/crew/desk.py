@@ -241,8 +241,7 @@ SHADOW_RULES = {
 async def export_candidates(pool, account: str = "") -> str:
     """v1.42: every entry the bots considered, with the rule that stopped it (blank when allowed), the price, the model's view,
     and how the window settled (polybot_window_results, which records every settled window, traded or not), so each blocked buy
-    can be checked against what it would have made. Subscriber copies (asset tagged with an account) are left out: the owner's
-    export only. Subscribers get the header alone."""
+    can be checked against what it would have made. An account's export holds only its own copies (asset tagged with that account)."""
     import csv
     import io
 
@@ -251,11 +250,12 @@ async def export_candidates(pool, account: str = "") -> str:
     buf = io.StringIO()
     wr = csv.writer(buf)
     wr.writerow(cols)
-    if account:
-        return buf.getvalue()
+    tag = "@" + account if account else ""
     async with pool.acquire() as c:
+        # owner 2026-11-21: an account's own copies carry its tag in the asset ("btc@u123..."); the owner's rows carry none
         rows = [r for r in await c.fetch("SELECT ts, asset, slug, side, price, fair, momentum_z, sigma, vol_tag, secs_left, blocked_by "
-                                         "FROM polybot_candidates ORDER BY ts") if "@" not in str(r["asset"])]
+                                         "FROM polybot_candidates ORDER BY ts")
+                if (str(r["asset"]).endswith(tag) if tag else "@" not in str(r["asset"]))]
         slugs = sorted({r["slug"] for r in rows})
         results = {}
         if slugs:
@@ -263,9 +263,10 @@ async def export_candidates(pool, account: str = "") -> str:
                 results[(r["asset"], r["slug"])] = "UP" if r["up"] else "DOWN"
     from openjarvis.polybot.config import desk_label
     for r in rows:
-        res = results.get((r["asset"], r["slug"]), "")
+        base = str(r["asset"]).split("@")[0]                       # the window's result is the market's, the same for every account
+        res = results.get((r["asset"], r["slug"])) or results.get((base, r["slug"]), "")
         won = "" if not res else (1 if res == str(r["side"]).upper() else 0)
-        wr.writerow([r["ts"], desk_label(r["asset"]), r["slug"], r["side"], r["price"], r["fair"], r["momentum_z"], r["sigma"],
+        wr.writerow([r["ts"], desk_label(base), r["slug"], r["side"], r["price"], r["fair"], r["momentum_z"], r["sigma"],
                      r["vol_tag"], r["secs_left"], r["blocked_by"] or "", res or "unknown", won])
     return buf.getvalue()
 

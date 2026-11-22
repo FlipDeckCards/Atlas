@@ -675,7 +675,7 @@ async def _team_accounts(pool) -> list:
     return out
 
 
-async def _team_csv(pool, fetch) -> str:
+async def _team_csv(pool, fetch, market_data: str = "") -> str:
     """One CSV from every person's own export (fetch(account_tag) -> csv text), with an "account" first column naming whose rows they are."""
     import csv
     import io
@@ -683,7 +683,10 @@ async def _team_csv(pool, fetch) -> str:
     buf = io.StringIO()
     wr = csv.writer(buf)
     header = None
-    for name, tag in await _team_accounts(pool):
+    accounts = await _team_accounts(pool)
+    if market_data:                                    # the same for every account (e.g. settle checks): the owner's once, labelled as such
+        accounts = [(market_data, "")]
+    for name, tag in accounts:
         text = await fetch(tag)
         rows = csv.reader(io.StringIO(text))
         head = next(rows, None)
@@ -755,7 +758,7 @@ async def crew_desk_settle_checks_export(request: Request, view: str = "", team:
     from openjarvis.server.crew import desk
 
     if team and not g[3]:
-        body = await _team_csv(g[2], lambda t: desk.export_settle_checks(g[2], account=t))
+        body = await _team_csv(g[2], lambda t: desk.export_settle_checks(g[2], account=t), market_data="All desks (market data)")
     else:
         body = await desk.export_settle_checks(g[2], account=g[3])
     return Response(content=body, media_type="text/csv",
