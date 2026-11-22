@@ -976,6 +976,31 @@ class Desk:
             return round(min(0.99, b.best_ask + TAKER_SLIP), 4)
         return round(max(0.01, b.best_bid - TAKER_SLIP), 4)
 
+    async def _send_probe(self, slug: str, side: str, method: str, n: int, price: float) -> None:
+        """2026-11-21 diagnostic (owner): half of the orders that should fill do not, even when the price did not move. Log, for every
+        live order, the price the bot decided on, what its own book showed, and a fresh signed read of the book taken as the order
+        goes out (top offers with sizes), so a miss can be compared with what the market looked like at the send. Trading is unchanged."""
+        parts = [f"decided at {price * 100:.0f}c"]
+        bk = self.book
+        if bk is not None:
+            mine = (bk.offers[0][0] if bk.offers else None) if side == "up" else (1.0 - bk.bids[0][0] if bk.bids else None)
+            parts.append("bot book " + ("none" if mine is None else f"{mine * 100:.0f}c") + f" ({max(0.0, self.clock() - (bk.ts or 0)):.1f}s old)")
+        try:
+            d = await self.c._req("GET", f"/v1/markets/{slug}/book", auth=True, tries=1)
+            md = (d or {}).get("marketData") or {}
+
+            def top(rows, low):
+                lv_ = [(money(r.get("px")), money(r.get("qty"))) for r in rows or []]
+                lv_ = sorted([x for x in lv_ if x[0] is not None and x[1]], key=lambda x: x[0], reverse=not low)[:3]
+                return lv_
+            offers, bids = top(md.get("offers"), True), top(md.get("bids"), False)
+            ask = (offers[0][0] if offers else None) if side == "up" else (1.0 - bids[0][0] if bids else None)
+            fmt = lambda lv_: ", ".join(f"{p_ * 100:.0f}c x{q_:g}" for p_, q_ in lv_) or "none"
+            parts.append("signed book at send " + ("none" if ask is None else f"{ask * 100:.0f}c") + f" offers [{fmt(offers)}] bids [{fmt(bids)}]")
+        except Exception as exc:                                   # noqa: BLE001 - a diagnostic never stops the desk
+            parts.append(f"signed book unreadable ({str(exc)[:40]})")
+        self.log("info", f"{self.name}: order sent {method} {side} (try {n}): " + " | ".join(parts) + ".")
+
     async def _order_probe(self, slug: str, side: str, method: str, n: int) -> None:
         """2026-11-20 diagnostic (owner): a missed order, as Polymarket itself records it: whether it was sent at all, its state,
         how much filled, its limit and any reason text. Logged as one "order check" desk-log line. Trading is unchanged."""
@@ -1086,6 +1111,11 @@ class Desk:
         att["n"] += 1
         att["ts"] = now
         att["qty"] = qty
+        if isinstance(self.broker, LiveBroker) and not self.cfg.watch_only and price is not None:
+            try:                                                      # 2026-11-21 (owner): what the market showed as the order went out
+                asyncio.get_running_loop().create_task(self._send_probe(slug, side, method, att["n"], price))
+            except RuntimeError:
+                pass
         if len(self._attempts) > 400:
             self._attempts = dict(list(self._attempts.items())[-200:])
         raw = None if self.fair_model is None else (self.fair_model if side == "up" else 1.0 - self.fair_model)
