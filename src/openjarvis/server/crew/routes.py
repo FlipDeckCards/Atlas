@@ -450,6 +450,11 @@ async def subscriber_finance(request: Request, engine, uid: str, pool, missions=
     return out
 
 
+def _all_time(per: dict) -> float:
+    """Owner 2026-11-22: a person's live trading since the start, all desks (the same sum the account view totals, with any earlier record)."""
+    return round(sum(float(v.get("all") or 0.0) + float(v.get("pre_all") or 0.0) for v in per.values()), 2)
+
+
 async def _family_pnl(pool, owner_trading, owner_view: bool = False) -> list:
     """Owner 2026-11-21: one P&L box with each person's live trading today and over 30 days, on every family Station
     (owner_trading None = work the owner's line out here). Who is who comes from
@@ -481,14 +486,16 @@ async def _family_pnl(pool, owner_trading, owner_view: bool = False) -> list:
                     owner_trading = {"polymarket": {k: round(sum(v[k] for v in per.values()), 2) for k in ("today", "d30")}}
                 t = (owner_trading or {}).get("polymarket") or {"today": 0.0, "d30": 0.0}
                 out.append({"name": name, "today": t.get("today", 0.0), "d30": t.get("d30", 0.0),
+                            **({"total": _all_time(per)} if owner_view else {}),
                             "desks": {a: round(v["today"], 2) for a, v in per.items()}})
                 continue
             uid = by_start.get(who) or next((v for k, v in by_start.items() if k.startswith(who)), None)
             if uid is None:
-                out.append({"name": name, "today": None, "d30": None})
+                out.append({"name": name, "today": None, "d30": None, **({"total": None} if owner_view else {})})
                 continue
             per = await desk.live_pnl_all(pool, tenant_desks.account_tag(uid))
             out.append({"name": name, **{k: round(sum(v[k] for v in per.values()), 2) for k in ("today", "d30")},
+                        **({"total": _all_time(per)} if owner_view else {}),                    # owner 2026-11-22: Total only on the owner's own Station
                         "desks": {a: round(v["today"], 2) for a, v in per.items()}})   # owner 2026-11-21: today per desk under each name
     except Exception:
         logger.exception("family P&L unavailable")
