@@ -879,12 +879,18 @@ class Desk:
         add, cap = rule
         fair_side = None if self.fair is None else (self.fair if side == "up" else 1.0 - self.fair)
         kinds = []
-        if secs_left > 180.0:
-            kinds.append("over 3 min left")
-        if 0.30 <= cost < 0.70:
-            kinds.append("bought 30-70c")
-        if fair_side is not None and fair_side - cost > 0.10:
-            kinds.append("edge over 10c")
+        if self.cfg.asset == "btc":
+            # 2026-11-22 (owner): BTC 5m's live fills since Nov 14 (309): under 3 min left won 86% at +13.9c per contract; over 3 min left
+            # 70% at -8.3c; the other two kinds fit nearly every BTC bet. So BTC's bonus is "under 3 min left" only.
+            if secs_left <= 180.0:
+                kinds.append("under 3 min left")
+        else:
+            if secs_left > 180.0:
+                kinds.append("over 3 min left")
+            if 0.30 <= cost < 0.70:
+                kinds.append("bought 30-70c")
+            if fair_side is not None and fair_side - cost > 0.10:
+                kinds.append("edge over 10c")
         if not kinds:
             return lot_pct, ""
         new = min(lot_pct + add, cap)
