@@ -865,6 +865,30 @@ class Desk:
                 self.rs.day_start = start
         except Exception:
             logger.exception("shared day start unavailable; this desk keeps its own")
+        await self._share_booked_pnl(raw)
+
+    async def _share_booked_pnl(self, raw) -> None:
+        """2026-11-22: every live desk of the account publishes its settled P&L for the day; the sum is what the account-wide loss stop
+        checks the account value against, so money taken out of the account is not mistaken for trading losses. Per-desk keys (no
+        read-modify-write race). Any failure leaves booked_pnl None, which keeps the old behaviour (the account value alone decides)."""
+        if raw is None or self.cfg.mode != "live":
+            self.rs.booked_pnl = None
+            return
+        from .config import ASSETS
+        acct = f"@{self.base.account}" if self.base.account else ""
+        try:
+            await raw.put(f"day_pnl:{self.cfg.asset}{acct}", {"day": self.rs.day, "pnl": round(self.rs.day_pnl, 2)})
+            total = 0.0
+            for a in ASSETS:
+                if a == self.cfg.asset:
+                    total += self.rs.day_pnl
+                    continue
+                d = await raw.get(f"day_pnl:{a}{acct}") or {}
+                if d.get("day") == self.rs.day:
+                    total += float(d.get("pnl") or 0.0)
+            self.rs.booked_pnl = round(total, 2)
+        except Exception:
+            self.rs.booked_pnl = None
 
     def _taken(self, slug: str, method: str) -> bool:
         return method in self._bets.get(slug, {})

@@ -233,3 +233,21 @@ def test_a_blocked_desk_logs_its_reason_once_per_window_and_skips_the_routine_wa
     d.cfg = SimpleNamespace(watch_only=False, mode="paper")
     d._log_block("Cooling down after a fast move in BTC.", _w("w3"))
     assert len(lines) == 3
+
+
+def test_money_taken_out_does_not_trip_the_account_wide_loss_stop():
+    from openjarvis.polybot import risk
+    from openjarvis.polybot.config import Config
+
+    from dataclasses import replace
+    base = Config()
+    cfg = replace(base, mode="live", limits=replace(base.limits, daily_loss_pct=18.0))
+    rs = risk.RiskState()
+    rs.day, rs.day_start, rs.real_pnl = "d", 97.1, -47.95                 # the account value fell $47.95 ...
+    kw = dict(now=1000.0, data_age_s=0.0, book_age_s=0.0, market_open=True, secs_since_open=60.0, secs_to_end=100.0, balance=50.0)
+    rs.booked_pnl = 1.69                                                   # ... but trading is +$1.69: money left the account
+    assert "Daily loss limit reached on the account" not in (risk.blocked(cfg, rs, **kw) or "")
+    rs.booked_pnl = -10.0                                                  # a real loss: stops
+    assert "Daily loss limit reached on the account" in risk.blocked(cfg, rs, **kw)
+    rs.booked_pnl = None                                                   # not readable: the old rule
+    assert "Daily loss limit reached on the account" in risk.blocked(cfg, rs, **kw)

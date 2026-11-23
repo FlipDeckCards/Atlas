@@ -48,6 +48,7 @@ class RiskState:
     paused: bool = False
     kill: bool = False
     real_pnl: Optional[float] = None    # live: the whole account's change today (all desks share it), from Polymarket itself
+    booked_pnl: Optional[float] = None  # live: the day's settled P&L added up over every live desk of the account (None: not readable)
 
     def roll(self, now: float) -> None:
         d = la_day(now)
@@ -72,7 +73,10 @@ def blocked(cfg: Config, rs: RiskState, *, now: float, data_age_s: float, book_a
     if rs.paused:
         return "Paused from Aibussol."
     dl = day_limit(cfg, rs)
-    if cfg.mode == "live" and dl > 0 and rs.real_pnl is not None and rs.real_pnl <= -dl:      # the shared account: all desks stop
+    # 2026-11-22: the account value also falls when money is TAKEN OUT (Adam, Nov 22: -$47.95 with trading +$1.69 stopped four desks).
+    # So the account-wide stop needs the booked trading P&L to agree: it must be at least half the limit down too. Unreadable: stop as before.
+    booked_ok = rs.booked_pnl is None or rs.booked_pnl <= -dl / 2.0
+    if cfg.mode == "live" and dl > 0 and rs.real_pnl is not None and rs.real_pnl <= -dl and booked_ok:      # the shared account: all desks stop
         return f"Daily loss limit reached on the account (${-rs.real_pnl:.2f} of ${dl:.2f}); back tomorrow."
     if cfg.mode == "live" and dl > 0 and rs.day_pnl <= -dl:          # paper keeps collecting data past the stop (it only notes it)
         return f"Daily loss limit reached (${-rs.day_pnl:.2f} of ${dl:.2f}); back tomorrow."
