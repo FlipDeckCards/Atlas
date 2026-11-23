@@ -1486,8 +1486,28 @@ class Desk:
             await self.broker.set_quotes(w.slug, want, now)
         elif self.broker.resting:
             await self.broker.cancel_all(now)
+        self._log_block(reason, w)
         self.reason = reason
         self.rs.errors_in_row = 0
+
+    _ROUTINE_BLOCKS = ("Between windows", "Too close to the close", "Waiting for the window to settle", "The current window is not open",
+                       "Waiting for the price to beat")
+
+    def _log_block(self, reason: Optional[str], w) -> None:
+        """2026-11-22 (owner): a desk that was stopped before it could decide (cooldown after a fast move, stale data, low buying power,
+        a loss limit...) left nothing in the log, so a missed window could not be explained. Log the reason once per window and reason.
+        Diagnostic only: nothing here changes what the desk does. The every-window waits are left out."""
+        if not reason or self.cfg.watch_only or self.cfg.mode != "live" or reason.startswith(self._ROUTINE_BLOCKS):
+            return
+        import re as _re
+        key = (getattr(w, "slug", ""), _re.sub(r"[\d.]+", "#", reason))
+        seen = self.__dict__.setdefault("_block_logged", set())
+        if key in seen:
+            return
+        if len(seen) > 400:
+            seen.clear()
+        seen.add(key)
+        self.log("info", f"{self.name}: blocked, no decision this window: {reason}")
 
     def account_value(self) -> float:
         """Live: what the account is worth. Polymarket nets a matched Up + Down pair at once (each pair is worth $1 for sure,
