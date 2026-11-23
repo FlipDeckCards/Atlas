@@ -792,6 +792,10 @@ class Desk:
         # 85c+ won 21 of 21 (+$6.79); under 85c won 15 of 21 (-$4.52), and every loss was bought under 85c.
         if self.cfg.asset == "sol" and price < 0.85:
             return "sol 5m under 85c"
+        # Owner, 2026-11-22: NATGAS 15m's floor is 85c, like SOL's. Live since Nov 19 (10 fills, 5 won, -$6.07): the three buys at 83c or
+        # more all won; the five buys under 80c that lost were all directional or edge entries at 40-75c (a test; revisit at about 30 trades).
+        if self.cfg.asset == "natgas" and price < 0.85:
+            return "natgas under 85c"
         # Owner, 2026-11-11: BTC 5m under 75c won 55.8% over 389 live fills (+1.1% per $ staked); 75c+ won 87.4% over 278 (+2.9%).
         # All five BTC 5m losses on 2026-11-11 were bought at 64-73c with the model 78-99% sure.
         # Owner, 2026-11-18: lowered to 70c (was 75c). Live since Nov 5: 70-74c won 74% of 53 (+2.8% per $), about the same as 75-79c
