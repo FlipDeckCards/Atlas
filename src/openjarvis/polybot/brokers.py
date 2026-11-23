@@ -78,7 +78,6 @@ class Resting:
     order_id: str
     placed_ts: float
     filled: float = 0.0
-    ioc: bool = False                  # 2026-11-22: sent immediate-or-cancel: it fills or dies at once, so it is never held or cancelled
 
     @property
     def left(self) -> float:
@@ -207,7 +206,6 @@ class LiveBroker:
         self._bal: Optional[float] = None
         self.rejects: List[str] = []
         self._bal_ts = 0.0
-        self.ioc = False                               # 2026-11-22 (owner): buys go out immediate-or-cancel (set by the desk; SOL only for now)
         self.skipped: Dict[tuple, float] = {}          # 2026-11-21: (slug, side) -> when a buy was NOT sent because the ask had run past its limit
         self.last_sent: Dict[tuple, Any] = {}          # 2026-11-21: (slug, side) -> the request body and reply of the latest order (diagnostic)
         self.last_order: Dict[tuple, str] = {}         # 2026-11-20: (slug, side) -> the latest order id sent (for the miss check)
@@ -254,8 +252,6 @@ class LiveBroker:
         for side in list(self.resting):
             r = self.resting[side]
             q = sides.get(side)
-            if r.ioc:
-                continue          # 2026-11-22: an immediate-or-cancel order is already filled or dead; the next read-back clears it
             if r.quote.taker and now - r.placed_ts < TAKER_HOLD_S:
                 continue          # 2026-11-21 (owner): a buy order gets TAKER_HOLD_S to match before it is cancelled (it used to go 1 s later)
             if not keep(r, q):
@@ -273,18 +269,8 @@ class LiveBroker:
                 self.rejects.append(f"{side} {q.qty:g} @ {q.price:.2f}: price ran past the limit before sending, not sent")
                 self.rejects = self.rejects[-20:]
                 continue
-            use_ioc = bool(self.ioc and q.taker)
             try:
-                try:
-                    oid = await (self.c.place(slug, side, q.price, q.qty, post_only=not q.taker, ioc=True) if use_ioc
-                                 else self.c.place(slug, side, q.price, q.qty, post_only=not q.taker))
-                except PMError as exc:
-                    if not (use_ioc and exc.status and 400 <= exc.status < 500 and exc.status != 401):
-                        raise
-                    self.ioc = False                             # the exchange refused the order type: back to the normal order, for good
-                    use_ioc = False
-                    logger.warning("immediate-or-cancel refused (%s); using the normal buy order from now on", exc)
-                    oid = await self.c.place(slug, side, q.price, q.qty, post_only=not q.taker)
+                oid = await self.c.place(slug, side, q.price, q.qty, post_only=not q.taker)
             except PMError as exc:
                 if exc.status and 400 <= exc.status < 500 and exc.status != 401:   # e.g. post-only would cross, size or tick: skip this quote
                     self.rejects.append(f"{side} {q.qty:g} @ {q.price:.2f}: {exc}")
@@ -292,7 +278,7 @@ class LiveBroker:
                     logger.warning("order rejected: %s", exc)
                     continue
                 raise
-            self.resting[side] = Resting(q, oid, now, ioc=use_ioc)
+            self.resting[side] = Resting(q, oid, now)
             self.last_order[(slug, side)] = oid
             self.last_sent[(slug, side)] = getattr(self.c, "last_post", None)
             if len(self.last_order) > 200:

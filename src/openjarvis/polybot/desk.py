@@ -81,7 +81,6 @@ CORRECTION_STRENGTH = 0.6
 # window, never more than RETRY_PAY_UP over the first try's price.
 TAKER_SLIP = 0.01
 RETRY_AFTER_S = 3.0
-RETRY_AFTER_IOC_S = 1.0           # 2026-11-22: an immediate-or-cancel buy is answered at once, so a miss is retried after 1 s, not 3
 RETRY_MAX = 3
 RETRY_PAY_UP = 0.02
 RETRY_PAY_UP_MOVED = 0.05      # 2026-11-21 (owner): after a try that was not sent because the price had run past its limit, a retry may follow the market this far
@@ -200,8 +199,6 @@ class Desk:
         if new.mode != self.cfg.mode:
             await self.broker.cancel_all(now)
             self.broker = LiveBroker(self.c) if new.mode == "live" else PaperBroker()
-            if new.mode == "live":
-                self.broker.ioc = str(self.cfg.asset) == "sol"           # 2026-11-22 (owner): SOL buys go out immediate-or-cancel (test)
             if new.mode == "live":
                 try:
                     await self.cancel_own_orders()                  # nothing left over from an earlier run (this desk's market only)
@@ -926,7 +923,7 @@ class Desk:
             ran = (getattr(self.broker, "skipped", None) or {}).pop((w.slug, side), None) is not None
             if ran:
                 att["moved"] = True                                      # the price ran past our limit before the order went out: decide again now
-            elif now - att["ts"] < (RETRY_AFTER_IOC_S if getattr(self.broker, "ioc", False) else RETRY_AFTER_S):
+            elif now - att["ts"] < RETRY_AFTER_S:
                 continue
             if self._filled.get((w.slug, side), 0.0) > 0:
                 continue                                                 # it filled (in full or in part): a bet, nothing to retry
@@ -953,7 +950,7 @@ class Desk:
                     asyncio.get_running_loop().create_task(self._order_probe(w.slug, side, method, att["n"]))
                 except RuntimeError:
                     pass
-            how = "was not sent, the price had already run past its limit" if ran else f"got no fill in {(RETRY_AFTER_IOC_S if getattr(self.broker, 'ioc', False) else RETRY_AFTER_S):.0f}s"
+            how = "was not sent, the price had already run past its limit" if ran else f"got no fill in {RETRY_AFTER_S:.0f}s"
             self.log("info", f"{self.name}: {method} {side} at {price * 100:.0f}c {how} "
                              f"({att['n']} of {RETRY_MAX}){'; giving up on this window' if last else '; will try again'}.")
             if not last:
