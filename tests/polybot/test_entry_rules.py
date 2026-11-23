@@ -88,3 +88,14 @@ def test_eth_5m_and_sol_5m_entry_price_floors():
     # BTC 5m is floored at 70c; XRP 5m too since 2026-11-20
     assert btc._block_rule(200, 0.40, 1.0) == "btc 5m under 70c" and btc._block_rule(200, 0.75, 1.0) is None
     assert xrp._block_rule(200, 0.50, 1.0) == "xrp 5m under 70c" and xrp._block_rule(200, 0.75, 1.0) is None
+
+
+def test_natgas_floor_is_85c_and_the_other_commodities_are_unchanged():
+    from openjarvis.polybot.config import from_env
+    from openjarvis.polybot.desk import Desk
+
+    ng = Desk(from_env({}, asset="natgas"), None, None)
+    gold = Desk(from_env({}, asset="gold"), None, None)
+    assert ng._block_rule(200, 0.84, 0.5, "up") == "natgas under 85c" and ng._block_rule(200, 0.72, 0.5, "up") == "natgas under 85c"
+    assert ng._block_rule(200, 0.85, 0.5, "up") is None and ng._block_rule(200, 0.91, 0.5, "up") is None
+    assert gold._block_rule(200, 0.72, 0.5, "up") is None
