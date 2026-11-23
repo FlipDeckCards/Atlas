@@ -779,6 +779,17 @@ async def export_daily(pool, account: str = "", rh_rows: Optional[list] = None) 
                 c.font = font
         return c
 
+    def roi(r, pnl, bal):
+        # owner 2026-11-23: the day's profit as a % of that day's starting balance; blank where no balance was recorded
+        c = ws.cell(row=r, column=4)
+        c.border, c.alignment = border, Alignment(horizontal="center")
+        if bal and bal > 0:
+            v = pnl / bal
+            c.value, c.number_format = round(v, 4), "0.00%;-0.00%"
+            fill, font = style_for(v)
+            if fill is not None:
+                c.fill, c.font = fill, font
+
     def range_label(days):
         lo, hi = min(days), max(days)
         return f"{lo.month}/{lo.day}/{lo:%y} - {hi.month}/{hi.day}/{hi:%y}"
@@ -791,6 +802,7 @@ async def export_daily(pool, account: str = "", rh_rows: Optional[list] = None) 
     header(1, 1, "Date")
     header(1, 2, "Starting balance")
     header(1, 3, "Daily profit or loss")
+    header(1, 4, "Daily ROI %")
     row = 2
     for day in sorted(per_day, reverse=True):
         value(row, 1, day, label=True, fmt="m/d/yyyy").number_format = "m/d/yyyy"
@@ -800,11 +812,13 @@ async def export_daily(pool, account: str = "", rh_rows: Optional[list] = None) 
         else:
             ws.cell(row=row, column=2).border = border           # no balance was recorded that day (before this was tracked)
         value(row, 3, per_day[day])
+        roi(row, per_day[day], starts.get(day.isoformat()))
         row += 1
     if old_days:
         value(row, 1, range_label(old_days), label=True)
         ws.cell(row=row, column=2).border = border
         value(row, 3, old_profit)
+        roi(row, old_profit, None)
         row += 1
     last_day_row = row - 1
 
