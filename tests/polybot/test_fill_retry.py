@@ -214,3 +214,22 @@ def test_a_short_fill_gets_an_order_check_and_a_full_one_does_not():
     assert probes == [("w1", "up", "partial fill")] and "5.05 of the 12.76" in logs[0]
     logs, probes = asyncio.run(go(12.0))
     assert probes == [] and logs == []
+
+
+def test_a_blocked_desk_logs_its_reason_once_per_window_and_skips_the_routine_waits():
+    d = _desk()
+    lines = []
+    d.log = lambda level, text: lines.append(text)
+    d.cfg = SimpleNamespace(watch_only=False, mode="live")
+    w = _w("w1")
+    d._log_block("Cooling down after a fast move in BTC.", w)
+    d._log_block("Cooling down after a fast move in BTC.", w)               # same window and reason: once
+    d._log_block("Between windows: waiting for the next 5m market to open.", w)
+    d._log_block("Index data is stale (12s old).", w)
+    d._log_block("Index data is stale (15s old).", w)                        # only the number differs: once
+    d._log_block(None, w)
+    d._log_block("Cooling down after a fast move in BTC.", _w("w2"))        # a new window logs again
+    assert len(lines) == 3 and "blocked, no decision this window: Cooling down" in lines[0] and "stale" in lines[1]
+    d.cfg = SimpleNamespace(watch_only=False, mode="paper")
+    d._log_block("Cooling down after a fast move in BTC.", _w("w3"))
+    assert len(lines) == 3
