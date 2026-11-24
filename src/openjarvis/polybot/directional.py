@@ -61,7 +61,10 @@ TIERS = {
     # Owner, 2026-11-24: XRP back down to two steps, 84-87% = 3%, 88%+ = 5% (the 8% step is gone), and no XRP bet may pass 5% of the
     # balance, bonus included (config.SMALL_COINS window 5%, WIN_BONUS cap 5%). Why: a 5% tier + the 3-point bonus made one 9% bet
     # that lost $35 by 0.7bp (Nov 24, 5:16 AM PT). BTC is unchanged.
-    "xrp": ((88, 5.0), (84, 3.0)),
+    # Owner, 2026-11-24 (later): XRP to a flat 3% from 84% (49 live fills since Nov 14: 69% won, -$25.88, -6.7% per $ staked; +$3.03 without the
+    # one cap-size bet). BTC, gold and silver are the desks that move the needle; the small desks stay at 3% or less so one bad bet cannot
+    # undo the big three. The win bonus can no longer lift XRP above 3%.
+    "xrp": ((84, 3.0),),
     # Owner, 2026-11-17 (live test): ETH 5m and SOL 5m bet a flat 3% (their confidence steps did not predict results).
     # Floor 90% calibrated (owner, 2026-11-17; was 85%): 85% calibrated let in raw 89-94% readings, the range that lost live;
     # 90% calibrated is about raw 95%, the only range that was near break-even.
@@ -105,7 +108,7 @@ def open_sides(fair_up: Optional[float], asset: str = "btc") -> Tuple[bool, bool
 
 # Owner, 2026-11-18: a bet that is also one of the three "what wins" kinds (over 3 minutes left, bought 30-70c, edge over 10c)
 # gets this much on top of its confidence tier, capped. XRP 5m only, the one desk with 100+ fills on its current version.
-WIN_BONUS = {"xrp": (3.0, 5.0), "btc": (3.0, 10.0)}   # XRP cap 5% (owner, 2026-11-24)   # BTC 5m (owner, 2026-11-22): the same +3 points, but only for bets with under 3 minutes left          # coin -> (percentage points added, cap in % of the balance)
+WIN_BONUS = {"xrp": (3.0, 3.0), "btc": (3.0, 10.0)}   # XRP cap 3%, so no lift (owner, 2026-11-24)   # BTC 5m (owner, 2026-11-22): the same +3 points, but only for bets with under 3 minutes left          # coin -> (percentage points added, cap in % of the balance)
 
 
 CUSHION_Z = 0.5
