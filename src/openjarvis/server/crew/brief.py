@@ -242,7 +242,7 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
              "earn money by buying a side only when their own price model says it is more likely to win than its price implies, by "
              "sizing every bet to how confident the model is, and by refusing to trade in conditions their record shows are unprofitable.")
     _bullets(d, [
-        f"Fleet: {len(facts)} desks covering BTC, ETH, SOL and XRP on 5-minute, 15-minute and 1-hour windows. "
+        f"Fleet: {len(facts)} desks: BTC, ETH, SOL and XRP on 5-minute windows and gold, silver, WTI oil and natural gas on 15-minute windows. "
         f"{len(live)} trade real money right now ({', '.join(f['label'] for f in live) or 'none'}); the other {len(paper)} trade in paper "
         "(simulated) to build a record before they are trusted with money.",
         f"Live results: {live_n} settled live windows, {live_w} winners ({(100.0 * live_w / live_n) if live_n else 0:.1f}%), "
@@ -314,12 +314,12 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
     d.add_heading("4.1 Sizing steps by coin", level=2)
     cal = directional.CAL_TIERS
     rows = []
-    for coin in ("btc", "eth", "sol", "xrp"):
+    for coin in ("btc", "eth", "sol", "xrp", "gold", "silver", "wti", "natgas"):
         tiers = directional._tiers(coin)
         rows.append([coin.upper(), f"{min(f for f, _ in tiers)}%", _steps(tiers),
                      _steps(cal) if coin == "btc" else "— (uses the steps at left on calibrated confidence)"])
     _table(d, ["Coin", "Lowest confidence traded", "Bet size (% of balance) by confidence", "Calibrated-hour steps"], rows)
-    _para(d, "Confidence is rounded down (84.6% counts as 84%). The 15-minute and 1-hour desks use their coin's steps. In a half-size "
+    _para(d, "Confidence is rounded down (84.6% counts as 84%). The commodity desks (gold, silver, WTI, natgas) have their own steps and no calibration. In a half-size "
              "hour every bet is halved; in a caution hour bets are halved and must also clear the caution floors; in a skipped hour "
              "(only if the daily review switches one off) the desk does not trade.")
     d.add_heading("4.2 Limits on how much is at risk", level=2)
@@ -328,7 +328,9 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
     _table(d, ["Limit", "Setting", "What it means"], [
         ["All-desk cap", f"{exposure.CROSS_DESK_PCT:.0f}% of the account", "Everything open at once, across every live desk and every method including sweeps. Bets that would go over wait until earlier ones settle. Paper desks keep their own tally."],
         ["Per-window total, BTC", f"{btc['window_total']:.0f}%", "All directional, edge and late bets in one BTC window together."],
-        ["Per-window total, XRP", f"{directional.window_total_pct('xrp'):.0f}%", "All directional, edge and late bets in one XRP window together (owner, 2026-11-11: was 5%)."],
+        ["Per-window total, XRP", f"{directional.window_total_pct('xrp'):.0f}%", "All directional, edge and late bets in one XRP window together (owner, 2026-11-24: 3%; was 5% that morning and 10% from 2026-11-11)."],
+        ["Per-window total, gold/silver", f"{directional.window_total_pct('gold'):.0f}% / {directional.window_total_pct('silver'):.0f}%", "All bets in one 15-minute window on each metal (owner, 2026-11-24). Gold and silver tend to move together, so both desks at the top step is a large bet in one direction."],
+        ["Per-window total, WTI/natgas", f"{directional.window_total_pct('wti'):.0f}% / {directional.window_total_pct('natgas'):.0f}%", "All bets in one 15-minute window on these commodities."],
         ["Per-window total, ETH/SOL", f"{directional.window_total_pct('eth'):.0f}%", "All directional, edge and late bets in one window on these coins together."],
         ["Sweeps, ETH/SOL/XRP", f"{small['sweep_pct'] or 1:.0f}% of the balance", "The closing sweep's own limit on these coins."],
         ["Daily stop", f"{btc['daily_loss_pct']:.0f}% of the day's starting balance", "When the account has lost this much since midnight Pacific, every desk stops for the rest of the day. The starting balance is shared by all desks (BTC 5m sets it)."],
@@ -377,7 +379,8 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
     roles = {
         "btc": "The flagship. Live since the start and the source of most of the data behind the rules. Full method set and its own "
                "calibrated steps. Sizes cut on 2026-11-11 (owner) from 7 / 8 / 10% to 1 / 4 / 8% after losing $42.56 that day; set to "
-               "3% / 5% / 8% on 2026-11-17 (owner). It sets the shared daily starting balance for the whole account.",
+               "3% / 5% / 8% on 2026-11-17 (owner); since 2026-11-22 a bet with under 3 minutes left gets +3 points, capped at 10%. Kept unchanged on 2026-11-24 "
+               "(its 90%+ step won 80% of fills, not the 90% it claims). It sets the shared daily starting balance for the whole account.",
         "eth": "ETH 5m: calibrated confidence, 85% floor (90% from 2026-11-17 to 2026-11-21 left it with no trades; owner put it back on 2026-11-22), a flat 3% per bet and at most 3% per window (owner, 2026-11-17, a live test). "
                "Skips buys under 85c (since 2026-11-10), enters only in the last 3 minutes, and skips a bet while the price already moves "
                "more than 1 sd toward it. On paper from 2026-11-10; live test judged at 30 live trades or two weeks.",
@@ -385,12 +388,22 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
                "Skips buys under 85c (owner, 2026-11-21; 75c from 2026-11-10), enters only in the last 3 minutes, and skips a bet while the price already moves "
                "more than 1 sd toward it (replacing the old rule that blocked both sides whenever the price rose). Live test judged at "
                "50 live trades.",
-        "xrp": "XRP 5m: calibrated confidence only. Confidence sets the tier (3 / 5 / 8%); a bet that is also one of the three "
-               "'what wins' kinds (over 3 minutes left, bought 30-70c, edge over 10c) gets +3% on top, capped at 10% (owner, 2026-11-18). "
+        "xrp": "XRP 5m: calibrated confidence, a flat 3% per bet from an 84% floor, at most 3% per window, and the win bonus can no longer lift a bet above 3% "
+               "(owner, 2026-11-24). It was cut in two steps that day: first to 3% at 84-87% and 5% at 88%+ after one 9% bet lost $35 by 0.7bp, then to a flat 3% "
+               "(49 live fills since Nov 14: 69% won, -$25.88, about -6.7% per dollar staked; +$3.03 without that one bet). The reasoning: BTC, gold and "
+               "silver are the desks that move the needle, so the smaller desks stay at 3% or less. "
                "Skips buys under 70c (owner, 2026-11-20) and at 70c+ with 1-3 minutes left (owner, 2026-11-18: they won 76% of 47 live "
-               "fills, under the ~78% those prices need). Sized up on 2026-11-11 (owner) after its v1.22 start (22 trades, 82% won, +11.1% per "
-               "dollar staked): no trade under 84%, then 3% at 84%, 5% at 85-87% and 8% at 88%+ (owner, 2026-11-17; the 7% and 10% steps are gone), with a 10% per-window limit. Its losses cluster overnight, "
-               "so 3-5 AM is halved. Its lifetime live record before 1.22 was about break-even, so its v1.22 results are watched closely.",
+               "fills, under the ~78% those prices need). Its losses cluster overnight, so 3-5 AM is halved.",
+        "gold": "GOLD 15m: a 60% floor and three steps, 60-74% = 3%, 75-89% = 5%, 90%+ = 8%, with an 8% per-window limit (owner, 2026-11-24; it was a flat 1% on "
+                "2026-11-19, a flat 3% that night and a flat 5% that morning). The best desk per dollar so far: 33 wins in 38 live fills (87%), +16.7% per dollar "
+                "staked through Nov 24. Its low-confidence fills did well and its largest loss was a 94% bet, so the 90%+ step is the least proven, "
+                "reviewed at about 60 fills (Dec 1).",
+        "silver": "SILVER 15m: a 75% floor and two steps, 75-84% = 5% and 85%+ = 8%, with an 8% per-window limit (owner, 2026-11-24). The floor was raised from 60% "
+                  "because its only live losses under 80% confidence were at 71.9% and 72.7% (28 live fills: 93% won, +12.2% per dollar staked). Most bets are "
+                  "at 91c+, so a win pays about 9% and one loss costs about eleven wins; gold and silver move together.",
+        "wti": "WTI OIL 15m: a flat 3% from 60% confidence, at most 3% per window (owner, 2026-11-19). Negative so far (-$13.62 since Nov 14); reviewed at about 40 live fills.",
+        "natgas": "NATGAS 15m: a flat 1% from 60% confidence, at most 1% per window (owner, 2026-11-19), with an 85c entry-floor test since 2026-11-22. Negative so far "
+                  "(-$5.42 since Nov 14); reviewed at about 30 fills under the 85c floor.",
     }
     for f in facts:
         d.add_heading(f"5.{facts.index(f) + 1} {f['label']}", level=2)
@@ -491,11 +504,20 @@ def build_doc(facts: List[Dict[str, Any]], family: List[Dict[str, Any]], now: dt
         ["Nov 18", "XRP 5m size bonus: confidence sets the tier; a bet that is also one of the three most profitable 'what wins' kinds on its current version (over 3 minutes left +$28.07, bought 30-70¢ +$24.83, edge over 10¢ +$35.21) gets +3%, capped at 10%. One kind is enough."],
         ["Nov 18", "XRP 5m skips buys at 70¢+ with 1-3 minutes left. On v1.22 (105 live fills) those won 76% of 47 (-$20.68) while 3-4 minutes left at 70-79¢ won 83% (+$11.08); the same split shows across all history. The owner's goal: fewer trades that make money every day over many trades that break even; more money goes in once a desk does that consistently."],
         ["Nov 18", "BTC 5m entry floor lowered to 70¢ (was 75¢). Live since Nov 5, 70-74¢ won 74% of 53 trades (+2.8% per dollar), about the same as 75-79¢; 65-69¢ won 60% (-31%), so the floor stays above it. Down bets at 70-79¢ stay blocked."],
+        ["Nov 22", "BTC 5m size bonus: +3 points of lot size (cap 10%) for bets with under 3 minutes left only. ETH 5m confidence floor back to 85% calibrated (90% left it with no trades since Nov 17). Natural gas entry floor 85c (test)."],
+        ["Nov 22", "Daily loss stop: money taken out of the account no longer stops the desks (the stop needs booked P&L to agree)."],
+        ["Nov 24", "XRP 5m cut after one 9% bet lost $35: first 3% / 5% with a 5% cap, then a flat 3% from 84% with a 3% cap and no bonus lift (49 live fills since Nov 14: 69% won, -$25.88)."],
+        ["Nov 24", "Gold and silver to a flat 5% per window (gold 38 live fills 87% won, silver 28 fills 93%). Same day: silver gets a 75% floor with 5% (75-84%) and 8% (85%+) steps; gold gets 3% (60-74%), 5% (75-89%) and 8% (90%+) steps; both with an 8% window limit."],
+        ["Nov 24", "Sizing principle (owner): BTC, gold and silver are the desks that move the needle; ETH, SOL, XRP and WTI stay at a flat 3% and natural gas at 1%, so a bad small-desk bet cannot undo the big three. BTC sizes left unchanged until the Dec 14 review."],
     ])
 
     # ---- 9. watch list
     d.add_heading("9. What to watch next", level=1)
     _bullets(d, [
+        "Gold and silver, first review about Dec 1: gold at about 60 live fills (watch the 60-74c entry band, the 90-94% confidence band and whether the 8% step "
+        "pays), silver on whether its 75% floor kept the losers out. Both at 8% in one direction is about 16% of the account against an 18% daily stop.",
+        "Dec 14, the first full 30-day review (counted from Nov 14, strategy v1.22): BTC sizing (the 90%+ step has won about 80%, below its label), the "
+        "small desks (WTI at about 40 fills, natgas about 30, SOL about 100) and a possible $300 deposit.",
         "ETH, SOL and XRP at the new 85% floor: if their live win rate holds above about 85% over 30+ trades, the bigger steps are earning "
         "their keep; if it slips, raise the floor to 88% before cutting the sizes.",
         "Hour tables: most hours still have fewer than 10 trades. Re-run the profit-by-hour tables after a week and tighten or relax them.",
