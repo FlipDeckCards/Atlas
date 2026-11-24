@@ -46,7 +46,9 @@ TIERS = {
     # small size) until there is data for sizing and strategy. The 4c minimum edge still applies.
     # 2026-11-19 22:46 (owner): gold, silver and WTI to a flat 3%; natural gas stays at 1%.
     # 2026-11-24 (owner): gold and silver to a flat 5% (gold 38 live fills 87% +16.7% per $ staked, silver 28 fills 93% +12.2%); WTI stays 3%.
-    "gold": ((60, 5.0),), "silver": ((60, 5.0),), "wti": ((60, 3.0),), "natgas": ((60, 1.0),),
+    # 2026-11-24 (owner): silver gets a 75% floor and two steps, 75-84% = 5%, 85%+ = 8% (its only live losses under 80% were at 71.9% and 72.7%;
+    # 85%+ has won every live fill so far). Gold stays a flat 5% from 60%.
+    "gold": ((60, 5.0),), "silver": ((85, 8.0), (75, 5.0)), "wti": ((60, 3.0),), "natgas": ((60, 1.0),),
     # Owner, 2026-11-11: BTC sizes cut (were 5 / 7 / 8 / 10%) until BTC 5m proves itself; same steps. Used by the pair method's legs.
     # Owner, 2026-11-17: 3 / 5 / 8% (were 1 / 4 / 8%)
     "btc": ((95, 8.0), (90, 8.0), (85, 5.0), (80, 3.0)),

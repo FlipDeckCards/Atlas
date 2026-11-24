@@ -19,10 +19,13 @@ def test_commodity_config_15m_one_percent_and_live_only_by_tap():
     for a in config.COMMODITIES:
         c = from_env(env, asset=a)
         assert c.price_kind == "commodity" and c.horizon == "15m" and c.coin == a and not c.watch_only
-        pct = {"natgas": 1.0, "gold": 5.0, "silver": 5.0}.get(a, 3.0)    # owner, 2026-11-24: gold/silver 5%; WTI 3%, natgas 1%
+        pct = {"natgas": 1.0, "gold": 5.0, "silver": 8.0}.get(a, 3.0)    # owner, 2026-11-24: gold 5%, silver window 8%; WTI 3%, natgas 1%
         assert c.window_pct == pct
         assert c.hour_size == () and c.trade_start == "00:00" and c.trade_end == "23:59"     # every hour, full size
-        assert directional.size_pct(0.85, a) == pct and directional.size_pct(0.60, a) == pct and directional.size_pct(0.59, a) == 0.0
+        if a == "silver":      # owner, 2026-11-24: silver 75-84% = 5%, 85%+ = 8%, no trade under 75%
+            assert directional.size_pct(0.85, a) == 8.0 and directional.size_pct(0.75, a) == 5.0 and directional.size_pct(0.74, a) == 0.0
+        else:
+            assert directional.size_pct(0.85, a) == pct and directional.size_pct(0.60, a) == pct and directional.size_pct(0.59, a) == 0.0
         assert apply_control(c, {}).mode == "paper"                     # no control row: paper
         from dataclasses import replace
         assert apply_control(replace(c, allow_live=True, key_id="k", secret_key="s"), {"mode": "live"}).mode == "live"   # Go live tap
