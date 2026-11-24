@@ -339,7 +339,7 @@ ONE_HOUR_TIMING = {"directional_secs_left": 900.0, "directional_min_secs": 120.0
 
 
 # owner, 2026-11-07 (v1.32): XRP, SOL and ETH bets run 1-5% by confidence, so a window holds at most 5%; sweeps stay at 1%.
-SMALL_COINS = {"xrp": (5.0, 1.0), "sol": (3.0, 1.0), "eth": (3.0, 1.0), "gold": (5.0, 1.0), "silver": (8.0, 1.0), "wti": (3.0, 1.0), "natgas": (1.0, 1.0)}   # commodities: gold 5%, silver 8% window (owner, 2026-11-24), WTI 3%, natgas 1% per window (owner, 2026-11-19)   # coin -> (window %, sweep %); XRP 5% since 2026-11-24 (owner; was 10% since 2026-11-11);
+SMALL_COINS = {"xrp": (3.0, 1.0), "sol": (3.0, 1.0), "eth": (3.0, 1.0), "gold": (5.0, 1.0), "silver": (8.0, 1.0), "wti": (3.0, 1.0), "natgas": (1.0, 1.0)}   # commodities: gold 5%, silver 8% window (owner, 2026-11-24), WTI 3%, natgas 1% per window (owner, 2026-11-19)   # coin -> (window %, sweep %); XRP 3% since 2026-11-24 (owner; was 5% earlier that day, 10% since 2026-11-11);
                                                                              # ETH/SOL 3% since 2026-11-17 (owner: live test at 3%)
 # Owner, 2026-11-17 (ETH 5m / SOL 5m live test): enter only with this many seconds or fewer left. Live fills at/above each floor
 # entered with more than 3 minutes left lost on both desks (ETH -3.7% over 12, SOL -14.9% over 18).

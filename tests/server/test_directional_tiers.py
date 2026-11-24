@@ -11,7 +11,7 @@ def test_btc_tiers(prob, expected):
     assert directional.size_pct(prob, "btc") == expected
 
 
-@pytest.mark.parametrize("coin", ["xrp", "sol", "eth"])
+@pytest.mark.parametrize("coin", ["sol", "eth"])      # XRP has its own tests (test_xrp_sizing_5pct.py): flat 3% since 2026-11-24
 @pytest.mark.parametrize("prob,expected", [(0.80, 0.0), (0.849, 0.0), (0.85, 1.0), (0.879, 1.0), (0.88, 2.0), (0.919, 2.0),
                                            (0.92, 3.0), (0.949, 3.0), (0.95, 5.0), (0.999, 5.0)])
 def test_xrp_sol_eth_trade_from_85_at_one_to_five_percent(coin, prob, expected):
