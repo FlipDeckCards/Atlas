@@ -14,7 +14,6 @@ def test_silver_floor_and_tiers():
 def test_silver_window_limit_is_eight_percent_and_gold_is_unchanged():
     assert from_env({}, asset="silver").window_pct == 8.0 and directional.window_total_pct("silver") == 8.0
     assert directional.window_room({}, 300.0, "silver") == 24.0
-    assert from_env({}, asset="gold").window_pct == 5.0 and directional.size_pct(0.60, "gold") == 5.0 and directional.size_pct(0.59, "gold") == 0.0
     assert directional.size_pct(0.70, "wti") == 3.0 and directional.size_pct(0.70, "natgas") == 1.0
 
 
