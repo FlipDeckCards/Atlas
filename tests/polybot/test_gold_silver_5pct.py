@@ -4,7 +4,7 @@ from openjarvis.polybot.config import from_env
 
 
 def test_gold_and_silver_are_five_percent_and_the_rest_unchanged():
-    for a in ("gold", "silver"):
+    for a in ("gold",):      # silver moved to 75% / 5% / 8% tiers the same day (tests/polybot/test_silver_tiers.py)
         assert from_env({}, asset=a).window_pct == 5.0, a
         assert directional.window_total_pct(a) == 5.0, a
         assert directional.size_pct(0.60, a) == 5.0 and directional.size_pct(0.59, a) == 0.0, a      # same 60% floor
