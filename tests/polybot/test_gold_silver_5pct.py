@@ -5,7 +5,7 @@ from openjarvis.polybot.config import from_env
 
 def test_gold_and_silver_are_five_percent_and_the_rest_unchanged():
     # silver and gold moved to tiers the same day (tests/polybot/test_silver_tiers.py, test_gold_tiers.py)
-    assert from_env({}, asset="wti").window_pct == 3.0 and directional.size_pct(0.70, "wti") == 3.0
+    assert from_env({}, asset="wti").window_pct == 1.0 and directional.size_pct(0.70, "wti") == 1.0
     assert from_env({}, asset="natgas").window_pct == 1.0 and directional.size_pct(0.70, "natgas") == 1.0
     assert directional.window_total_pct("xrp") == 3.0 and directional.window_total_pct("btc") == 10.0
 

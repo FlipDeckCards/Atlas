@@ -49,7 +49,7 @@ TIERS = {
     # 2026-11-24 (owner): silver gets a 75% floor and two steps, 75-84% = 5%, 85%+ = 8% (its only live losses under 80% were at 71.9% and 72.7%;
     # 85%+ has won every live fill so far). Gold stays a flat 5% from 60%.
     # 2026-11-24 (owner, later): gold gets tiers too, 60-74% = 3%, 75-89% = 5%, 90%+ = 8% (window limit 8%).
-    "gold": ((90, 8.0), (75, 5.0), (60, 3.0)), "silver": ((85, 8.0), (75, 5.0)), "wti": ((60, 3.0),), "natgas": ((60, 1.0),),
+    "gold": ((90, 8.0), (75, 5.0), (60, 3.0)), "silver": ((85, 8.0), (75, 5.0)), "wti": ((60, 1.0),), "natgas": ((60, 1.0),),
     # Owner, 2026-11-11: BTC sizes cut (were 5 / 7 / 8 / 10%) until BTC 5m proves itself; same steps. Used by the pair method's legs.
     # Owner, 2026-11-17: 3 / 5 / 8% (were 1 / 4 / 8%)
     "btc": ((95, 8.0), (90, 8.0), (85, 5.0), (80, 3.0)),
