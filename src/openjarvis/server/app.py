@@ -444,6 +444,16 @@ def create_app(
         except Exception:
             logger.exception("the daily 7 AM review did not start")
         try:
+            # 2026-11-26: read-only memory probe (logs "MEMPROBE" lines) while we hunt the ~80 MB/h leak; MEMPROBE=off disables it.
+            if (os.environ.get("MEMPROBE") or "on").strip().lower() not in ("0", "false", "no", "off"):
+                import asyncio
+
+                from openjarvis.server import memory_probe
+
+                app.state.memprobe_task = asyncio.create_task(memory_probe.loop(), name="memory-probe")
+        except Exception:
+            logger.exception("the memory probe did not start; the rest of Aibussol runs normally")
+        try:
             # 2026-11-20 (owner): the Robinhood crypto engine. Paper unless the owner takes it live; with no strategy it only watches.
             if dsn and (os.environ.get("ROBINHOOD_ENGINE") or "true").strip().lower() not in ("0", "false", "no", "off"):
                 import asyncio
