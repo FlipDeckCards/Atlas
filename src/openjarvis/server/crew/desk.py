@@ -876,6 +876,15 @@ async def export_daily(pool, account: str = "", rh_rows: Optional[list] = None) 
             value(row, 2 + i, old_bot.get(bot, 0.0))
         value(row, tot_col, old_profit)
         row += 1
+    # owner 2026-11-27: each bot's all-time total (every day plus the older-versions row) under its column; the last column is the
+    # settled trades total, the same number as the "Settled trades total" box above
+    lab = ws.cell(row=row, column=1, value="Bot All Time Total:")
+    lab.font, lab.border, lab.alignment = Font(bold=True), border, Alignment(horizontal="center")
+    for i, bot in enumerate(bots):
+        bot_total = sum(d.get(bot, 0.0) for d in per_day_bot.values()) + old_bot.get(bot, 0.0)
+        value(row, 2 + i, bot_total).font = Font(bold=True, color=("006100" if bot_total > 0 else "9C0006" if bot_total < 0 else "000000"))
+    value(row, tot_col, total_profit).font = Font(bold=True, color=("006100" if total_profit > 0 else "9C0006" if total_profit < 0 else "000000"))
+    row += 1
 
     ws.column_dimensions["A"].width = 26
     ws.column_dimensions["B"].width = 20
