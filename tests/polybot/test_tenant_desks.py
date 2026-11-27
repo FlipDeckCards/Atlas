@@ -319,10 +319,10 @@ def test_xrp_desks_sizes_and_window_limit():
 
     for a in ("xrp", "xrp15", "xrp1h"):
         c = from_env({"POLYBOT_WINDOW_PCT": "20", "POLYBOT_SWEEP_PCT": "10"}, asset=a)
-        assert c.window_pct == 3.0 and c.sweep_pct == 1.0, a           # owner, 2026-11-24: XRP window limit 3% (was 5% that morning, 10% from 2026-11-11)
-    assert directional.window_total_pct("xrp") == 3.0 and directional.window_total_pct("eth") == 3.0
+        assert c.window_pct == 0.5 and c.sweep_pct == 0.5, a           # owner, 2026-11-27: 0.5% (was 3%; 2026-11-24: XRP window limit 3% (was 5% that morning, 10% from 2026-11-11)
+    assert directional.window_total_pct("xrp") == 0.5 and directional.window_total_pct("eth") == 0.5
     # owner, 2026-11-24: no trade under 84%, then a flat 3%
-    assert [directional.size_pct(p, "xrp") for p in (0.83, 0.84, 0.86, 0.90, 0.93, 0.96)] == [0.0, 3.0, 3.0, 3.0, 3.0, 3.0]
+    assert [directional.size_pct(p, "xrp") for p in (0.83, 0.84, 0.86, 0.90, 0.93, 0.96)] == [0.0, 0.5, 0.5, 0.5, 0.5, 0.5]
     assert directional.min_conf("xrp") == 0.84
     assert from_env({"POLYBOT_WINDOW_PCT": "10"}, asset="btc").window_pct == 10.0
 
@@ -376,7 +376,7 @@ def test_desks_on_one_key_share_one_open_orders_read_and_back_off_after_a_429():
 def test_sol_and_eth_desks_are_capped_at_one_percent_too():
     for a in ("sol", "sol15", "sol1h", "eth", "eth15", "eth1h"):
         c = from_env({"POLYBOT_WINDOW_PCT": "10", "POLYBOT_SWEEP_PCT": "10"}, asset=a)
-        assert c.window_pct == 3.0 and c.sweep_pct == 1.0, a     # owner, 2026-11-17: 3% (was 5%)
+        assert c.window_pct == 0.5 and c.sweep_pct == 0.5, a     # owner, 2026-11-27: 0.5% (was 3%)
     for a in ("btc", "btc15", "btc1h"):
         assert from_env({"POLYBOT_WINDOW_PCT": "10"}, asset=a).window_pct == 10.0, a
 

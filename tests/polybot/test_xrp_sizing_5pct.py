@@ -7,24 +7,24 @@ from openjarvis.polybot.config import from_env
 from openjarvis.polybot.desk import Desk
 
 
-@pytest.mark.parametrize("prob,expected", [(0.83, 0.0), (0.84, 3.0), (0.85, 3.0), (0.879, 3.0), (0.88, 3.0), (0.94, 3.0), (0.99, 3.0)])
+@pytest.mark.parametrize("prob,expected", [(0.83, 0.0), (0.84, 0.5), (0.85, 0.5), (0.879, 0.5), (0.88, 0.5), (0.94, 0.5), (0.99, 0.5)])
 def test_xrp_is_a_flat_three_percent_from_84(prob, expected):
     assert directional.size_pct(prob, "xrp") == expected
     assert directional.min_conf("xrp") == 0.84
 
 
 def test_xrp_window_and_bonus_are_capped_at_three_percent():
-    assert directional.window_total_pct("xrp") == 3.0
-    assert from_env({}, asset="xrp").window_pct == 3.0
-    assert directional.WIN_BONUS["xrp"] == (3.0, 3.0)
+    assert directional.window_total_pct("xrp") == 0.5
+    assert from_env({}, asset="xrp").window_pct == 0.5
+    assert "xrp" not in directional.WIN_BONUS
 
 
 def test_the_nov_24_bet_would_have_been_three_percent_not_nine():
     d = Desk(from_env({}, asset="xrp"), None, None)
     d.fair = 0.19
     lot, _ = d._win_bonus(directional.size_pct(0.85, "xrp"), "down", 0.68, 236.0)
-    assert lot == 3.0
-    assert directional.window_room({}, 390.0, "xrp") == 11.7        # at most $11.70 in one window on a $390 account
+    assert lot == 0.5
+    assert directional.window_room({}, 390.0, "xrp") == 1.95        # at most $1.95 in one window on a $390 account (0.5%, owner 2026-11-27)
 
 
 def test_btc_is_unchanged():

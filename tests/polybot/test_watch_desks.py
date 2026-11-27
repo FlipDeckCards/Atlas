@@ -19,7 +19,7 @@ def test_commodity_config_15m_one_percent_and_live_only_by_tap():
     for a in config.COMMODITIES:
         c = from_env(env, asset=a)
         assert c.price_kind == "commodity" and c.horizon == "15m" and c.coin == a and not c.watch_only
-        pct = {"natgas": 1.0, "gold": 8.0, "silver": 8.0}.get(a, 3.0)    # owner, 2026-11-24: gold and silver window 8%; WTI 3%, natgas 1%
+        pct = {"natgas": 0.5, "wti": 0.5, "gold": 8.0, "silver": 8.0}[a]    # owner, 2026-11-27: WTI and natgas 0.5%; gold and silver window 8%
         assert c.window_pct == pct
         assert c.hour_size == () and c.trade_start == "00:00" and c.trade_end == "23:59"     # every hour, full size
         if a == "silver":      # owner, 2026-11-24: silver 75-84% = 5%, 85%+ = 8%, no trade under 75%

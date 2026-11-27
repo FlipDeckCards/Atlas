@@ -16,4 +16,4 @@ def test_gold_window_limit_is_eight_percent_and_the_rest_unchanged():
     assert from_env({}, asset="gold").window_pct == 8.0 and directional.window_total_pct("gold") == 8.0
     assert directional.window_room({}, 300.0, "gold") == 24.0
     assert directional.size_pct(0.85, "silver") == 8.0 and directional.size_pct(0.74, "silver") == 0.0
-    assert directional.size_pct(0.70, "wti") == 1.0 and directional.size_pct(0.70, "natgas") == 1.0 and directional.size_pct(0.85, "xrp") == 3.0
+    assert directional.size_pct(0.70, "wti") == 0.5 and directional.size_pct(0.70, "natgas") == 0.5 and directional.size_pct(0.85, "xrp") == 0.5

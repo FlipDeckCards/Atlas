@@ -49,7 +49,7 @@ TIERS = {
     # 2026-11-24 (owner): silver gets a 75% floor and two steps, 75-84% = 5%, 85%+ = 8% (its only live losses under 80% were at 71.9% and 72.7%;
     # 85%+ has won every live fill so far). Gold stays a flat 5% from 60%.
     # 2026-11-24 (owner, later): gold gets tiers too, 60-74% = 3%, 75-89% = 5%, 90%+ = 8% (window limit 8%).
-    "gold": ((90, 8.0), (75, 5.0), (60, 3.0)), "silver": ((85, 8.0), (75, 5.0)), "wti": ((60, 1.0),), "natgas": ((60, 1.0),),
+    "gold": ((90, 8.0), (75, 5.0), (60, 3.0)), "silver": ((85, 8.0), (75, 5.0)), "wti": ((60, 0.5),), "natgas": ((60, 0.5),),   # owner, 2026-11-27: every desk except BTC 5m, gold and silver at 0.5% of the balance
     # Owner, 2026-11-11: BTC sizes cut (were 5 / 7 / 8 / 10%) until BTC 5m proves itself; same steps. Used by the pair method's legs.
     # Owner, 2026-11-17: 3 / 5 / 8% (were 1 / 4 / 8%)
     "btc": ((95, 8.0), (90, 8.0), (85, 5.0), (80, 3.0)),
@@ -65,12 +65,12 @@ TIERS = {
     # Owner, 2026-11-24 (later): XRP to a flat 3% from 84% (49 live fills since Nov 14: 69% won, -$25.88, -6.7% per $ staked; +$3.03 without the
     # one cap-size bet). BTC, gold and silver are the desks that move the needle; the small desks stay at 3% or less so one bad bet cannot
     # undo the big three. The win bonus can no longer lift XRP above 3%.
-    "xrp": ((84, 3.0),),
+    "xrp": ((84, 0.5),),
     # Owner, 2026-11-17 (live test): ETH 5m and SOL 5m bet a flat 3% (their confidence steps did not predict results).
     # Floor 90% calibrated (owner, 2026-11-17; was 85%): 85% calibrated let in raw 89-94% readings, the range that lost live;
     # 90% calibrated is about raw 95%, the only range that was near break-even.
-    "eth": ((85, 3.0),),      # owner, 2026-11-22: ETH back to 85% calibrated (90% left it with no trades since Nov 17); SOL stays at 90%
-    "sol": ((90, 3.0),),
+    "eth": ((85, 0.5),),      # owner, 2026-11-22: ETH back to 85% calibrated (90% left it with no trades since Nov 17); SOL stays at 90%
+    "sol": ((90, 0.5),),
 }
 
 
@@ -109,7 +109,7 @@ def open_sides(fair_up: Optional[float], asset: str = "btc") -> Tuple[bool, bool
 
 # Owner, 2026-11-18: a bet that is also one of the three "what wins" kinds (over 3 minutes left, bought 30-70c, edge over 10c)
 # gets this much on top of its confidence tier, capped. XRP 5m only, the one desk with 100+ fills on its current version.
-WIN_BONUS = {"xrp": (3.0, 3.0), "btc": (3.0, 10.0)}   # XRP cap 3%, so no lift (owner, 2026-11-24)   # BTC 5m (owner, 2026-11-22): the same +3 points, but only for bets with under 3 minutes left          # coin -> (percentage points added, cap in % of the balance)
+WIN_BONUS = { "btc": (3.0, 10.0)}   # XRP cap 3%, so no lift (owner, 2026-11-24)   # BTC 5m (owner, 2026-11-22): the same +3 points, but only for bets with under 3 minutes left          # coin -> (percentage points added, cap in % of the balance)
 
 
 CUSHION_Z = 0.5

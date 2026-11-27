@@ -41,7 +41,7 @@ def test_window_total_is_capped_at_10_percent():
     assert directional.may_take(bets, "up", 5.0, 100.0)[0] is False
     assert directional.may_take(bets, "up", 2.0, 100.0)[0] is True
     assert directional.window_room({"late": ("down", 12.0, 15.0)}, 100.0) == 0.0
-    assert directional.window_total_pct("btc") == 10.0 and directional.window_total_pct("xrp") == 3.0
+    assert directional.window_total_pct("btc") == 10.0 and directional.window_total_pct("xrp") == 0.5
 
 
 def test_empty_window_allows_a_first_bet():
