@@ -161,6 +161,86 @@ async def fees_backfill_once(pool) -> None:
         logger.exception("fees backfill failed; P&L stays as booked")
 
 
+EARLY_FEES_CUTOFF = "2026-11-10"
+
+
+def early_fee_plan(windows: List[Dict[str, Any]], fills: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """For live windows settled before Nov 10: which ones were booked WITHOUT Polymarket's taker fee, and what to subtract.
+    A window's P&L is payout - cost; the fee is 0.0695 x p x (1 - p) per contract (or the fee the fill recorded). A window whose stored
+    P&L sits closer to payout - cost than to payout - cost - fee was booked without the fee. Windows that already carry it (the BTC 15m
+    desk's rows, for one) are only marked, never charged twice."""
+    by: Dict[Any, List[Dict[str, Any]]] = {}
+    for f in fills:
+        by.setdefault((f["mode"], f["slug"]), []).append(f)
+    plan = []
+    for w in windows:
+        fl = by.get((w["mode"], w["slug"]))
+        if not fl or w.get("up") is None or w.get("pnl") is None:
+            continue
+        win_side = "up" if w["up"] else "down"
+        cost = sum(float(f["cost"]) for f in fl)
+        payout = sum(float(f["qty"]) for f in fl if f["side"] == win_side)
+        fee_up = fee_dn = 0.0
+        for f in fl:
+            feat = f.get("features")
+            if isinstance(feat, str):
+                try:
+                    feat = json.loads(feat)
+                except Exception:
+                    feat = None
+            rec = feat.get("fee") if isinstance(feat, dict) else None
+            p = float(f["price"])
+            fee = float(rec) if isinstance(rec, (int, float)) else 0.0695 * p * (1.0 - p) * float(f["qty"])
+            if f["side"] == "up":
+                fee_up += fee
+            else:
+                fee_dn += fee
+        fee = fee_up + fee_dn
+        pnl = float(w["pnl"])
+        exp = payout - cost
+        missing = fee > 0.005 and abs(pnl - exp) <= abs(pnl - (exp - fee))
+        plan.append({"mode": w["mode"], "slug": w["slug"], "fee": fee, "fee_up": fee_up, "fee_dn": fee_dn, "charge": missing})
+    return plan
+
+
+async def fees_backfill_early_once(pool) -> None:
+    """Owner, 2026-11-27: the Nov 20 backfill only reached windows settled since Nov 10, so the Oct 29 - Nov 10 row of the daily sheet
+    (and the "Settled trades total") was about $43 better than the account. The account's all-time result matches the raw fills WITH the
+    taker fee. This charges the fee once to the live windows settled before Nov 10 that were booked without it (decided window by window
+    from the fills, see early_fee_plan) and marks all of them. Marked fees_backfill_v2; runs once."""
+    try:
+        await _ensure(pool)
+        if (await get_kv(pool, "fees_backfill_v2")).get("done"):
+            return
+        async with pool.acquire() as c:
+            wins = [dict(r) for r in await c.fetch(
+                f"SELECT slug, mode, up, pnl FROM polybot_windows WHERE mode LIKE 'live%' AND settled_at < '{EARLY_FEES_CUTOFF}' "
+                "AND pnl IS NOT NULL AND up IS NOT NULL AND fees_in_pnl IS NOT TRUE")]
+            slugs = sorted({w["slug"] for w in wins})
+            fills = [dict(r) for r in await c.fetch(
+                "SELECT mode, slug, side, price, qty, cost, features FROM polybot_fills WHERE mode LIKE 'live%' AND slug = ANY($1::text[])", slugs)] if slugs else []
+            plan = early_fee_plan(wins, fills)
+            charged = [p for p in plan if p["charge"]]
+            async with c.transaction():
+                if charged:
+                    await c.executemany(
+                        "UPDATE polybot_windows SET pnl = pnl - $3, up_cost = coalesce(up_cost, 0) + $4, down_cost = coalesce(down_cost, 0) + $5, "
+                        "fees = $3, fees_in_pnl = TRUE WHERE mode = $1 AND slug = $2 AND fees_in_pnl IS NOT TRUE",
+                        [(p["mode"], p["slug"], p["fee"], p["fee_up"], p["fee_dn"]) for p in charged])
+                marked = [p for p in plan if not p["charge"]]
+                if marked:
+                    await c.executemany("UPDATE polybot_windows SET fees = $3, fees_in_pnl = TRUE WHERE mode = $1 AND slug = $2 AND fees_in_pnl IS NOT TRUE",
+                                        [(p["mode"], p["slug"], p["fee"]) for p in marked])
+                await c.execute("INSERT INTO polybot_kv (key, value, updated_at) VALUES ($1, $2::jsonb, now()) "
+                                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+                                "fees_backfill_v2", json.dumps({"done": True, "charged": len(charged), "already_had_fee": len(marked),
+                                                                "fee_total": round(sum(p["fee"] for p in charged), 2)}))
+        logger.warning("Early fees backfill: %s windows before Nov 10 charged $%.2f in taker fees; %s already had them",
+                       len(charged), sum(p["fee"] for p in charged), len(marked))
+    except Exception:
+        logger.exception("early fees backfill failed; P&L stays as booked")
+
+
 async def put_control(pool, control: Dict[str, Any], asset: str = "btc", account: str = "") -> None:
     await _ensure(pool)
     async with pool.acquire() as c:
