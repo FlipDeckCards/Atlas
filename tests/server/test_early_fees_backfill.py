@@ -81,3 +81,39 @@ def test_backfill_runs_once_and_updates(monkeypatch):
     c2 = _Conn(wins, [])
     asyncio.run(desk.fees_backfill_early_once(_Pool(c2)))
     assert not c2.many and not c2.exec
+
+
+def test_recompute_sets_pnl_from_fills_whatever_the_row_holds():
+    """Absolute P&L = payout - cost - fee from the fills, so an over-charged row and an untouched row both land on the same number."""
+    f1 = _fills("a", "up", 0.80, 10)
+    f2 = _fills("b", "down", 0.60, 10)
+    both = _fills("c", "up", 0.50, 4) , _fills("c", "down", 0.40, 4)             # both sides in one window
+    wins = [{"mode": "live", "slug": "a", "up": True}, {"mode": "live", "slug": "b", "up": True}, {"mode": "live", "slug": "c", "up": False},
+            {"mode": "live", "slug": "nofills", "up": True}]
+    plan = {p["slug"]: p for p in desk.early_recompute_plan(wins, [f1, f2, *both])}
+    assert abs(plan["a"]["pnl"] - (10 - 8 - FEE(0.80, 10))) < 1e-9
+    assert abs(plan["b"]["pnl"] - (0 - 6 - FEE(0.60, 10))) < 1e-9
+    assert abs(plan["c"]["pnl"] - (4 - 2.0 - 1.6 - FEE(0.5, 4) - FEE(0.4, 4))) < 1e-9
+    assert "nofills" not in plan
+    assert abs(plan["a"]["up_cost"] - (8 + FEE(0.80, 10))) < 1e-9 and plan["a"]["down_cost"] == 0
+
+
+def test_recompute_runs_once(monkeypatch):
+    c = _Conn([{"mode": "live", "slug": "a", "up": True}], [_fills("a", "up", 0.8, 10)])
+    state = {}
+
+    async def noop(*a, **k):
+        return None
+
+    async def kvget(pool, key):
+        return state.get(key, {})
+    monkeypatch.setattr(desk, "_ensure", noop)
+    monkeypatch.setattr(desk, "get_kv", kvget)
+    asyncio.run(desk.fees_recompute_early_once(_Pool(c)))
+    sql, rows = c.many[0]
+    assert "SET pnl = $3" in sql and rows[0][1] == "a" and abs(rows[0][2] - (2 - FEE(0.8, 10))) < 1e-9
+    assert json.loads(c.exec[-1][1][1])["done"]
+    state["fees_backfill_v3"] = {"done": True}
+    c2 = _Conn([{"mode": "live", "slug": "a", "up": True}], [])
+    asyncio.run(desk.fees_recompute_early_once(_Pool(c2)))
+    assert not c2.many and not c2.exec

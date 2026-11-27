@@ -241,6 +241,73 @@ async def fees_backfill_early_once(pool) -> None:
         logger.exception("early fees backfill failed; P&L stays as booked")
 
 
+def early_recompute_plan(windows: List[Dict[str, Any]], fills: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Absolute P&L for live windows settled before Nov 10, from their fills: payout - cost - Polymarket's taker fee (the fee the fill
+    recorded, else 0.0695 x p x (1 - p) per contract). Independent of whatever the window row holds now, so it also repairs a row the
+    first early-fee pass charged too much; running it twice gives the same numbers."""
+    by: Dict[Any, List[Dict[str, Any]]] = {}
+    for f in fills:
+        by.setdefault((f["mode"], f["slug"]), []).append(f)
+    out = []
+    for w in windows:
+        fl = by.get((w["mode"], w["slug"]))
+        if not fl or w.get("up") is None:
+            continue
+        win_side = "up" if w["up"] else "down"
+        cost_up = cost_dn = fee_up = fee_dn = 0.0
+        payout = 0.0
+        for f in fl:
+            feat = f.get("features")
+            if isinstance(feat, str):
+                try:
+                    feat = json.loads(feat)
+                except Exception:
+                    feat = None
+            rec = feat.get("fee") if isinstance(feat, dict) else None
+            p = float(f["price"])
+            fee = float(rec) if isinstance(rec, (int, float)) else 0.0695 * p * (1.0 - p) * float(f["qty"])
+            if f["side"] == win_side:
+                payout += float(f["qty"])
+            if f["side"] == "up":
+                cost_up += float(f["cost"]); fee_up += fee
+            else:
+                cost_dn += float(f["cost"]); fee_dn += fee
+        out.append({"mode": w["mode"], "slug": w["slug"], "pnl": payout - cost_up - cost_dn - fee_up - fee_dn, "fee": fee_up + fee_dn,
+                    "up_cost": cost_up + fee_up, "down_cost": cost_dn + fee_dn})
+    return out
+
+
+async def fees_recompute_early_once(pool) -> None:
+    """Owner, 2026-11-27: the first early-fee pass (fees_backfill_v2) judged 'already has the fee' from a comparison that did not hold on
+    the real rows, so it charged every early window - about $16 too much against the account. This sets each live window settled
+    before Nov 10 to payout - cost - fee computed from its fills (see early_recompute_plan). Marked fees_backfill_v3; runs once."""
+    try:
+        await _ensure(pool)
+        if (await get_kv(pool, "fees_backfill_v3")).get("done"):
+            return
+        async with pool.acquire() as c:
+            wins = [dict(r) for r in await c.fetch(
+                f"SELECT slug, mode, up FROM polybot_windows WHERE mode LIKE 'live%' AND settled_at < '{EARLY_FEES_CUTOFF}' "
+                "AND pnl IS NOT NULL AND up IS NOT NULL")]
+            slugs = sorted({w["slug"] for w in wins})
+            fills = [dict(r) for r in await c.fetch(
+                "SELECT mode, slug, side, price, qty, cost, features FROM polybot_fills WHERE mode LIKE 'live%' AND slug = ANY($1::text[])", slugs)] if slugs else []
+            plan = early_recompute_plan(wins, fills)
+            async with c.transaction():
+                if plan:
+                    await c.executemany(
+                        "UPDATE polybot_windows SET pnl = $3, up_cost = $4, down_cost = $5, fees = $6, fees_in_pnl = TRUE WHERE mode = $1 AND slug = $2",
+                        [(p["mode"], p["slug"], p["pnl"], p["up_cost"], p["down_cost"], p["fee"]) for p in plan])
+                await c.execute("INSERT INTO polybot_kv (key, value, updated_at) VALUES ($1, $2::jsonb, now()) "
+                                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+                                "fees_backfill_v3", json.dumps({"done": True, "windows": len(plan), "pnl_total": round(sum(p["pnl"] for p in plan), 2),
+                                                                "fee_total": round(sum(p["fee"] for p in plan), 2)}))
+        logger.warning("Early fees recompute: %s windows before Nov 10 set to payout - cost - fee; their P&L totals $%.2f (fees $%.2f)",
+                       len(plan), sum(p["pnl"] for p in plan), sum(p["fee"] for p in plan))
+    except Exception:
+        logger.exception("early fees recompute failed; P&L stays as booked")
+
+
 async def put_control(pool, control: Dict[str, Any], asset: str = "btc", account: str = "") -> None:
     await _ensure(pool)
     async with pool.acquire() as c:
