@@ -28,9 +28,12 @@ def test_the_desks_run_all_four_methods_and_the_paper_label():
     for a in ("btc", "btc15"):
         c = from_env({}, asset=a)
         assert c.methods == ("pairs", "directional", "edge", "late") and c.ledger == "paper"
-    for a in ("eth", "sol", "xrp", "gold", "silver", "wti", "natgas"):    # owner, 2026-11-20: directional runs on BTC only
+    for a in ("eth", "sol", "xrp", "wti", "natgas"):    # owner, 2026-11-20: directional runs on BTC only
         c = from_env({}, asset=a)
         assert c.methods == ("pairs", "edge", "late") and c.ledger == "paper"
+    for a in ("gold", "silver"):                          # owner, 2026-11-27: no late (last-minute) bets on the metals
+        c = from_env({}, asset=a)
+        assert c.methods == ("pairs", "edge") and c.ledger == "paper"
 
 
 def test_late_desk_has_its_own_store_and_lock():

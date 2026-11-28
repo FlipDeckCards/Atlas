@@ -169,6 +169,11 @@ METHODS = {"btclate": ("late",)}
 # same desks; BTC's directional made +$8.36 over 19. The other desks keep pairs, edge and late.
 for _a in ("xrp", "sol", "eth", "gold", "silver", "wti", "natgas"):
     METHODS[_a] = ("pairs", "edge", "late")
+# Owner, 2026-11-27: no last-minute buys on gold and silver. Late bets (under 60 s left, model 90%+, 95c or less) lost on both desks:
+# gold 70 fills -$49.81 (-16% per $), silver 69 fills -$93.04 (-22%) across all five accounts; edge made +14% and +20% on the same desks.
+# Late pays about 85c to win 15c, so one loss cancels about ten wins. Edge bets (60 s and more left) are unchanged.
+for _a in ("gold", "silver"):
+    METHODS[_a] = ("pairs", "edge")
 # 2026-11-19 (owner): commodity desks on Polymarket US's 15-minute Up/Down markets (gold, silver, WTI oil, natural gas). Full desks
 # like the crypto ones (Station panel, trade log, Pause, Go live), run on Polymarket's own 1-second commodity price feed
 # (commodity:<name>). They start in paper; the owner's Go live tap takes each live. Flat 1% bets until there is data for sizing.
