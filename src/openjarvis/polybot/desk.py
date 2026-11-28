@@ -784,6 +784,13 @@ class Desk:
         if self.cfg.asset == "btc" and momentum is not None and -0.3 <= momentum <= 0.3:
             return "btc flat momentum"                              # v1.34, widened: BTC 5m's flat-price buys at any price. v1.34 blocked 30-70c only;
                                                                     # Oct 29-Nov 8 live CSV: flat-price buys 57% won, -$50 on 190 fills (30-70c -$26, outside 30-70c -$24)
+        # Owner, 2026-11-27: BTC 5m takes no bet with more than 3 minutes left when the model's raw confidence in the side is 90-95%.
+        # Live v1.21+ fills with the model at 80%+: that cell lost $31.92 over 55 of the owner's fills ($46.02 over 174 across all five
+        # accounts); over 3 min at other confidences and 90-95% at other timings both made money. A watch item: revisit Dec 1 / Dec 14.
+        if self.cfg.asset == "btc" and side in ("up", "down") and secs_left > 180.0 and self.fair_model is not None:
+            conf = self.fair_model if side == "up" else 1.0 - self.fair_model
+            if 0.90 <= conf < 0.95:
+                return "btc early 90-95%"
         # v1.41 (owner, 2026-11-10): entry price floors on v1.21 fills. ETH 5m's 75-84c buys lost money (58 fills, 79% won, -$2.34);
         # its 85c+ buys made +$1.19. SOL 5m's 60-74c buys lost money (15 fills, 60% won, -$2.15); its 75c+ buys made +$9.64 (a test).
         if self.cfg.asset == "eth" and price < 0.85:
